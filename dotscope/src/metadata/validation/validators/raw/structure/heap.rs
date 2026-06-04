@@ -647,7 +647,7 @@ mod tests {
         validator_test(
             raw_heap_validator_file_factory,
             "RawHeapValidator",
-            "Malformed",
+            "Parse",
             config,
             |context| validator.validate_raw(context),
         )
@@ -668,7 +668,7 @@ mod tests {
         let result_disabled = validator_test(
             clean_only_factory,
             "RawHeapValidator",
-            "Malformed",
+            "Parse",
             ValidationConfig {
                 enable_structural_validation: false,
                 ..Default::default()
@@ -691,7 +691,7 @@ mod tests {
         let result_enabled = validator_test(
             clean_only_factory,
             "RawHeapValidator",
-            "Malformed",
+            "Parse",
             ValidationConfig {
                 enable_structural_validation: true,
                 ..Default::default()

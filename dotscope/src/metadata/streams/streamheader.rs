@@ -159,7 +159,7 @@
 //! - **ECMA-335 II.24.2.2**: Stream header format and directory structure
 //! - **ECMA-335 II.24.2**: Complete metadata stream architecture overview
 
-use crate::{utils::read_le_at, Result};
+use crate::{utils::read_le_at, ParseFailure, ParseStage, Result};
 use std::io::Write;
 
 /// ECMA-335 compliant stream header providing metadata stream location and identification.
@@ -506,7 +506,12 @@ impl StreamHeader {
     /// - [ECMA-335 II.24.2.2](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): Official stream header specification
     pub fn from(data: &[u8]) -> Result<StreamHeader> {
         if data.len() < 9 {
-            return Err(out_of_bounds_error!());
+            return Err(ParseFailure::Truncated {
+                stage: ParseStage::StreamHeader,
+                expected: 9,
+                found: data.len(),
+            }
+            .into());
         }
 
         let mut cursor = 0_usize;
@@ -520,18 +525,22 @@ impl StreamHeader {
 
         // Validate offset bounds - offset must be reasonable
         if offset > 0x7FFF_FFFF {
-            return Err(malformed_error!(
-                "Stream offset {} exceeds maximum allowed value (0x7FFFFFFF)",
-                offset
-            ));
+            return Err(ParseFailure::InvalidField {
+                stage: ParseStage::StreamHeader,
+                field: "offset",
+                reason: format!("{offset} exceeds maximum 0x7FFFFFFF"),
+            }
+            .into());
         }
 
         // Validate size bounds - prevent integer overflow and unreasonable sizes
         if size > 0x7FFF_FFFF {
-            return Err(malformed_error!(
-                "Stream size {} exceeds maximum allowed value (0x7FFFFFFF)",
-                size
-            ));
+            return Err(ParseFailure::InvalidField {
+                stage: ParseStage::StreamHeader,
+                field: "size",
+                reason: format!("{size} exceeds maximum 0x7FFFFFFF"),
+            }
+            .into());
         }
 
         // After the 8-byte header, parse the name (max 32 chars or until end of data).
@@ -552,7 +561,12 @@ impl StreamHeader {
             .iter()
             .any(|valid_name| name == *valid_name)
         {
-            return Err(malformed_error!("Invalid stream header name - {}", name));
+            return Err(ParseFailure::InvalidField {
+                stage: ParseStage::StreamHeader,
+                field: "name",
+                reason: format!("unknown stream name `{name}`"),
+            }
+            .into());
         }
 
         Ok(StreamHeader { offset, size, name })
@@ -616,22 +630,34 @@ impl StreamHeader {
 
         // Pad to 4-byte boundary
         // Name length + 1 (null terminator), padded to multiple of 4
-        let name_with_null = self.name.len().checked_add(1).ok_or_else(|| {
-            malformed_error!("StreamHeader name length overflow: {}", self.name.len())
-        })?;
-        let padded_len = name_with_null.checked_add(3).ok_or_else(|| {
-            malformed_error!(
-                "StreamHeader padded length overflow: {} + 3",
-                name_with_null
-            )
-        })? & !3;
-        let padding = padded_len.checked_sub(name_with_null).ok_or_else(|| {
-            malformed_error!(
-                "StreamHeader padding underflow: padded={} name_with_null={}",
-                padded_len,
-                name_with_null
-            )
-        })?;
+        let name_with_null =
+            self.name
+                .len()
+                .checked_add(1)
+                .ok_or_else(|| ParseFailure::InvalidField {
+                    stage: ParseStage::StreamHeader,
+                    field: "name",
+                    reason: format!("name length overflow: {}", self.name.len()),
+                })?;
+        let padded_len =
+            name_with_null
+                .checked_add(3)
+                .ok_or_else(|| ParseFailure::InvalidField {
+                    stage: ParseStage::StreamHeader,
+                    field: "name",
+                    reason: format!("padded length overflow: {name_with_null} + 3"),
+                })?
+                & !3;
+        let padding =
+            padded_len
+                .checked_sub(name_with_null)
+                .ok_or_else(|| ParseFailure::InvalidField {
+                    stage: ParseStage::StreamHeader,
+                    field: "name",
+                    reason: format!(
+                        "padding underflow: padded={padded_len} name_with_null={name_with_null}",
+                    ),
+                })?;
         if padding > 0 {
             writer.write_all(&vec![0u8; padding])?;
         }

@@ -164,6 +164,7 @@ impl Technique for NetReactorNecroBit {
         let runtime_type_token = init_method_token.and_then(|init_token| {
             assembly
                 .method(&init_token)
+                .ok()
                 .and_then(|m| m.declaring_type_rc())
                 .map(|t| t.token)
         });
@@ -923,7 +924,7 @@ fn extract_bodies_from_image(
     let mut still_stubs = 0usize;
 
     for &token in stub_tokens {
-        let Some(method) = assembly.method(&token) else {
+        let Ok(method) = assembly.method(&token) else {
             continue;
         };
         let Some(rva) = method.rva.filter(|&r| r > 0) else {

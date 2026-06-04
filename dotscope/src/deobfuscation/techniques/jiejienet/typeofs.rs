@@ -127,7 +127,7 @@ impl Technique for JiejieNetTypeOf {
 
             // Extract the GetTypeFromHandle MemberRef token from the accessor body.
             // The accessor's IL: ldsfld handles → ldarg.0 → ldelem → call GetTypeFromHandle → ret
-            let get_type_from_handle_token = assembly.method(&accessor).and_then(|method| {
+            let get_type_from_handle_token = assembly.method(&accessor).ok().and_then(|method| {
                 method.instructions().find_map(|instr| {
                     if instr.mnemonic == "call" {
                         if let Operand::Token(token) = &instr.operand {
@@ -144,7 +144,7 @@ impl Technique for JiejieNetTypeOf {
 
             // Count ldtoken instructions in .cctor to determine handle count
             let handle_count = cctor_token
-                .and_then(|t| assembly.method(&t))
+                .and_then(|t| assembly.method(&t).ok())
                 .map(|m| m.instructions().filter(|i| i.mnemonic == "ldtoken").count())
                 .unwrap_or(0);
 
@@ -238,7 +238,7 @@ impl Technique for JiejieNetTypeOf {
 /// `ldtoken <type>` instructions. The order of `ldtoken` instructions corresponds
 /// to array indices 0, 1, 2, ...
 fn extract_cctor_type_tokens(assembly: &CilObject, cctor_token: Token) -> Vec<Token> {
-    let Some(method) = assembly.method(&cctor_token) else {
+    let Ok(method) = assembly.method(&cctor_token) else {
         return Vec::new();
     };
 

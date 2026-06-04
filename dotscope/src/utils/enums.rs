@@ -10,7 +10,7 @@ use crate::{
         signatures::TypeSignature,
         typesystem::{CilTypeRc, TypeRegistry},
     },
-    Result,
+    ParseFailure, ParseStage, Result,
 };
 use std::sync::Arc;
 
@@ -141,10 +141,12 @@ impl EnumUtils {
             2 => Ok(i64::from(parser.read_le::<u16>()?)),
             4 => Ok(i64::from(parser.read_le::<i32>()?)),
             8 => parser.read_le::<i64>(),
-            _ => Err(malformed_error!(
-                "Invalid enum underlying type size: {} bytes",
-                size_bytes
-            )),
+            _ => Err(ParseFailure::InvalidField {
+                stage: ParseStage::Generic,
+                field: "enum_underlying_type_size",
+                reason: format!("invalid size: {size_bytes} bytes"),
+            }
+            .into()),
         }
     }
 

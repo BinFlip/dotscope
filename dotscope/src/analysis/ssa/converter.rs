@@ -41,9 +41,9 @@ use crate::{
         cfg::ControlFlowGraph,
         ssa::{
             decompose::decompose_instruction, liveness, place_pruned_phis,
-            resolve_corelib_valuetype, ConstValue, DefSite, PhiNode, SimulationResult, SsaBlock,
-            SsaFunction, SsaInstruction, SsaOp, SsaType, SsaVarId, StackSimulator, StackSlot,
-            StackSlotSource, TypeProvider, UseSite, VariableOrigin,
+            resolve_corelib_valuetype, ConstValue, DefSite, PhiNode, PhiPlacementConfig,
+            SimulationResult, SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaType, SsaVarId,
+            StackSimulator, StackSlot, StackSlotSource, TypeProvider, UseSite, VariableOrigin,
         },
     },
     assembly::{opcodes, Immediate, Instruction, Operand},
@@ -293,6 +293,8 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                 ConstValue::F64(_) => SsaType::F64,
                 ConstValue::String(_) | ConstValue::DecryptedString(_) => SsaType::String,
                 ConstValue::DecryptedArray { .. } => SsaType::Object,
+                // SIMD vector constant from the native substrate — no CIL type.
+                ConstValue::Vector(_) => SsaType::Unknown,
                 ConstValue::Null => SsaType::Null,
                 ConstValue::True | ConstValue::False => SsaType::Bool,
                 // Runtime handle types (`ldtoken` results). Each handle
@@ -322,8 +324,15 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                     }),
             },
 
-            // Comparison results are always bool (represented as I32 on stack)
-            SsaOp::Ceq { .. } | SsaOp::Clt { .. } | SsaOp::Cgt { .. } => SsaType::Bool,
+            // Comparison results are always bool (represented as I32 on stack).
+            // Native boolean ops from the analyssa substrate likewise yield bool.
+            SsaOp::Ceq { .. }
+            | SsaOp::Clt { .. }
+            | SsaOp::Cgt { .. }
+            | SsaOp::BoolAnd { .. }
+            | SsaOp::BoolOr { .. }
+            | SsaOp::BoolXor { .. }
+            | SsaOp::BoolNot { .. } => SsaType::Bool,
 
             // Conversion - use the target type
             SsaOp::Conv { target, .. } => target.clone(),
@@ -516,7 +525,59 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             | SsaOp::Fence { .. }
             | SsaOp::InterruptReturn
             | SsaOp::Unreachable
-            | SsaOp::Readonly => SsaType::Unknown,
+            | SsaOp::Readonly
+            // Native SSA substrate operations (wide arithmetic, SIMD/vector,
+            // native atomics, bitcast, opaque, indirect branch). These never
+            // appear in CIL-lifted SSA — CIL type inference does not model
+            // them — so they resolve to Unknown. Enumerated explicitly (no
+            // wildcard) so future substrate additions still trip this
+            // exhaustiveness check.
+            | SsaOp::WideMul { .. }
+            | SsaOp::WideDiv { .. }
+            | SsaOp::FloatCompareFlags { .. }
+            | SsaOp::Bitcast { .. }
+            | SsaOp::IndirectBranch { .. }
+            | SsaOp::NativeOpaque(_)
+            | SsaOp::VectorUnary { .. }
+            | SsaOp::VectorBinary { .. }
+            | SsaOp::VectorTernary { .. }
+            | SsaOp::VectorPredicatedUnary { .. }
+            | SsaOp::VectorPredicatedBinary { .. }
+            | SsaOp::VectorPredicatedTernary { .. }
+            | SsaOp::VectorCompare { .. }
+            | SsaOp::VectorLoad { .. }
+            | SsaOp::VectorStore { .. }
+            | SsaOp::VectorMaskedLoad { .. }
+            | SsaOp::VectorMaskedStore { .. }
+            | SsaOp::VectorBroadcastLoad { .. }
+            | SsaOp::VectorGather { .. }
+            | SsaOp::VectorFaultingLoad { .. }
+            | SsaOp::VectorSegmentLoad { .. }
+            | SsaOp::VectorScatter { .. }
+            | SsaOp::VectorSegmentStore { .. }
+            | SsaOp::VectorExtract { .. }
+            | SsaOp::VectorInsert { .. }
+            | SsaOp::VectorSplat { .. }
+            | SsaOp::VectorShuffle { .. }
+            | SsaOp::VectorCast { .. }
+            | SsaOp::VectorReinterpret { .. }
+            | SsaOp::VectorPack { .. }
+            | SsaOp::VectorPackLoad { .. }
+            | SsaOp::VectorPackStore { .. }
+            | SsaOp::VectorZeroUpper { .. }
+            | SsaOp::VectorMaskUnary { .. }
+            | SsaOp::VectorMaskBinary { .. }
+            | SsaOp::VectorReduce { .. }
+            | SsaOp::VectorBitmask { .. }
+            | SsaOp::AtomicLoad { .. }
+            | SsaOp::AtomicStore { .. }
+            | SsaOp::AtomicStoreConditional { .. }
+            | SsaOp::AtomicPairLoad { .. }
+            | SsaOp::AtomicPairStoreConditional { .. }
+            | SsaOp::AtomicExchange { .. }
+            | SsaOp::AtomicLockRmw { .. }
+            | SsaOp::AtomicCmpXchg { .. }
+            | SsaOp::AtomicPairCmpXchg { .. } => SsaType::Unknown,
         }
     }
 
@@ -1357,7 +1418,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         match token.table() {
             // MethodDef (0x06) - method defined in this assembly
             0x06 => {
-                let method = assembly.method(&token)?;
+                let method = assembly.method(&token).ok()?;
                 let param_count = method.signature.params.len();
                 let has_this = !method.is_static();
                 let has_return = !matches!(method.signature.return_type.base, TypeSignature::Void);
@@ -1377,7 +1438,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 
             // MethodSpec (0x2B) - generic method instantiation
             0x2B => {
-                let method_spec = assembly.method_spec(&token)?;
+                let method_spec = assembly.method_spec(&token).ok()?;
                 // Get the underlying method token from the CilTypeReference
                 let underlying_token = match &method_spec.method {
                     CilTypeReference::MethodDef(method_ref) => {
@@ -1531,23 +1592,25 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         let num_locals = self.num_locals;
         let _ = place_pruned_phis(
             self.function.blocks_mut(),
-            &self.defs,
-            &live_in,
-            dominance_frontiers,
-            None,      // All blocks reachable during initial construction
-            &|_| true, // Process all groups
-            &|group| {
-                group_origins.get(&group).copied().unwrap_or_else(|| {
-                    if (group as usize) < num_args {
-                        VariableOrigin::Argument(group as u16)
-                    } else if (group as usize) < num_args.saturating_add(num_locals) {
-                        VariableOrigin::Local((group as usize).saturating_sub(num_args) as u16)
-                    } else {
-                        VariableOrigin::Phi
-                    }
-                })
+            PhiPlacementConfig {
+                defs: &self.defs,
+                live_in: &live_in,
+                dominance_frontiers,
+                reachable: None, // All blocks reachable during initial construction
+                group_filter: &|_| true, // Process all groups
+                group_to_origin: &|group| {
+                    group_origins.get(&group).copied().unwrap_or_else(|| {
+                        if (group as usize) < num_args {
+                            VariableOrigin::Argument(group as u16)
+                        } else if (group as usize) < num_args.saturating_add(num_locals) {
+                            VariableOrigin::Local((group as usize).saturating_sub(num_args) as u16)
+                        } else {
+                            VariableOrigin::Phi
+                        }
+                    })
+                },
+                leave_target_fn: None, // No Leave target handling during initial construction
             },
-            None, // No Leave target handling during initial construction
         );
 
         // Second, place PHI nodes for stack positions at merge points
@@ -2620,9 +2683,56 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                     if let Some(block) = self.function.block_mut(block_idx) {
                         if let Some(instr) = block.instruction_mut(instr_idx) {
                             let op = instr.op_mut();
-                            for (old_use, &new_use) in uses.iter().zip(renamed_uses.iter()) {
+                            // Apply the placeholder→final renaming atomically.
+                            //
+                            // `replace_uses(old, new)` rewrites EVERY operand
+                            // equal to `old`, so a naive sequential loop
+                            // miscompiles whenever a freshly-written value
+                            // aliases a not-yet-processed operand's old value
+                            // (e.g. uses=[a,b] renamed=[b,c] collapses both
+                            // operands to `c`). SSA var-id numbering can make a
+                            // final id equal a sibling operand's placeholder id,
+                            // so this is not hypothetical.
+                            //
+                            // Move each changing operand to a unique temporary id
+                            // first, then from the temporary to its final value.
+                            // This is position-wise exact and handles aliasing,
+                            // cycles (swaps), and repeated operands.
+                            //
+                            // Temps only have to be distinct from this op's own
+                            // operands (and each other) — `replace_uses` touches
+                            // no other instruction — so the lowest unused ids
+                            // suffice. They must NOT be derived from `max id + 1`:
+                            // operand ids include the reserved placeholder
+                            // (`u32::MAX - 1`), which would overflow the index
+                            // space and reintroduce collisions.
+                            let mut temps: Vec<SsaVarId> = Vec::with_capacity(uses.len());
+                            let mut candidate = 0usize;
+                            for _ in 0..uses.len() {
+                                loop {
+                                    let id = SsaVarId::from_index(candidate);
+                                    candidate = candidate.saturating_add(1);
+                                    if !uses.contains(&id)
+                                        && !renamed_uses.contains(&id)
+                                        && !temps.contains(&id)
+                                    {
+                                        temps.push(id);
+                                        break;
+                                    }
+                                }
+                            }
+                            for (&temp, (old_use, &new_use)) in
+                                temps.iter().zip(uses.iter().zip(renamed_uses.iter()))
+                            {
                                 if *old_use != new_use {
-                                    op.replace_uses(*old_use, new_use);
+                                    op.replace_uses(*old_use, temp);
+                                }
+                            }
+                            for (&temp, (old_use, &new_use)) in
+                                temps.iter().zip(uses.iter().zip(renamed_uses.iter()))
+                            {
+                                if *old_use != new_use {
+                                    op.replace_uses(temp, new_use);
                                 }
                             }
                         }

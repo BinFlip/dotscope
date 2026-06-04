@@ -632,7 +632,7 @@ mod tests {
         validator_test(
             raw_operation_validator_file_factory,
             "RawOperationValidator",
-            "Malformed",
+            "Parse",
             config,
             |context| validator.validate_raw(context),
         )

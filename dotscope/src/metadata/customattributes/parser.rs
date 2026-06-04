@@ -1956,13 +1956,15 @@ mod tests {
         let result = parse_custom_attribute_data(blob_data, &method.params);
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
-        // Be more flexible with error message matching - accept "Out of Bound" messages too
+        // Be more flexible with error message matching - accept "Out of Bound"
+        // and "read past end of buffer" (ParseFailure::OutOfBounds Display) too.
         assert!(
             error_msg.contains("data")
                 || error_msg.contains("I4")
                 || error_msg.contains("enough")
                 || error_msg.contains("Out of Bound")
-                || error_msg.contains("bound"),
+                || error_msg.contains("bound")
+                || error_msg.contains("read past end"),
             "Error should mention data, I4, or bound issue: {error_msg}"
         );
 

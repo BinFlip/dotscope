@@ -154,7 +154,7 @@ impl Technique for JiejieNetArrays {
 
             // Count ldtoken instructions in .cctor
             let handle_count = cctor_token
-                .and_then(|t| assembly.method(&t))
+                .and_then(|t| assembly.method(&t).ok())
                 .map(|m| m.instructions().filter(|i| i.mnemonic == "ldtoken").count())
                 .unwrap_or(0);
 
@@ -343,7 +343,7 @@ impl Technique for JiejieNetArrays {
 /// `ldtoken <field>` instructions. The order of `ldtoken` instructions corresponds
 /// to array indices 0, 1, 2, ...
 fn extract_cctor_field_tokens(assembly: &CilObject, cctor_token: Token) -> Vec<Token> {
-    let Some(method) = assembly.method(&cctor_token) else {
+    let Ok(method) = assembly.method(&cctor_token) else {
         return Vec::new();
     };
 
@@ -413,7 +413,7 @@ fn find_my_initialize_array(assembly: &CilObject) -> (Option<Token>, Option<Toke
             }
 
             // Scan the method body for a `call` to `RuntimeHelpers.InitializeArray`
-            let Some(method_body) = assembly.method(&method.token) else {
+            let Ok(method_body) = assembly.method(&method.token) else {
                 continue;
             };
 
@@ -481,7 +481,7 @@ fn extract_init_array_call_sites(
                 continue;
             };
 
-            let Some(method_body) = assembly.method(&method.token) else {
+            let Ok(method_body) = assembly.method(&method.token) else {
                 continue;
             };
 
@@ -600,7 +600,7 @@ fn resolve_int32_container_values(assembly: &CilObject) -> HashMap<Token, i32> {
 fn emulate_delta_chain_cctor(assembly: &CilObject, cctor_token: Token) -> HashMap<Token, i32> {
     let mut values = HashMap::new();
 
-    let Some(method) = assembly.method(&cctor_token) else {
+    let Ok(method) = assembly.method(&cctor_token) else {
         return values;
     };
 

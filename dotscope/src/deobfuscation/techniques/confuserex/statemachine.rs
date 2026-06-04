@@ -662,7 +662,7 @@ fn extract_slot_operations(
     next_method: Token,
     field_tokens: &[Token],
 ) -> Option<Vec<StateSlotOperation>> {
-    let method = assembly.method(&next_method)?;
+    let method = assembly.method(&next_method).ok()?;
 
     // Build SSA for the method - this gives us proper data flow analysis
     let ssa = method.ssa(assembly).ok()?;
@@ -773,7 +773,7 @@ pub fn find_constants_initializer(assembly: &CilObject) -> Option<Token> {
 
     // Get .cctor to find what methods it calls first
     let cctor_token = assembly.types().module_cctor()?;
-    let cctor = assembly.method(&cctor_token)?;
+    let cctor = assembly.method(&cctor_token).ok()?;
 
     // Look at ALL call instructions in .cctor
     // ConfuserEx injects multiple calls: anti-tamper, constants, anti-debug, etc.
@@ -792,7 +792,7 @@ pub fn find_constants_initializer(assembly: &CilObject) -> Option<Token> {
 
     // Now check each candidate to see if it matches Initialize() pattern
     for candidate in init_candidates {
-        let Some(method) = assembly.method(&candidate) else {
+        let Ok(method) = assembly.method(&candidate) else {
             continue;
         };
 
@@ -858,7 +858,7 @@ pub fn find_constants_initializer(assembly: &CilObject) -> Option<Token> {
             if instr.flow_type == FlowType::Call {
                 if let Operand::Token(call_target) = &instr.operand {
                     // Check if calling a method with "Decompress" in name
-                    if let Some(callee) = assembly.method(call_target) {
+                    if let Ok(callee) = assembly.method(call_target) {
                         if callee.name.contains("Decompress") || callee.name.contains("LZMA") {
                             return Some(method.token);
                         }
@@ -967,7 +967,7 @@ fn resolve_method_spec_to_def(assembly: &CilObject, token: Token) -> Option<Toke
         return None; // Not a MethodSpec
     }
 
-    let method_spec = assembly.method_spec(&token)?;
+    let method_spec = assembly.method_spec(&token).ok()?;
     let method_token = method_spec.method.token()?;
 
     // Only return if it's a MethodDef (0x06), not a MemberRef

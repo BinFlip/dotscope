@@ -703,7 +703,7 @@ fn collect_module_state_fields(
         .collect();
 
     for method_token in &method_tokens {
-        let Some(method) = assembly.method(method_token) else {
+        let Ok(method) = assembly.method(method_token) else {
             continue;
         };
         for instr in method.instructions() {
@@ -746,7 +746,7 @@ fn resolve_memberref_to_decryptor(
     let memberref = assembly.member_ref(&memberref_token)?;
 
     for decryptor_token in decryptor_set {
-        if let Some(method) = assembly.method(decryptor_token) {
+        if let Ok(method) = assembly.method(decryptor_token) {
             if method.name == memberref.name {
                 return Some(*decryptor_token);
             }

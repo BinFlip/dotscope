@@ -196,7 +196,7 @@ use crate::{
         validation::{ValidationConfig, ValidationEngine},
     },
     project::ProjectContext,
-    Error, Result,
+    Error, MethodLookupError, Result,
 };
 
 /// A fully parsed and loaded .NET assembly representation.
@@ -1486,13 +1486,12 @@ impl CilObject {
         &self.data.method_specs
     }
 
-    /// Returns the method definition for the given token, if it exists.
+    /// Returns the method definition for the given token.
     ///
-    /// This is a convenience accessor that looks up a method by its metadata token
-    /// and returns a cloned reference-counted pointer to the
-    /// [`Method`](crate::metadata::method::Method) object. It
-    /// eliminates the need to call [`methods()`](Self::methods), unwrap the `Entry`
-    /// guard, and clone the value manually.
+    /// Convenience accessor over [`methods()`](Self::methods) — looks up a
+    /// method by its metadata token and returns a cloned reference-counted
+    /// pointer to the [`Method`](crate::metadata::method::Method) object,
+    /// eliminating the boilerplate of unwrapping the `Entry` guard manually.
     ///
     /// # Arguments
     ///
@@ -1500,8 +1499,19 @@ impl CilObject {
     ///
     /// # Returns
     ///
-    /// A reference-counted [`Method`](crate::metadata::method::Method) if a method with the
-    /// given token exists, `None` otherwise.
+    /// `Ok(`[`Method`](crate::metadata::method::Method)`)` reference-counted
+    /// if the token resolves; `Err(`[`MethodLookupError::NotFound`]`)` if the
+    /// token is not present in the `MethodDef` table.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::LookupMethod`]`(`[`MethodLookupError::NotFound`]`)`
+    /// when `token` does not match any row in the `MethodDef` table. **This
+    /// is distinct from RVA = 0.** A method that exists but has no IL body
+    /// (abstract, P/Invoke, runtime-managed) still resolves to `Ok(method)`;
+    /// inspect [`Method::rva_kind`](crate::metadata::method::Method::rva_kind)
+    /// to see why the body is absent. Match on `Error::LookupMethod(_)` to
+    /// recover the structured [`MethodLookupError`] variant.
     ///
     /// # Examples
     ///
@@ -1512,13 +1522,20 @@ impl CilObject {
     /// let assembly = CilObject::from_path("tests/samples/WindowsBase.dll")?;
     /// let token = Token::new(0x06000001);
     ///
-    /// if let Some(method) = assembly.method(&token) {
-    ///     println!("Method: {} (static: {})", method.name, method.is_static());
+    /// match assembly.method(&token) {
+    ///     Ok(method) => {
+    ///         println!("Method: {} (static: {})", method.name, method.is_static());
+    ///     }
+    ///     Err(e) => eprintln!("lookup failed: {e}"),
     /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn method(&self, token: &Token) -> Option<MethodRc> {
-        self.data.methods.get(token).map(|e| e.value().clone())
+    pub fn method(&self, token: &Token) -> Result<MethodRc> {
+        self.data
+            .methods
+            .get(token)
+            .map(|e| e.value().clone())
+            .ok_or_else(|| MethodLookupError::NotFound(*token).into())
     }
 
     /// Returns the member reference for the given token, if it exists.
@@ -1533,8 +1550,11 @@ impl CilObject {
     ///
     /// # Returns
     ///
-    /// A reference-counted [`MemberRef`](crate::metadata::tables::MemberRef) if a member
-    /// reference with the given token exists, `None` otherwise.
+    /// - `Some(`[`MemberRef`](crate::metadata::tables::MemberRef)`)` reference-counted
+    ///   if `token` resolves to a row in the `MemberRef` table.
+    /// - `None` only when `token` is not present in the `MemberRef` table.
+    ///   This is a lookup miss, not a malformed-input signal — the assembly
+    ///   may simply not reference the requested member.
     ///
     /// # Examples
     ///
@@ -1554,11 +1574,12 @@ impl CilObject {
         self.data.refs_member.get(token).map(|e| e.value().clone())
     }
 
-    /// Returns the method specification for the given token, if it exists.
+    /// Returns the method specification for the given token.
     ///
-    /// A method specification represents a generic method instantiation with concrete
-    /// type arguments. This is a convenience accessor that looks up a `MethodSpec` by
-    /// its metadata token and returns a cloned reference-counted pointer.
+    /// A method specification represents a generic method instantiation with
+    /// concrete type arguments. Convenience accessor that looks up a
+    /// `MethodSpec` by its metadata token and returns a cloned
+    /// reference-counted pointer.
     ///
     /// # Arguments
     ///
@@ -1566,8 +1587,16 @@ impl CilObject {
     ///
     /// # Returns
     ///
-    /// A reference-counted [`MethodSpec`](crate::metadata::tables::MethodSpec) if a method
-    /// specification with the given token exists, `None` otherwise.
+    /// `Ok(`[`MethodSpec`](crate::metadata::tables::MethodSpec)`)` reference-counted
+    /// if the token resolves; `Err(`[`MethodLookupError::SpecNotFound`]`)` if the
+    /// token is not present in the `MethodSpec` table.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::LookupMethod`]`(`[`MethodLookupError::SpecNotFound`]`)`
+    /// when `token` does not match any row in the `MethodSpec` table. Match
+    /// on `Error::LookupMethod(_)` to recover the structured
+    /// [`MethodLookupError`] variant.
     ///
     /// # Examples
     ///
@@ -1578,14 +1607,18 @@ impl CilObject {
     /// let assembly = CilObject::from_path("tests/samples/WindowsBase.dll")?;
     /// let token = Token::new(0x2B000001);
     ///
-    /// if let Some(spec) = assembly.method_spec(&token) {
+    /// if let Ok(spec) = assembly.method_spec(&token) {
     ///     println!("MethodSpec: {:?} with {} generic args",
     ///              spec.method.token(), spec.generic_args.count());
     /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn method_spec(&self, token: &Token) -> Option<MethodSpecRc> {
-        self.data.method_specs.get(token).map(|e| e.value().clone())
+    pub fn method_spec(&self, token: &Token) -> Result<MethodSpecRc> {
+        self.data
+            .method_specs
+            .get(token)
+            .map(|e| e.value().clone())
+            .ok_or_else(|| MethodLookupError::SpecNotFound(*token).into())
     }
 
     /// Resolves a method-like token to its simple method name.
@@ -1608,9 +1641,19 @@ impl CilObject {
     ///
     /// # Returns
     ///
-    /// The method name as a `String` if the token refers to a known method, `None`
-    /// if the token table is not one of the three supported types or if the entry
-    /// does not exist.
+    /// - `Some(name)` if `token` resolves to a row in the `MethodDef`,
+    ///   `MemberRef`, or `MethodSpec` table.
+    /// - `None` in two distinct cases that this accessor does **not**
+    ///   distinguish:
+    ///   - `token` belongs to one of the three supported tables but the row
+    ///     is missing (lookup miss).
+    ///   - `token`'s table is not one of the three supported types (caller
+    ///     bug — the helper is intended for call-site operands only).
+    ///
+    /// If you need to distinguish those cases, dispatch on
+    /// [`Token::table`](crate::metadata::token::Token::table) yourself and
+    /// call [`method`](Self::method) / [`member_ref`](Self::member_ref) /
+    /// [`method_spec`](Self::method_spec) directly.
     ///
     /// # Examples
     ///

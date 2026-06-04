@@ -77,6 +77,7 @@ use crate::{
         tables::{ClassLayoutRaw, FieldLayoutRaw, FieldRaw, TypeDefRaw},
         validation::{
             context::{RawValidationContext, ValidationContext},
+            shared::err_no_metadata_tables,
             traits::RawValidator,
         },
     },
@@ -144,9 +145,7 @@ impl RawLayoutConstraintValidator {
     /// - Field references are invalid or null (zero field reference)
     /// - Field references exceed Field table row count
     fn validate_field_layouts(assembly_view: &CilAssemblyView) -> Result<()> {
-        let tables = assembly_view
-            .tables()
-            .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
+        let tables = assembly_view.tables().ok_or_else(err_no_metadata_tables)?;
 
         if let Some(field_layout_table) = tables.table::<FieldLayoutRaw>() {
             let mut field_offsets: FxHashMap<usize, Vec<(u32, u32)>> = FxHashMap::default();
@@ -225,9 +224,7 @@ impl RawLayoutConstraintValidator {
     /// - Parent type references are invalid (null or exceed TypeDef table row count)
     /// - Layout constraints are malformed
     fn validate_class_layouts(assembly_view: &CilAssemblyView) -> Result<()> {
-        let tables = assembly_view
-            .tables()
-            .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
+        let tables = assembly_view.tables().ok_or_else(err_no_metadata_tables)?;
 
         if let Some(class_layout_table) = tables.table::<ClassLayoutRaw>() {
             let typedef_table = tables.table::<TypeDefRaw>();
@@ -304,9 +301,7 @@ impl RawLayoutConstraintValidator {
     /// - Field layouts exceed reasonable offset bounds (>1MB suggesting corruption)
     /// - ClassLayout parent references point to non-existent TypeDef entries
     fn validate_layout_consistency(assembly_view: &CilAssemblyView) -> Result<()> {
-        let tables = assembly_view
-            .tables()
-            .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
+        let tables = assembly_view.tables().ok_or_else(err_no_metadata_tables)?;
 
         if let (Some(class_layout_table), Some(field_layout_table), Some(typedef_table)) = (
             tables.table::<ClassLayoutRaw>(),
@@ -419,9 +414,7 @@ impl RawLayoutConstraintValidator {
     /// - Field layouts violate natural alignment requirements
     /// - Explicit layout fields have unreasonable spacing
     fn validate_field_alignment(assembly_view: &CilAssemblyView) -> Result<()> {
-        let tables = assembly_view
-            .tables()
-            .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
+        let tables = assembly_view.tables().ok_or_else(err_no_metadata_tables)?;
 
         if let (Some(field_layout_table), Some(_field_table)) =
             (tables.table::<FieldLayoutRaw>(), tables.table::<FieldRaw>())
@@ -480,9 +473,7 @@ impl RawLayoutConstraintValidator {
     /// - Value type packing constraints are inappropriate
     /// - Value type field layouts create alignment issues
     fn validate_value_type_layouts(assembly_view: &CilAssemblyView) -> Result<()> {
-        let tables = assembly_view
-            .tables()
-            .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
+        let tables = assembly_view.tables().ok_or_else(err_no_metadata_tables)?;
 
         if let (Some(class_layout_table), Some(typedef_table)) = (
             tables.table::<ClassLayoutRaw>(),
@@ -540,9 +531,7 @@ impl RawLayoutConstraintValidator {
     /// * `Ok(())` - All sequential layouts are valid
     /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Sequential layout violations found
     fn validate_sequential_layout(assembly_view: &CilAssemblyView) -> Result<()> {
-        let tables = assembly_view
-            .tables()
-            .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
+        let tables = assembly_view.tables().ok_or_else(err_no_metadata_tables)?;
 
         if let Some(field_layout_table) = tables.table::<FieldLayoutRaw>() {
             let field_layouts: Vec<_> = field_layout_table.iter().collect();
@@ -679,7 +668,7 @@ mod tests {
         validator_test(
             raw_layout_constraint_validator_file_factory,
             "RawLayoutConstraintValidator",
-            "Malformed",
+            "Parse",
             config,
             |context| validator.validate_raw(context),
         )

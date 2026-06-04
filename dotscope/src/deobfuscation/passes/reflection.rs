@@ -333,7 +333,7 @@ impl<'a> ChainTracer<'a> {
     fn is_method_from_type(&self, token: Token, type_name: &str) -> bool {
         let table = token.table();
         if table == 0x06 {
-            if let Some(method) = self.assembly.method(&token) {
+            if let Ok(method) = self.assembly.method(&token) {
                 if let Some(ty) = method.declaring_type_rc() {
                     return ty.name.contains(type_name);
                 }
@@ -412,7 +412,7 @@ impl<'a> ChainTracer<'a> {
             return None;
         };
         match value {
-            ConstValue::DecryptedString(s) => Some(s.clone()),
+            ConstValue::DecryptedString(s) => Some(s.to_string()),
             _ => None,
         }
     }
@@ -1481,7 +1481,7 @@ fn resolve_method_by_name(assembly: &CilObject, type_token: Token, name: &str) -
 fn find_parameterless_ctor(assembly: &CilObject, type_token: Token) -> Option<Token> {
     let ty = assembly.types().get(&type_token)?;
     let ctor_token = ty.ctor()?;
-    let method = assembly.method(&ctor_token)?;
+    let method = assembly.method(&ctor_token).ok()?;
     if method.params.is_empty() {
         Some(ctor_token)
     } else {

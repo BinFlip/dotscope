@@ -774,6 +774,7 @@ impl From<&ConstValue> for EmValue {
             ConstValue::Null
             | ConstValue::DecryptedString(_)
             | ConstValue::DecryptedArray { .. }
+            | ConstValue::Vector(_)
             | ConstValue::Type(_)
             | ConstValue::MethodHandle(_)
             | ConstValue::FieldHandle(_) => EmValue::Null,

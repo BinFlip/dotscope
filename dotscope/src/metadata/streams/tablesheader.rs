@@ -312,7 +312,7 @@ use crate::{
         TableInfo, TableInfoRef, TypeDefRaw, TypeRefRaw, TypeSpecRaw,
     },
     utils::read_le,
-    Result,
+    Error, ParseFailure, ParseStage, Result,
 };
 
 /// ECMA-335 compliant metadata tables header providing efficient access to .NET assembly metadata.
@@ -1008,25 +1008,51 @@ impl<'a> TablesHeader<'a> {
     /// - [`crate::metadata::tables::TableInfo`]: Table metadata and row count information
     /// - [ECMA-335 II.24.2.6](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): Tables header specification
     pub fn from(data: &'a [u8]) -> Result<TablesHeader<'a>> {
+        let truncated = |expected: usize, found: usize| ParseFailure::Truncated {
+            stage: ParseStage::TildeStream,
+            expected,
+            found,
+        };
         if data.len() < 24 {
-            return Err(out_of_bounds_error!());
+            return Err(truncated(24, data.len()).into());
         }
 
-        let valid_bitvec = read_le::<u64>(data.get(8..).ok_or(out_of_bounds_error!())?)?;
+        let valid_bitvec = read_le::<u64>(
+            data.get(8..)
+                .ok_or_else(|| Error::from(truncated(16, data.len())))?,
+        )?;
         if valid_bitvec == 0 {
-            return Err(malformed_error!("No valid rows in any of the tables"));
+            return Err(ParseFailure::InvalidField {
+                stage: ParseStage::TildeStream,
+                field: "valid",
+                reason: "no valid rows in any of the tables".into(),
+            }
+            .into());
         }
 
         let tables_offset = 24usize
             .checked_add((valid_bitvec.count_ones() as usize).saturating_mul(4))
-            .ok_or_else(|| malformed_error!("Tables header offset overflow"))?;
+            .ok_or_else(|| ParseFailure::InvalidField {
+                stage: ParseStage::TildeStream,
+                field: "valid",
+                reason: "tables-header offset overflow".into(),
+            })?;
         let table_capacity = (TableId::CustomDebugInformation as usize).saturating_add(1);
 
         let mut tables_header = TablesHeader {
-            major_version: read_le::<u8>(data.get(4..).ok_or(out_of_bounds_error!())?)?,
-            minor_version: read_le::<u8>(data.get(5..).ok_or(out_of_bounds_error!())?)?,
+            major_version: read_le::<u8>(
+                data.get(4..)
+                    .ok_or_else(|| Error::from(truncated(5, data.len())))?,
+            )?,
+            minor_version: read_le::<u8>(
+                data.get(5..)
+                    .ok_or_else(|| Error::from(truncated(6, data.len())))?,
+            )?,
             valid: valid_bitvec,
-            sorted: read_le::<u64>(data.get(16..).ok_or(out_of_bounds_error!())?)?,
+            sorted: read_le::<u64>(
+                data.get(16..)
+                    .ok_or_else(|| Error::from(truncated(24, data.len())))?,
+            )?,
             info: Arc::new(TableInfo::new(data, valid_bitvec)?),
             tables_offset,
             tables: Vec::with_capacity(table_capacity),
@@ -1039,11 +1065,18 @@ impl<'a> TablesHeader<'a> {
         let mut current_offset = tables_header.tables_offset;
         for table_id in TableId::iter() {
             if current_offset > data.len() {
-                return Err(out_of_bounds_error!());
+                return Err(ParseFailure::OutOfBounds {
+                    stage: ParseStage::TildeStream,
+                }
+                .into());
             }
 
             tables_header.add_table(
-                data.get(current_offset..).ok_or(out_of_bounds_error!())?,
+                data.get(current_offset..).ok_or_else(|| {
+                    Error::from(ParseFailure::OutOfBounds {
+                        stage: ParseStage::TildeStream,
+                    })
+                })?,
                 table_id,
                 &mut current_offset,
             )?;

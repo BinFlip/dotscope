@@ -155,7 +155,7 @@ impl Technique for GenericStrings {
 
         trace!("GenericStrings: {} candidates found", candidates.len());
         for (token, count) in &counts {
-            if let Some(method) = assembly.method(token) {
+            if let Ok(method) = assembly.method(token) {
                 trace!(
                     "  candidate {}: {}({}) → string - calls: {}",
                     token,
@@ -325,7 +325,7 @@ impl Technique for GenericStrings {
         // populates the table on the template process, so forked decryption calls
         // skip the expensive initialization.
         for &token in &findings.decryptor_methods {
-            if let Some(method) = assembly.method(&token) {
+            if let Ok(method) = assembly.method(&token) {
                 let warmup_args = Self::default_warmup_args(&method.signature.params);
                 if let Some(args) = warmup_args {
                     debug!(
@@ -373,7 +373,7 @@ impl Technique for GenericStrings {
 fn collect_decryptor_resources(assembly: &CilObject, decryptors: &HashSet<Token>) -> Vec<Token> {
     let mut declaring_types: HashSet<Token> = HashSet::new();
     for &decryptor in decryptors {
-        if let Some(method) = assembly.method(&decryptor) {
+        if let Ok(method) = assembly.method(&decryptor) {
             if let Some(parent) = method.declaring_type_rc() {
                 declaring_types.insert(parent.token);
             }

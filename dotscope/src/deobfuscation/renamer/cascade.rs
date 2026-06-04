@@ -228,6 +228,7 @@ impl<'a> CascadeRenamer<'a> {
                     .or_else(|| {
                         self.assembly
                             .method(caller_token)
+                            .ok()
                             .filter(|m| !is_obfuscated_name(&m.name))
                             .map(|m| m.name.clone())
                     })
@@ -619,7 +620,7 @@ impl<'a> CascadeRenamer<'a> {
         };
 
         // Get method metadata
-        if let Some(method) = self.assembly.method(&method_token) {
+        if let Ok(method) = self.assembly.method(&method_token) {
             // Return type
             context.dotnet_type = Some(method.signature.return_type.to_string());
 
@@ -823,14 +824,14 @@ impl<'a> CascadeRenamer<'a> {
         // Parent method name (committed or original)
         if let Some(name) = self.committed.get(&method_token) {
             context.parent_type = Some(name.clone());
-        } else if let Some(method) = self.assembly.method(&method_token) {
+        } else if let Ok(method) = self.assembly.method(&method_token) {
             if !is_obfuscated_name(&method.name) {
                 context.parent_type = Some(method.name.clone());
             }
         }
 
         // Parameter type from method signature
-        if let Some(method) = self.assembly.method(&method_token) {
+        if let Ok(method) = self.assembly.method(&method_token) {
             // param.sequence is 1-based (0 = return type), so index = sequence - 1
             let sig_index = (param_sequence as usize).saturating_sub(1);
             if let Some(param) = method.signature.params.get(sig_index) {
@@ -2048,6 +2049,7 @@ mod tests {
                     let method_token = Token::new(0x0600_0000 | rid);
                     let has_cfg = assembly
                         .method(&method_token)
+                        .ok()
                         .map(|m| m.cfg().is_some())
                         .unwrap_or(false);
                     eprintln!(
@@ -2115,7 +2117,7 @@ mod tests {
                     .get(rid)
                     .and_then(|md| strings.get(md.name as usize).ok())
                     .unwrap_or("?");
-                let method = assembly.method(&method_token);
+                let method = assembly.method(&method_token).ok();
                 let has_cfg = method.as_ref().map(|m| m.cfg().is_some()).unwrap_or(false);
                 let has_body = method
                     .as_ref()
@@ -2446,6 +2448,7 @@ mod tests {
             for (i, token) in topo.iter().enumerate() {
                 let name = assembly
                     .method(token)
+                    .ok()
                     .map(|m| m.name.clone())
                     .or_else(|| assembly.resolve_method_name(*token))
                     .unwrap_or_else(|| format!("0x{:08X}", token.value()));

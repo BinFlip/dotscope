@@ -134,6 +134,38 @@ impl OperandType {
             OperandType::Switch => None, // Variable size: 4 + (count * 4)
         }
     }
+
+    /// Returns a stable `&'static str` identifier for this operand type.
+    ///
+    /// The strings are part of the stable public API and safe to persist
+    /// (file, database, log line). They use lowercase ECMA-335-style names
+    /// (`"none"`, `"int8"`, `"uint8"`, `"int16"`, `"uint16"`, `"int32"`,
+    /// `"uint32"`, `"int64"`, `"uint64"`, `"float32"`, `"float64"`,
+    /// `"token"`, `"switch"`).
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            OperandType::None => "none",
+            OperandType::Int8 => "int8",
+            OperandType::UInt8 => "uint8",
+            OperandType::Int16 => "int16",
+            OperandType::UInt16 => "uint16",
+            OperandType::Int32 => "int32",
+            OperandType::UInt32 => "uint32",
+            OperandType::Int64 => "int64",
+            OperandType::UInt64 => "uint64",
+            OperandType::Float32 => "float32",
+            OperandType::Float64 => "float64",
+            OperandType::Token => "token",
+            OperandType::Switch => "switch",
+        }
+    }
+}
+
+impl Display for OperandType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 /// Represents an immediate value type embedded in CIL instructions.
@@ -322,6 +354,36 @@ impl Operand {
     }
 }
 
+impl Display for Operand {
+    /// Stable, human-readable rendering of the operand.
+    ///
+    /// Mirrors [`Operand::as_string`], but returns the string `"none"` for
+    /// [`Operand::None`] instead of nothing so the [`Display`] impl is total.
+    /// The format of each variant is part of the stable public API and safe
+    /// to persist or parse:
+    ///
+    /// - `Operand::None`           → `"none"`
+    /// - `Operand::Immediate(v)`   → `Debug` of the immediate (`"Int32(42)"`, `"UInt8(7)"`, …)
+    /// - `Operand::Target(addr)`   → `"0x{addr:08X}"`
+    /// - `Operand::Token(tok)`     → `"0x{token:08X}"`
+    /// - `Operand::Local(idx)`     → `"V_{idx}"`
+    /// - `Operand::Argument(idx)`  → `"A_{idx}"`
+    /// - `Operand::Switch(targs)`  → `"switch({len})"` (target count, not the
+    ///   targets themselves; render those explicitly via the `Switch` variant
+    ///   payload if needed).
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Operand::None => f.write_str("none"),
+            Operand::Immediate(imm) => write!(f, "{imm:?}"),
+            Operand::Target(t) => write!(f, "0x{t:08X}"),
+            Operand::Token(t) => write!(f, "0x{:08X}", t.value()),
+            Operand::Local(l) => write!(f, "V_{l}"),
+            Operand::Argument(a) => write!(f, "A_{a}"),
+            Operand::Switch(targets) => write!(f, "switch({})", targets.len()),
+        }
+    }
+}
+
 /// How an instruction affects control flow.
 ///
 /// This enum categorizes instructions based on their control flow behavior,
@@ -364,6 +426,41 @@ pub enum FlowType {
     EndFinally,
     /// Leave protected region (try/catch/finally)
     Leave,
+}
+
+impl FlowType {
+    /// Returns a stable `&'static str` identifier for this flow type.
+    ///
+    /// The strings are part of the stable public API and safe to persist
+    /// (file, database, log line). Variants use `snake_case` so the value
+    /// can be parsed without quoting:
+    ///
+    /// `"sequential"`, `"conditional_branch"`, `"unconditional_branch"`,
+    /// `"call"`, `"return"`, `"switch"`, `"throw"`, `"end_finally"`,
+    /// `"leave"`.
+    ///
+    /// Prefer this accessor over `format!("{:?}", flow_type)` — the `Debug`
+    /// representation is **not** part of the stable API and can change.
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            FlowType::Sequential => "sequential",
+            FlowType::ConditionalBranch => "conditional_branch",
+            FlowType::UnconditionalBranch => "unconditional_branch",
+            FlowType::Call => "call",
+            FlowType::Return => "return",
+            FlowType::Switch => "switch",
+            FlowType::Throw => "throw",
+            FlowType::EndFinally => "end_finally",
+            FlowType::Leave => "leave",
+        }
+    }
+}
+
+impl Display for FlowType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 /// Stack effect of an instruction.
@@ -447,6 +544,37 @@ pub enum InstructionCategory {
     Prefix,
     /// Miscellaneous operations (nop, break, dup)
     Misc,
+}
+
+impl InstructionCategory {
+    /// Returns a stable `&'static str` identifier for this category.
+    ///
+    /// The strings are part of the stable public API and safe to persist.
+    /// Variants use `snake_case` so the value can be parsed without quoting:
+    ///
+    /// `"arithmetic"`, `"bitwise_logical"`, `"comparison"`, `"control_flow"`,
+    /// `"conversion"`, `"load_store"`, `"object_model"`, `"prefix"`,
+    /// `"misc"`.
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            InstructionCategory::Arithmetic => "arithmetic",
+            InstructionCategory::BitwiseLogical => "bitwise_logical",
+            InstructionCategory::Comparison => "comparison",
+            InstructionCategory::ControlFlow => "control_flow",
+            InstructionCategory::Conversion => "conversion",
+            InstructionCategory::LoadStore => "load_store",
+            InstructionCategory::ObjectModel => "object_model",
+            InstructionCategory::Prefix => "prefix",
+            InstructionCategory::Misc => "misc",
+        }
+    }
+}
+
+impl Display for InstructionCategory {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 /// A decoded CIL instruction with all metadata needed for analysis and emulation.
@@ -1832,5 +1960,85 @@ mod tests {
             assert_eq!(stack_behavior.net_effect, *expected_net);
             assert_eq!(stack_behavior.net_effect, (*pushes as i8) - (*pops as i8));
         }
+    }
+
+    #[test]
+    fn test_flow_type_stable_strings() {
+        // Strings are part of the stable public API. Changing them is a
+        // breaking change for downstream consumers that persist these values
+        // (e.g. visus stores the result in a database).
+        let cases = [
+            (FlowType::Sequential, "sequential"),
+            (FlowType::ConditionalBranch, "conditional_branch"),
+            (FlowType::UnconditionalBranch, "unconditional_branch"),
+            (FlowType::Call, "call"),
+            (FlowType::Return, "return"),
+            (FlowType::Switch, "switch"),
+            (FlowType::Throw, "throw"),
+            (FlowType::EndFinally, "end_finally"),
+            (FlowType::Leave, "leave"),
+        ];
+        for (variant, expected) in cases {
+            assert_eq!(variant.as_str(), expected);
+            assert_eq!(format!("{variant}"), expected);
+        }
+    }
+
+    #[test]
+    fn test_operand_type_stable_strings() {
+        let cases = [
+            (OperandType::None, "none"),
+            (OperandType::Int8, "int8"),
+            (OperandType::UInt8, "uint8"),
+            (OperandType::Int16, "int16"),
+            (OperandType::UInt16, "uint16"),
+            (OperandType::Int32, "int32"),
+            (OperandType::UInt32, "uint32"),
+            (OperandType::Int64, "int64"),
+            (OperandType::UInt64, "uint64"),
+            (OperandType::Float32, "float32"),
+            (OperandType::Float64, "float64"),
+            (OperandType::Token, "token"),
+            (OperandType::Switch, "switch"),
+        ];
+        for (variant, expected) in cases {
+            assert_eq!(variant.as_str(), expected);
+            assert_eq!(format!("{variant}"), expected);
+        }
+    }
+
+    #[test]
+    fn test_instruction_category_stable_strings() {
+        let cases = [
+            (InstructionCategory::Arithmetic, "arithmetic"),
+            (InstructionCategory::BitwiseLogical, "bitwise_logical"),
+            (InstructionCategory::Comparison, "comparison"),
+            (InstructionCategory::ControlFlow, "control_flow"),
+            (InstructionCategory::Conversion, "conversion"),
+            (InstructionCategory::LoadStore, "load_store"),
+            (InstructionCategory::ObjectModel, "object_model"),
+            (InstructionCategory::Prefix, "prefix"),
+            (InstructionCategory::Misc, "misc"),
+        ];
+        for (variant, expected) in cases {
+            assert_eq!(variant.as_str(), expected);
+            assert_eq!(format!("{variant}"), expected);
+        }
+    }
+
+    #[test]
+    fn test_operand_display_stable_format() {
+        // None now renders as "none" (Display is total, unlike as_string).
+        assert_eq!(format!("{}", Operand::None), "none");
+
+        // Numeric / target / token / variable indices match the as_string contract.
+        assert_eq!(format!("{}", Operand::Target(0x1000)), "0x00001000");
+        assert_eq!(format!("{}", Operand::Local(5)), "V_5");
+        assert_eq!(format!("{}", Operand::Argument(3)), "A_3");
+        assert_eq!(format!("{}", Operand::Switch(vec![1, 2, 3])), "switch(3)");
+
+        // Token formatting matches as_string.
+        let tok = Token::new(0x06000001);
+        assert_eq!(format!("{}", Operand::Token(tok)), "0x06000001");
     }
 }

@@ -68,13 +68,14 @@ impl ConstValueCilExt for AnalyssaConstValue<CilTarget> {
             AnalyssaConstValue::Null
             | AnalyssaConstValue::String(_)
             | AnalyssaConstValue::DecryptedString(_)
+            | AnalyssaConstValue::Vector(_)
             | AnalyssaConstValue::DecryptedArray { .. } => SsaType::Object,
         }
     }
 
     fn as_string_content(&self, assembly: &CilObject) -> Option<String> {
         match self {
-            AnalyssaConstValue::DecryptedString(s) => Some(s.clone()),
+            AnalyssaConstValue::DecryptedString(s) => Some(s.to_string()),
             AnalyssaConstValue::String(idx) => assembly
                 .userstrings()
                 .and_then(|us| us.get(*idx as usize).ok())
@@ -116,6 +117,7 @@ impl TryFrom<&AnalyssaConstValue<CilTarget>> for Immediate {
 
             AnalyssaConstValue::String(_)
             | AnalyssaConstValue::DecryptedString(_)
+            | AnalyssaConstValue::Vector(_)
             | AnalyssaConstValue::DecryptedArray { .. }
             | AnalyssaConstValue::Null
             | AnalyssaConstValue::Type(_)

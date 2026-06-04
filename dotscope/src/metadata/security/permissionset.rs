@@ -277,7 +277,7 @@ use crate::{
         PermissionSetFormat, SecurityPermissionFlags,
     },
     utils::EnumUtils,
-    Result,
+    ParseFailure, ParseStage, Result,
 };
 use quick_xml::{
     events::{attributes::Attributes, Event},
@@ -670,7 +670,12 @@ impl PermissionSet {
     /// analysis scenarios, attribute-based parsing is sufficient.
     fn parse_xml_format(data: &[u8]) -> Result<(PermissionSetFormat, Vec<Permission>)> {
         if data.len() < 5 {
-            return Err(malformed_error!("XML data too short"));
+            return Err(ParseFailure::Truncated {
+                stage: ParseStage::PermissionSet,
+                expected: 5,
+                found: data.len(),
+            }
+            .into());
         }
 
         let xml_start = b"<Perm";

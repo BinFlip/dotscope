@@ -133,6 +133,7 @@ impl Technique for NetReactorAntiTamp {
         let init_method_token = fan_in.target_token;
         let runtime_type_token = assembly
             .method(&init_method_token)
+            .ok()
             .and_then(|m| m.declaring_type_rc())
             .map(|t| t.token);
 

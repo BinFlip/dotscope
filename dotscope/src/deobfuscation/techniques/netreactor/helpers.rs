@@ -136,7 +136,7 @@ pub fn find_cctor_fan_in_target(assembly: &CilObject) -> Option<CctorFanInResult
             continue;
         };
 
-        let Some(cctor_method) = assembly.method(&cctor_token) else {
+        let Ok(cctor_method) = assembly.method(&cctor_token) else {
             continue;
         };
 
@@ -170,6 +170,7 @@ pub fn find_cctor_fan_in_target(assembly: &CilObject) -> Option<CctorFanInResult
     // Extract structural properties of the target method
     let (target_local_count, target_instruction_count) = assembly
         .method(&target_token)
+        .ok()
         .map(|m| (m.local_vars.count(), m.instruction_count()))
         .unwrap_or((0, 0));
 
@@ -208,7 +209,7 @@ pub fn find_trial_checks(assembly: &CilObject) -> Vec<TrialCheckResult> {
             continue;
         }
 
-        let Some(method) = assembly.method(method_token) else {
+        let Ok(method) = assembly.method(method_token) else {
             continue;
         };
 
@@ -468,7 +469,7 @@ pub fn find_nr_private_impl_containers(assembly: &CilObject) -> Vec<PrivateImplC
 /// an `<Module>`-trial NR-context gate it is highly specific to NR's
 /// license-verification stub.
 pub fn has_single_shot_bool_guard(assembly: &CilObject, method_token: Token) -> bool {
-    let Some(method) = assembly.method(&method_token) else {
+    let Ok(method) = assembly.method(&method_token) else {
         return false;
     };
 
@@ -614,7 +615,7 @@ enum AccessorKind {
 /// Body shape (4 instructions):
 /// `ldsflda <static_field>` → `ldarg.0` → `call instance ModuleHandle::Get*FromMetadataToken` → `ret`.
 fn classify_token_accessor_body(assembly: &CilObject, method_token: Token) -> Option<AccessorKind> {
-    let method = assembly.method(&method_token)?;
+    let method = assembly.method(&method_token).ok()?;
     let instrs: Vec<_> = method.instructions().collect();
     if instrs.len() != 4 {
         return None;
@@ -675,7 +676,7 @@ pub fn find_resources_referenced_by_methods(
     let mut results = Vec::new();
 
     for &method_token in method_tokens {
-        let Some(method) = assembly.method(&method_token) else {
+        let Ok(method) = assembly.method(&method_token) else {
             continue;
         };
         for instr in method.instructions() {
@@ -727,7 +728,7 @@ pub fn classify_injected_cctors(
     let mut modified = Vec::new();
 
     for &cctor_token in calling_cctors {
-        let Some(method) = assembly.method(&cctor_token) else {
+        let Ok(method) = assembly.method(&cctor_token) else {
             continue;
         };
 

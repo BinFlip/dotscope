@@ -283,7 +283,7 @@ fn is_obfuscar_helper_type(namespace: &str) -> bool {
 /// Scans for the characteristic double-XOR pattern: `xor`, `ldc.i4 <KEY>`, `xor`.
 /// The constant between the two `xor` instructions is the encryption key byte.
 fn extract_xor_key_from_cctor(assembly: &CilObject, cctor_token: Token) -> Option<u8> {
-    let method = assembly.method(&cctor_token)?;
+    let method = assembly.method(&cctor_token).ok()?;
     let instructions: Vec<_> = method.instructions().collect();
 
     for window in instructions.windows(3) {

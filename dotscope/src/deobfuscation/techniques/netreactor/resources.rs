@@ -675,7 +675,7 @@ fn find_resolve_handler_registration(
 /// handler always lives on the resolver type itself; legitimate handlers
 /// almost never do.
 fn handler_lives_on_type(assembly: &CilObject, handler_token: Token, cil_type: &CilTypeRc) -> bool {
-    let Some(handler) = assembly.method(&handler_token) else {
+    let Ok(handler) = assembly.method(&handler_token) else {
         return false;
     };
     let Some(declaring) = handler.declaring_type_rc() else {
@@ -758,7 +758,7 @@ fn is_lazy_init_body(assembly: &CilObject, method: &MethodRc, cil_type: &CilType
         return false;
     };
     // The newobj must target a .ctor on the resolver type.
-    let Some(ctor) = assembly.method(ctor_token) else {
+    let Ok(ctor) = assembly.method(ctor_token) else {
         return false;
     };
     let Some(declaring) = ctor.declaring_type_rc() else {

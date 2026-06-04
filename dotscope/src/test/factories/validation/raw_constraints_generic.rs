@@ -56,7 +56,7 @@ pub fn raw_generic_constraint_validator_file_factory() -> Result<Vec<TestAssembl
 ///
 /// Originally from: `src/metadata/validation/validators/raw/constraints/generic.rs`
 pub fn create_assembly_with_null_constraint_owner() -> Result<TestAssembly> {
-    create_test_assembly_with_error(get_testfile_wb, "Malformed", |assembly| {
+    create_test_assembly_with_error(get_testfile_wb, "Parse", |assembly| {
         // Create a valid generic parameter first
         let typedef_token = TypeDefBuilder::new()
             .name("GenericType")
@@ -104,7 +104,7 @@ pub fn create_assembly_with_null_constraint_owner() -> Result<TestAssembly> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/constraints/generic.rs`
 pub fn create_assembly_with_constraint_owner_exceeding_bounds() -> Result<TestAssembly> {
-    create_test_assembly_with_error(get_testfile_wb, "Malformed", |assembly| {
+    create_test_assembly_with_error(get_testfile_wb, "Parse", |assembly| {
         // Create a valid generic parameter first
         let typedef_token = TypeDefBuilder::new()
             .name("GenericType")
@@ -152,7 +152,7 @@ pub fn create_assembly_with_constraint_owner_exceeding_bounds() -> Result<TestAs
 ///
 /// Originally from: `src/metadata/validation/validators/raw/constraints/generic.rs`
 pub fn create_assembly_with_invalid_parameter_flags() -> Result<TestAssembly> {
-    create_test_assembly_with_error(get_testfile_wb, "Malformed", |assembly| {
+    create_test_assembly_with_error(get_testfile_wb, "Parse", |assembly| {
         let typedef_builder = TypeDefBuilder::new()
             .name("GenericType")
             .namespace("Test")

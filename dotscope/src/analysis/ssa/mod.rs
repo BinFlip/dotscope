@@ -128,7 +128,7 @@ pub use analyssa::Target;
 #[allow(unused_imports)]
 pub use analyssa::analysis::consts::evaluate_const_op;
 pub use analyssa::analysis::evaluator::ControlFlow;
-pub use analyssa::analysis::phis::{place_pruned_phis, PhiAnalyzer};
+pub use analyssa::analysis::phis::{place_pruned_phis, PhiAnalyzer, PhiPlacementConfig};
 
 /// CIL-defaulted alias of [`analyssa::ir::block::SsaBlock`].
 pub type SsaBlock<T = CilTarget> = analyssa::ir::block::SsaBlock<T>;

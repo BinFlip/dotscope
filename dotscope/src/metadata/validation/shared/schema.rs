@@ -72,7 +72,7 @@ use crate::{
             ScannerStatistics,
         },
     },
-    Error, Result,
+    Error, HeapKind, ParseFailure, Result,
 };
 
 /// Shared schema validation utilities.
@@ -425,10 +425,10 @@ impl<'a> SchemaValidator<'a> {
         let max_index = guid_heap_size / 16; // Each GUID is 16 bytes
 
         if index > max_index {
-            return Err(Error::HeapBoundsError {
-                heap: "guids".to_string(),
+            return Err(Error::Parse(ParseFailure::HeapOutOfBounds {
+                heap: HeapKind::Guid,
                 index,
-            });
+            }));
         }
 
         Ok(())

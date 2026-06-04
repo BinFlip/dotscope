@@ -41,7 +41,7 @@
 use crate::{
     metadata::streams::StreamHeader,
     utils::{read_le, read_le_at},
-    Result,
+    Error, ParseFailure, ParseStage, Result,
 };
 use std::io::Write;
 
@@ -351,34 +351,52 @@ impl Root {
     /// This method is thread-safe and can be called concurrently from multiple threads
     /// as it performs no mutations and uses only stack-allocated temporary variables.
     pub fn read(data: &[u8]) -> Result<Root> {
+        let invalid = |field: &'static str, reason: String| ParseFailure::InvalidField {
+            stage: ParseStage::MetadataRoot,
+            field,
+            reason,
+        };
+        let oob = || ParseFailure::OutOfBounds {
+            stage: ParseStage::MetadataRoot,
+        };
+
         if data.len() < MIN_ROOT_HEADER_SIZE {
-            return Err(out_of_bounds_error!());
+            return Err(ParseFailure::Truncated {
+                stage: ParseStage::MetadataRoot,
+                expected: MIN_ROOT_HEADER_SIZE,
+                found: data.len(),
+            }
+            .into());
         }
 
         let signature = read_le::<u32>(data)?;
         if signature != CIL_HEADER_MAGIC {
-            return Err(malformed_error!(
-                "Root: invalid signature 0x{:08X}, expected 0x{:08X} [ECMA-335 §II.24.2.1]",
-                signature,
-                CIL_HEADER_MAGIC
-            ));
+            return Err(ParseFailure::BadMagic {
+                stage: ParseStage::MetadataRoot,
+                expected: CIL_HEADER_MAGIC,
+                found: signature,
+            }
+            .into());
         }
 
         let version_string_length = read_le_at::<u32>(data, &mut { VERSION_LENGTH_OFFSET })?;
         match version_string_length.checked_add(u32::from(VERSION_STRING_OFFSET)) {
             Some(str_end) => {
                 let data_len = u32::try_from(data.len()).map_err(|_| {
-                    malformed_error!("Root: data length too large [ECMA-335 §II.24.2.1]")
+                    invalid("data_length", "metadata root data length too large".into())
                 })?;
                 if str_end > data_len {
-                    return Err(out_of_bounds_error!());
+                    return Err(oob().into());
                 }
             }
             None => {
-                return Err(malformed_error!(
-                    "Root: version string length {} causes integer overflow [ECMA-335 §II.24.2.1]",
-                    version_string_length
-                ))
+                return Err(invalid(
+                    "version_string_length",
+                    format!(
+                        "{version_string_length} causes integer overflow [ECMA-335 §II.24.2.1]",
+                    ),
+                )
+                .into())
             }
         }
 
@@ -386,32 +404,39 @@ impl Root {
         for counter in 0..version_string_length {
             let mut pos = usize::from(VERSION_STRING_OFFSET)
                 .checked_add(counter as usize)
-                .ok_or_else(|| malformed_error!("version string offset overflow"))?;
+                .ok_or_else(|| invalid("version_string_offset", "offset overflow".into()))?;
             version_string.push(char::from(read_le_at::<u8>(data, &mut pos)?));
         }
 
         // Validate version string format and content
         if version_string.is_empty() {
-            return Err(malformed_error!(
-                "Root: version string cannot be empty [ECMA-335 §II.24.2.1]"
-            ));
+            return Err(invalid(
+                "version_string",
+                "version string cannot be empty [ECMA-335 §II.24.2.1]".into(),
+            )
+            .into());
         }
 
         // Check for common malformed version strings
         if !version_string.starts_with('v') {
-            return Err(malformed_error!(
-                "Root: version string '{}' must start with 'v' [ECMA-335 §II.24.2.1]",
-                version_string
-            ));
+            return Err(invalid(
+                "version_string",
+                format!("'{version_string}' must start with 'v' [ECMA-335 §II.24.2.1]",),
+            )
+            .into());
         }
 
         // Validate version string contains reasonable content
         if version_string.len() > MAX_VERSION_STRING_LENGTH {
-            return Err(malformed_error!(
-                "Root: version string length {} exceeds reasonable limit ({}) [ECMA-335 §II.24.2.1]",
-                version_string.len(),
-                MAX_VERSION_STRING_LENGTH
-            ));
+            return Err(invalid(
+                "version_string",
+                format!(
+                    "length {} exceeds reasonable limit ({}) [ECMA-335 §II.24.2.1]",
+                    version_string.len(),
+                    MAX_VERSION_STRING_LENGTH
+                ),
+            )
+            .into());
         }
 
         // Stream count is located after: version_string + FLAGS_FIELD_SIZE
@@ -419,19 +444,19 @@ impl Root {
             .len()
             .checked_add(usize::from(VERSION_STRING_OFFSET))
             .and_then(|v| v.checked_add(FLAGS_FIELD_SIZE))
-            .ok_or_else(|| malformed_error!("stream count offset overflow"))?;
+            .ok_or_else(|| invalid("stream_count_offset", "offset overflow".into()))?;
         let stream_count = read_le_at::<u16>(data, &mut stream_count_offset)?;
 
         // Validate stream count: must have at least one stream, no more than MAX_STREAM_COUNT
         let stream_count_size = (stream_count as usize)
             .checked_mul(MIN_STREAM_HEADER_SIZE)
-            .ok_or_else(|| malformed_error!("stream count size overflow"))?;
+            .ok_or_else(|| invalid("stream_count", "size overflow".into()))?;
         if stream_count == 0 || stream_count > MAX_STREAM_COUNT || stream_count_size > data.len() {
-            return Err(malformed_error!(
-                "Root: invalid stream count {} (must be 1-{}) [ECMA-335 §II.24.2.1]",
-                stream_count,
-                MAX_STREAM_COUNT
-            ));
+            return Err(invalid(
+                "stream_count",
+                format!("{stream_count} (must be 1-{MAX_STREAM_COUNT}) [ECMA-335 §II.24.2.1]",),
+            )
+            .into());
         }
 
         let mut streams = Vec::with_capacity(stream_count as usize);
@@ -441,36 +466,40 @@ impl Root {
             .checked_add(usize::from(VERSION_STRING_OFFSET))
             .and_then(|v| v.checked_add(FLAGS_FIELD_SIZE))
             .and_then(|v| v.checked_add(STREAM_COUNT_FIELD_SIZE))
-            .ok_or_else(|| malformed_error!("stream directory offset overflow"))?;
+            .ok_or_else(|| invalid("stream_directory_offset", "offset overflow".into()))?;
         let mut streams_seen = [false; MAX_STREAM_COUNT as usize];
 
         for _i in 0..stream_count {
             if stream_offset > data.len() {
-                return Err(out_of_bounds_error!());
+                return Err(oob().into());
             }
 
-            let stream_data = data.get(stream_offset..).ok_or(out_of_bounds_error!())?;
+            let stream_data = data
+                .get(stream_offset..)
+                .ok_or_else(|| Error::from(oob()))?;
             let new_stream = StreamHeader::from(stream_data)?;
             if new_stream.offset as usize > data.len()
                 || new_stream.size as usize > data.len()
                 || new_stream.name.len() > MAX_STREAM_NAME_LENGTH
             {
-                return Err(out_of_bounds_error!());
+                return Err(oob().into());
             }
 
             match u32::checked_add(new_stream.offset, new_stream.size) {
                 Some(range) => {
                     if range as usize > data.len() {
-                        return Err(out_of_bounds_error!());
+                        return Err(oob().into());
                     }
                 }
                 None => {
-                    return Err(malformed_error!(
-                        "Root: stream '{}' offset {} + size {} causes integer overflow [ECMA-335 §II.24.2.2]",
-                        new_stream.name,
-                        new_stream.offset,
-                        new_stream.size
-                    ))
+                    return Err(invalid(
+                        "stream_extent",
+                        format!(
+                            "stream '{}' offset {} + size {} causes integer overflow [ECMA-335 §II.24.2.2]",
+                            new_stream.name, new_stream.offset, new_stream.size
+                        ),
+                    )
+                    .into())
                 }
             }
 
@@ -482,71 +511,88 @@ impl Root {
                 "#~" => 4,
                 "#-" => 5,
                 _ => {
-                    return Err(malformed_error!(
-                        "Root: unrecognized stream name '{}' [ECMA-335 §II.24.2.2]",
-                        new_stream.name
-                    ))
+                    return Err(invalid(
+                        "stream_name",
+                        format!(
+                            "unrecognized stream '{}' [ECMA-335 §II.24.2.2]",
+                            new_stream.name
+                        ),
+                    )
+                    .into())
                 }
             };
 
             if *streams_seen
                 .get(stream_index)
-                .ok_or(out_of_bounds_error!())?
+                .ok_or_else(|| Error::from(oob()))?
             {
-                return Err(malformed_error!(
-                    "Root: duplicate stream '{}' found [ECMA-335 §II.24.2.2]",
-                    new_stream.name
-                ));
+                return Err(invalid(
+                    "stream_name",
+                    format!(
+                        "duplicate stream '{}' [ECMA-335 §II.24.2.2]",
+                        new_stream.name
+                    ),
+                )
+                .into());
             }
             *streams_seen
                 .get_mut(stream_index)
-                .ok_or(out_of_bounds_error!())? = true;
+                .ok_or_else(|| Error::from(oob()))? = true;
 
             let name_aligned = new_stream
                 .name
                 .len()
                 .checked_add(1)
                 .and_then(|v| v.checked_add(3))
-                .ok_or_else(|| malformed_error!("stream name alignment overflow"))?
+                .ok_or_else(|| invalid("stream_name", "alignment overflow".into()))?
                 & !3usize;
             stream_offset = stream_offset
                 .checked_add(STREAM_HEADER_FIXED_SIZE)
                 .and_then(|v| v.checked_add(name_aligned))
-                .ok_or_else(|| malformed_error!("stream offset overflow"))?;
+                .ok_or_else(|| invalid("stream_offset", "offset overflow".into()))?;
 
             streams.push(new_stream);
         }
 
         if streams.is_empty() {
-            return Err(malformed_error!(
-                "Root: no valid streams found [ECMA-335 §II.24.2.1]"
-            ));
+            return Err(invalid(
+                "streams",
+                "no valid streams found [ECMA-335 §II.24.2.1]".into(),
+            )
+            .into());
         }
 
         let flags_offset = usize::from(VERSION_STRING_OFFSET)
             .checked_add(version_string.len())
-            .ok_or_else(|| malformed_error!("flags offset overflow"))?;
+            .ok_or_else(|| invalid("flags_offset", "offset overflow".into()))?;
 
         Ok(Root {
             signature,
             major_version: read_le::<u16>(
                 data.get(FIELD_OFFSET_MAJOR_VERSION..)
-                    .ok_or(out_of_bounds_error!())?,
+                    .ok_or_else(|| Error::from(oob()))?,
             )?,
             minor_version: read_le::<u16>(
                 data.get(FIELD_OFFSET_MINOR_VERSION..)
-                    .ok_or(out_of_bounds_error!())?,
+                    .ok_or_else(|| Error::from(oob()))?,
             )?,
             reserved: read_le::<u32>(
                 data.get(FIELD_OFFSET_RESERVED..)
-                    .ok_or(out_of_bounds_error!())?,
+                    .ok_or_else(|| Error::from(oob()))?,
             )?,
             length: u32::try_from(version_string.len()).map_err(|_| {
-                malformed_error!("Root: version string length too large [ECMA-335 §II.24.2.1]")
+                invalid(
+                    "version_string_length",
+                    "string length too large [ECMA-335 §II.24.2.1]".into(),
+                )
             })?,
-            flags: read_le::<u16>(data.get(flags_offset..).ok_or(out_of_bounds_error!())?)?,
-            stream_number: u16::try_from(streams.len())
-                .map_err(|_| malformed_error!("Root: too many streams [ECMA-335 §II.24.2.1]"))?,
+            flags: read_le::<u16>(data.get(flags_offset..).ok_or_else(|| Error::from(oob()))?)?,
+            stream_number: u16::try_from(streams.len()).map_err(|_| {
+                invalid(
+                    "stream_count",
+                    "too many streams [ECMA-335 §II.24.2.1]".into(),
+                )
+            })?,
             stream_headers: streams,
             version: version_string,
         })
@@ -569,16 +615,20 @@ impl Root {
         meta_root_offset: usize,
         total_metadata_size: u32,
     ) -> Result<()> {
+        let invalid = |field: &'static str, reason: String| ParseFailure::InvalidField {
+            stage: ParseStage::MetadataRoot,
+            field,
+            reason,
+        };
         let mut stream_ranges: Vec<(u32, u32, &str)> = Vec::new();
 
         // Validate stream doesn't exceed metadata bounds
         let metadata_end = meta_root_offset
             .checked_add(total_metadata_size as usize)
             .ok_or_else(|| {
-                malformed_error!(
-                    "Metadata size causes overflow: {} + {}",
-                    meta_root_offset,
-                    total_metadata_size
+                invalid(
+                    "metadata_size",
+                    format!("size causes overflow: {meta_root_offset} + {total_metadata_size}",),
                 )
             })?;
 
@@ -587,47 +637,55 @@ impl Root {
             let absolute_start = meta_root_offset
                 .checked_add(stream.offset as usize)
                 .ok_or_else(|| {
-                    malformed_error!(
-                        "Stream '{}' offset causes overflow: {} + {}",
-                        stream.name,
-                        meta_root_offset,
-                        stream.offset
+                    invalid(
+                        "stream_offset",
+                        format!(
+                            "stream '{}' offset causes overflow: {} + {}",
+                            stream.name, meta_root_offset, stream.offset
+                        ),
                     )
                 })?;
 
             let absolute_end = absolute_start
                 .checked_add(stream.size as usize)
                 .ok_or_else(|| {
-                    malformed_error!(
-                        "Stream '{}' size causes overflow: {} + {}",
-                        stream.name,
-                        absolute_start,
-                        stream.size
+                    invalid(
+                        "stream_size",
+                        format!(
+                            "stream '{}' size causes overflow: {} + {}",
+                            stream.name, absolute_start, stream.size
+                        ),
                     )
                 })?;
 
             if absolute_end > metadata_end {
-                return Err(malformed_error!(
-                    "Stream '{}' extends beyond metadata bounds (end {} > metadata end {})",
-                    stream.name,
-                    absolute_end,
-                    metadata_end
-                ));
+                return Err(invalid(
+                    "stream_extent",
+                    format!(
+                        "stream '{}' extends beyond metadata bounds (end {} > metadata end {})",
+                        stream.name, absolute_end, metadata_end
+                    ),
+                )
+                .into());
             }
 
             stream_ranges.push((
                 u32::try_from(absolute_start).map_err(|_| {
-                    malformed_error!(
-                        "Stream '{}' start position {} exceeds u32 range",
-                        stream.name,
-                        absolute_start
+                    invalid(
+                        "stream_start",
+                        format!(
+                            "stream '{}' start position {} exceeds u32 range",
+                            stream.name, absolute_start
+                        ),
                     )
                 })?,
                 u32::try_from(absolute_end).map_err(|_| {
-                    malformed_error!(
-                        "Stream '{}' end position {} exceeds u32 range",
-                        stream.name,
-                        absolute_end
+                    invalid(
+                        "stream_end",
+                        format!(
+                            "stream '{}' end position {} exceeds u32 range",
+                            stream.name, absolute_end
+                        ),
                     )
                 })?,
                 &stream.name,
@@ -638,15 +696,13 @@ impl Root {
             let skip = i.saturating_add(1);
             for &(start2, end2, name2) in stream_ranges.iter().skip(skip) {
                 if start1 < end2 && start2 < end1 {
-                    return Err(malformed_error!(
-                        "Stream '{}' ({}..{}) overlaps with stream '{}' ({}..{})",
-                        name1,
-                        start1,
-                        end1,
-                        name2,
-                        start2,
-                        end2
-                    ));
+                    return Err(invalid(
+                        "stream_overlap",
+                        format!(
+                            "stream '{name1}' ({start1}..{end1}) overlaps with stream '{name2}' ({start2}..{end2})",
+                        ),
+                    )
+                    .into());
                 }
             }
         }
@@ -726,16 +782,20 @@ impl Root {
 
         // Version string length (padded to 4-byte boundary)
         let version_bytes = self.version.as_bytes();
-        let padded_len = version_bytes
-            .len()
-            .checked_add(3)
-            .ok_or_else(|| malformed_error!("Version string padded length overflow"))?
-            & !3usize;
-        let padded_len_u32 = u32::try_from(padded_len).map_err(|_| {
-            malformed_error!(
-                "Version string padded length {} exceeds u32 range",
-                padded_len
-            )
+        let padded_len =
+            version_bytes
+                .len()
+                .checked_add(3)
+                .ok_or_else(|| ParseFailure::InvalidField {
+                    stage: ParseStage::MetadataRoot,
+                    field: "version_string_length",
+                    reason: "padded length overflow".into(),
+                })?
+                & !3usize;
+        let padded_len_u32 = u32::try_from(padded_len).map_err(|_| ParseFailure::InvalidField {
+            stage: ParseStage::MetadataRoot,
+            field: "version_string_length",
+            reason: format!("padded length {padded_len} exceeds u32 range"),
         })?;
         writer.write_all(&padded_len_u32.to_le_bytes())?;
 

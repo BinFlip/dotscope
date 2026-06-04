@@ -40,8 +40,18 @@
 
 use crate::{
     utils::{read_le_at, write_le_at},
-    Error, Result,
+    Error, ParseFailure, ParseStage, Result,
 };
+
+#[inline]
+fn pe_invalid(field: &'static str, reason: String) -> Error {
+    ParseFailure::InvalidField {
+        stage: ParseStage::OptionalHeader,
+        field,
+        reason,
+    }
+    .into()
+}
 use std::collections::HashMap;
 use std::fmt;
 use std::io::Write;
@@ -550,11 +560,17 @@ impl Pe {
             .transpose()?;
 
         if optional_header.is_none() {
-            return Err(malformed_error!("File does not have an OptionalHeader"));
+            return Err(pe_invalid(
+                "optional_header",
+                "PE file does not have an OptionalHeader".into(),
+            ));
         }
 
         if goblin_pe.image_base == 0 {
-            return Err(malformed_error!("PE has invalid zero image base"));
+            return Err(pe_invalid(
+                "image_base",
+                "PE has invalid zero image base".into(),
+            ));
         }
 
         let sections = goblin_pe
@@ -812,8 +828,9 @@ impl Pe {
             );
             Ok(())
         } else {
-            Err(malformed_error!(
-                "Cannot update CLR data directory: PE has no optional header"
+            Err(pe_invalid(
+                "optional_header",
+                "cannot update CLR data directory: PE has no optional header".into(),
             ))
         }
     }
@@ -850,8 +867,9 @@ impl Pe {
             );
             Ok(())
         } else {
-            Err(malformed_error!(
-                "Cannot update data directory: PE has no optional header"
+            Err(pe_invalid(
+                "optional_header",
+                "cannot update data directory: PE has no optional header".into(),
             ))
         }
     }
@@ -873,8 +891,9 @@ impl Pe {
             optional_header.windows_fields.size_of_image = new_size;
             Ok(())
         } else {
-            Err(malformed_error!(
-                "Cannot update SizeOfImage: PE has no optional header"
+            Err(pe_invalid(
+                "optional_header",
+                "cannot update SizeOfImage: PE has no optional header".into(),
             ))
         }
     }
@@ -896,8 +915,9 @@ impl Pe {
             optional_header.windows_fields.size_of_headers = new_size;
             Ok(())
         } else {
-            Err(malformed_error!(
-                "Cannot update SizeOfHeaders: PE has no optional header"
+            Err(pe_invalid(
+                "optional_header",
+                "cannot update SizeOfHeaders: PE has no optional header".into(),
             ))
         }
     }
@@ -1198,10 +1218,12 @@ impl OptionalHeader {
             0x10b => false, // PE32
             0x20b => true,  // PE32+
             magic => {
-                return Err(malformed_error!(
-                    "Invalid PE optional header magic: 0x{:x} (expected 0x10b or 0x20b)",
-                    magic
-                ))
+                return Err(ParseFailure::BadMagic {
+                    stage: ParseStage::OptionalHeader,
+                    expected: 0x10b,
+                    found: u32::from(magic),
+                }
+                .into())
             }
         };
 
@@ -1259,14 +1281,14 @@ impl StandardFields {
             major_linker_version: goblin_sf.major_linker_version,
             minor_linker_version: goblin_sf.minor_linker_version,
             size_of_code: u32::try_from(goblin_sf.size_of_code)
-                .map_err(|_| malformed_error!("PE size_of_code value too large"))?,
+                .map_err(|_| pe_invalid("size_of_code", "value too large".into()))?,
             size_of_initialized_data: u32::try_from(goblin_sf.size_of_initialized_data)
-                .map_err(|_| malformed_error!("PE size_of_initialized_data value too large"))?,
+                .map_err(|_| pe_invalid("size_of_initialized_data", "value too large".into()))?,
             size_of_uninitialized_data: u32::try_from(goblin_sf.size_of_uninitialized_data)
-                .map_err(|_| malformed_error!("PE size_of_uninitialized_data value too large"))?,
+                .map_err(|_| pe_invalid("size_of_uninitialized_data", "value too large".into()))?,
             address_of_entry_point: goblin_sf.address_of_entry_point,
             base_of_code: u32::try_from(goblin_sf.base_of_code)
-                .map_err(|_| malformed_error!("PE base_of_code value too large"))?,
+                .map_err(|_| pe_invalid("base_of_code", "value too large".into()))?,
             base_of_data: if goblin_sf.magic == 0x10b {
                 Some(goblin_sf.base_of_data)
             } else {
@@ -1299,11 +1321,10 @@ impl StandardFields {
             if let Some(base_of_data) = self.base_of_data {
                 writer.write_all(&base_of_data.to_le_bytes())?;
             } else {
-                return Err(Error::Malformed {
-                    message: "PE32 file missing base_of_data field".to_string(),
-                    file: file!(),
-                    line: line!(),
-                });
+                return Err(pe_invalid(
+                    "base_of_data",
+                    "PE32 file missing base_of_data field".into(),
+                ));
             }
         }
 
@@ -1362,7 +1383,7 @@ impl WindowsFields {
         } else {
             writer.write_all(
                 &u32::try_from(self.image_base)
-                    .map_err(|_| malformed_error!("Image base exceeds u32 range"))?
+                    .map_err(|_| pe_invalid("image_base", "exceeds u32 range".into()))?
                     .to_le_bytes(),
             )?;
         }
@@ -1393,22 +1414,22 @@ impl WindowsFields {
             // PE32: 4-byte fields
             writer.write_all(
                 &u32::try_from(self.size_of_stack_reserve)
-                    .map_err(|_| malformed_error!("Stack reserve size exceeds u32 range"))?
+                    .map_err(|_| pe_invalid("stack_reserve_size", "exceeds u32 range".into()))?
                     .to_le_bytes(),
             )?;
             writer.write_all(
                 &u32::try_from(self.size_of_stack_commit)
-                    .map_err(|_| malformed_error!("Stack commit size exceeds u32 range"))?
+                    .map_err(|_| pe_invalid("stack_commit_size", "exceeds u32 range".into()))?
                     .to_le_bytes(),
             )?;
             writer.write_all(
                 &u32::try_from(self.size_of_heap_reserve)
-                    .map_err(|_| malformed_error!("Heap reserve size exceeds u32 range"))?
+                    .map_err(|_| pe_invalid("heap_reserve_size", "exceeds u32 range".into()))?
                     .to_le_bytes(),
             )?;
             writer.write_all(
                 &u32::try_from(self.size_of_heap_commit)
-                    .map_err(|_| malformed_error!("Heap commit size exceeds u32 range"))?
+                    .map_err(|_| pe_invalid("heap_commit_size", "exceeds u32 range".into()))?
                     .to_le_bytes(),
             )?;
         }
@@ -1592,10 +1613,10 @@ impl SectionTable {
 
     fn from_goblin(goblin_section: &goblin::pe::section_table::SectionTable) -> Result<Self> {
         let name = std::str::from_utf8(&goblin_section.name)
-            .map_err(|_| Error::Malformed {
-                message: "Invalid section name".to_string(),
-                file: file!(),
-                line: line!(),
+            .map_err(|_| ParseFailure::InvalidField {
+                stage: ParseStage::SectionTable,
+                field: "section_name",
+                reason: "invalid UTF-8 in section name".into(),
             })?
             .trim_end_matches('\0')
             .to_string();
@@ -1653,9 +1674,9 @@ impl SectionTable {
         characteristics: u32,
     ) -> Result<Self> {
         let size_of_raw_data = u32::try_from(file_size)
-            .map_err(|_| malformed_error!("File size exceeds u32 range: {}", file_size))?;
+            .map_err(|_| pe_invalid("file_size", format!("exceeds u32 range: {file_size}")))?;
         let pointer_to_raw_data = u32::try_from(file_offset)
-            .map_err(|_| malformed_error!("File offset exceeds u32 range: {}", file_offset))?;
+            .map_err(|_| pe_invalid("file_offset", format!("exceeds u32 range: {file_offset}")))?;
 
         Ok(Self {
             name,
@@ -1691,9 +1712,9 @@ impl SectionTable {
     /// Returns an error if the file offset or size exceed u32 range
     pub fn update_file_location(&mut self, file_offset: u64, file_size: u64) -> Result<()> {
         self.pointer_to_raw_data = u32::try_from(file_offset)
-            .map_err(|_| malformed_error!("File offset exceeds u32 range: {}", file_offset))?;
+            .map_err(|_| pe_invalid("file_offset", format!("exceeds u32 range: {file_offset}")))?;
         self.size_of_raw_data = u32::try_from(file_size)
-            .map_err(|_| malformed_error!("File size exceeds u32 range: {}", file_size))?;
+            .map_err(|_| pe_invalid("file_size", format!("exceeds u32 range: {file_size}")))?;
         Ok(())
     }
 
@@ -1717,11 +1738,15 @@ impl SectionTable {
     /// Returns an error if the name exceeds 8 bytes.
     pub fn set_name(&mut self, name: String) -> Result<()> {
         if name.len() > 8 {
-            return Err(malformed_error!(
-                "Section name '{}' exceeds 8-byte PE limit ({} bytes)",
-                name,
-                name.len()
-            ));
+            return Err(ParseFailure::InvalidField {
+                stage: ParseStage::SectionTable,
+                field: "section_name",
+                reason: format!(
+                    "section name '{name}' exceeds 8-byte PE limit ({} bytes)",
+                    name.len()
+                ),
+            }
+            .into());
         }
         self.name = name;
         Ok(())
@@ -1779,10 +1804,10 @@ impl Import {
                 None
             },
             rva: u32::try_from(goblin_import.rva)
-                .map_err(|_| malformed_error!("PE import RVA value too large"))?,
+                .map_err(|_| pe_invalid("import_rva", "value too large".into()))?,
             hint: 0, // Not available from goblin
             ilt_value: u64::try_from(goblin_import.offset)
-                .map_err(|_| malformed_error!("PE import offset value too large"))?,
+                .map_err(|_| pe_invalid("import_offset", "value too large".into()))?,
         })
     }
 
@@ -1804,12 +1829,12 @@ impl Export {
         Ok(Self {
             name: goblin_export.name.map(ToString::to_string),
             rva: u32::try_from(goblin_export.rva)
-                .map_err(|_| malformed_error!("PE export RVA value too large"))?,
+                .map_err(|_| pe_invalid("export_rva", "value too large".into()))?,
             offset: goblin_export
                 .offset
                 .map(|o| {
                     u32::try_from(o)
-                        .map_err(|_| malformed_error!("PE export offset value too large"))
+                        .map_err(|_| pe_invalid("export_offset", "value too large".into()))
                 })
                 .transpose()?,
         })
@@ -2018,7 +2043,11 @@ pub fn relocate_resource_section(data: &mut [u8], old_rva: u32, new_rva: u32) ->
     // satisfies clippy's arithmetic_side_effects lint.
     let delta = i64::from(new_rva)
         .checked_sub(i64::from(old_rva))
-        .ok_or_else(|| malformed_error!("Resource RVA delta overflow"))?;
+        .ok_or_else(|| ParseFailure::InvalidField {
+            stage: ParseStage::Resources,
+            field: "rva_delta",
+            reason: "resource RVA delta overflow".into(),
+        })?;
 
     // Process the root directory at offset 0
     relocate_resource_directory(data, 0, delta)
@@ -2028,18 +2057,23 @@ pub fn relocate_resource_section(data: &mut [u8], old_rva: u32, new_rva: u32) ->
 fn relocate_resource_directory(data: &mut [u8], offset: usize, delta: i64) -> Result<()> {
     // Read the directory header
     let dir = ImageResourceDirectory::read_from(data, offset)?;
+    let res_invalid = |field: &'static str, reason: String| ParseFailure::InvalidField {
+        stage: ParseStage::Resources,
+        field,
+        reason,
+    };
     let entries_offset = offset
         .checked_add(IMAGE_RESOURCE_DIRECTORY_SIZE)
-        .ok_or_else(|| malformed_error!("Resource directory entries offset overflow"))?;
+        .ok_or_else(|| res_invalid("entries_offset", "directory entries offset overflow".into()))?;
 
     // Process each entry
     for i in 0..dir.entry_count() {
         let scaled = i
             .checked_mul(RESOURCE_ENTRY_SIZE)
-            .ok_or_else(|| malformed_error!("Resource entry index overflow"))?;
+            .ok_or_else(|| res_invalid("entry_index", "entry index overflow".into()))?;
         let entry_offset = entries_offset
             .checked_add(scaled)
-            .ok_or_else(|| malformed_error!("Resource entry offset overflow"))?;
+            .ok_or_else(|| res_invalid("entry_offset", "entry offset overflow".into()))?;
         let entry = ResourceEntry::read_from(data, entry_offset)?;
 
         if entry.is_directory() {
@@ -2053,10 +2087,11 @@ fn relocate_resource_directory(data: &mut [u8], offset: usize, delta: i64) -> Re
             let old_data_rva: u32 = read_le_at(data, &mut pos)?;
             let new_data_rva = u32::try_from(i64::from(old_data_rva).saturating_add(delta))
                 .map_err(|_| {
-                    malformed_error!(
-                        "Resource RVA relocation overflow: old_rva={:#x}, delta={}",
-                        old_data_rva,
-                        delta
+                    res_invalid(
+                        "rva",
+                        format!(
+                            "RVA relocation overflow: old_rva={old_data_rva:#x}, delta={delta}",
+                        ),
                     )
                 })?;
             let mut pos = data_entry_offset;

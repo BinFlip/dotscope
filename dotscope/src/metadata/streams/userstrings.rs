@@ -42,7 +42,7 @@
 
 use crate::{
     utils::{read_compressed_int, read_compressed_int_at},
-    Result,
+    Error, HeapKind, ParseFailure, Result,
 };
 
 use widestring::U16Str;
@@ -125,7 +125,11 @@ impl<'a> UserStrings<'a> {
     /// ```
     pub fn from(data: &'a [u8]) -> Result<UserStrings<'a>> {
         if data.first().copied() != Some(0) {
-            return Err(out_of_bounds_error!());
+            return Err(ParseFailure::HeapCorrupt {
+                heap: HeapKind::UserStrings,
+                reason: "first byte must be 0 (empty string sentinel)".into(),
+            }
+            .into());
         }
 
         Ok(UserStrings { data })
@@ -169,20 +173,25 @@ impl<'a> UserStrings<'a> {
     /// used on a raw pointer conversion that is guaranteed to succeed when the input slice
     /// is valid.
     pub fn get(&self, index: usize) -> Result<&'a U16Str> {
+        let oob = || ParseFailure::HeapOutOfBounds {
+            heap: HeapKind::UserStrings,
+            index: u32::try_from(index).unwrap_or(u32::MAX),
+        };
+        let corrupt = |reason: String| ParseFailure::HeapCorrupt {
+            heap: HeapKind::UserStrings,
+            reason,
+        };
         if index >= self.data.len() {
-            return Err(out_of_bounds_error!());
+            return Err(oob().into());
         }
 
         let (total_bytes, compressed_length_size) = read_compressed_int_at(self.data, index)?;
         let data_start = index
             .checked_add(compressed_length_size)
-            .ok_or_else(|| malformed_error!("User string offset overflow at index {}", index))?;
+            .ok_or_else(|| corrupt(format!("offset overflow at index {index}")))?;
 
         if total_bytes == 0 {
-            return Err(malformed_error!(
-                "Invalid zero-length string at index {}",
-                index
-            ));
+            return Err(corrupt(format!("zero-length entry at index {index}")).into());
         }
 
         if total_bytes == 1 {
@@ -194,26 +203,26 @@ impl<'a> UserStrings<'a> {
         // So actual UTF-16 data is total_bytes - 1
         let utf16_length = total_bytes
             .checked_sub(1)
-            .ok_or_else(|| malformed_error!("User string length underflow at index {}", index))?;
+            .ok_or_else(|| corrupt(format!("length underflow at index {index}")))?;
 
         let total_data_end = data_start
             .checked_add(total_bytes)
-            .ok_or_else(|| malformed_error!("User string end overflow at index {}", index))?;
+            .ok_or_else(|| corrupt(format!("end overflow at index {index}")))?;
         if total_data_end > self.data.len() {
-            return Err(out_of_bounds_error!());
+            return Err(oob().into());
         }
 
         if utf16_length % 2 != 0 {
-            return Err(malformed_error!("Invalid UTF-16 length at index {}", index));
+            return Err(corrupt(format!("odd UTF-16 byte count at index {index}")).into());
         }
 
         let utf16_data_end = data_start
             .checked_add(utf16_length)
-            .ok_or_else(|| malformed_error!("User string data end overflow at index {}", index))?;
+            .ok_or_else(|| corrupt(format!("data end overflow at index {index}")))?;
         let utf16_data = self
             .data
             .get(data_start..utf16_data_end)
-            .ok_or(out_of_bounds_error!())?;
+            .ok_or_else(|| Error::from(oob()))?;
 
         // Convert byte slice to u16 slice for UTF-16 string construction.
         //
@@ -240,7 +249,7 @@ impl<'a> UserStrings<'a> {
             #[allow(clippy::cast_ptr_alignment)]
             core::ptr::slice_from_raw_parts(ptr.cast::<u16>(), utf16_data.len() / 2)
                 .as_ref()
-                .ok_or_else(|| malformed_error!("null pointer in user string slice conversion"))?
+                .ok_or_else(|| corrupt("null pointer in user string slice conversion".into()))?
         };
 
         Ok(U16Str::from_slice(str_slice))

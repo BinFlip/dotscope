@@ -153,6 +153,7 @@ impl Technique for JiejieNetResources {
             .filter_map(|entry| {
                 assembly
                     .method(&entry.data_method_token)
+                    .ok()
                     .and_then(|method| {
                         method
                             .declaring_type
@@ -376,7 +377,7 @@ fn find_original_bcl_call(
     assembly: &CilObject,
     interception_token: Token,
 ) -> Option<ResourceTarget> {
-    let method = assembly.method(&interception_token)?;
+    let method = assembly.method(&interception_token).ok()?;
     let instructions: Vec<_> = method.instructions().collect();
 
     // Look for callvirt instructions that call Assembly methods
@@ -667,7 +668,7 @@ fn extract_resource_entries_ssa(ssa: &SsaFunction, assembly: &CilObject) -> Vec<
                 _ => continue,
             };
 
-            if let Some(called_method) = assembly.method(&method_token) {
+            if let Ok(called_method) = assembly.method(&method_token) {
                 if matches!(
                     called_method.signature.return_type.base,
                     TypeSignature::SzArray(_)
@@ -725,7 +726,7 @@ fn trace_to_string_const(ssa: &SsaFunction, var: SsaVarId, assembly: &CilObject)
             SsaOp::Const {
                 value: ConstValue::DecryptedString(s),
                 ..
-            } => Some(s.clone()),
+            } => Some(s.to_string()),
             SsaOp::Copy { src, .. } => trace_impl(ssa, *src, assembly, depth.saturating_add(1)),
             _ => None,
         }
@@ -740,12 +741,7 @@ fn extract_and_decrypt_resource(
     entry: &ResourceEntry,
     xor_key: u8,
 ) -> Result<Vec<u8>> {
-    let method = assembly.method(&entry.data_method_token).ok_or_else(|| {
-        Error::Deobfuscation(format!(
-            "Data method 0x{:08X} not found",
-            entry.data_method_token.value()
-        ))
-    })?;
+    let method = assembly.method(&entry.data_method_token)?;
 
     let mut field_token: Option<Token> = None;
     let mut array_size: Option<usize> = None;

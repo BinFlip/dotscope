@@ -147,7 +147,7 @@ impl DeobfuscationEngine {
         let errors: Vec<(Token, Error)> = method_tokens
             .par_iter()
             .filter_map(|&method_token| {
-                let method = assembly.method(&method_token)?;
+                let method = assembly.method(&method_token).ok()?;
                 match method.ssa(assembly) {
                     Ok(ssa) => {
                         ctx.set_ssa(method_token, ssa);

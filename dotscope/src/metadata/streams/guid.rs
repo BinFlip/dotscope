@@ -144,7 +144,7 @@
 //! - **ECMA-335 II.24.2.5**: `#GUID` heap specification
 //! - **RFC 4122**: UUID/GUID format and generation standards
 
-use crate::Result;
+use crate::{HeapKind, ParseFailure, ParseStage, Result};
 
 /// ECMA-335 GUID heap providing indexed access to 128-bit globally unique identifiers.
 ///
@@ -379,7 +379,12 @@ impl<'a> Guid<'a> {
     /// - [ECMA-335 II.24.2.5](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): GUID heap specification
     pub fn from(data: &'a [u8]) -> Result<Guid<'a>> {
         if data.len() < 16 {
-            return Err(malformed_error!("Data for #Guid heap is too small"));
+            return Err(ParseFailure::Truncated {
+                stage: ParseStage::Heap,
+                expected: 16,
+                found: data.len(),
+            }
+            .into());
         }
 
         Ok(Guid { data })
@@ -501,19 +506,20 @@ impl<'a> Guid<'a> {
     /// - [`uguid::Guid`]: The returned GUID type with formatting and comparison methods
     /// - [ECMA-335 II.24.2.5](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): GUID heap specification
     pub fn get(&self, index: usize) -> Result<uguid::Guid> {
+        let oob = || ParseFailure::HeapOutOfBounds {
+            heap: HeapKind::Guid,
+            index: u32::try_from(index).unwrap_or(u32::MAX),
+        };
         if index < 1 {
-            return Err(out_of_bounds_error!());
+            return Err(oob().into());
         }
         let offset_start = index
             .checked_sub(1)
             .and_then(|i| i.checked_mul(16))
-            .ok_or(out_of_bounds_error!())?;
-        let offset_end = offset_start.checked_add(16).ok_or(out_of_bounds_error!())?;
+            .ok_or_else(oob)?;
+        let offset_end = offset_start.checked_add(16).ok_or_else(oob)?;
 
-        let bytes = self
-            .data
-            .get(offset_start..offset_end)
-            .ok_or(out_of_bounds_error!())?;
+        let bytes = self.data.get(offset_start..offset_end).ok_or_else(oob)?;
         let mut buffer = [0u8; 16];
         buffer.copy_from_slice(bytes);
 

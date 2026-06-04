@@ -21,6 +21,34 @@
 //! 1. **Raw Validation**: Validates raw assembly data during [`crate::metadata::cilassemblyview::CilAssemblyView`] loading
 //! 2. **Owned Validation**: Validates resolved data structures during [`crate::metadata::cilobject::CilObject`] creation
 //!
+//! # Field-to-Validator Map
+//!
+//! Each `enable_*` field on [`ValidationConfig`] gates a specific group of
+//! validators. The table below summarizes what each field controls, what kind
+//! of malformed input it catches, and roughly how expensive it is. Use this as
+//! ground truth when picking a preset or building a custom config.
+//!
+//! | Field                              | Stage           | Gates                                                                                                                            | Catches                                                                                                                | Cost class                              |
+//! |------------------------------------|-----------------|----------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------|-----------------------------------------|
+//! | `enable_raw_validation`            | meta (stage 1)  | enables/disables the entire raw pipeline                                                                                         | n/a — gates the structural/token/constraint validators below                                                           | n/a                                     |
+//! | `enable_owned_validation`          | meta (stage 2)  | enables/disables the entire owned pipeline                                                                                       | n/a — gates the cross-table/semantic/method validators below                                                           | n/a                                     |
+//! | `enable_structural_validation`     | raw (1)         | `RawTokenValidator`, `RawTableValidator`, `RawHeapValidator`                                                                     | malformed token format, RID overflow, table-structure breakage, heap offsets out of bounds                             | cheap (linear scan)                     |
+//! | `enable_token_validation`          | raw (1)         | `RawSignatureValidator`                                                                                                          | malformed signature blobs, invalid coded-index tag values                                                              | cheap (linear scan)                     |
+//! | `enable_constraint_validation`     | raw (1) + owned (2) | `RawGenericConstraintValidator`, `RawLayoutConstraintValidator`                                                              | invalid constraint targets, circular constraints, layout overlap violations on `[StructLayout(LayoutKind.Explicit)]`   | cheap–moderate (table walk)             |
+//! | `enable_cross_table_validation`    | owned (2)       | `OwnedCircularityValidator`, `OwnedDependencyValidator`, `OwnedOwnershipValidator`                                               | broken cross-references, circular type hierarchies, orphaned metadata                                                  | moderate (table walk + graph analysis)  |
+//! | `enable_semantic_validation`       | owned (2)       | `OwnedFieldValidator`, `OwnedAccessibilityValidator`, `OwnedTypeDefinitionValidator`, `OwnedTypeCircularityValidator`, `OwnedTypeDependencyValidator`, `OwnedTypeOwnershipValidator`, `OwnedAttributeValidator`, `OwnedSecurityValidator`, `OwnedAssemblyValidator` | ECMA-335 semantic rules: access-modifier breaches, SpecialName violations, abstract/sealed conflicts, naming convention breaches, duplicate fields | moderate–expensive (multi-pass type-system walk) |
+//! | `enable_method_validation`         | owned (2)       | `OwnedMethodValidator`, `OwnedSignatureValidator`                                                                                | concrete types declaring abstract methods, final-override attempts, signature incompatibilities, invalid constructors  | moderate (signature resolution + inheritance walk) |
+//! | `enable_type_system_validation`    | owned (2)       | reserved — currently subsumed by `enable_semantic_validation`                                                                    | n/a until wired                                                                                                        | n/a                                     |
+//! | `enable_field_layout_validation`   | owned (2)       | reserved — currently subsumed by `enable_owned_validation`                                                                       | n/a until wired                                                                                                        | n/a                                     |
+//! | `max_nesting_depth`                | owned (2)       | nested-type depth ceiling                                                                                                        | over-deep nested-class chains (default `64`; set `0` to disable the check)                                             | cheap (counter)                         |
+//! | `lenient`                          | both stages     | error handling mode                                                                                                              | n/a — when `true`, errors become diagnostics instead of aborting load                                                  | n/a                                     |
+//!
+//! Two of the fields above (`enable_type_system_validation`,
+//! `enable_field_layout_validation`) are accepted for forward compatibility but
+//! not yet observed by any validator's `should_run()` check. Setting them is
+//! safe; the validators they would gate are currently controlled by
+//! `enable_semantic_validation` / `enable_owned_validation`.
+//!
 //! # Key Components
 //!
 //! - [`crate::metadata::validation::config::ValidationConfig`] - Main configuration struct with predefined presets
@@ -124,12 +152,24 @@ pub struct ValidationConfig {
     /// Validates semantic consistency across metadata tables
     pub enable_cross_table_validation: bool,
 
-    /// Enable field layout validation (overlap detection, offset validation)
-    /// Only useful for types with explicit layout; detects problematic overlaps
+    /// Enable field layout validation (overlap detection, offset validation).
+    ///
+    /// Only useful for types with explicit layout; detects problematic overlaps.
+    ///
+    /// **Reserved for forward compatibility.** No validator currently checks this
+    /// flag in `should_run()`. Field-layout validation is presently controlled by
+    /// `enable_owned_validation`. Setting this flag is safe but has no effect
+    /// until the dedicated layout validators are wired through it.
     pub enable_field_layout_validation: bool,
 
-    /// Enable type system validation (inheritance chains, generic constraints)
-    /// Validates logical consistency of type hierarchies and generic constraints
+    /// Enable type system validation (inheritance chains, generic constraints).
+    ///
+    /// Validates logical consistency of type hierarchies and generic constraints.
+    ///
+    /// **Reserved for forward compatibility.** No validator currently checks this
+    /// flag in `should_run()`. Type-system validation is presently controlled by
+    /// `enable_semantic_validation`. Setting this flag is safe but has no effect
+    /// until the dedicated type-system validators are wired through it.
     pub enable_type_system_validation: bool,
 
     /// Enable semantic validation (method consistency, access modifiers, abstract/concrete rules)
@@ -208,6 +248,12 @@ impl ValidationConfig {
     /// - Potential for crashes on invalid data
     /// - Silent acceptance of ECMA-335 violations
     ///
+    /// # Field values
+    ///
+    /// All validation fields are `false`, including the stage gates. Every
+    /// `enable_*` flag is off, `lenient = false`, `max_nesting_depth = 0`.
+    /// The two pipelines never run.
+    ///
     /// # Examples
     ///
     /// ```rust,no_run
@@ -259,6 +305,16 @@ impl ValidationConfig {
     /// - Semantic rule enforcement
     /// - Method signature validation
     ///
+    /// # Field values
+    ///
+    /// - **Stage gates:** `enable_raw_validation = true`, `enable_owned_validation = false`
+    /// - **Raw validators on:** `enable_structural_validation`
+    /// - **Raw validators off:** `enable_token_validation`, `enable_constraint_validation`
+    /// - **Owned validators off:** `enable_cross_table_validation`,
+    ///   `enable_field_layout_validation`, `enable_type_system_validation`,
+    ///   `enable_semantic_validation`, `enable_method_validation`
+    /// - **Other:** `lenient = false`, `max_nesting_depth = 64`
+    ///
     /// # Examples
     ///
     /// ```rust,no_run
@@ -298,6 +354,17 @@ impl ValidationConfig {
     ///
     /// Returns a [`crate::metadata::validation::config::ValidationConfig`] with all validation enabled.
     ///
+    /// # Field values
+    ///
+    /// - **Stage gates:** `enable_raw_validation = true`, `enable_owned_validation = true`
+    /// - **All `enable_*` validators on**
+    /// - **Other:** `lenient = false`, `max_nesting_depth = 64`
+    ///
+    /// Identical in field values to [`production`](Self::production) and
+    /// [`strict`](Self::strict); the three exist as named entry points so
+    /// downstream code can document intent. Pick whichever name best matches
+    /// the calling context.
+    ///
     /// # Examples
     ///
     /// ```rust,no_run
@@ -335,6 +402,16 @@ impl ValidationConfig {
     /// - Method: Runtime enforces method signature and override constraints
     /// - Token: Runtime validates token references for security
     /// - Constraint: Runtime validates generic and layout constraints
+    ///
+    /// # Field values
+    ///
+    /// - **Stage gates:** `enable_raw_validation = true`, `enable_owned_validation = true`
+    /// - **All `enable_*` validators on**
+    /// - **Other:** `lenient = false`, `max_nesting_depth = 64`
+    ///
+    /// Identical in field values to [`comprehensive`](Self::comprehensive) and
+    /// [`strict`](Self::strict). Use `production` when you specifically want
+    /// to communicate that you are matching .NET runtime validation behavior.
     ///
     /// # Examples
     ///
@@ -374,6 +451,17 @@ impl ValidationConfig {
     /// # Returns
     ///
     /// Returns a [`crate::metadata::validation::config::ValidationConfig`] with strict validation enabled.
+    ///
+    /// # Field values
+    ///
+    /// - **Stage gates:** `enable_raw_validation = true`, `enable_owned_validation = true`
+    /// - **All `enable_*` validators on**
+    /// - **Other:** `lenient = false`, `max_nesting_depth = 64`
+    ///
+    /// Identical in field values to [`comprehensive`](Self::comprehensive) and
+    /// [`production`](Self::production). The strict alias exists to call out
+    /// that field-layout validation can flag legitimate overlapping fields
+    /// (see note below) — pick this name when that risk is acceptable.
     ///
     /// # Examples
     ///
@@ -436,6 +524,14 @@ impl ValidationConfig {
     ///
     /// Returns a [`crate::metadata::validation::config::ValidationConfig`] configured for raw validation only.
     ///
+    /// # Field values
+    ///
+    /// - **Stage gates:** `enable_raw_validation = true`, `enable_owned_validation = false`
+    /// - **Raw validators on:** `enable_structural_validation`
+    /// - **Raw validators off:** `enable_token_validation`, `enable_constraint_validation`
+    /// - **Owned validators all off**
+    /// - **Other:** `lenient = false`, `max_nesting_depth = 64`
+    ///
     /// # Examples
     ///
     /// ```rust,no_run
@@ -472,6 +568,22 @@ impl ValidationConfig {
     /// # Returns
     ///
     /// Returns a [`crate::metadata::validation::config::ValidationConfig`] configured for owned validation only.
+    ///
+    /// # Field values
+    ///
+    /// - **Stage gates:** `enable_raw_validation = false`, `enable_owned_validation = true`
+    /// - **Raw validators all off** (`enable_structural_validation`,
+    ///   `enable_token_validation` are skipped along with the stage)
+    /// - **Owned validators on:** `enable_cross_table_validation`,
+    ///   `enable_field_layout_validation`, `enable_type_system_validation`,
+    ///   `enable_semantic_validation`, `enable_method_validation`,
+    ///   `enable_constraint_validation`
+    /// - **Other:** `lenient = false`, `max_nesting_depth = 64`
+    ///
+    /// Caller is responsible for guaranteeing the raw stage already passed
+    /// (or is being deliberately skipped). Loading malformed metadata with
+    /// the raw stage off may surface garbage as validation errors at
+    /// stage 2 instead of clean parse failures.
     ///
     /// # Examples
     ///
@@ -519,6 +631,18 @@ impl ValidationConfig {
     /// - **Lenient mode**: All errors (loading and validation) are logged as warnings, not fatal
     /// - **Comprehensive validation**: ALL validation checks enabled to collect maximum diagnostic info
     /// - **Complete error collection**: Continues through all checks to build full diagnostic report
+    ///
+    /// # Field values
+    ///
+    /// - **Stage gates:** `enable_raw_validation = true`, `enable_owned_validation = true`
+    /// - **All `enable_*` validators on** (same as [`comprehensive`](Self::comprehensive))
+    /// - **Other:** `lenient = true` (the load-bearing differentiator),
+    ///   `max_nesting_depth = 64`
+    ///
+    /// The single distinguishing field versus `comprehensive`/`production`/`strict`
+    /// is `lenient = true`: errors from the loader and the validation engine
+    /// flow into [`crate::metadata::diagnostics::Diagnostics`] instead of
+    /// short-circuiting the load.
     ///
     /// # Use Cases
     ///

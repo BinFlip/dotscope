@@ -133,7 +133,7 @@ use crate::{
     },
     utils::align_to,
     Error::{self, Goblin, LayoutFailed, Other},
-    Result,
+    ParseFailure, ParseStage, Result,
 };
 use goblin::pe::PE;
 use pe::{DataDirectory, DataDirectoryType, Pe};
@@ -878,8 +878,11 @@ impl File {
     /// ```
     pub fn data_slice(&self, offset: usize, len: usize) -> Result<&[u8]> {
         let base = self.data.data();
-        let end = offset.checked_add(len).ok_or(out_of_bounds_error!())?;
-        base.get(offset..end).ok_or(out_of_bounds_error!())
+        let oob = || ParseFailure::OutOfBounds {
+            stage: ParseStage::DataDirectory,
+        };
+        let end = offset.checked_add(len).ok_or_else(|| Error::from(oob()))?;
+        base.get(offset..end).ok_or_else(|| Error::from(oob()))
     }
 
     /// Converts a virtual address (VA) to a file offset.
@@ -915,9 +918,16 @@ impl File {
     /// ```
     pub fn va_to_offset(&self, va: usize) -> Result<usize> {
         let ib = self.imagebase();
-        let rva_u64 = (va as u64).checked_sub(ib).ok_or(out_of_bounds_error!())?;
-        let rva = usize::try_from(rva_u64)
-            .map_err(|_| malformed_error!("RVA too large to fit in usize: {}", rva_u64))?;
+        let rva_u64 = (va as u64).checked_sub(ib).ok_or_else(|| {
+            Error::from(ParseFailure::OutOfBounds {
+                stage: ParseStage::DataDirectory,
+            })
+        })?;
+        let rva = usize::try_from(rva_u64).map_err(|_| ParseFailure::InvalidField {
+            stage: ParseStage::DataDirectory,
+            field: "rva",
+            reason: format!("RVA too large to fit in usize: {rva_u64}"),
+        })?;
         self.rva_to_offset(rva)
     }
 
@@ -954,32 +964,41 @@ impl File {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn rva_to_offset(&self, rva: usize) -> Result<usize> {
+        let invalid = |field: &'static str, reason: String| ParseFailure::InvalidField {
+            stage: ParseStage::SectionTable,
+            field,
+            reason,
+        };
         for section in &self.pe.sections {
             let Some(section_max) = section.virtual_address.checked_add(section.virtual_size)
             else {
-                return Err(malformed_error!(
-                    "Section malformed, causing integer overflow - {} + {}",
-                    section.virtual_address,
-                    section.virtual_size
-                ));
+                return Err(invalid(
+                    "section_extent",
+                    format!(
+                        "section malformed, causing integer overflow - {} + {}",
+                        section.virtual_address, section.virtual_size
+                    ),
+                )
+                .into());
             };
 
             let rva_u32 = u32::try_from(rva)
-                .map_err(|_| malformed_error!("RVA too large to fit in u32: {}", rva))?;
+                .map_err(|_| invalid("rva", format!("RVA too large to fit in u32: {rva}")))?;
             if section.virtual_address <= rva_u32 && section_max > rva_u32 {
                 let delta = rva
                     .checked_sub(section.virtual_address as usize)
-                    .ok_or_else(|| malformed_error!("RVA underflow vs section base"))?;
+                    .ok_or_else(|| invalid("rva", "RVA underflow vs section base".into()))?;
                 return delta
                     .checked_add(section.pointer_to_raw_data as usize)
-                    .ok_or_else(|| malformed_error!("RVA-to-offset overflow"));
+                    .ok_or_else(|| Error::from(invalid("rva", "RVA-to-offset overflow".into())));
             }
         }
 
-        Err(malformed_error!(
-            "RVA could not be converted to offset - {}",
-            rva
-        ))
+        Err(invalid(
+            "rva",
+            format!("RVA could not be converted to offset - {rva}"),
+        )
+        .into())
     }
 
     /// Converts a file offset to a relative virtual address (RVA).
@@ -1014,34 +1033,49 @@ impl File {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn offset_to_rva(&self, offset: usize) -> Result<usize> {
+        let invalid = |field: &'static str, reason: String| ParseFailure::InvalidField {
+            stage: ParseStage::SectionTable,
+            field,
+            reason,
+        };
         for section in &self.pe.sections {
             let Some(section_max) = section
                 .pointer_to_raw_data
                 .checked_add(section.size_of_raw_data)
             else {
-                return Err(malformed_error!(
-                    "Section malformed, causing integer overflow - {} + {}",
-                    section.pointer_to_raw_data,
-                    section.size_of_raw_data
-                ));
+                return Err(invalid(
+                    "section_extent",
+                    format!(
+                        "section malformed, causing integer overflow - {} + {}",
+                        section.pointer_to_raw_data, section.size_of_raw_data
+                    ),
+                )
+                .into());
             };
 
-            let offset_u32 = u32::try_from(offset)
-                .map_err(|_| malformed_error!("Offset too large to fit in u32: {}", offset))?;
+            let offset_u32 = u32::try_from(offset).map_err(|_| {
+                invalid(
+                    "offset",
+                    format!("offset too large to fit in u32: {offset}"),
+                )
+            })?;
             if section.pointer_to_raw_data <= offset_u32 && section_max > offset_u32 {
                 let delta = offset
                     .checked_sub(section.pointer_to_raw_data as usize)
-                    .ok_or_else(|| malformed_error!("Offset underflow vs section base"))?;
+                    .ok_or_else(|| invalid("offset", "offset underflow vs section base".into()))?;
                 return delta
                     .checked_add(section.virtual_address as usize)
-                    .ok_or_else(|| malformed_error!("Offset-to-RVA overflow"));
+                    .ok_or_else(|| {
+                        Error::from(invalid("offset", "offset-to-RVA overflow".into()))
+                    });
             }
         }
 
-        Err(malformed_error!(
-            "Offset could not be converted to RVA - {}",
-            offset
-        ))
+        Err(invalid(
+            "offset",
+            format!("offset could not be converted to RVA - {offset}"),
+        )
+        .into())
     }
 
     /// Determines if a section contains .NET metadata by checking the actual metadata RVA.

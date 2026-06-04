@@ -148,7 +148,7 @@ impl Technique for BitMonoStrings {
             if has_crypto_ops(ssa, assembly) {
                 decryptor_tokens.push(method_token);
                 if decryptor_type.is_none() {
-                    if let Some(method) = assembly.method(&method_token) {
+                    if let Ok(method) = assembly.method(&method_token) {
                         if let Some(decl_type) = method.declaring_type_rc() {
                             decryptor_type = Some(decl_type.token);
                         }

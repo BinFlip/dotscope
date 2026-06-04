@@ -20,7 +20,7 @@ pub fn parse_token_filter(filter: &str) -> Option<Token> {
 pub fn resolve_methods(assembly: &CilObject, filter: &str) -> anyhow::Result<Vec<Arc<Method>>> {
     // Try token first
     if let Some(token) = parse_token_filter(filter) {
-        if let Some(method) = assembly.method(&token) {
+        if let Ok(method) = assembly.method(&token) {
             return Ok(vec![method]);
         }
         bail!("no method with token {filter} found");

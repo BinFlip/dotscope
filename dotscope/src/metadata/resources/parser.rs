@@ -82,7 +82,7 @@ use crate::{
     metadata::resources::{
         ResourceEntry, ResourceEntryRef, ResourceType, ResourceTypeRef, RESOURCE_MAGIC,
     },
-    Result,
+    ParseFailure, ParseStage, Result,
 };
 
 /// Maximum number of resource types allowed in a resource file.
@@ -454,7 +454,12 @@ impl Resource {
     /// - **Array Bounds**: Ensures hash and position arrays match resource count
     pub fn parse(data: &[u8]) -> Result<Self> {
         if data.len() < 12 {
-            return Err(malformed_error!("Resource data too small"));
+            return Err(ParseFailure::Truncated {
+                stage: ParseStage::Resources,
+                expected: 12,
+                found: data.len(),
+            }
+            .into());
         }
 
         let mut parser = Parser::new(data);

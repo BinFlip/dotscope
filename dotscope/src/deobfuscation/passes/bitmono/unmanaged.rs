@@ -94,7 +94,7 @@ impl SsaPass<CilTarget, CompilerContext> for UnmanagedStringReversalPass {
                 if let Some(instr) = block.instruction_mut(site.newobj_idx) {
                     instr.set_op(SsaOp::Const {
                         dest: site.newobj_dest,
-                        value: ConstValue::DecryptedString(site.decrypted.clone()),
+                        value: ConstValue::DecryptedString(site.decrypted.clone().into()),
                     });
                 }
 

@@ -214,7 +214,7 @@ fn extract_native_string(
     native_token: Token,
     is_64bit: bool,
 ) -> Option<String> {
-    let method = assembly.method(&native_token)?;
+    let method = assembly.method(&native_token).ok()?;
     let rva = method.rva.filter(|&r| r > 0)?;
 
     let file = assembly.file();

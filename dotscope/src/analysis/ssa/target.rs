@@ -170,6 +170,8 @@ impl Target for CilTarget {
             ConstValue::F64(_) => SsaType::F64,
             ConstValue::String(_) | ConstValue::DecryptedString(_) => SsaType::String,
             ConstValue::DecryptedArray { .. } => SsaType::Object,
+            // SIMD vector constant from the native substrate — no CIL type.
+            ConstValue::Vector(_) => return None,
             ConstValue::Null => SsaType::Null,
             ConstValue::True | ConstValue::False => SsaType::Bool,
             ConstValue::Type(_) | ConstValue::MethodHandle(_) | ConstValue::FieldHandle(_) => {

@@ -256,7 +256,7 @@ fn method_invoke_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> Pre
             // Look up method signature to detect ByRef parameters
             let sig_params: Option<Vec<bool>> = thread
                 .assembly()
-                .and_then(|asm| asm.method(&method_token))
+                .and_then(|asm| asm.method(&method_token).ok())
                 .map(|m| m.signature.params.iter().map(|p| p.by_ref).collect());
 
             // Extract the method arguments from the object[] array (second argument).
@@ -689,7 +689,7 @@ fn method_get_method_body_pre(
             thread.heap().get(*method_ref)
         {
             if let Some(asm) = thread.assembly().cloned() {
-                if let Some(method) = asm.method(&method_token) {
+                if let Ok(method) = asm.method(&method_token) {
                     if method.body.get().is_some() {
                         match thread
                             .heap_mut()

@@ -265,7 +265,7 @@ impl DelegateProxyResolutionPass {
                     let is_virtual = synthetic_is_virtual.unwrap_or_else(|| {
                         assembly
                             .as_ref()
-                            .and_then(|asm| asm.method(&resolved_token))
+                            .and_then(|asm| asm.method(&resolved_token).ok())
                             .map(|m| !m.is_static())
                             .unwrap_or(false)
                     });

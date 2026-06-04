@@ -78,7 +78,7 @@ pub fn collect_string_literals(ssa: &SsaFunction, assembly: &CilObject) -> Vec<S
         if let SsaOp::Const { value, .. } = instr.op() {
             match value {
                 ConstValue::DecryptedString(s) if !s.is_empty() => {
-                    strings.push(s.clone());
+                    strings.push(s.to_string());
                 }
                 ConstValue::String(idx) => {
                     // Resolve from UserStrings heap
@@ -319,10 +319,11 @@ pub fn collect_call_site_context(
         for (_, _, nearby_instr) in window {
             if let SsaOp::Const { value, .. } = nearby_instr.op() {
                 match value {
-                    ConstValue::DecryptedString(s)
-                        if !s.is_empty() && !nearby_strings.contains(s) =>
-                    {
-                        nearby_strings.push(s.clone());
+                    ConstValue::DecryptedString(s) if !s.is_empty() => {
+                        let s = s.to_string();
+                        if !nearby_strings.contains(&s) {
+                            nearby_strings.push(s);
+                        }
                     }
                     ConstValue::String(us_idx) => {
                         if let Some(us) = assembly.userstrings() {
@@ -385,7 +386,7 @@ fn resolve_qualified_method_name(assembly: &CilObject, token: Token) -> Option<S
         }
         // MethodDef
         0x06 => {
-            let method = assembly.method(&token)?;
+            let method = assembly.method(&token).ok()?;
             if let Some(type_name) = method.declaring_type_fullname() {
                 Some(format!("{type_name}::{}", method.name))
             } else {

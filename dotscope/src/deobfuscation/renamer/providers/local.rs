@@ -246,7 +246,11 @@ impl RenameProvider for LocalProvider {
             self.config.model_path.display()
         );
 
-        *self.state.lock().unwrap() = Some(InferenceState { model, runtime });
+        let mut guard = self
+            .state
+            .lock()
+            .map_err(|e| Error::Deobfuscation(format!("Smart rename state mutex poisoned: {e}")))?;
+        *guard = Some(InferenceState { model, runtime });
         Ok(())
     }
 
@@ -275,7 +279,10 @@ impl RenameProvider for LocalProvider {
             None => return Ok(None),
         };
 
-        let guard = self.state.lock().unwrap();
+        let guard = self
+            .state
+            .lock()
+            .map_err(|e| Error::Deobfuscation(format!("Smart rename state mutex poisoned: {e}")))?;
         let Some(ref state) = *guard else {
             return Ok(None);
         };
@@ -300,9 +307,13 @@ impl RenameProvider for LocalProvider {
     ///
     /// # Errors
     ///
-    /// This method currently does not fail.
+    /// Returns an error if the internal state mutex has been poisoned.
     fn shutdown(&mut self) -> Result<()> {
-        *self.state.lock().unwrap() = None;
+        let mut guard = self
+            .state
+            .lock()
+            .map_err(|e| Error::Deobfuscation(format!("Smart rename state mutex poisoned: {e}")))?;
+        *guard = None;
         log::info!("Smart rename model unloaded");
         Ok(())
     }

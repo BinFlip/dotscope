@@ -202,7 +202,7 @@
 
 use std::{ffi::CStr, str};
 
-use crate::Result;
+use crate::{Error, HeapKind, ParseFailure, Result};
 
 /// ECMA-335 compliant `#Strings` heap providing UTF-8 identifier string access.
 ///
@@ -533,7 +533,11 @@ impl<'a> Strings<'a> {
     /// - [ECMA-335 II.24.2.3](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): Strings heap format specification
     pub fn from(data: &[u8]) -> Result<Strings<'_>> {
         if data.first() != Some(&0) {
-            return Err(malformed_error!("Provided #String heap is empty"));
+            return Err(ParseFailure::HeapCorrupt {
+                heap: HeapKind::Strings,
+                reason: "first byte must be 0 (empty string sentinel)".into(),
+            }
+            .into());
         }
 
         Ok(Strings { data })
@@ -756,8 +760,12 @@ impl<'a> Strings<'a> {
     /// - [`crate::metadata::tables`]: Metadata tables containing string references
     /// - [ECMA-335 II.24.2.3](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): Strings heap specification
     pub fn get(&self, index: usize) -> Result<&'a str> {
+        let oob = || ParseFailure::HeapOutOfBounds {
+            heap: HeapKind::Strings,
+            index: u32::try_from(index).unwrap_or(u32::MAX),
+        };
         if index >= self.data.len() {
-            return Err(out_of_bounds_error!());
+            return Err(oob().into());
         }
 
         // Performance note: Each call performs O(n) operations:
@@ -773,13 +781,17 @@ impl<'a> Strings<'a> {
         // If profiling shows this is a bottleneck, callers should:
         // 1. Cache results at the call site for repeated access
         // 2. Use the iterator for bulk processing (avoids repeated bounds checks)
-        let slice = self.data.get(index..).ok_or(out_of_bounds_error!())?;
+        let slice = self.data.get(index..).ok_or_else(|| Error::from(oob()))?;
+        let corrupt = || ParseFailure::HeapCorrupt {
+            heap: HeapKind::Strings,
+            reason: format!("invalid UTF-8 string at index {index}"),
+        };
         match CStr::from_bytes_until_nul(slice) {
             Ok(result) => match result.to_str() {
                 Ok(result) => Ok(result),
-                Err(_) => Err(malformed_error!("Invalid string at index - {}", index)),
+                Err(_) => Err(corrupt().into()),
             },
-            Err(_) => Err(malformed_error!("Invalid string at index - {}", index)),
+            Err(_) => Err(corrupt().into()),
         }
     }
 

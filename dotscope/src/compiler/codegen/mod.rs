@@ -844,27 +844,22 @@ impl SsaCodeGenerator {
                     SsaOp::Const {
                         value: ConstValue::DecryptedString(s),
                         ..
-                    } if !self.interned_strings.contains_key(s) => {
+                    } if !self.interned_strings.contains_key(s.as_ref()) => {
                         let change_ref = assembly.userstring_add(s)?;
                         self.interned_strings
-                            .insert(s.clone(), change_ref.placeholder());
+                            .insert(s.to_string(), change_ref.placeholder());
                     }
                     SsaOp::Const {
-                        value:
-                            ConstValue::DecryptedArray {
-                                data,
-                                element_type_ref,
-                                element_size,
-                            },
+                        value: ConstValue::DecryptedArray(arr),
                         ..
-                    } if !self.interned_arrays.contains_key(data) => {
+                    } if !self.interned_arrays.contains_key(&arr.data) => {
                         if let Some(info) = self.intern_array_data(
-                            data,
-                            element_type_ref.token(),
-                            *element_size,
+                            &arr.data,
+                            arr.element_type_ref.token(),
+                            arr.element_size,
                             assembly,
                         )? {
-                            self.interned_arrays.insert(data.clone(), info);
+                            self.interned_arrays.insert(arr.data.clone(), info);
                         }
                     }
                     _ => {}
@@ -3515,7 +3510,63 @@ impl SsaCodeGenerator {
             | SsaOp::Select { .. }
             | SsaOp::ReadFlags { .. }
             | SsaOp::CmpXchg { .. }
-            | SsaOp::AtomicRmw { .. } => {
+            | SsaOp::AtomicRmw { .. }
+            // Native SSA substrate operations (wide arithmetic, native
+            // boolean/float-flag ops, SIMD/vector, native atomics, bitcast,
+            // opaque, indirect branch). These never appear in CIL-lifted SSA
+            // and have no direct CIL encoding; enumerated explicitly (no
+            // wildcard) so future substrate additions still trip this
+            // exhaustiveness check.
+            | SsaOp::WideMul { .. }
+            | SsaOp::WideDiv { .. }
+            | SsaOp::FloatCompareFlags { .. }
+            | SsaOp::BoolAnd { .. }
+            | SsaOp::BoolOr { .. }
+            | SsaOp::BoolXor { .. }
+            | SsaOp::BoolNot { .. }
+            | SsaOp::Bitcast { .. }
+            | SsaOp::IndirectBranch { .. }
+            | SsaOp::NativeOpaque(_)
+            | SsaOp::VectorUnary { .. }
+            | SsaOp::VectorBinary { .. }
+            | SsaOp::VectorTernary { .. }
+            | SsaOp::VectorPredicatedUnary { .. }
+            | SsaOp::VectorPredicatedBinary { .. }
+            | SsaOp::VectorPredicatedTernary { .. }
+            | SsaOp::VectorCompare { .. }
+            | SsaOp::VectorLoad { .. }
+            | SsaOp::VectorStore { .. }
+            | SsaOp::VectorMaskedLoad { .. }
+            | SsaOp::VectorMaskedStore { .. }
+            | SsaOp::VectorBroadcastLoad { .. }
+            | SsaOp::VectorGather { .. }
+            | SsaOp::VectorFaultingLoad { .. }
+            | SsaOp::VectorSegmentLoad { .. }
+            | SsaOp::VectorScatter { .. }
+            | SsaOp::VectorSegmentStore { .. }
+            | SsaOp::VectorExtract { .. }
+            | SsaOp::VectorInsert { .. }
+            | SsaOp::VectorSplat { .. }
+            | SsaOp::VectorShuffle { .. }
+            | SsaOp::VectorCast { .. }
+            | SsaOp::VectorReinterpret { .. }
+            | SsaOp::VectorPack { .. }
+            | SsaOp::VectorPackLoad { .. }
+            | SsaOp::VectorPackStore { .. }
+            | SsaOp::VectorZeroUpper { .. }
+            | SsaOp::VectorMaskUnary { .. }
+            | SsaOp::VectorMaskBinary { .. }
+            | SsaOp::VectorReduce { .. }
+            | SsaOp::VectorBitmask { .. }
+            | SsaOp::AtomicLoad { .. }
+            | SsaOp::AtomicStore { .. }
+            | SsaOp::AtomicStoreConditional { .. }
+            | SsaOp::AtomicPairLoad { .. }
+            | SsaOp::AtomicPairStoreConditional { .. }
+            | SsaOp::AtomicExchange { .. }
+            | SsaOp::AtomicLockRmw { .. }
+            | SsaOp::AtomicCmpXchg { .. }
+            | SsaOp::AtomicPairCmpXchg { .. } => {
                 // These operations may appear in the shared SSA but are not
                 // directly expressible in CIL; they should have been lowered
                 // before code generation.
@@ -4426,7 +4477,7 @@ impl SsaCodeGenerator {
 
             // Decrypted strings look up pre-interned index
             ConstValue::DecryptedString(s) => {
-                if let Some(&idx) = self.interned_strings.get(s) {
+                if let Some(&idx) = self.interned_strings.get(s.as_ref()) {
                     let token = Token::new(0x7000_0000 | idx);
                     encoder.emit_instruction("ldstr", Some(Operand::Token(token)))?;
                 } else {
@@ -4470,20 +4521,18 @@ impl SsaCodeGenerator {
             //   dup                        ; push copy (+2)
             //   ldtoken <field_with_rva>   ; push handle (+3)
             //   call InitializeArray       ; pop 2 (+1) — net: 1 value on stack
-            ConstValue::DecryptedArray {
-                data,
-                element_type_ref,
-                element_size,
-            } => {
-                let elem_size = element_size.max(&1);
+            ConstValue::DecryptedArray(arr) => {
+                let elem_size = arr.element_size.max(1);
                 #[allow(clippy::cast_possible_truncation)]
-                let num_elements = data.len().checked_div(*elem_size).unwrap_or(0);
+                let num_elements = arr.data.len().checked_div(elem_size).unwrap_or(0);
 
                 emitter::emit_ldc_i4(encoder, num_elements as i32)?;
-                encoder
-                    .emit_instruction("newarr", Some(Operand::Token(element_type_ref.token())))?;
+                encoder.emit_instruction(
+                    "newarr",
+                    Some(Operand::Token(arr.element_type_ref.token())),
+                )?;
 
-                if let Some(info) = self.interned_arrays.get(data) {
+                if let Some(info) = self.interned_arrays.get(&arr.data) {
                     // Compact: dup + ldtoken + call InitializeArray
                     // Stack: [array] → [array, array] → [array, array, handle] → [array]
                     encoder.emit_instruction("dup", None)?;
@@ -4499,6 +4548,14 @@ impl SsaCodeGenerator {
                 }
                 // If interning failed, array is left uninitialized (zeroed).
                 // This is still valid IL — the values will just be default(T).
+            }
+
+            // SIMD vector constants come from the native SSA substrate and have
+            // no direct CIL `ldc`-style encoding.
+            ConstValue::Vector(_) => {
+                return Err(Error::CodegenFailed(
+                    "Vector constants are not supported in CIL code generation".to_string(),
+                ));
             }
         }
         Ok(())

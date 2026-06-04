@@ -804,6 +804,7 @@ fn extract_member_custom_attrs(
     match thread.heap().get(href) {
         Ok(HeapObject::ReflectionMethod { method_token, .. }) => asm
             .method(&method_token)
+            .ok()
             .map(|m| m.custom_attributes.clone()),
         Ok(HeapObject::ReflectionField {
             field_token,

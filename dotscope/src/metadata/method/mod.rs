@@ -444,6 +444,69 @@ impl From<MethodRc> for MethodRef {
     }
 }
 
+/// Disambiguated reason for a [`Method`]'s RVA value.
+///
+/// Returned by [`Method::rva_kind`]. Lets callers distinguish between a method
+/// with a real IL body (`Resolved(addr)`), one of the legitimate "no IL"
+/// cases (`Abstract`, `PInvoke`, `Runtime`), and a malformed-input case
+/// (`UnresolvedZero` — RVA is `None` with no flag explaining why).
+///
+/// `Method.rva` carried `Option<u32>` does not surface this distinction;
+/// `rva_kind()` is the recommended accessor for downstream code that needs
+/// to log a meaningful reason or take a code path based on the RVA's
+/// provenance.
+///
+/// # Stability
+///
+/// `#[non_exhaustive]` so additional well-known classifications (e.g. an
+/// unmanaged-export variant) can be added later without a breaking change.
+/// Consumers must include a wildcard arm when matching.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MethodRvaKind {
+    /// IL code lives at the given RVA. Equivalent to `Method.rva == Some(addr)`.
+    Resolved(u32),
+    /// Method is declared abstract — body is supplied by an overriding type
+    /// in this or another assembly.
+    Abstract,
+    /// Method is implemented via Platform Invoke — body lives in an external
+    /// native module referenced by `MethodModifiers::PINVOKE_IMPL`.
+    PInvoke,
+    /// Method is runtime-managed — implemented by the CLR rather than by IL
+    /// in this assembly. Identified by `MethodImplCodeType::RUNTIME`.
+    Runtime,
+    /// `Method.rva` is `None` but no flag explains why. Indicates malformed
+    /// metadata or an unsupported method-implementation form.
+    UnresolvedZero,
+}
+
+impl MethodRvaKind {
+    /// Returns a stable `&'static str` identifier for this RVA kind.
+    ///
+    /// Variants render as `"resolved"`, `"abstract"`, `"pinvoke"`,
+    /// `"runtime"`, `"unresolved_zero"`. The strings are part of the stable
+    /// public API and safe to persist.
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            MethodRvaKind::Resolved(_) => "resolved",
+            MethodRvaKind::Abstract => "abstract",
+            MethodRvaKind::PInvoke => "pinvoke",
+            MethodRvaKind::Runtime => "runtime",
+            MethodRvaKind::UnresolvedZero => "unresolved_zero",
+        }
+    }
+}
+
+impl std::fmt::Display for MethodRvaKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MethodRvaKind::Resolved(addr) => write!(f, "resolved(0x{addr:08X})"),
+            other => f.write_str(other.as_str()),
+        }
+    }
+}
+
 /// Represents all the information about a CIL method.
 ///
 /// The `Method` struct contains all metadata, code, and analysis results for a single .NET method.
@@ -1013,6 +1076,72 @@ impl Method {
     #[must_use]
     pub fn is_abstract(&self) -> bool {
         self.flags_modifiers.contains(MethodModifiers::ABSTRACT)
+    }
+
+    /// Returns the disambiguated reason for this method's RVA value.
+    ///
+    /// `Method.rva` is `Some(addr)` for methods with IL bodies and `None`
+    /// for methods that legitimately have no IL (abstract, P/Invoke,
+    /// runtime-managed) — but the bare `Option` cannot tell consumers *why*
+    /// a method has no body. This accessor classifies by examining the
+    /// method's `MethodModifiers` and `MethodImplCodeType` flags so callers
+    /// can log a meaningful reason instead of treating "RVA = 0" as
+    /// generic missing-data.
+    ///
+    /// The classification follows ECMA-335 §II.23.1.10: `ABSTRACT` and
+    /// `PINVOKE_IMPL` are method-attribute bits (`MethodModifiers`), and the
+    /// `RUNTIME` impl-code-type bits live in `MethodImplCodeType`. Variants
+    /// are tested in priority order — `Abstract` first, then `PInvoke`, then
+    /// `Runtime` — so a method tagged with multiple flags reports the most
+    /// informative reason.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use dotscope::metadata::method::MethodRvaKind;
+    /// use dotscope::metadata::token::Token;
+    ///
+    /// let assembly = CilObject::from_path("tests/samples/WindowsBase.dll")?;
+    /// let token = Token::new(0x06000001);
+    ///
+    /// if let Ok(method) = assembly.method(&token) {
+    ///     match method.rva_kind() {
+    ///         MethodRvaKind::Resolved(addr) => {
+    ///             println!("IL at 0x{addr:08X}");
+    ///         }
+    ///         MethodRvaKind::Abstract => {
+    ///             println!("abstract — no body in this assembly");
+    ///         }
+    ///         MethodRvaKind::PInvoke => {
+    ///             println!("P/Invoke — body lives in a native module");
+    ///         }
+    ///         MethodRvaKind::Runtime => {
+    ///             println!("runtime-managed — implemented by the CLR");
+    ///         }
+    ///         MethodRvaKind::UnresolvedZero => {
+    ///             println!("RVA = 0 with no flag explanation; suspicious metadata");
+    ///         }
+    ///         _ => {}
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    #[must_use]
+    pub fn rva_kind(&self) -> MethodRvaKind {
+        if let Some(addr) = self.rva {
+            return MethodRvaKind::Resolved(addr);
+        }
+        if self.flags_modifiers.contains(MethodModifiers::ABSTRACT) {
+            return MethodRvaKind::Abstract;
+        }
+        if self.flags_modifiers.contains(MethodModifiers::PINVOKE_IMPL) {
+            return MethodRvaKind::PInvoke;
+        }
+        if self.impl_code_type.contains(MethodImplCodeType::RUNTIME) {
+            return MethodRvaKind::Runtime;
+        }
+        MethodRvaKind::UnresolvedZero
     }
 
     /// Returns true if the method has public access.
@@ -2143,5 +2272,67 @@ mod tests {
 
         // Default method should not have forwarded pinvoke flag
         assert!(!method.is_forwarded_pinvoke());
+    }
+
+    #[test]
+    fn test_method_rva_kind() {
+        // Default: rva = Some(0x1000) → Resolved.
+        let resolved = MethodBuilder::new().with_rva(0x1234).build();
+        assert_eq!(resolved.rva_kind(), MethodRvaKind::Resolved(0x1234));
+
+        // Abstract: no rva, ABSTRACT modifier set.
+        let abstract_m = MethodBuilder::new()
+            .without_rva()
+            .with_modifiers(MethodModifiers::ABSTRACT)
+            .build();
+        assert_eq!(abstract_m.rva_kind(), MethodRvaKind::Abstract);
+
+        // P/Invoke: no rva, PINVOKE_IMPL modifier set.
+        let pinvoke = MethodBuilder::new()
+            .without_rva()
+            .with_modifiers(MethodModifiers::PINVOKE_IMPL)
+            .build();
+        assert_eq!(pinvoke.rva_kind(), MethodRvaKind::PInvoke);
+
+        // Runtime: no rva, MethodImplCodeType::RUNTIME.
+        let runtime = MethodBuilder::new()
+            .without_rva()
+            .with_impl_code_type(MethodImplCodeType::RUNTIME)
+            .build();
+        assert_eq!(runtime.rva_kind(), MethodRvaKind::Runtime);
+
+        // UnresolvedZero: no rva, no flag explanation — malformed metadata.
+        let unresolved = MethodBuilder::new().without_rva().build();
+        assert_eq!(unresolved.rva_kind(), MethodRvaKind::UnresolvedZero);
+
+        // Priority: when both ABSTRACT and a runtime-managed flag are set,
+        // Abstract takes precedence (it's the most informative reason).
+        let abstract_runtime = MethodBuilder::new()
+            .without_rva()
+            .with_modifiers(MethodModifiers::ABSTRACT)
+            .with_impl_code_type(MethodImplCodeType::RUNTIME)
+            .build();
+        assert_eq!(abstract_runtime.rva_kind(), MethodRvaKind::Abstract);
+    }
+
+    #[test]
+    fn test_method_rva_kind_stable_strings() {
+        // Strings are part of the stable public API.
+        assert_eq!(MethodRvaKind::Resolved(0).as_str(), "resolved");
+        assert_eq!(MethodRvaKind::Abstract.as_str(), "abstract");
+        assert_eq!(MethodRvaKind::PInvoke.as_str(), "pinvoke");
+        assert_eq!(MethodRvaKind::Runtime.as_str(), "runtime");
+        assert_eq!(MethodRvaKind::UnresolvedZero.as_str(), "unresolved_zero");
+
+        // Display renders Resolved with the address; other variants delegate to as_str.
+        assert_eq!(
+            format!("{}", MethodRvaKind::Resolved(0x1234)),
+            "resolved(0x00001234)"
+        );
+        assert_eq!(format!("{}", MethodRvaKind::Abstract), "abstract");
+        assert_eq!(
+            format!("{}", MethodRvaKind::UnresolvedZero),
+            "unresolved_zero"
+        );
     }
 }

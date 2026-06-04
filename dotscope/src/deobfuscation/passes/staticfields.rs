@@ -213,7 +213,7 @@ impl FieldValueExtractor for StringExtractor {
     ) -> Option<ConstValue> {
         match value {
             EmValue::ObjectRef(heap_ref) => match process.address_space().get_string(*heap_ref) {
-                Ok(s) => Some(ConstValue::DecryptedString(s.to_string())),
+                Ok(s) => Some(ConstValue::DecryptedString(s.to_string().into_boxed_str())),
                 Err(e) => {
                     debug!(
                         "StringField: field 0x{:08X} has ObjectRef but get_string failed: {}",
@@ -225,7 +225,7 @@ impl FieldValueExtractor for StringExtractor {
             },
             EmValue::Null => {
                 // Null string — field initialized to null (rare but valid)
-                Some(ConstValue::DecryptedString(String::new()))
+                Some(ConstValue::DecryptedString(Box::from("")))
             }
             other => {
                 debug!(

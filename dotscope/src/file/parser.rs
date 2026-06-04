@@ -97,8 +97,29 @@
 use crate::{
     metadata::token::Token,
     utils::{read_be_at, read_le_at, CilIO},
-    Result,
+    Error, ParseFailure, ParseStage, Result,
 };
+
+/// File-local helpers for converting parser failures into the crate's
+/// [`Error`] without per-site verbosity. The parser is a generic
+/// building block, so all errors carry [`ParseStage::Generic`].
+#[inline]
+fn oob_err() -> Error {
+    ParseFailure::OutOfBounds {
+        stage: ParseStage::Generic,
+    }
+    .into()
+}
+
+#[inline]
+fn invalid_err(field: &'static str, reason: String) -> Error {
+    ParseFailure::InvalidField {
+        stage: ParseStage::Generic,
+        field,
+        reason,
+    }
+    .into()
+}
 
 /// A generic binary data parser for reading .NET metadata structures.
 ///
@@ -249,7 +270,7 @@ impl<'a> Parser<'a> {
     /// ```
     pub fn seek(&mut self, pos: usize) -> Result<()> {
         if pos >= self.data.len() {
-            return Err(out_of_bounds_error!());
+            return Err(oob_err());
         }
 
         self.position = pos;
@@ -298,12 +319,9 @@ impl<'a> Parser<'a> {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn advance_by(&mut self, step: usize) -> Result<()> {
-        let new_pos = self
-            .position
-            .checked_add(step)
-            .ok_or(out_of_bounds_error!())?;
+        let new_pos = self.position.checked_add(step).ok_or(oob_err())?;
         if new_pos > self.data.len() {
-            return Err(out_of_bounds_error!());
+            return Err(oob_err());
         }
         self.position = new_pos;
         Ok(())
@@ -363,10 +381,7 @@ impl<'a> Parser<'a> {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn peek_byte(&self) -> Result<u8> {
-        self.data
-            .get(self.position)
-            .copied()
-            .ok_or(out_of_bounds_error!())
+        self.data.get(self.position).copied().ok_or(oob_err())
     }
 
     /// Peek at a value of type `T` in little-endian format without advancing the position.
@@ -475,20 +490,14 @@ impl<'a> Parser<'a> {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn align(&mut self, alignment: usize) -> Result<()> {
-        let rem = self
-            .position
-            .checked_rem(alignment)
-            .ok_or(out_of_bounds_error!())?;
+        let rem = self.position.checked_rem(alignment).ok_or(oob_err())?;
         let padding = alignment
             .wrapping_sub(rem)
             .checked_rem(alignment)
-            .ok_or(out_of_bounds_error!())?;
-        let new_pos = self
-            .position
-            .checked_add(padding)
-            .ok_or(out_of_bounds_error!())?;
+            .ok_or(oob_err())?;
+        let new_pos = self.position.checked_add(padding).ok_or(oob_err())?;
         if new_pos > self.data.len() {
-            return Err(out_of_bounds_error!());
+            return Err(oob_err());
         }
         self.position = new_pos;
         Ok(())
@@ -587,7 +596,10 @@ impl<'a> Parser<'a> {
             return Ok(value);
         }
 
-        Err(malformed_error!("Invalid compressed uint - {}", first_byte))
+        Err(invalid_err(
+            "compressed_uint",
+            format!("invalid compressed uint - {first_byte}"),
+        ))
     }
 
     /// Read a compressed signed integer as defined in ECMA-335 II.23.2.
@@ -674,19 +686,18 @@ impl<'a> Parser<'a> {
             0x1 => 0x0100_0000, // TypeRef
             0x2 => 0x1B00_0000, // TypeSpec
             _ => {
-                return Err(malformed_error!(
-                    "Invalid compressed token - {}",
-                    compressed_token
+                return Err(invalid_err(
+                    "compressed_token",
+                    format!("invalid compressed token - {compressed_token}"),
                 ))
             }
         };
 
         let table_index = compressed_token >> 2;
         let token = table.checked_add(table_index).ok_or_else(|| {
-            malformed_error!(
-                "Compressed token index overflows table base: {} + {}",
-                table,
-                table_index
+            invalid_err(
+                "compressed_token",
+                format!("token index overflows table base: {table} + {table_index}"),
             )
         })?;
 
@@ -724,13 +735,13 @@ impl<'a> Parser<'a> {
         let mut shift: u32 = 0;
 
         loop {
-            let byte = *self.data.get(self.position).ok_or(out_of_bounds_error!())?;
-            self.position = self.position.checked_add(1).ok_or(out_of_bounds_error!())?;
+            let byte = *self.data.get(self.position).ok_or(oob_err())?;
+            self.position = self.position.checked_add(1).ok_or(oob_err())?;
 
             value |= u32::from(byte & 0x7F) << shift;
             shift = shift
                 .checked_add(7)
-                .ok_or_else(|| malformed_error!("7-bit encoded integer overflow"))?;
+                .ok_or_else(|| invalid_err("varint", "7-bit encoded integer overflow".into()))?;
 
             if (byte & 0x80) == 0 {
                 break;
@@ -739,9 +750,11 @@ impl<'a> Parser<'a> {
             // A u32 can hold at most 32 bits; after 4 bytes we've read 28 bits.
             // A 5th continuation byte would push past 32 bits, causing overflow.
             if shift >= 32 {
-                return Err(malformed_error!(
-                    "7-bit encoded integer overflow: value exceeds u32 capacity after {} bits",
-                    shift
+                return Err(invalid_err(
+                    "varint",
+                    format!(
+                        "7-bit encoded integer overflow: value exceeds u32 capacity after {shift} bits",
+                    ),
                 ));
             }
         }
@@ -781,26 +794,27 @@ impl<'a> Parser<'a> {
             if b == 0 {
                 break;
             }
-            end = end.checked_add(1).ok_or(out_of_bounds_error!())?;
+            end = end.checked_add(1).ok_or(oob_err())?;
         }
 
         // Handle two cases:
         // 1. Found null terminator (end < data.len()): normal null-terminated string
         // 2. Reached end of data (end == data.len()): string without null terminator (valid case)
-        let string_data = self.data.get(start..end).ok_or(out_of_bounds_error!())?;
+        let string_data = self.data.get(start..end).ok_or(oob_err())?;
 
         if end < self.data.len() {
-            self.position = end.checked_add(1).ok_or(out_of_bounds_error!())?;
+            self.position = end.checked_add(1).ok_or(oob_err())?;
         } else {
             self.position = end;
         }
 
         String::from_utf8(string_data.to_vec()).map_err(|e| {
-            malformed_error!(
-                "Invalid UTF-8 string at offset {}-{}: {}",
-                start,
-                end,
-                e.utf8_error()
+            invalid_err(
+                "utf8_string",
+                format!(
+                    "invalid UTF-8 string at offset {start}-{end}: {}",
+                    e.utf8_error()
+                ),
             )
         })
     }
@@ -829,21 +843,19 @@ impl<'a> Parser<'a> {
     /// ```
     pub fn read_prefixed_string_utf8(&mut self) -> Result<String> {
         let length = self.read_7bit_encoded_int()? as usize;
-        let end = self
-            .position
-            .checked_add(length)
-            .ok_or(out_of_bounds_error!())?;
+        let end = self.position.checked_add(length).ok_or(oob_err())?;
 
         let start = self.position;
-        let string_data = self.data.get(start..end).ok_or(out_of_bounds_error!())?;
+        let string_data = self.data.get(start..end).ok_or(oob_err())?;
         self.position = end;
 
         String::from_utf8(string_data.to_vec()).map_err(|e| {
-            malformed_error!(
-                "Invalid UTF-8 string at offset {}-{}: {}",
-                start,
-                end,
-                e.utf8_error()
+            invalid_err(
+                "utf8_string",
+                format!(
+                    "invalid UTF-8 string at offset {start}-{end}: {}",
+                    e.utf8_error()
+                ),
             )
         })
     }
@@ -885,17 +897,15 @@ impl<'a> Parser<'a> {
     pub fn read_prefixed_string_utf8_ref(&mut self) -> Result<&'a str> {
         let length = self.read_7bit_encoded_int()? as usize;
         let start = self.position;
-        let end = start.checked_add(length).ok_or(out_of_bounds_error!())?;
+        let end = start.checked_add(length).ok_or(oob_err())?;
 
-        let string_data = self.data.get(start..end).ok_or(out_of_bounds_error!())?;
+        let string_data = self.data.get(start..end).ok_or(oob_err())?;
         self.position = end;
 
         std::str::from_utf8(string_data).map_err(|_| {
-            malformed_error!(
-                "Invalid UTF-8 string at position {} - {} - {:?}",
-                start,
-                end,
-                string_data
+            invalid_err(
+                "utf8_string",
+                format!("invalid UTF-8 string at position {start} - {end} - {string_data:?}"),
             )
         })
     }
@@ -926,17 +936,18 @@ impl<'a> Parser<'a> {
     pub fn read_compressed_string_utf8(&mut self) -> Result<String> {
         let length = self.read_compressed_uint()? as usize;
         let start = self.position;
-        let end = start.checked_add(length).ok_or(out_of_bounds_error!())?;
+        let end = start.checked_add(length).ok_or(oob_err())?;
 
-        let string_data = self.data.get(start..end).ok_or(out_of_bounds_error!())?;
+        let string_data = self.data.get(start..end).ok_or(oob_err())?;
         self.position = end;
 
         String::from_utf8(string_data.to_vec()).map_err(|e| {
-            malformed_error!(
-                "Invalid UTF-8 compressed string at offset {}-{}: {}",
-                start,
-                end,
-                e.utf8_error()
+            invalid_err(
+                "utf8_compressed_string",
+                format!(
+                    "invalid UTF-8 compressed string at offset {start}-{end}: {}",
+                    e.utf8_error()
+                ),
             )
         })
     }
@@ -990,7 +1001,7 @@ impl<'a> Parser<'a> {
     /// ```
     pub fn ensure_remaining(&self, needed: usize) -> Result<()> {
         if self.remaining() < needed {
-            return Err(out_of_bounds_error!());
+            return Err(oob_err());
         }
         Ok(())
     }
@@ -1023,13 +1034,10 @@ impl<'a> Parser<'a> {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn calc_end_position(&self, length: usize) -> Result<usize> {
-        let end = self
-            .position
-            .checked_add(length)
-            .ok_or(out_of_bounds_error!())?;
+        let end = self.position.checked_add(length).ok_or(oob_err())?;
 
         if end > self.data.len() {
-            return Err(out_of_bounds_error!());
+            return Err(oob_err());
         }
 
         Ok(end)
@@ -1060,10 +1068,7 @@ impl<'a> Parser<'a> {
     /// ```
     pub fn read_bytes(&mut self, length: usize) -> Result<&'a [u8]> {
         let end = self.calc_end_position(length)?;
-        let bytes = self
-            .data
-            .get(self.position..end)
-            .ok_or(out_of_bounds_error!())?;
+        let bytes = self.data.get(self.position..end).ok_or(oob_err())?;
         self.position = end;
         Ok(bytes)
     }
@@ -1093,16 +1098,16 @@ impl<'a> Parser<'a> {
     /// ```
     pub fn read_prefixed_string_utf16(&mut self) -> Result<String> {
         let length = self.read_7bit_encoded_int()? as usize;
-        let end = self
-            .position
-            .checked_add(length)
-            .ok_or(out_of_bounds_error!())?;
+        let end = self.position.checked_add(length).ok_or(oob_err())?;
         if end > self.data.len() {
-            return Err(out_of_bounds_error!());
+            return Err(oob_err());
         }
 
         if !length.is_multiple_of(2) || length < 2 {
-            return Err(malformed_error!("Invalid UTF-16 length - {}", length));
+            return Err(invalid_err(
+                "utf16_length",
+                format!("invalid UTF-16 length - {length}"),
+            ));
         }
 
         let char_count = length / 2;
@@ -1114,11 +1119,12 @@ impl<'a> Parser<'a> {
 
         match String::from_utf16(&utf16_chars) {
             Ok(s) => Ok(s),
-            Err(_) => Err(malformed_error!(
-                "Invalid UTF-16 str - {} - {} - {:?}",
-                self.position,
-                length,
-                utf16_chars
+            Err(_) => Err(invalid_err(
+                "utf16_string",
+                format!(
+                    "invalid UTF-16 string at position {} (length {}): {utf16_chars:?}",
+                    self.position, length
+                ),
             )),
         }
     }
@@ -1127,7 +1133,7 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Error;
+    use crate::{Error, ParseFailure};
 
     #[test]
     fn test_read_compressed_uint() {
@@ -1150,7 +1156,7 @@ mod tests {
         let mut parser = Parser::new(&[]);
         assert!(matches!(
             parser.read_compressed_uint(),
-            Err(Error::OutOfBounds { .. })
+            Err(Error::Parse(ParseFailure::OutOfBounds { .. }))
         ));
     }
 
@@ -1191,7 +1197,7 @@ mod tests {
         assert!(matches!(parser.read_compressed_uint(), Ok(8)));
         assert!(matches!(
             parser.read_compressed_uint(),
-            Err(Error::OutOfBounds { .. })
+            Err(Error::Parse(ParseFailure::OutOfBounds { .. }))
         ));
     }
 
@@ -1334,7 +1340,7 @@ mod tests {
         let mut parser = Parser::new(&data);
         assert!(matches!(
             parser.read_prefixed_string_utf8_ref(),
-            Err(Error::OutOfBounds { .. })
+            Err(Error::Parse(ParseFailure::OutOfBounds { .. }))
         ));
     }
 
@@ -1368,13 +1374,19 @@ mod tests {
         let data = [0x01];
         let parser = Parser::new(&data);
         let result: Result<u16> = parser.peek_le();
-        assert!(matches!(result, Err(Error::OutOfBounds { .. })));
+        assert!(matches!(
+            result,
+            Err(Error::Parse(ParseFailure::OutOfBounds { .. }))
+        ));
 
         // Test peek_le at end of data
         let mut parser = Parser::new(&data);
         parser.advance().unwrap();
         let result: Result<u8> = parser.peek_le();
-        assert!(matches!(result, Err(Error::OutOfBounds { .. })));
+        assert!(matches!(
+            result,
+            Err(Error::Parse(ParseFailure::OutOfBounds { .. }))
+        ));
     }
 
     #[test]

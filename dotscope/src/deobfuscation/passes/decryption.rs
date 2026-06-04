@@ -91,6 +91,7 @@ use analyssa::graph::{
     algorithms::{compute_dominators, DominatorTree},
     GraphBase, NodeId, RootedGraph,
 };
+use analyssa::ir::value::DecryptedArrayData;
 
 /// Decryption pass for obfuscated constants and strings.
 ///
@@ -430,7 +431,7 @@ impl DecryptionPass {
         // Handle ObjectRef specially - try string, unbox, or array from heap
         if let EmValue::ObjectRef(href) = em_value {
             if let Ok(s) = thread.heap().get_string(*href) {
-                return Some(ConstValue::DecryptedString(s.to_string()));
+                return Some(ConstValue::DecryptedString(s.to_string().into_boxed_str()));
             }
             // Try to unbox a boxed primitive value from the heap
             if let Ok(unboxed) = thread.heap().unbox(*href) {
@@ -444,11 +445,11 @@ impl DecryptionPass {
                     let elem_size = elem_flavor.byte_size(PointerSize::Bit32).unwrap_or(1);
                     // Resolve the element CilFlavor to a real TypeRef token from the assembly
                     if let Some(token) = Self::resolve_flavor_to_typeref(&elem_flavor, thread) {
-                        return Some(ConstValue::DecryptedArray {
+                        return Some(ConstValue::DecryptedArray(Box::new(DecryptedArrayData {
                             data: bytes,
                             element_type_ref: TypeRef::new(token),
                             element_size: elem_size,
-                        });
+                        })));
                     }
                 }
             }
@@ -461,7 +462,7 @@ impl DecryptionPass {
             if let Some(first_field) = fields.first().filter(|_| fields.len() == 1) {
                 if let EmValue::ObjectRef(href) = first_field {
                     if let Ok(s) = thread.heap().get_string(*href) {
-                        return Some(ConstValue::DecryptedString(s.to_string()));
+                        return Some(ConstValue::DecryptedString(s.to_string().into_boxed_str()));
                     }
                 }
                 // Try primitive conversion on the single field (but not if it's Null)

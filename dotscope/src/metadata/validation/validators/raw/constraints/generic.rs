@@ -81,6 +81,7 @@ use crate::{
         },
         validation::{
             context::{RawValidationContext, ValidationContext},
+            shared::err_no_metadata_tables,
             traits::RawValidator,
         },
     },
@@ -145,9 +146,7 @@ impl RawGenericConstraintValidator {
     /// - Owner coded index references are null (row = 0)
     /// - Name references are null (name = 0)
     fn validate_generic_parameters(assembly_view: &CilAssemblyView) -> Result<()> {
-        let tables = assembly_view
-            .tables()
-            .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
+        let tables = assembly_view.tables().ok_or_else(err_no_metadata_tables)?;
 
         if let Some(generic_param_table) = tables.table::<GenericParamRaw>() {
             for generic_param in generic_param_table {
@@ -200,9 +199,7 @@ impl RawGenericConstraintValidator {
     /// - Constraint coded index references are null (constraint.row = 0)
     /// - Owner references exceed GenericParam table row count
     fn validate_parameter_constraints(assembly_view: &CilAssemblyView) -> Result<()> {
-        let tables = assembly_view
-            .tables()
-            .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
+        let tables = assembly_view.tables().ok_or_else(err_no_metadata_tables)?;
 
         if let Some(constraint_table) = tables.table::<GenericParamConstraintRaw>() {
             let generic_param_table = tables.table::<GenericParamRaw>();
@@ -259,9 +256,7 @@ impl RawGenericConstraintValidator {
     /// - Constraint owners reference non-existent GenericParam RIDs
     /// - Cross-table references are inconsistent between GenericParamConstraint and GenericParam tables
     fn validate_constraint_inheritance(assembly_view: &CilAssemblyView) -> Result<()> {
-        let tables = assembly_view
-            .tables()
-            .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
+        let tables = assembly_view.tables().ok_or_else(err_no_metadata_tables)?;
 
         if let (Some(generic_param_table), Some(constraint_table)) = (
             tables.table::<GenericParamRaw>(),
@@ -308,9 +303,7 @@ impl RawGenericConstraintValidator {
     /// - TypeRef constraint references exceed TypeRef table bounds
     /// - TypeSpec constraint references exceed TypeSpec table bounds
     fn validate_constraint_types(assembly_view: &CilAssemblyView) -> Result<()> {
-        let tables = assembly_view
-            .tables()
-            .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
+        let tables = assembly_view.tables().ok_or_else(err_no_metadata_tables)?;
 
         if let Some(constraint_table) = tables.table::<GenericParamConstraintRaw>() {
             for constraint in constraint_table {
@@ -408,9 +401,7 @@ impl RawGenericConstraintValidator {
     /// - Reserved flag bits are set
     /// - Variance flags used inappropriately (method vs type parameters)
     fn validate_parameter_flags(assembly_view: &CilAssemblyView) -> Result<()> {
-        let tables = assembly_view
-            .tables()
-            .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
+        let tables = assembly_view.tables().ok_or_else(err_no_metadata_tables)?;
 
         if let Some(generic_param_table) = tables.table::<GenericParamRaw>() {
             for generic_param in generic_param_table {
@@ -535,7 +526,7 @@ mod tests {
         validator_test(
             raw_generic_constraint_validator_file_factory,
             "RawGenericConstraintValidator",
-            "Malformed",
+            "Parse",
             config,
             |context| validator.validate_raw(context),
         )

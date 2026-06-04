@@ -793,7 +793,7 @@ fn compute_target_offset(
 
     for (stale_dummy, final_dummy_val) in sorted_entries {
         let final_dummy_token = Token::new(*final_dummy_val);
-        let Some(dummy_method) = assembly.method(&final_dummy_token) else {
+        let Ok(dummy_method) = assembly.method(&final_dummy_token) else {
             continue;
         };
 
@@ -899,7 +899,7 @@ fn is_redirect_stub_memberref(
     };
 
     if memberref.class.tag == TableId::TypeDef {
-        if let Some(stub_method) = assembly.method(&redirect_stub_token) {
+        if let Ok(stub_method) = assembly.method(&redirect_stub_token) {
             if let Some(stub_type) = stub_method.declaring_type_rc() {
                 return memberref.class.row == stub_type.token.row();
             }

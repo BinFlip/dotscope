@@ -161,7 +161,7 @@ pub fn resolve_call_result(
     pointer_size: PointerSize,
 ) -> Option<ConstValue> {
     // Look up the method
-    let method = assembly.method(&method_token)?;
+    let method = assembly.method(&method_token).ok()?;
 
     // Build SSA for the callee
     let callee_ssa = method.ssa(assembly).ok()?;

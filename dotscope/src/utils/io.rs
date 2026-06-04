@@ -156,7 +156,15 @@
 //! making them safe to call concurrently from multiple threads.
 //!
 
-use crate::Result;
+use crate::{Error, ParseFailure, ParseStage, Result};
+
+#[inline]
+fn io_oob() -> Error {
+    ParseFailure::OutOfBounds {
+        stage: ParseStage::Generic,
+    }
+    .into()
+}
 
 /// Trait for implementing type-specific safe binary data reading operations.
 ///
@@ -536,10 +544,10 @@ pub fn read_le<T: CilIO>(data: &[u8]) -> Result<T> {
 /// Note that the offset parameter is modified, so each thread should use its own offset variable.
 pub fn read_le_at<T: CilIO>(data: &[u8], offset: &mut usize) -> Result<T> {
     let type_len = std::mem::size_of::<T>();
-    let end = offset.checked_add(type_len).ok_or(out_of_bounds_error!())?;
-    let slice = data.get(*offset..end).ok_or(out_of_bounds_error!())?;
+    let end = offset.checked_add(type_len).ok_or(io_oob())?;
+    let slice = data.get(*offset..end).ok_or(io_oob())?;
     let Ok(read) = slice.try_into() else {
-        return Err(out_of_bounds_error!());
+        return Err(io_oob());
     };
 
     *offset = end;
@@ -669,10 +677,10 @@ pub fn read_be<T: CilIO>(data: &[u8]) -> Result<T> {
 /// Note that the offset parameter is modified, so each thread should use its own offset variable.
 pub fn read_be_at<T: CilIO>(data: &[u8], offset: &mut usize) -> Result<T> {
     let type_len = std::mem::size_of::<T>();
-    let end = offset.checked_add(type_len).ok_or(out_of_bounds_error!())?;
-    let slice = data.get(*offset..end).ok_or(out_of_bounds_error!())?;
+    let end = offset.checked_add(type_len).ok_or(io_oob())?;
+    let slice = data.get(*offset..end).ok_or(io_oob())?;
     let Ok(read) = slice.try_into() else {
-        return Err(out_of_bounds_error!());
+        return Err(io_oob());
     };
 
     *offset = end;
@@ -805,9 +813,9 @@ pub fn write_le<T: CilIO>(data: &mut [u8], value: T) -> Result<()> {
 /// Note that the offset parameter is modified, so each thread should use its own offset variable.
 pub fn write_le_at<T: CilIO>(data: &mut [u8], offset: &mut usize, value: T) -> Result<()> {
     let type_len = std::mem::size_of::<T>();
-    let end = offset.checked_add(type_len).ok_or(out_of_bounds_error!())?;
+    let end = offset.checked_add(type_len).ok_or(io_oob())?;
     let bytes = value.to_le_bytes();
-    let dst = data.get_mut(*offset..end).ok_or(out_of_bounds_error!())?;
+    let dst = data.get_mut(*offset..end).ok_or(io_oob())?;
     dst.copy_from_slice(bytes.as_ref());
     *offset = end;
 
@@ -946,9 +954,9 @@ pub fn write_be<T: CilIO>(data: &mut [u8], value: T) -> Result<()> {
 /// Note that the offset parameter is modified, so each thread should use its own offset variable.
 pub fn write_be_at<T: CilIO>(data: &mut [u8], offset: &mut usize, value: T) -> Result<()> {
     let type_len = std::mem::size_of::<T>();
-    let end = offset.checked_add(type_len).ok_or(out_of_bounds_error!())?;
+    let end = offset.checked_add(type_len).ok_or(io_oob())?;
     let bytes = value.to_be_bytes();
-    let dst = data.get_mut(*offset..end).ok_or(out_of_bounds_error!())?;
+    let dst = data.get_mut(*offset..end).ok_or(io_oob())?;
     dst.copy_from_slice(bytes.as_ref());
     *offset = end;
 
@@ -1271,17 +1279,13 @@ pub fn decode_utf16le(bytes: &[u8]) -> Option<String> {
 /// Note that the offset parameter is modified, so each thread should use its own offset variable.
 pub fn write_string_at(data: &mut [u8], offset: &mut usize, value: &str) -> Result<()> {
     let string_bytes = value.as_bytes();
-    let after_str = offset
-        .checked_add(string_bytes.len())
-        .ok_or(out_of_bounds_error!())?;
-    let after_null = after_str.checked_add(1).ok_or(out_of_bounds_error!())?;
+    let after_str = offset.checked_add(string_bytes.len()).ok_or(io_oob())?;
+    let after_null = after_str.checked_add(1).ok_or(io_oob())?;
 
-    let dst = data
-        .get_mut(*offset..after_str)
-        .ok_or(out_of_bounds_error!())?;
+    let dst = data.get_mut(*offset..after_str).ok_or(io_oob())?;
     dst.copy_from_slice(string_bytes);
 
-    *data.get_mut(after_str).ok_or(out_of_bounds_error!())? = 0;
+    *data.get_mut(after_str).ok_or(io_oob())? = 0;
 
     *offset = after_null;
 
@@ -1328,32 +1332,32 @@ pub fn write_string_at(data: &mut [u8], offset: &mut usize, value: &str) -> Resu
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub fn read_compressed_int(data: &[u8], offset: &mut usize) -> Result<(usize, usize)> {
-    let first_byte = *data.get(*offset).ok_or(out_of_bounds_error!())?;
+    let first_byte = *data.get(*offset).ok_or(io_oob())?;
 
     if first_byte & 0x80 == 0 {
         // Single byte: 0xxxxxxx
-        *offset = offset.checked_add(1).ok_or(out_of_bounds_error!())?;
+        *offset = offset.checked_add(1).ok_or(io_oob())?;
         Ok((first_byte as usize, 1))
     } else if first_byte & 0xC0 == 0x80 {
         // Two bytes: 10xxxxxx xxxxxxxx
-        let next = offset.checked_add(1).ok_or(out_of_bounds_error!())?;
-        let second_byte = *data.get(next).ok_or(out_of_bounds_error!())?;
+        let next = offset.checked_add(1).ok_or(io_oob())?;
+        let second_byte = *data.get(next).ok_or(io_oob())?;
         let value = (((first_byte & 0x3F) as usize) << 8) | (second_byte as usize);
-        *offset = offset.checked_add(2).ok_or(out_of_bounds_error!())?;
+        *offset = offset.checked_add(2).ok_or(io_oob())?;
         Ok((value, 2))
     } else {
         // Four bytes: 110xxxxx xxxxxxxx xxxxxxxx xxxxxxxx
-        let o1 = offset.checked_add(1).ok_or(out_of_bounds_error!())?;
-        let o2 = offset.checked_add(2).ok_or(out_of_bounds_error!())?;
-        let o3 = offset.checked_add(3).ok_or(out_of_bounds_error!())?;
-        let b1 = *data.get(o1).ok_or(out_of_bounds_error!())?;
-        let b2 = *data.get(o2).ok_or(out_of_bounds_error!())?;
-        let b3 = *data.get(o3).ok_or(out_of_bounds_error!())?;
+        let o1 = offset.checked_add(1).ok_or(io_oob())?;
+        let o2 = offset.checked_add(2).ok_or(io_oob())?;
+        let o3 = offset.checked_add(3).ok_or(io_oob())?;
+        let b1 = *data.get(o1).ok_or(io_oob())?;
+        let b2 = *data.get(o2).ok_or(io_oob())?;
+        let b3 = *data.get(o3).ok_or(io_oob())?;
         let mut value = ((first_byte & 0x1F) as usize) << 24;
         value |= (b1 as usize) << 16;
         value |= (b2 as usize) << 8;
         value |= b3 as usize;
-        *offset = offset.checked_add(4).ok_or(out_of_bounds_error!())?;
+        *offset = offset.checked_add(4).ok_or(io_oob())?;
         Ok((value, 4))
     }
 }
@@ -1439,7 +1443,7 @@ pub fn read_packed_len(data: &[u8]) -> Option<(usize, usize)> {
 /// ```
 pub fn read_compressed_uint(data: &[u8], offset: &mut usize) -> Result<u32> {
     let (value, _consumed) = read_compressed_int(data, offset)?;
-    u32::try_from(value).map_err(|_| out_of_bounds_error!())
+    u32::try_from(value).map_err(|_| io_oob())
 }
 
 /// Reads a compressed unsigned integer from a specific offset without advancing a mutable offset.
@@ -1473,7 +1477,7 @@ pub fn read_compressed_uint_at(data: &[u8], offset: usize) -> Result<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Error;
+    use crate::{Error, ParseFailure};
 
     const TEST_BUFFER: [u8; 8] = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
 
@@ -1640,10 +1644,16 @@ mod tests {
         let buffer = [0xFF, 0xFF, 0xFF, 0xFF];
 
         let result = read_le::<u64>(&buffer);
-        assert!(matches!(result, Err(Error::OutOfBounds { .. })));
+        assert!(matches!(
+            result,
+            Err(Error::Parse(ParseFailure::OutOfBounds { .. }))
+        ));
 
         let result = read_le::<f64>(&buffer);
-        assert!(matches!(result, Err(Error::OutOfBounds { .. })));
+        assert!(matches!(
+            result,
+            Err(Error::Parse(ParseFailure::OutOfBounds { .. }))
+        ));
     }
 
     #[test]
@@ -1933,10 +1943,16 @@ mod tests {
 
         // Try to write u32 (4 bytes) into 2-byte buffer
         let result = write_le(&mut buffer, 0x12345678u32);
-        assert!(matches!(result, Err(Error::OutOfBounds { .. })));
+        assert!(matches!(
+            result,
+            Err(Error::Parse(ParseFailure::OutOfBounds { .. }))
+        ));
 
         let result = write_be(&mut buffer, 0x12345678u32);
-        assert!(matches!(result, Err(Error::OutOfBounds { .. })));
+        assert!(matches!(
+            result,
+            Err(Error::Parse(ParseFailure::OutOfBounds { .. }))
+        ));
     }
 
     #[test]

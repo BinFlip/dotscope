@@ -1169,8 +1169,8 @@ fn test_try_fold_concat2_decrypted_strings() {
     let v1 = SsaVarId::from_index(1);
 
     let mut constants = BTreeMap::new();
-    constants.insert(v0, ConstValue::DecryptedString("Hello".to_string()));
-    constants.insert(v1, ConstValue::DecryptedString(", World".to_string()));
+    constants.insert(v0, ConstValue::DecryptedString("Hello".into()));
+    constants.insert(v1, ConstValue::DecryptedString(", World".into()));
 
     // Use a fake token — identify_string_op will fail to resolve it through the
     // assembly, so we test the folding logic indirectly through fold_string_operations.
@@ -1194,7 +1194,7 @@ fn test_try_fold_concat_with_non_constant_arg() {
     let v1 = SsaVarId::from_index(1);
 
     let mut constants = BTreeMap::new();
-    constants.insert(v0, ConstValue::DecryptedString("Hello".to_string()));
+    constants.insert(v0, ConstValue::DecryptedString("Hello".into()));
     // v1 is NOT in constants — simulates a non-constant argument
 
     let strings: Option<Vec<String>> = [v0, v1]
@@ -1225,11 +1225,11 @@ fn test_fold_string_operations_with_decrypted_concat() {
             f.block(0, |b| {
                 b.op(SsaOp::Const {
                     dest: v0,
-                    value: ConstValue::DecryptedString("Sys".to_string()),
+                    value: ConstValue::DecryptedString("Sys".into()),
                 });
                 b.op(SsaOp::Const {
                     dest: v1,
-                    value: ConstValue::DecryptedString("tem".to_string()),
+                    value: ConstValue::DecryptedString("tem".into()),
                 });
                 b.op(SsaOp::Call {
                     dest: Some(v2),
@@ -1242,8 +1242,8 @@ fn test_fold_string_operations_with_decrypted_concat() {
         .unwrap();
 
     let mut constants = BTreeMap::new();
-    constants.insert(v0, ConstValue::DecryptedString("Sys".to_string()));
-    constants.insert(v1, ConstValue::DecryptedString("tem".to_string()));
+    constants.insert(v0, ConstValue::DecryptedString("Sys".into()));
+    constants.insert(v1, ConstValue::DecryptedString("tem".into()));
 
     let mut changes = EventLog::new();
 

@@ -406,7 +406,7 @@ fn resolve_call_name(assembly: &CilObject, token: Token) -> Option<String> {
     match table_id {
         // MethodDef
         0x06 => {
-            let method = assembly.method(&token)?;
+            let method = assembly.method(&token).ok()?;
             Some(method.name.clone())
         }
         // MemberRef

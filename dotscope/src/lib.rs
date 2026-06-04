@@ -247,7 +247,7 @@
 //! match CilObject::from_path(std::path::Path::new("tests/samples/crafted_2.exe")) {
 //!     Ok(assembly) => println!("Successfully loaded assembly"),
 //!     Err(Error::NotSupported) => println!("File format not supported"),
-//!     Err(Error::Malformed { message, .. }) => println!("Malformed file: {}", message),
+//!     Err(Error::Parse(parse_err)) => println!("Malformed file: {}", parse_err),
 //!     Err(e) => println!("Other error: {}", e),
 //! }
 //! ```
@@ -907,11 +907,11 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// match CilObject::from_path(std::path::Path::new("tests/samples/crafted_2.exe")) {
 ///     Ok(assembly) => println!("Loaded successfully"),
 ///     Err(Error::NotSupported) => println!("File format not supported"),
-///     Err(Error::Malformed { message, .. }) => println!("Malformed: {}", message),
+///     Err(Error::Parse(parse_err)) => println!("Malformed: {}", parse_err),
 ///     Err(e) => println!("Error: {}", e),
 /// }
 /// ```
-pub use error::Error;
+pub use error::{Error, HeapKind, MethodLookupError, ParseFailure, ParseStage, StreamKind};
 
 /// Raw assembly view for editing and modification operations.
 ///

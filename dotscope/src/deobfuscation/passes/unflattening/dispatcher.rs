@@ -153,35 +153,12 @@ impl Dispatcher {
             })?;
 
         // Find the state phi: the phi whose result feeds into the switch value
-        // (directly or through a short chain of copies/arithmetic in the block)
-        let state_phi = block
-            .phi_nodes()
-            .iter()
-            .find(|phi| {
-                if phi.result() == switch_var {
-                    return true;
-                }
-                // Trace switch_var backwards through block-local definitions
-                let mut current = switch_var;
-                for _ in 0..5 {
-                    if let Some(def_instr) = block
-                        .instructions()
-                        .iter()
-                        .find(|i| i.op().dest().is_some_and(|d| d == current))
-                    {
-                        if let Some(&src) = def_instr.op().uses().first() {
-                            if src == phi.result() {
-                                return true;
-                            }
-                            current = src;
-                            continue;
-                        }
-                    }
-                    break;
-                }
-                false
-            })
-            .map(|phi| phi.result());
+        // through the dispatcher's state-transform chain. Reuse the IR's
+        // backward tracer (which follows arithmetic/bitwise/unary state
+        // transforms) rather than an ad-hoc, fixed-depth, first-operand walk —
+        // the latter capped at 5 steps and ignored `neg`/`not`, missing the
+        // state phi behind ConfuserEx "expression" wrappers like `-(!!state)`.
+        let state_phi = ssa.trace_to_phi(switch_var, Some(self.block));
 
         let mut refreshed = Self::new(
             self.block,

@@ -146,7 +146,7 @@
 //! - **ECMA-335 II.24.2.4**: `#Blob` heap specification
 //! - **ECMA-335 II.23.2**: Signature encoding formats stored in blobs
 
-use crate::{file::parser::Parser, Result};
+use crate::{file::parser::Parser, Error, HeapKind, ParseFailure, Result};
 
 /// ECMA-335 binary blob heap providing indexed access to variable-length data.
 ///
@@ -354,7 +354,11 @@ impl<'a> Blob<'a> {
     pub fn from(data: &'a [u8]) -> Result<Blob<'a>> {
         match data.first() {
             Some(0) => Ok(Blob { data }),
-            _ => Err(malformed_error!("Invalid memory for #Blob heap")),
+            _ => Err(ParseFailure::HeapCorrupt {
+                heap: HeapKind::Blob,
+                reason: "first byte must be 0 (empty blob sentinel)".into(),
+            }
+            .into()),
         }
     }
 
@@ -436,25 +440,29 @@ impl<'a> Blob<'a> {
     /// - [`crate::file::parser::Parser`]: For compressed integer parsing
     /// - [ECMA-335 II.23.2](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): Compressed integer format
     pub fn get(&self, index: usize) -> Result<&'a [u8]> {
+        let oob = || ParseFailure::HeapOutOfBounds {
+            heap: HeapKind::Blob,
+            index: u32::try_from(index).unwrap_or(u32::MAX),
+        };
         if index >= self.data.len() {
-            return Err(out_of_bounds_error!());
+            return Err(oob().into());
         }
 
-        let mut parser = Parser::new(self.data.get(index..).ok_or(out_of_bounds_error!())?);
+        let mut parser = Parser::new(self.data.get(index..).ok_or_else(oob)?);
         let len = parser.read_compressed_uint()? as usize;
         let skip = parser.pos();
 
         let Some(data_start) = index.checked_add(skip) else {
-            return Err(out_of_bounds_error!());
+            return Err(oob().into());
         };
 
         let Some(data_end) = data_start.checked_add(len) else {
-            return Err(out_of_bounds_error!());
+            return Err(oob().into());
         };
 
         self.data
             .get(data_start..data_end)
-            .ok_or(out_of_bounds_error!())
+            .ok_or_else(|| Error::from(oob()))
     }
 
     /// Returns an iterator over all blobs in the heap.

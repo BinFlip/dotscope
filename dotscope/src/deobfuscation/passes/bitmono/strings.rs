@@ -255,7 +255,7 @@ impl SsaPass<CilTarget, CompilerContext> for StringDecryptionPass {
                     if let Some(instr) = block.instruction_mut(*call_idx) {
                         instr.set_op(SsaOp::Const {
                             dest: *call_dest,
-                            value: ConstValue::DecryptedString(decrypted.clone()),
+                            value: ConstValue::DecryptedString(decrypted.clone().into()),
                         });
                     }
                 }

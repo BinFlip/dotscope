@@ -67,7 +67,7 @@ use crate::{
         },
         token::Token,
     },
-    Blob, Error, Guid, Result, Strings, UserStrings,
+    Blob, Error, Guid, HeapKind, ParseFailure, Result, Strings, UserStrings,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -816,19 +816,23 @@ impl ReferenceScanner {
             "blobs" => self.heap_sizes.blobs,
             "guids" => self.heap_sizes.guids,
             "userstrings" => self.heap_sizes.userstrings,
-            _ => {
-                return Err(Error::HeapBoundsError {
-                    heap: heap_type.to_string(),
-                    index,
-                })
+            other => {
+                return Err(Error::Parse(ParseFailure::Other {
+                    stage: crate::ParseStage::Validation,
+                    message: format!("unknown heap '{other}' for index {index}"),
+                }))
             }
         };
 
         if index >= max_size {
-            return Err(Error::HeapBoundsError {
-                heap: heap_type.to_string(),
-                index,
-            });
+            let heap = match heap_type {
+                "strings" => HeapKind::Strings,
+                "blobs" => HeapKind::Blob,
+                "guids" => HeapKind::Guid,
+                "userstrings" => HeapKind::UserStrings,
+                _ => unreachable!("heap_type already validated above"),
+            };
+            return Err(Error::Parse(ParseFailure::HeapOutOfBounds { heap, index }));
         }
 
         Ok(())

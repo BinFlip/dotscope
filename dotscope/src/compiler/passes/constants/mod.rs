@@ -60,6 +60,7 @@ fn is_method_on_type(assembly: &CilObject, token: Token, type_name: &str) -> boo
     match token.table() {
         0x06 => assembly
             .method(&token)
+            .ok()
             .and_then(|m| m.declaring_type_rc())
             .is_some_and(|ty| ty.name.contains(type_name)),
         0x0A => assembly
@@ -1052,7 +1053,7 @@ impl ConstantPropagationPass {
         args: &[ConstValue],
         ptr_size: PointerSize,
     ) -> Option<ConstValue> {
-        let method = assembly.method(&callee_token)?;
+        let method = assembly.method(&callee_token).ok()?;
         let callee_ssa = method.ssa(assembly).ok()?;
 
         let mut eval = SsaEvaluator::new(&callee_ssa, ptr_size);
@@ -1223,7 +1224,7 @@ impl ConstantPropagationPass {
                     })
                     .collect();
                 let result = strings?.concat();
-                Some((dest, ConstValue::DecryptedString(result)))
+                Some((dest, ConstValue::DecryptedString(result.into())))
             }
             StringFoldOp::SubstringFrom => {
                 let this_str = constants.get(args.first()?)?.as_string_content(assembly)?;
@@ -1233,7 +1234,7 @@ impl ConstantPropagationPass {
                 }
                 let start = constants.get(args.get(1)?)?.as_i32()? as usize;
                 let tail = this_str.get(start..)?;
-                Some((dest, ConstValue::DecryptedString(tail.to_string())))
+                Some((dest, ConstValue::DecryptedString(tail.into())))
             }
             StringFoldOp::SubstringRange => {
                 let this_str = constants.get(args.first()?)?.as_string_content(assembly)?;
@@ -1244,7 +1245,7 @@ impl ConstantPropagationPass {
                 let len = constants.get(args.get(2)?)?.as_i32()? as usize;
                 let end = start.checked_add(len)?;
                 let slice = this_str.get(start..end)?;
-                Some((dest, ConstValue::DecryptedString(slice.to_string())))
+                Some((dest, ConstValue::DecryptedString(slice.into())))
             }
             StringFoldOp::Replace => {
                 let this_str = constants.get(args.first()?)?.as_string_content(assembly)?;
@@ -1252,16 +1253,22 @@ impl ConstantPropagationPass {
                 let new = constants.get(args.get(2)?)?.as_string_content(assembly)?;
                 Some((
                     dest,
-                    ConstValue::DecryptedString(this_str.replace(&old, &new)),
+                    ConstValue::DecryptedString(this_str.replace(&old, &new).into()),
                 ))
             }
             StringFoldOp::ToLower => {
                 let this_str = constants.get(args.first()?)?.as_string_content(assembly)?;
-                Some((dest, ConstValue::DecryptedString(this_str.to_lowercase())))
+                Some((
+                    dest,
+                    ConstValue::DecryptedString(this_str.to_lowercase().into()),
+                ))
             }
             StringFoldOp::ToUpper => {
                 let this_str = constants.get(args.first()?)?.as_string_content(assembly)?;
-                Some((dest, ConstValue::DecryptedString(this_str.to_uppercase())))
+                Some((
+                    dest,
+                    ConstValue::DecryptedString(this_str.to_uppercase().into()),
+                ))
             }
         }
     }
@@ -1489,7 +1496,7 @@ impl ConstantPropagationPass {
                 // Even chain: all cancel out, result = innermost_operand
                 ssa.replace_uses_including_phis(t.outermost_dest, t.innermost_operand);
                 for &(b, i) in &t.instructions_to_nop {
-                    ssa.remove_instruction(b, i);
+                    ssa.replace_instruction_op(b, i, SsaOp::Nop);
                 }
                 changes
                     .record(EventKind::ConstantFolded)
@@ -1521,7 +1528,7 @@ impl ConstantPropagationPass {
                 // Nop all except the outermost
                 if let Some(rest) = t.instructions_to_nop.get(1..) {
                     for &(b, i) in rest {
-                        ssa.remove_instruction(b, i);
+                        ssa.replace_instruction_op(b, i, SsaOp::Nop);
                     }
                 }
                 changes

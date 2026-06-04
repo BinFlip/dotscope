@@ -305,8 +305,8 @@ impl AnalysisTestRunner {
 
         // Get the method
         let method = match assembly.method(&token) {
-            Some(method) => method,
-            None => {
+            Ok(method) => method,
+            Err(_) => {
                 return AnalysisTestResult::run_failed(
                     test_case.name,
                     format!("Method with token {:?} not in method table", token),

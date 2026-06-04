@@ -496,7 +496,7 @@ pub(crate) fn exclude_cross_calling_candidates(
     candidates
         .iter()
         .filter(|token| {
-            let Some(method) = assembly.method(token) else {
+            let Ok(method) = assembly.method(token) else {
                 return true;
             };
             let calls_other = method.instructions().any(|instr| {
@@ -694,6 +694,7 @@ pub(crate) fn is_method_on_type(assembly: &CilObject, token: Token, type_name: &
     match token.table() {
         0x06 => assembly
             .method(&token)
+            .ok()
             .and_then(|m| m.declaring_type_rc())
             .is_some_and(|ty| ty.name.contains(type_name)),
         0x0A => assembly

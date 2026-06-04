@@ -1029,7 +1029,7 @@ fn test_dotnethook_call_targets_for_sample(sample: &str) {
                                 .unwrap_or_default();
                             format!("{}.{}", tdt, tm.name)
                         })
-                        .unwrap_or_else(|| format!("ext:0x{:08X}", t.value()));
+                        .unwrap_or_else(|_| format!("ext:0x{:08X}", t.value()));
                     format!("{} 0x{:08X}({})", i.mnemonic, t.value(), target_name)
                 })
             })
@@ -1150,7 +1150,7 @@ fn dump_call_targets(assembly: &CilObject, method_name: &str, label: &str) {
                     let target_name = assembly
                         .method(&target)
                         .map(|m| m.name.clone())
-                        .unwrap_or_else(|| format!("(unresolved 0x{:08X})", target.value()));
+                        .unwrap_or_else(|_| format!("(unresolved 0x{:08X})", target.value()));
                     eprintln!(
                         "  {} 0x{:08X} -> {}",
                         instr.mnemonic,
@@ -1176,7 +1176,7 @@ fn get_call_target_names(assembly: &CilObject, method_name: &str) -> Vec<String>
                     let name = assembly
                         .method(&target)
                         .map(|m| m.name.clone())
-                        .unwrap_or_else(|| format!("(external 0x{:08X})", target.value()));
+                        .unwrap_or_else(|_| format!("(external 0x{:08X})", target.value()));
                     names.push(name);
                 }
             }
@@ -1239,7 +1239,7 @@ fn test_dotnethook_offset_diagnostic() {
                                 .unwrap_or_default();
                             format!("{}.{}", tdt, tm.name)
                         })
-                        .unwrap_or_else(|| format!("ext:0x{:08X}", t.value()));
+                        .unwrap_or_else(|_| format!("ext:0x{:08X}", t.value()));
                     format!("{} 0x{:08X}({})", i.mnemonic, t.value(), target_name)
                 })
             })

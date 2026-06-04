@@ -1069,7 +1069,7 @@ mod tests {
         validator_test(
             raw_change_integrity_validator_file_factory,
             "RawChangeIntegrityValidator",
-            "Malformed",
+            "Parse",
             config,
             |context| validator.validate_raw(context),
         )

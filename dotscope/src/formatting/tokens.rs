@@ -168,7 +168,7 @@ fn format_memberref(mref: &MemberRef, asm: &CilObject) -> String {
 /// Resolves the underlying method (MethodDef or MemberRef) and appends
 /// the generic type arguments: `instance void Type::Method<int32, string>(params)`
 fn format_methodspec(assembly: &CilObject, token: &Token) -> Option<String> {
-    let spec = assembly.method_spec(token)?;
+    let spec = assembly.method_spec(token).ok()?;
 
     // Format the underlying method reference
     let base_ref = match &spec.method {

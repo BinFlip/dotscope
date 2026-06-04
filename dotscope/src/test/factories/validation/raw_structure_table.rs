@@ -52,7 +52,7 @@ pub fn raw_table_validator_file_factory() -> Result<Vec<TestAssembly>> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/table.rs`
 pub fn create_assembly_with_empty_module_table() -> Result<TestAssembly> {
-    create_test_assembly_with_error(get_testfile_mscorlib, "Malformed", |assembly| {
+    create_test_assembly_with_error(get_testfile_mscorlib, "Parse", |assembly| {
         // Delete the Module table row entirely - this will reduce row_count to 0
         match assembly.table_row_remove(TableId::Module, 1) {
             Ok(()) => {
@@ -77,7 +77,7 @@ pub fn create_assembly_with_empty_module_table() -> Result<TestAssembly> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/table.rs`
 pub fn create_assembly_with_multiple_assembly_rows() -> Result<TestAssembly> {
-    create_test_assembly_with_error(get_testfile_mscorlib, "Malformed", |assembly| {
+    create_test_assembly_with_error(get_testfile_mscorlib, "Parse", |assembly| {
         // Create a second Assembly row which violates ECMA-335 "at most 1 row" constraint
         // Use add_table_row to actually add a second row (increasing row_count to 2)
         let duplicate_assembly = AssemblyRaw {
@@ -112,7 +112,7 @@ pub fn create_assembly_with_multiple_assembly_rows() -> Result<TestAssembly> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/table.rs`
 pub fn create_assembly_with_field_list_violation() -> Result<TestAssembly> {
-    create_test_assembly_with_error(get_testfile_mscorlib, "Malformed", |assembly| {
+    create_test_assembly_with_error(get_testfile_mscorlib, "Parse", |assembly| {
         // Create a TypeDef with field_list pointing beyond Field table bounds
         let invalid_typedef = TypeDefRaw {
             rid: 1,
@@ -143,7 +143,7 @@ pub fn create_assembly_with_field_list_violation() -> Result<TestAssembly> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/table.rs`
 pub fn create_assembly_with_method_list_violation() -> Result<TestAssembly> {
-    create_test_assembly_with_error(get_testfile_mscorlib, "Malformed", |assembly| {
+    create_test_assembly_with_error(get_testfile_mscorlib, "Parse", |assembly| {
         // Create a TypeDef with method_list pointing beyond MethodDef table bounds
         let invalid_typedef = TypeDefRaw {
             rid: 1,
