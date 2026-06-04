@@ -905,7 +905,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                     // (CALLI has VarPop/VarPush so net_effect=0 without resolution)
                     let net_effect = match instr.opcode {
                         opcodes::CALL | opcodes::CALLVIRT | opcodes::NEWOBJ => assembly
-                            .and_then(|asm| Self::extract_token(&instr.operand).map(|t| (asm, t)))
+                            .zip(Self::extract_token(&instr.operand))
                             .and_then(|(asm, token)| {
                                 Self::resolve_call_info(asm, token).map(
                                     |(param_count, has_this, has_return)| {
@@ -933,7 +933,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                             })
                             .unwrap_or(instr.stack_behavior.net_effect),
                         opcodes::CALLI => assembly
-                            .and_then(|asm| Self::extract_token(&instr.operand).map(|t| (asm, t)))
+                            .zip(Self::extract_token(&instr.operand))
                             .and_then(|(asm, token)| {
                                 Self::resolve_calli_info(asm, token).map(
                                     |(param_count, has_this, has_return)| {
