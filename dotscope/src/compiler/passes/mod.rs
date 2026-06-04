@@ -77,38 +77,31 @@
 //! - **Loop Analysis** ([`LoopAnalyzer`](crate::analysis::LoopAnalyzer)): Used by
 //!   loop canonicalization to identify and restructure loops
 
-mod algebraic;
-mod blockmerge;
 mod constants;
-mod controlflow;
 mod copying;
 mod deadcode;
-mod gvn;
 mod inlining;
-mod licm;
-mod loopcanon;
-mod predicates;
 mod proxy;
-mod ranges;
-mod reassociate;
 mod strength;
-mod threading;
-mod utils;
 
-// Re-export passes for public API (may not be used internally but exposed for crate users)
-pub use self::algebraic::AlgebraicSimplificationPass;
-pub use self::blockmerge::BlockMergingPass;
+// Re-export the analyssa-supplied target-agnostic pass structs at the
+// dotscope namespace so existing callers (registered via
+// `compiler::PassScheduler`) keep working.
+pub use analyssa::passes::{
+    AlgebraicSimplificationPass, BlockMergingPass, ControlFlowSimplificationPass,
+    DeadCodeEliminationPass, GlobalValueNumberingPass, JumpThreadingPass, LicmPass,
+    LoopCanonicalizationPass, OpaquePredicatePass, PredicateResult, ReassociationPass,
+    ValueRangePropagationPass,
+};
+
+// CIL-specific pass impls remain dotscope-side. `copying` and `strength`
+// keep their custom hooks (CIL local-type propagation, interprocedural
+// value ranges); `deadcode` keeps its CIL-call-graph-aware
+// `DeadMethodEliminationPass`; `constants`, `inlining`, `proxy` are
+// CIL-specific in their entirety.
 pub use self::constants::ConstantPropagationPass;
-pub use self::controlflow::ControlFlowSimplificationPass;
 pub use self::copying::CopyPropagationPass;
-pub use self::deadcode::{DeadCodeEliminationPass, DeadMethodEliminationPass};
-pub use self::gvn::GlobalValueNumberingPass;
+pub use self::deadcode::DeadMethodEliminationPass;
 pub use self::inlining::InliningPass;
-pub use self::licm::LicmPass;
-pub use self::loopcanon::LoopCanonicalizationPass;
-pub use self::predicates::{OpaquePredicatePass, PredicateResult};
 pub use self::proxy::ProxyDevirtualizationPass;
-pub use self::ranges::ValueRangePropagationPass;
-pub use self::reassociate::ReassociationPass;
 pub use self::strength::StrengthReductionPass;
-pub use self::threading::JumpThreadingPass;

@@ -13,7 +13,7 @@ impl RowReadable for MethodDebugInformationRaw {
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(MethodDebugInformationRaw {
             rid,
-            token: Token::new(0x3100_0000 + rid),
+            token: Token::new(0x3100_0000u32.saturating_add(rid)),
             offset: *offset,
             document: read_le_at_dyn(data, offset, sizes.is_large(TableId::Document))?,
             sequence_points: read_le_at_dyn(data, offset, sizes.is_large_blob())?,

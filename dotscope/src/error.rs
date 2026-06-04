@@ -60,8 +60,8 @@
 //!     Err(Error::NotSupported) => {
 //!         eprintln!("File format is not supported");
 //!     }
-//!     Err(Error::Malformed { message, file, line }) => {
-//!         eprintln!("Malformed file: {} ({}:{})", message, file, line);
+//!     Err(Error::Parse(parse_err)) => {
+//!         eprintln!("Malformed file: {}", parse_err);
 //!     }
 //!     Err(Error::Io(io_err)) => {
 //!         eprintln!("I/O error: {}", io_err);
@@ -92,6 +92,8 @@
 //! between threads and shared across thread boundaries. This enables proper error
 //! propagation in concurrent parsing and analysis operations.
 //!
+
+use std::io;
 
 use thiserror::Error;
 
@@ -145,39 +147,39 @@ impl std::fmt::Display for EmulationError {
 macro_rules! malformed_error {
     // Single string version
     ($msg:expr) => {
-        $crate::Error::Malformed {
-            message: $msg.to_string(),
-            file: file!(),
-            line: line!(),
-        }
+        $crate::Error::Parse($crate::ParseFailure::Other {
+            stage: $crate::ParseStage::Generic,
+            message: format!("{} ({}:{})", $msg, file!(), line!()),
+        })
     };
 
     // Format string with arguments version
     ($fmt:expr, $($arg:tt)*) => {
-        $crate::Error::Malformed {
-            message: format!($fmt, $($arg)*),
-            file: file!(),
-            line: line!(),
-        }
+        $crate::Error::Parse($crate::ParseFailure::Other {
+            stage: $crate::ParseStage::Generic,
+            message: format!("{} ({}:{})", format!($fmt, $($arg)*), file!(), line!()),
+        })
     };
 }
 
-/// Helper macro for creating out-of-bounds errors with source location information.
+/// Helper macro for creating [`crate::ParseFailure::OutOfBounds`] errors.
 ///
-/// This macro simplifies the creation of [`crate::Error::OutOfBounds`] errors by automatically
-/// capturing the current file and line number where the out-of-bounds access was detected.
+/// Convenience constructor for the structured out-of-bounds parse failure.
+/// The expanded form is `Error::Parse(ParseFailure::OutOfBounds { stage:
+/// ParseStage::Generic })` — call sites that can supply a more specific stage
+/// should construct the variant directly instead of using this macro.
 ///
-/// # Returns
-///
-/// Returns a [`crate::Error::OutOfBounds`] variant with automatically captured source
-/// location information for debugging purposes.
+/// Source-location capture (`file!()`/`line!()`) was previously embedded in
+/// the rendered message; it's no longer included because the structured
+/// variant is intended to be matched on, not stringified for debugging. If
+/// you need source-location info, use a structured `Error::Parse(...)`
+/// expression and panic/`tracing::error!` with `Location::caller()` at the
+/// call site.
 ///
 /// # Examples
 ///
 /// ```rust,ignore
 /// # use dotscope::out_of_bounds_error;
-/// // Replace: Err(Error::OutOfBounds)
-/// // With:    Err(out_of_bounds_error!())
 /// if index >= data.len() {
 ///     return Err(out_of_bounds_error!());
 /// }
@@ -185,10 +187,9 @@ macro_rules! malformed_error {
 #[macro_export]
 macro_rules! out_of_bounds_error {
     () => {
-        $crate::Error::OutOfBounds {
-            file: file!(),
-            line: line!(),
-        }
+        $crate::Error::Parse($crate::ParseFailure::OutOfBounds {
+            stage: $crate::ParseStage::Generic,
+        })
     };
 }
 
@@ -231,46 +232,6 @@ macro_rules! out_of_bounds_error {
 #[derive(Error, Debug)]
 pub enum Error {
     // File parsing Errors
-    /// The file is damaged and could not be parsed.
-    ///
-    /// This error indicates that the file structure is corrupted or doesn't
-    /// conform to the expected .NET PE format. The error includes the source
-    /// location where the malformation was detected for debugging purposes.
-    ///
-    /// # Fields
-    ///
-    /// * `message` - Detailed description of what was malformed
-    /// * `file` - Source file where the error was detected  
-    /// * `line` - Source line where the error was detected
-    #[error("Malformed - {file}:{line}: {message}")]
-    Malformed {
-        /// The message to be printed for the Malformed error
-        message: String,
-        /// The source file in which this error occured
-        file: &'static str,
-        /// The source line in which this error occured
-        line: u32,
-    },
-
-    /// An out of bound access was attempted while parsing the file.
-    ///
-    /// This error occurs when trying to read data beyond the end of the file
-    /// or stream. It's a safety check to prevent buffer overruns during parsing.
-    /// The error includes the source location where the out-of-bounds access
-    /// was detected for debugging purposes.
-    ///
-    /// # Fields
-    ///
-    /// * `file` - Source file where the error was detected
-    /// * `line` - Source line where the error was detected
-    #[error("Out of Bounds - {file}:{line}")]
-    OutOfBounds {
-        /// The source file in which this error occurred
-        file: &'static str,
-        /// The source line in which this error occurred
-        line: u32,
-    },
-
     /// This file type is not supported.
     ///
     /// Indicates that the input file is not a supported .NET PE executable,
@@ -283,7 +244,7 @@ pub enum Error {
     /// Wraps standard I/O errors that can occur during file operations
     /// such as reading from disk, permission issues, or filesystem errors.
     #[error("{0}")]
-    Io(#[from] std::io::Error),
+    Io(#[from] io::Error),
 
     /// Other errors that don't fit specific categories.
     ///
@@ -306,9 +267,32 @@ pub enum Error {
     /// This error occurs when looking up a type by token that doesn't
     /// exist in the loaded metadata or type system registry.
     ///
-    /// The associated [`crate::metadata::token::Token`] identifies which type was not found.
+    /// The associated [`Token`] identifies which type was not found.
     #[error("Failed to find type in TypeSystem - {0}")]
     TypeNotFound(Token),
+
+    /// Method or method-spec lookup failure.
+    ///
+    /// Returned by [`crate::CilObject::method`] and
+    /// [`crate::CilObject::method_spec`] when the supplied token does not
+    /// resolve to a row in the corresponding metadata table. See
+    /// [`MethodLookupError`] for the variant set.
+    #[error(transparent)]
+    LookupMethod(#[from] MethodLookupError),
+
+    /// Structured parse-pipeline failure.
+    ///
+    /// Wraps a [`ParseFailure`] so consumers can categorize parse failures
+    /// (truncated headers, bad magic, unsupported schemas, heap corruption,
+    /// invalid fields) without parsing string messages. Returned by every
+    /// parse-pipeline error site in [`crate::file`], [`crate::metadata::root`],
+    /// and [`crate::metadata::streams`].
+    ///
+    /// Match on `Error::Parse(_)` to recover the structured failure, or on a
+    /// specific variant of [`ParseFailure`] to react to a particular failure
+    /// class (e.g. `ParseFailure::Truncated { .. }`).
+    #[error(transparent)]
+    Parse(#[from] ParseFailure),
 
     /// General error during `TypeSystem` usage.
     ///
@@ -427,18 +411,6 @@ pub enum Error {
     /// between metadata tables.
     #[error("Cross-reference error: {0}")]
     CrossReferenceError(String),
-
-    /// Heap bounds validation failed.
-    ///
-    /// This error occurs when metadata heap indices are out of bounds
-    /// for the target heap.
-    #[error("Heap bounds error: {heap} index {index}")]
-    HeapBoundsError {
-        /// The type of heap (strings, blobs, etc.)
-        heap: String,
-        /// The out-of-bounds index
-        index: u32,
-    },
 
     /// Conflict resolution failed.
     ///
@@ -646,6 +618,321 @@ pub enum Error {
     TracingError(String),
 }
 
+/// Failure modes for method-by-token lookups.
+///
+/// Returned by [`crate::CilObject::method`] and
+/// [`crate::CilObject::method_spec`]. Propagates into [`Error`] via the
+/// [`Error::LookupMethod`] variant — call sites that already use
+/// `Result<_, Error>` can propagate with `?` without manual conversion.
+///
+/// # Stability
+///
+/// `#[non_exhaustive]` so additional failure modes (e.g. partial resolution,
+/// stale weak references) can be added without a breaking change. Consumers
+/// must include a wildcard arm when matching.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[non_exhaustive]
+pub enum MethodLookupError {
+    /// The supplied token does not appear in the [`MethodDef`] table.
+    ///
+    /// This is distinct from "method exists but has no body" — for an abstract
+    /// or P/Invoke method the call returns `Ok(method)` and the caller can
+    /// inspect [`crate::metadata::method::Method::rva_kind`] to see why no IL
+    /// is present.
+    ///
+    /// [`MethodDef`]: crate::metadata::tables::MethodDef
+    #[error("MethodDef token {0} not found")]
+    NotFound(Token),
+
+    /// The supplied token does not appear in the [`MethodSpec`] table.
+    ///
+    /// [`MethodSpec`]: crate::metadata::tables::MethodSpec
+    #[error("MethodSpec token {0} not found")]
+    SpecNotFound(Token),
+}
+
+/// Pipeline stage at which a parse error originated.
+///
+/// Returned as part of [`ParseFailure`]. Lets consumers act on the error
+/// category (e.g. retry an upgrade only for `Cor20Header`/`MetadataRoot`
+/// failures) without parsing string messages.
+///
+/// `#[non_exhaustive]` — additional stages may be added as the parser
+/// surface grows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ParseStage {
+    /// DOS / MZ header at the very start of the PE file.
+    DosHeader,
+    /// PE signature ("PE\0\0") immediately following the DOS stub.
+    PeSignature,
+    /// COFF file header following the PE signature.
+    CoffHeader,
+    /// Optional header (PE32 / PE32+).
+    OptionalHeader,
+    /// Section table immediately after the optional header.
+    SectionTable,
+    /// CLI / COR20 runtime header located via the data-directory entry.
+    Cor20Header,
+    /// Metadata root header (signature, versions, stream count).
+    MetadataRoot,
+    /// Per-stream header inside the metadata root.
+    StreamHeader,
+    /// Tilde (`#~`) stream containing metadata table rows.
+    TildeStream,
+    /// Per-table row layout/decoding within the tilde stream.
+    TableRow,
+    /// One of the heap streams (`#Strings`, `#US`, `#Blob`, `#GUID`).
+    Heap,
+    /// Generic data-directory entry traversal.
+    DataDirectory,
+    /// Resource directory (.NET embedded resources).
+    Resources,
+    /// VTableFixup directory.
+    VTableFixup,
+    /// Strong-name signature blob.
+    StrongName,
+    /// Signature parsing within blobs (method/field/etc.).
+    Signature,
+    /// Method body header / code / EH-clause parsing.
+    MethodBody,
+    /// Custom-attribute decoding from the blob heap.
+    CustomAttribute,
+    /// DeclSecurity permission-set decoding.
+    PermissionSet,
+    /// CIL instruction decoding (disassembly).
+    InstructionDecoder,
+    /// CIL instruction encoding (assembler/serializer write paths).
+    InstructionEncoder,
+    /// Assembly / metadata writer paths (`crate::cilassembly::writer`).
+    AssemblyWriter,
+    /// Imports/exports table decoding.
+    ImportsExports,
+    /// Type system construction post-parse (`crate::metadata::tables`,
+    /// owned-type construction).
+    TypeSystem,
+    /// Validation passes (`crate::metadata::validation`).
+    Validation,
+    /// Emulation/runtime loader (`crate::emulation::loader`).
+    EmulationLoader,
+    /// Generic byte-parser primitives — used by helpers that have no
+    /// inherent stage (e.g. `crate::file::parser::Parser`).
+    Generic,
+}
+
+impl std::fmt::Display for ParseStage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            ParseStage::DosHeader => "DOS header",
+            ParseStage::PeSignature => "PE signature",
+            ParseStage::CoffHeader => "COFF header",
+            ParseStage::OptionalHeader => "PE optional header",
+            ParseStage::SectionTable => "PE section table",
+            ParseStage::Cor20Header => "COR20 header",
+            ParseStage::MetadataRoot => "metadata root",
+            ParseStage::StreamHeader => "stream header",
+            ParseStage::TildeStream => "tilde (#~) stream",
+            ParseStage::TableRow => "metadata table row",
+            ParseStage::Heap => "heap",
+            ParseStage::DataDirectory => "data directory",
+            ParseStage::Resources => "resources",
+            ParseStage::VTableFixup => "VTable fixup",
+            ParseStage::StrongName => "strong-name signature",
+            ParseStage::Signature => "signature blob",
+            ParseStage::MethodBody => "method body",
+            ParseStage::CustomAttribute => "custom attribute",
+            ParseStage::PermissionSet => "permission set",
+            ParseStage::InstructionDecoder => "CIL decoder",
+            ParseStage::InstructionEncoder => "CIL encoder",
+            ParseStage::AssemblyWriter => "assembly writer",
+            ParseStage::ImportsExports => "imports/exports",
+            ParseStage::TypeSystem => "type system",
+            ParseStage::Validation => "validation",
+            ParseStage::EmulationLoader => "emulation loader",
+            ParseStage::Generic => "generic byte parser",
+        };
+        f.write_str(s)
+    }
+}
+
+/// Heap stream kind.
+///
+/// Carried by [`ParseFailure::HeapOutOfBounds`] /
+/// [`ParseFailure::HeapCorrupt`] so consumers can pinpoint which heap
+/// failed without parsing a message string. `#[non_exhaustive]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum HeapKind {
+    /// `#Strings` heap — null-terminated UTF-8 identifier names.
+    Strings,
+    /// `#US` heap — length-prefixed UTF-16 user strings.
+    UserStrings,
+    /// `#Blob` heap — length-prefixed binary blobs.
+    Blob,
+    /// `#GUID` heap — packed 16-byte GUIDs.
+    Guid,
+}
+
+impl std::fmt::Display for HeapKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            HeapKind::Strings => "#Strings",
+            HeapKind::UserStrings => "#US",
+            HeapKind::Blob => "#Blob",
+            HeapKind::Guid => "#GUID",
+        })
+    }
+}
+
+/// Stream kind inside the metadata root.
+///
+/// Carried by [`ParseFailure::TruncatedStream`] and similar variants.
+/// `#[non_exhaustive]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum StreamKind {
+    /// Compressed metadata-table stream (`#~`).
+    Tilde,
+    /// Uncompressed metadata-table stream (`#-`).
+    TildeUncompressed,
+    /// `#Strings` heap.
+    Strings,
+    /// `#US` heap.
+    UserStrings,
+    /// `#Blob` heap.
+    Blob,
+    /// `#GUID` heap.
+    Guid,
+    /// Portable PDB (`#Pdb`) stream.
+    Pdb,
+}
+
+impl std::fmt::Display for StreamKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            StreamKind::Tilde => "#~",
+            StreamKind::TildeUncompressed => "#-",
+            StreamKind::Strings => "#Strings",
+            StreamKind::UserStrings => "#US",
+            StreamKind::Blob => "#Blob",
+            StreamKind::Guid => "#GUID",
+            StreamKind::Pdb => "#Pdb",
+        })
+    }
+}
+
+/// Structured parse-pipeline failure.
+///
+/// Reported through [`Error::Parse`] for every error site in
+/// [`crate::file`], [`crate::metadata::root`], and
+/// [`crate::metadata::streams`], plus per-table parse paths that read raw
+/// PE/metadata bytes. Replaces the stringly-typed [`Error::Malformed`] /
+/// [`Error::OutOfBounds`] / [`Error::HeapBoundsError`] variants for parse
+/// sites — those remain valid for non-parse code (validation, lookups,
+/// emulation), but new parse code must use [`ParseFailure`].
+///
+/// # Stability
+///
+/// `#[non_exhaustive]` — additional well-known failure classes can be added
+/// without a breaking change. Consumers must include a wildcard arm when
+/// matching.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[non_exhaustive]
+pub enum ParseFailure {
+    /// Header / structure bytes were not present at the expected offset.
+    ///
+    /// `expected` and `found` are byte counts when the gap is over a known
+    /// header. For partial reads where exact byte counts are unknown, both
+    /// fields may be 0.
+    #[error("truncated {stage} (expected {expected} bytes, found {found})")]
+    Truncated {
+        /// Pipeline stage in which truncation was detected.
+        stage: ParseStage,
+        /// Bytes the parser needed.
+        expected: usize,
+        /// Bytes that were actually available.
+        found: usize,
+    },
+
+    /// A magic number or signature did not match the expected value.
+    #[error("bad {stage} magic: expected 0x{expected:08X}, found 0x{found:08X}")]
+    BadMagic {
+        /// Pipeline stage that performed the magic check.
+        stage: ParseStage,
+        /// Expected magic value.
+        expected: u32,
+        /// Magic value actually read.
+        found: u32,
+    },
+
+    /// A header field was outside the acceptable range or otherwise invalid.
+    #[error("invalid {stage} field `{field}`: {reason}")]
+    InvalidField {
+        /// Pipeline stage in which the field appears.
+        stage: ParseStage,
+        /// Field name (static — derived from struct definition).
+        field: &'static str,
+        /// Human-readable description of why the value was rejected.
+        reason: String,
+    },
+
+    /// A schema version is recognized but not supported by this parser.
+    #[error("unsupported {stage} schema version `{version}`")]
+    UnsupportedSchema {
+        /// Pipeline stage that surfaced the schema mismatch.
+        stage: ParseStage,
+        /// Schema version string (e.g. ECMA-335 §II.24.2.1 form).
+        version: String,
+    },
+
+    /// A read crossed the end of the parse buffer.
+    #[error("read past end of buffer in {stage}")]
+    OutOfBounds {
+        /// Pipeline stage in which the OOB read was attempted.
+        stage: ParseStage,
+    },
+
+    /// A stream's declared offset/size exceeds the surrounding buffer.
+    #[error("truncated stream `{stream}` at offset {offset}")]
+    TruncatedStream {
+        /// Stream that could not be fully read.
+        stream: StreamKind,
+        /// File offset at which the read ran out of bytes.
+        offset: u32,
+    },
+
+    /// A heap reference was outside the bounds of its stream.
+    #[error("heap `{heap}` index {index} out of bounds")]
+    HeapOutOfBounds {
+        /// Heap whose bounds were violated.
+        heap: HeapKind,
+        /// Index that exceeded the heap.
+        index: u32,
+    },
+
+    /// A heap's byte content did not satisfy its format invariant.
+    #[error("heap `{heap}` corrupt: {reason}")]
+    HeapCorrupt {
+        /// Heap whose content was rejected.
+        heap: HeapKind,
+        /// Human-readable description of the corruption.
+        reason: String,
+    },
+
+    /// Free-form parse failure used as a migration fallback for sites whose
+    /// failure shape does not yet fit a structured variant.
+    ///
+    /// New code should prefer one of the structured variants; this one is
+    /// retained so partial migrations do not block on unusual call sites.
+    #[error("{stage}: {message}")]
+    Other {
+        /// Pipeline stage in which the error occurred.
+        stage: ParseStage,
+        /// Free-form description of the failure.
+        message: String,
+    },
+}
+
 impl Clone for Error {
     fn clone(&self) -> Self {
         match self {
@@ -673,6 +960,10 @@ impl Clone for Error {
             Error::X86Error(s) => Error::X86Error(s.clone()),
             // Tracing errors are cloneable
             Error::TracingError(s) => Error::TracingError(s.clone()),
+            // Method-lookup errors are pure data and Clone-derived.
+            Error::LookupMethod(e) => Error::LookupMethod(e.clone()),
+            // Parse failures are pure data and Clone-derived.
+            Error::Parse(e) => Error::Parse(e.clone()),
             // For all other variants, convert to their string representation and use Other
             other => Error::Other(other.to_string()),
         }
@@ -683,7 +974,9 @@ impl From<cowfile::Error> for Error {
     fn from(err: cowfile::Error) -> Self {
         match err {
             cowfile::Error::Io(io_err) => Error::Io(io_err),
-            cowfile::Error::OutOfBounds { .. } => Error::Other(err.to_string()),
+            cowfile::Error::OutOfBounds { .. } => Error::Parse(ParseFailure::OutOfBounds {
+                stage: ParseStage::Generic,
+            }),
             cowfile::Error::LockPoisoned(msg) => Error::LockError(msg),
         }
     }
@@ -693,5 +986,17 @@ impl From<cowfile::Error> for Error {
 impl From<EmulationError> for Error {
     fn from(err: EmulationError) -> Self {
         Error::Emulation(Box::new(err))
+    }
+}
+
+impl From<analyssa::GraphError> for Error {
+    fn from(err: analyssa::GraphError) -> Self {
+        Error::GraphError(err.0)
+    }
+}
+
+impl From<Error> for analyssa::Error {
+    fn from(err: Error) -> Self {
+        analyssa::Error::new(err.to_string())
     }
 }

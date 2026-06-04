@@ -291,28 +291,34 @@ impl TableModifications {
                 // binary_search_by_key returns Ok(index) if found, which would insert BEFORE
                 // existing entries with the same timestamp. We need to insert AFTER all
                 // entries with the same timestamp to maintain insertion order.
-                let insert_pos = match operations
-                    .binary_search_by_key(&op.timestamp, |o| o.timestamp)
-                {
-                    Ok(mut pos) => {
-                        // Found an entry with the same timestamp - scan forward to find the
-                        // end of all entries with this timestamp (FIFO ordering)
-                        while pos < operations.len() && operations[pos].timestamp == op.timestamp {
-                            pos += 1;
+                let insert_pos =
+                    match operations.binary_search_by_key(&op.timestamp, |o| o.timestamp) {
+                        Ok(mut pos) => {
+                            // Found an entry with the same timestamp - scan forward to find the
+                            // end of all entries with this timestamp (FIFO ordering)
+                            while operations
+                                .get(pos)
+                                .is_some_and(|o| o.timestamp == op.timestamp)
+                            {
+                                pos = pos.saturating_add(1);
+                            }
+                            pos
                         }
-                        pos
-                    }
-                    Err(pos) => pos, // Not found - insert at the natural position
-                };
+                        Err(pos) => pos, // Not found - insert at the natural position
+                    };
                 operations.insert(insert_pos, op);
 
                 // Update auxiliary data structures
-                let inserted_op = &operations[insert_pos];
+                let inserted_op = operations.get(insert_pos).ok_or_else(|| {
+                    crate::malformed_error!("inserted operation index out of bounds")
+                })?;
                 match &inserted_op.operation {
                     Operation::Insert(rid, _) => {
                         inserted_rows.insert(*rid);
                         if *rid >= *next_rid {
-                            *next_rid = *rid + 1;
+                            *next_rid = rid
+                                .checked_add(1)
+                                .ok_or_else(|| crate::malformed_error!("next_rid overflows u32"))?;
                         }
                     }
                     Operation::Delete(rid) => {
@@ -570,12 +576,17 @@ impl TableModifications {
             Self::Sparse { next_rid, .. } => Ok(*next_rid),
             Self::Replaced(rows) => {
                 let len = u32::try_from(rows.len()).map_err(|_| {
-                    crate::Error::LayoutFailed(format!(
+                    Error::LayoutFailed(format!(
                         "Table row count {} exceeds maximum u32 value",
                         rows.len()
                     ))
                 })?;
-                Ok(len + 1)
+                len.checked_add(1).ok_or_else(|| {
+                    Error::LayoutFailed(format!(
+                        "Table row count {} + 1 exceeds u32::MAX",
+                        rows.len()
+                    ))
+                })
             }
         }
     }

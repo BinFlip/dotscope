@@ -17,17 +17,25 @@ use std::{fs, hint::black_box, path::PathBuf};
 fn bench_cor20_header_parse(c: &mut Criterion) {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WB_COR20_HEADER.bin");
 
-    let data = fs::read(&path).expect("Failed to read COR20 header file");
+    let Ok(data) = fs::read(&path) else {
+        eprintln!(
+            "Skipping cor20 benchmark: failed to read {}",
+            path.display()
+        );
+        return;
+    };
     let file_size = data.len();
 
-    assert_eq!(file_size, 72, "COR20 header must be exactly 72 bytes");
+    if file_size != 72 {
+        eprintln!("COR20 header must be exactly 72 bytes, got {file_size}; skipping");
+        return;
+    }
 
     let mut group = c.benchmark_group("cor20_header");
     group.throughput(Throughput::Bytes(file_size as u64));
     group.bench_function("parse", |b| {
         b.iter(|| {
-            let header = Cor20Header::read(black_box(&data)).unwrap();
-            black_box(header)
+            black_box(Cor20Header::read(black_box(&data)).ok());
         });
     });
     group.finish();

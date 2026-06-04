@@ -47,10 +47,10 @@ use std::{any::Any, collections::HashMap, sync::Arc};
 use log::debug;
 
 use crate::{
-    analysis::{ConstValue, SsaFunction, SsaOp, SsaVarId},
+    analysis::{CilTarget, ConstValue, SsaFunction, SsaOp, SsaVarId},
     assembly::{Immediate, Operand},
     cilassembly::GeneratorConfig,
-    compiler::{EventKind, EventLog, PassPhase, SsaPass},
+    compiler::{CompilerContext, EventKind, EventLog, PassPhase, SsaPass},
     deobfuscation::{
         context::AnalysisContext,
         passes::jiejienet::{ResourceRestorationPass, ResourceTarget},
@@ -153,6 +153,7 @@ impl Technique for JiejieNetResources {
             .filter_map(|entry| {
                 assembly
                     .method(&entry.data_method_token)
+                    .ok()
                     .and_then(|method| {
                         method
                             .declaring_type
@@ -266,7 +267,7 @@ impl Technique for JiejieNetResources {
         // Insert decrypted resources into the assembly via CilAssembly
         let mut cil_assembly = cilobject.into_assembly();
 
-        let mut inserted_count = 0;
+        let mut inserted_count: usize = 0;
         for (name, data) in &decrypted_resources {
             let builder = ManifestResourceBuilder::new()
                 .name(name)
@@ -275,7 +276,7 @@ impl Technique for JiejieNetResources {
 
             match builder.build(&mut cil_assembly) {
                 Ok(_) => {
-                    inserted_count += 1;
+                    inserted_count = inserted_count.saturating_add(1);
                     log::info!(
                         "JIEJIE.NET resources: inserted resource '{}' ({} bytes)",
                         name,
@@ -324,7 +325,7 @@ impl Technique for JiejieNetResources {
         _ctx: &AnalysisContext,
         detection: &Detection,
         _assembly: &Arc<CilObject>,
-    ) -> Vec<Box<dyn SsaPass>> {
+    ) -> Vec<Box<dyn SsaPass<CilTarget, CompilerContext>>> {
         let Some(findings) = detection.findings::<ResourceFindings>() else {
             return Vec::new();
         };
@@ -376,7 +377,7 @@ fn find_original_bcl_call(
     assembly: &CilObject,
     interception_token: Token,
 ) -> Option<ResourceTarget> {
-    let method = assembly.method(&interception_token)?;
+    let method = assembly.method(&interception_token).ok()?;
     let instructions: Vec<_> = method.instructions().collect();
 
     // Look for callvirt instructions that call Assembly methods
@@ -473,7 +474,10 @@ fn detect_resource_structure(assembly: &CilObject) -> Option<ResourceStructure> 
 
             // SMF_GetContent: static byte[](string)
             if sig.params.len() == 1
-                && matches!(sig.params[0].base, TypeSignature::String)
+                && sig
+                    .params
+                    .first()
+                    .is_some_and(|p| matches!(p.base, TypeSignature::String))
                 && matches!(sig.return_type.base, TypeSignature::SzArray(_))
             {
                 get_content_method = Some(method.token);
@@ -560,7 +564,10 @@ fn extract_xor_key_from_stream(assembly: &CilObject, stream_type_token: Token) -
         }
 
         // Check first param is byte[]
-        let first_is_array = matches!(&sig.params[0].base, TypeSignature::SzArray(_));
+        let first_is_array = sig
+            .params
+            .first()
+            .is_some_and(|p| matches!(p.base, TypeSignature::SzArray(_)));
         if !first_is_array {
             continue;
         }
@@ -579,7 +586,9 @@ fn extract_xor_key_from_stream(assembly: &CilObject, stream_type_token: Token) -
             }
 
             for j in (0..i).rev() {
-                let prev = &instructions[j];
+                let Some(prev) = instructions.get(j) else {
+                    break;
+                };
                 if prev.mnemonic.starts_with("ldc.i4") {
                     if let Operand::Immediate(imm) = &prev.operand {
                         let key_value = match imm {
@@ -593,7 +602,7 @@ fn extract_xor_key_from_stream(assembly: &CilObject, stream_type_token: Token) -
                     }
                 }
                 // Don't search too far back
-                if i - j > 3 {
+                if i.saturating_sub(j) > 3 {
                     break;
                 }
             }
@@ -649,19 +658,17 @@ fn extract_resource_entries_ssa(ssa: &SsaFunction, assembly: &CilObject) -> Vec<
         };
 
         // The true branch (next block) should contain a Call to a static byte[]() method
-        let successor_idx = block_idx + 1;
-        if successor_idx >= blocks.len() {
+        let successor_idx = block_idx.saturating_add(1);
+        let Some(successor) = blocks.get(successor_idx) else {
             continue;
-        }
-
-        let successor = &blocks[successor_idx];
+        };
         for instr in successor.instructions() {
             let method_token = match instr.op() {
                 SsaOp::Call { method, .. } => method.token(),
                 _ => continue,
             };
 
-            if let Some(called_method) = assembly.method(&method_token) {
+            if let Ok(called_method) = assembly.method(&method_token) {
                 if matches!(
                     called_method.signature.return_type.base,
                     TypeSignature::SzArray(_)
@@ -719,8 +726,8 @@ fn trace_to_string_const(ssa: &SsaFunction, var: SsaVarId, assembly: &CilObject)
             SsaOp::Const {
                 value: ConstValue::DecryptedString(s),
                 ..
-            } => Some(s.clone()),
-            SsaOp::Copy { src, .. } => trace_impl(ssa, *src, assembly, depth + 1),
+            } => Some(s.to_string()),
+            SsaOp::Copy { src, .. } => trace_impl(ssa, *src, assembly, depth.saturating_add(1)),
             _ => None,
         }
     }
@@ -734,12 +741,7 @@ fn extract_and_decrypt_resource(
     entry: &ResourceEntry,
     xor_key: u8,
 ) -> Result<Vec<u8>> {
-    let method = assembly.method(&entry.data_method_token).ok_or_else(|| {
-        Error::Deobfuscation(format!(
-            "Data method 0x{:08X} not found",
-            entry.data_method_token.value()
-        ))
-    })?;
+    let method = assembly.method(&entry.data_method_token)?;
 
     let mut field_token: Option<Token> = None;
     let mut array_size: Option<usize> = None;
@@ -810,8 +812,28 @@ fn extract_and_decrypt_resource(
         )));
     }
 
-    let gzip_len = u32::from_le_bytes([raw_data[0], raw_data[1], raw_data[2], raw_data[3]]);
-    let payload = &raw_data[4..];
+    let header: [u8; 4] = raw_data
+        .get(..4)
+        .ok_or_else(|| {
+            Error::Deobfuscation(format!(
+                "Resource data missing 4-byte length header for '{}'",
+                entry.name
+            ))
+        })?
+        .try_into()
+        .map_err(|_| {
+            Error::Deobfuscation(format!(
+                "Resource data missing 4-byte length header for '{}'",
+                entry.name
+            ))
+        })?;
+    let gzip_len = u32::from_le_bytes(header);
+    let payload = raw_data.get(4..).ok_or_else(|| {
+        Error::Deobfuscation(format!(
+            "Resource data has no payload after header for '{}'",
+            entry.name
+        ))
+    })?;
 
     let content = if gzip_len > 0 {
         let decompressed = decompress_gzip(payload).map_err(|e| {

@@ -273,7 +273,7 @@ fn encoding_get_bytes_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
         })
         .unwrap_or(EncodingType::Utf8);
 
-    if let EmValue::ObjectRef(handle) = &ctx.args[0] {
+    if let Some(EmValue::ObjectRef(handle)) = ctx.args.first() {
         if let Ok(s) = thread.heap().get_string(*handle) {
             let bytes = encode_string(&s, encoding_type);
             match thread.heap_mut().alloc_byte_array(&bytes) {
@@ -336,29 +336,10 @@ fn encoding_get_string_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) 
         .unwrap_or(EncodingType::Utf8);
 
     // Handle both GetString(byte[]) and GetString(byte[], int, int) overloads
-    if let EmValue::ObjectRef(handle) = &ctx.args[0] {
+    if let Some(EmValue::ObjectRef(handle)) = ctx.args.first() {
         if let Some(all_bytes) = try_hook!(thread.heap().get_byte_array(*handle)) {
-            let bytes = if ctx.args.len() >= 3 {
-                // Safe: value validated as non-negative
-                #[allow(clippy::cast_sign_loss)]
-                let offset = match &ctx.args[1] {
-                    EmValue::I32(o) => *o as usize,
-                    _ => 0,
-                };
-                // Safe: value validated as non-negative
-                #[allow(clippy::cast_sign_loss)]
-                let count = match &ctx.args[2] {
-                    EmValue::I32(c) => *c as usize,
-                    _ => all_bytes.len(),
-                };
-                if offset + count <= all_bytes.len() {
-                    all_bytes[offset..offset + count].to_vec()
-                } else {
-                    all_bytes
-                }
-            } else {
-                all_bytes
-            };
+            let bytes = slice_bytes_with_offset_count(&all_bytes, ctx.args.get(1), ctx.args.get(2))
+                .unwrap_or(all_bytes);
 
             let s = decode_bytes(&bytes, encoding_type);
 
@@ -380,6 +361,33 @@ fn encoding_get_string_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) 
         }
     }
     PreHookResult::Bypass(Some(EmValue::Null))
+}
+
+/// Applies a `(byte[], int offset, int count)` slice spec to `all_bytes`.
+///
+/// Returns `Some(slice)` when both `offset_arg` and `count_arg` are present
+/// and `offset.checked_add(count) <= all_bytes.len()`. Returns `None` when
+/// the offset/count overload was not used (either argument missing) or when
+/// the requested range is invalid — callers fall back to the full buffer in
+/// both cases, matching the legacy behaviour.
+fn slice_bytes_with_offset_count(
+    all_bytes: &[u8],
+    offset_arg: Option<&EmValue>,
+    count_arg: Option<&EmValue>,
+) -> Option<Vec<u8>> {
+    let (offset_arg, count_arg) = (offset_arg?, count_arg?);
+    // Negative or non-`I32` offset/count is treated as "no slice", matching
+    // the legacy behaviour of falling back to the full buffer.
+    let offset = match offset_arg {
+        EmValue::I32(o) => usize::try_from(*o).ok()?,
+        _ => 0,
+    };
+    let count = match count_arg {
+        EmValue::I32(c) => usize::try_from(*c).ok()?,
+        _ => all_bytes.len(),
+    };
+    let end = offset.checked_add(count)?;
+    all_bytes.get(offset..end).map(<[u8]>::to_vec)
 }
 
 /// Hook for `System.Text.Encoding.GetByteCount` method.
@@ -423,7 +431,7 @@ fn encoding_get_byte_count_pre(
         })
         .unwrap_or(EncodingType::Utf8);
 
-    if let EmValue::ObjectRef(handle) = &ctx.args[0] {
+    if let Some(EmValue::ObjectRef(handle)) = ctx.args.first() {
         if let Ok(s) = thread.heap().get_string(*handle) {
             let byte_len = encode_string(&s, encoding_type).len();
             let len = i32::try_from(byte_len).unwrap_or(i32::MAX);
@@ -472,7 +480,7 @@ fn encoding_get_char_count_pre(
         })
         .unwrap_or(EncodingType::Utf8);
 
-    if let EmValue::ObjectRef(handle) = &ctx.args[0] {
+    if let Some(EmValue::ObjectRef(handle)) = ctx.args.first() {
         if let Some(bytes) = try_hook!(thread.heap().get_byte_array(*handle)) {
             let s = decode_bytes(&bytes, encoding_type);
             let count = i32::try_from(s.chars().count()).unwrap_or(i32::MAX);
@@ -649,7 +657,7 @@ fn utf8_get_bytes_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> Pr
         return PreHookResult::Bypass(Some(EmValue::Null));
     }
 
-    if let EmValue::ObjectRef(handle) = &ctx.args[0] {
+    if let Some(EmValue::ObjectRef(handle)) = ctx.args.first() {
         if let Ok(s) = thread.heap().get_string(*handle) {
             let bytes: Vec<u8> = s.as_bytes().to_vec();
             match thread.heap_mut().alloc_byte_array(&bytes) {
@@ -687,29 +695,10 @@ fn utf8_get_string_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> P
     }
 
     // Handle both GetString(byte[]) and GetString(byte[], int, int) overloads
-    if let EmValue::ObjectRef(handle) = &ctx.args[0] {
+    if let Some(EmValue::ObjectRef(handle)) = ctx.args.first() {
         if let Some(all_bytes) = try_hook!(thread.heap().get_byte_array(*handle)) {
-            let bytes = if ctx.args.len() >= 3 {
-                // Safe: value validated as non-negative
-                #[allow(clippy::cast_sign_loss)]
-                let offset = match &ctx.args[1] {
-                    EmValue::I32(o) => *o as usize,
-                    _ => 0,
-                };
-                // Safe: value validated as non-negative
-                #[allow(clippy::cast_sign_loss)]
-                let count = match &ctx.args[2] {
-                    EmValue::I32(c) => *c as usize,
-                    _ => all_bytes.len(),
-                };
-                if offset + count <= all_bytes.len() {
-                    all_bytes[offset..offset + count].to_vec()
-                } else {
-                    all_bytes
-                }
-            } else {
-                all_bytes
-            };
+            let bytes = slice_bytes_with_offset_count(&all_bytes, ctx.args.get(1), ctx.args.get(2))
+                .unwrap_or(all_bytes);
 
             let s = String::from_utf8_lossy(&bytes).into_owned();
 
@@ -754,7 +743,7 @@ fn ascii_get_bytes_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> P
         return PreHookResult::Bypass(Some(EmValue::Null));
     }
 
-    if let EmValue::ObjectRef(handle) = &ctx.args[0] {
+    if let Some(EmValue::ObjectRef(handle)) = ctx.args.first() {
         if let Ok(s) = thread.heap().get_string(*handle) {
             // ASCII encoding - replace non-ASCII with '?'
             let bytes: Vec<u8> = s
@@ -797,29 +786,10 @@ fn ascii_get_string_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> 
     }
 
     // Handle both GetString(byte[]) and GetString(byte[], int, int) overloads
-    if let EmValue::ObjectRef(handle) = &ctx.args[0] {
+    if let Some(EmValue::ObjectRef(handle)) = ctx.args.first() {
         if let Some(all_bytes) = try_hook!(thread.heap().get_byte_array(*handle)) {
-            let bytes = if ctx.args.len() >= 3 {
-                // Safe: value validated as non-negative
-                #[allow(clippy::cast_sign_loss)]
-                let offset = match &ctx.args[1] {
-                    EmValue::I32(o) => *o as usize,
-                    _ => 0,
-                };
-                // Safe: value validated as non-negative
-                #[allow(clippy::cast_sign_loss)]
-                let count = match &ctx.args[2] {
-                    EmValue::I32(c) => *c as usize,
-                    _ => all_bytes.len(),
-                };
-                if offset + count <= all_bytes.len() {
-                    all_bytes[offset..offset + count].to_vec()
-                } else {
-                    all_bytes
-                }
-            } else {
-                all_bytes
-            };
+            let bytes = slice_bytes_with_offset_count(&all_bytes, ctx.args.get(1), ctx.args.get(2))
+                .unwrap_or(all_bytes);
 
             // ASCII decoding - only keep valid ASCII
             let s: String = bytes
@@ -867,7 +837,7 @@ fn unicode_get_bytes_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) ->
         return PreHookResult::Bypass(Some(EmValue::Null));
     }
 
-    if let EmValue::ObjectRef(handle) = &ctx.args[0] {
+    if let Some(EmValue::ObjectRef(handle)) = ctx.args.first() {
         if let Ok(s) = thread.heap().get_string(*handle) {
             // UTF-16 LE encoding
             let bytes: Vec<u8> = s.encode_utf16().flat_map(u16::to_le_bytes).collect();
@@ -906,38 +876,20 @@ fn unicode_get_string_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
     }
 
     // Handle both GetString(byte[]) and GetString(byte[], int, int) overloads
-    if let EmValue::ObjectRef(handle) = &ctx.args[0] {
+    if let Some(EmValue::ObjectRef(handle)) = ctx.args.first() {
         if let Some(all_bytes) = try_hook!(thread.heap().get_byte_array(*handle)) {
-            let bytes = if ctx.args.len() >= 3 {
-                // Safe: value validated as non-negative
-                #[allow(clippy::cast_sign_loss)]
-                let offset = match &ctx.args[1] {
-                    EmValue::I32(o) => *o as usize,
-                    _ => 0,
-                };
-                // Safe: value validated as non-negative
-                #[allow(clippy::cast_sign_loss)]
-                let count = match &ctx.args[2] {
-                    EmValue::I32(c) => *c as usize,
-                    _ => all_bytes.len(),
-                };
-                if offset + count <= all_bytes.len() {
-                    all_bytes[offset..offset + count].to_vec()
-                } else {
-                    all_bytes
-                }
-            } else {
-                all_bytes
-            };
+            let bytes = slice_bytes_with_offset_count(&all_bytes, ctx.args.get(1), ctx.args.get(2))
+                .unwrap_or(all_bytes);
 
             // UTF-16 LE decoding
-            if bytes.len() % 2 != 0 {
+            if !bytes.len().is_multiple_of(2) {
                 return PreHookResult::Bypass(Some(EmValue::Null));
             }
 
             let u16s: Vec<u16> = bytes
                 .chunks_exact(2)
-                .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                .filter_map(|chunk| <[u8; 2]>::try_from(chunk).ok())
+                .map(u16::from_le_bytes)
                 .collect();
 
             let s = String::from_utf16_lossy(&u16s);
@@ -1011,7 +963,8 @@ fn decode_bytes(bytes: &[u8], encoding_type: EncodingType) -> String {
             }
             let u16s: Vec<u16> = bytes
                 .chunks_exact(2)
-                .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                .filter_map(|chunk| <[u8; 2]>::try_from(chunk).ok())
+                .map(u16::from_le_bytes)
                 .collect();
             String::from_utf16_lossy(&u16s)
         }
@@ -1021,7 +974,8 @@ fn decode_bytes(bytes: &[u8], encoding_type: EncodingType) -> String {
             }
             let u16s: Vec<u16> = bytes
                 .chunks_exact(2)
-                .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
+                .filter_map(|chunk| <[u8; 2]>::try_from(chunk).ok())
+                .map(u16::from_be_bytes)
                 .collect();
             String::from_utf16_lossy(&u16s)
         }
@@ -1031,10 +985,9 @@ fn decode_bytes(bytes: &[u8], encoding_type: EncodingType) -> String {
             }
             bytes
                 .chunks_exact(4)
-                .filter_map(|chunk| {
-                    let code = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-                    char::from_u32(code)
-                })
+                .filter_map(|chunk| <[u8; 4]>::try_from(chunk).ok())
+                .map(u32::from_le_bytes)
+                .filter_map(char::from_u32)
                 .collect()
         }
     }

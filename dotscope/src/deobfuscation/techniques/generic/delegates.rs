@@ -40,9 +40,9 @@ use std::{
 use log::debug;
 
 use crate::{
-    analysis::{SsaFunction, SsaOp, SsaVarId},
+    analysis::{CilTarget, SsaFunction, SsaOp, SsaVarId},
     cilassembly::CleanupRequest,
-    compiler::{PassPhase, SsaPass},
+    compiler::{CompilerContext, PassPhase, SsaPass},
     deobfuscation::{
         context::AnalysisContext,
         passes::{
@@ -120,8 +120,10 @@ fn traces_to_argument(ssa: &SsaFunction, var: SsaVarId) -> bool {
         if let Some((_block_idx, phi)) = ssa.find_phi_defining(current) {
             let operands = phi.operands();
             if operands.len() == 1 {
-                current = operands[0].value();
-                continue;
+                if let Some(first) = operands.first() {
+                    current = first.value();
+                    continue;
+                }
             }
             return false;
         }
@@ -231,7 +233,7 @@ impl Technique for GenericDelegateProxy {
             if !ty.is_delegate() {
                 continue;
             }
-            delegate_count += 1;
+            delegate_count = delegate_count.saturating_add(1);
 
             // Find the singleton static field. Delegate types normally have no
             // static fields, so any static field is the singleton instance.
@@ -243,7 +245,7 @@ impl Technique for GenericDelegateProxy {
             else {
                 continue;
             };
-            has_static_field += 1;
+            has_static_field = has_static_field.saturating_add(1);
 
             // Find the wrapper method: static (not .cctor/.ctor), whose SSA
             // shows a CallVirt(Invoke) pattern with the delegate from a parameter.
@@ -252,22 +254,20 @@ impl Technique for GenericDelegateProxy {
                 if !method.is_static() || method.is_cctor() || method.is_ctor() {
                     return None;
                 }
-                has_static_method += 1;
+                has_static_method = has_static_method.saturating_add(1);
 
                 // Look up this method's SSA function from the analysis context
-                let ssa_ref = ctx.ssa_functions.get(&method.token);
-                if ssa_ref.is_none() {
+                let Some(ssa) = ctx.ssa_functions.get(&method.token) else {
                     debug!(
                         "Delegate detect: type {}.{} method 0x{:08X} ({}) has no SSA",
                         ty.namespace, ty.name, method.token.value(), method.name
                     );
                     return None;
-                }
-                has_ssa += 1;
+                };
+                has_ssa = has_ssa.saturating_add(1);
 
-                let ssa = ssa_ref.unwrap();
                 if is_delegate_wrapper_ssa(ssa.value(), assembly) {
-                    is_wrapper += 1;
+                    is_wrapper = is_wrapper.saturating_add(1);
                     Some(method.token)
                 } else {
                     debug!(
@@ -315,14 +315,14 @@ impl Technique for GenericDelegateProxy {
             let calli_count = count_resolve_method_calli_sites(ssa, assembly);
             if calli_count > 0 {
                 reflection_affected.insert(method_token);
-                reflection_site_count += calli_count;
+                reflection_site_count = reflection_site_count.saturating_add(calli_count);
             }
 
             // Reflection patterns: Call/CallVirt to reflection APIs (P2, P3, P5, P6)
             let api_count = count_reflection_api_calls(ssa, assembly);
             if api_count > 0 {
                 reflection_affected.insert(method_token);
-                reflection_site_count += api_count;
+                reflection_site_count = reflection_site_count.saturating_add(api_count);
             }
         }
 
@@ -374,12 +374,12 @@ impl Technique for GenericDelegateProxy {
         ctx: &AnalysisContext,
         detection: &Detection,
         _assembly: &Arc<CilObject>,
-    ) -> Vec<Box<dyn SsaPass>> {
+    ) -> Vec<Box<dyn SsaPass<CilTarget, CompilerContext>>> {
         let Some(combined) = detection.findings::<CallIndirectionFindings>() else {
             return Vec::new();
         };
 
-        let mut passes: Vec<Box<dyn SsaPass>> = Vec::new();
+        let mut passes: Vec<Box<dyn SsaPass<CilTarget, CompilerContext>>> = Vec::new();
 
         // Delegate proxy resolution pass (emulation-based)
         let delegate = &combined.delegate;
@@ -425,7 +425,7 @@ impl Technique for GenericDelegateProxy {
 /// `FieldInfo.GetValue`, and `FieldInfo.SetValue` where the target comes from
 /// a traceable reflection chain.
 fn count_reflection_api_calls(ssa: &SsaFunction, assembly: &CilObject) -> usize {
-    let mut count = 0;
+    let mut count: usize = 0;
     for block in ssa.blocks() {
         for instr in block.instructions() {
             let (method_token, arg_count) = match instr.op() {
@@ -445,7 +445,7 @@ fn count_reflection_api_calls(ssa: &SsaFunction, assembly: &CilObject) -> usize 
                 if is_method_named(assembly, method_token, "MethodBase")
                     || is_method_named(assembly, method_token, "MethodInfo")
                 {
-                    count += 1;
+                    count = count.saturating_add(1);
                     continue;
                 }
             }
@@ -454,7 +454,7 @@ fn count_reflection_api_calls(ssa: &SsaFunction, assembly: &CilObject) -> usize 
             if name.contains("CreateInstance")
                 && is_method_named(assembly, method_token, "Activator")
             {
-                count += 1;
+                count = count.saturating_add(1);
                 continue;
             }
 
@@ -462,7 +462,7 @@ fn count_reflection_api_calls(ssa: &SsaFunction, assembly: &CilObject) -> usize 
             if (name == "GetValue" || name == "SetValue")
                 && is_method_named(assembly, method_token, "FieldInfo")
             {
-                count += 1;
+                count = count.saturating_add(1);
             }
         }
     }

@@ -372,7 +372,7 @@ pub fn execute_cleanup(
             for token in dead_methods.iter().rev() {
                 if try_remove(assembly, TableId::MethodDef, token.row()) {
                     removed_methods.insert(*token);
-                    method_count += 1;
+                    method_count = method_count.saturating_add(1);
                 }
             }
             stats.add(TableId::MethodDef, method_count);
@@ -382,7 +382,7 @@ pub fn execute_cleanup(
             for token in dead_fields.iter().rev() {
                 if try_remove(assembly, TableId::Field, token.row()) {
                     removed_fields.insert(*token);
-                    field_count += 1;
+                    field_count = field_count.saturating_add(1);
                 }
             }
             stats.add(TableId::Field, field_count);
@@ -646,11 +646,11 @@ fn remove_empty_types(
     };
 
     // Remove empty types (in reverse RID order)
-    let mut removed = 0;
+    let mut removed: usize = 0;
     let mut removed_tokens = HashSet::new();
     for rid in empty_types.into_iter().rev() {
         if try_remove(assembly, TableId::TypeDef, rid) {
-            removed += 1;
+            removed = removed.saturating_add(1);
             removed_tokens.insert(Token::from_parts(TableId::TypeDef, rid));
         }
     }

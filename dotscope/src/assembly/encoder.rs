@@ -83,21 +83,23 @@ fn get_mnemonic_lookup(
     MNEMONIC_TO_OPCODE.get_or_init(|| {
         let mut map = HashMap::new();
 
-        // Single-byte instructions (0x00 to 0xE0)
+        // Single-byte instructions (0x00 to 0xE0). The arrays are bounded to
+        // u8 opcodes by construction; any out-of-range entry is silently
+        // skipped (cannot be encoded with a 1-byte opcode anyway).
         for (opcode, instr) in INSTRUCTIONS.iter().enumerate() {
             if !instr.instr.is_empty() {
-                let opcode_u8 = u8::try_from(opcode)
-                    .unwrap_or_else(|_| panic!("Opcode {opcode} exceeds u8 range"));
-                map.insert(instr.instr, (opcode_u8, 0, instr));
+                if let Ok(opcode_u8) = u8::try_from(opcode) {
+                    map.insert(instr.instr, (opcode_u8, 0, instr));
+                }
             }
         }
 
         // Extended instructions (0xFE prefix)
         for (opcode, instr) in INSTRUCTIONS_FE.iter().enumerate() {
             if !instr.instr.is_empty() {
-                let opcode_u8 = u8::try_from(opcode)
-                    .unwrap_or_else(|_| panic!("Opcode {opcode} exceeds u8 range"));
-                map.insert(instr.instr, (opcode_u8, 0xFE, instr));
+                if let Ok(opcode_u8) = u8::try_from(opcode) {
+                    map.insert(instr.instr, (opcode_u8, 0xFE, instr));
+                }
             }
         }
 
@@ -1014,8 +1016,12 @@ impl InstructionEncoder {
             // Single-byte terminators: ret, throw, endfinally, jmp
             matches!(last_byte, 0x2A | 0x7A | 0xDC | 0x27)
                 // Two-byte terminator: rethrow (0xFE 0x1A)
-                || (self.bytecode.len() >= 2
-                    && self.bytecode[self.bytecode.len() - 2] == 0xFE
+                || (self
+                    .bytecode
+                    .len()
+                    .checked_sub(2)
+                    .and_then(|i| self.bytecode.get(i).copied())
+                    == Some(0xFE)
                     && last_byte == 0x1A)
         } else {
             false
@@ -1110,14 +1116,19 @@ impl InstructionEncoder {
                 .ok_or_else(|| Error::UndefinedLabel(fixup.label.clone()))?;
 
             // Calculate relative offset from end of branch instruction to label
-            let next_instruction_pos = fixup.fixup_position + fixup.offset_size as usize;
+            let next_instruction_pos = fixup
+                .fixup_position
+                .checked_add(fixup.offset_size as usize)
+                .ok_or_else(|| malformed_error!("Branch instruction end position overflow"))?;
 
             let label_pos_i32 = i32::try_from(*label_position)
                 .map_err(|_| malformed_error!("Label position exceeds i32 range"))?;
             let next_instr_pos_i32 = i32::try_from(next_instruction_pos)
                 .map_err(|_| malformed_error!("Instruction position exceeds i32 range"))?;
 
-            let offset = label_pos_i32 - next_instr_pos_i32;
+            let offset = label_pos_i32
+                .checked_sub(next_instr_pos_i32)
+                .ok_or_else(|| malformed_error!("Branch offset overflow"))?;
 
             self.write_branch_offset(offset, fixup)?;
         }
@@ -1138,12 +1149,26 @@ impl InstructionEncoder {
                     .map_err(|_| malformed_error!("Label position exceeds i32 range"))?;
 
                 // Switch offsets are relative to the end of the switch instruction
-                let offset = label_pos_i32 - instruction_end_i32;
+                let offset = label_pos_i32
+                    .checked_sub(instruction_end_i32)
+                    .ok_or_else(|| malformed_error!("Switch offset overflow"))?;
 
                 // Write the 4-byte offset at the correct position
-                let target_pos = switch_fixup.fixup_position + i * 4;
+                let target_pos = switch_fixup
+                    .fixup_position
+                    .checked_add(
+                        i.checked_mul(4)
+                            .ok_or_else(|| malformed_error!("Switch label index overflow"))?,
+                    )
+                    .ok_or_else(|| malformed_error!("Switch target position overflow"))?;
+                let target_end = target_pos
+                    .checked_add(4)
+                    .ok_or_else(|| malformed_error!("Switch target end overflow"))?;
                 let offset_bytes = offset.to_le_bytes();
-                self.bytecode[target_pos..target_pos + 4].copy_from_slice(&offset_bytes);
+                self.bytecode
+                    .get_mut(target_pos..target_end)
+                    .ok_or(out_of_bounds_error!())?
+                    .copy_from_slice(&offset_bytes);
             }
         }
 
@@ -1191,7 +1216,10 @@ impl InstructionEncoder {
             // Calculate offset as if we used short form (1 byte offset instead of 4)
             // Short form: instruction is 2 bytes (opcode + 1-byte offset)
             // The offset is relative to the end of the instruction
-            let short_form_end = fixup.instruction_position + 2; // opcode + 1-byte offset
+            let short_form_end = fixup
+                .instruction_position
+                .checked_add(2)
+                .ok_or_else(|| malformed_error!("Short-form end overflow"))?;
 
             let label_pos_i32 = i32::try_from(*label_position)
                 .map_err(|_| malformed_error!("Label position exceeds i32 range"))?;
@@ -1200,7 +1228,9 @@ impl InstructionEncoder {
 
             // Calculate what the offset would be with short form
             // Note: We need to account for the 3-byte savings in positions after this branch
-            let offset = label_pos_i32 - short_end_i32;
+            let offset = label_pos_i32
+                .checked_sub(short_end_i32)
+                .ok_or_else(|| malformed_error!("Short-form offset overflow"))?;
 
             // Check if offset fits in signed byte (-128 to +127)
             if (-128..=127).contains(&offset) {
@@ -1226,10 +1256,17 @@ impl InstructionEncoder {
         let mut cumulative = 0i32;
 
         for &idx in shrinkable {
-            let fixup = &self.fixups[idx];
+            let Some(fixup) = self.fixups.get(idx) else {
+                continue;
+            };
             // The adjustment takes effect after this instruction
-            let instr_end = fixup.fixup_position + fixup.offset_size as usize;
-            cumulative -= 3; // Shrinking saves 3 bytes
+            let instr_end = fixup
+                .fixup_position
+                .checked_add(fixup.offset_size as usize)
+                .ok_or_else(|| malformed_error!("Branch end position overflow"))?;
+            cumulative = cumulative
+                .checked_sub(3)
+                .ok_or_else(|| malformed_error!("Branch shrinking adjustment overflow"))?;
             adjustments.push((instr_end, cumulative));
         }
 
@@ -1249,7 +1286,7 @@ impl InstructionEncoder {
                 clippy::cast_possible_wrap,
                 clippy::cast_sign_loss
             )]
-            let adjusted = (pos as i32 + adj).max(0) as usize;
+            let adjusted = (pos as i32).saturating_add(adj).max(0) as usize;
             adjusted
         };
 
@@ -1259,14 +1296,24 @@ impl InstructionEncoder {
 
         // Sort fixups by position for sequential processing
         let mut sorted_indices: Vec<usize> = (0..self.fixups.len()).collect();
-        sorted_indices.sort_by_key(|&i| self.fixups[i].instruction_position);
+        sorted_indices.sort_by_key(|&i| {
+            self.fixups
+                .get(i)
+                .map_or(usize::MAX, |f| f.instruction_position)
+        });
 
         for &idx in &sorted_indices {
-            let fixup = &self.fixups[idx];
+            let Some(fixup) = self.fixups.get(idx) else {
+                continue;
+            };
 
             // Copy bytes up to this instruction
             if src_pos < fixup.instruction_position {
-                new_bytecode.extend_from_slice(&self.bytecode[src_pos..fixup.instruction_position]);
+                let chunk = self
+                    .bytecode
+                    .get(src_pos..fixup.instruction_position)
+                    .ok_or(out_of_bounds_error!())?;
+                new_bytecode.extend_from_slice(chunk);
             }
             src_pos = fixup.instruction_position;
 
@@ -1286,18 +1333,29 @@ impl InstructionEncoder {
                 new_bytecode.push(0); // Placeholder for offset
 
                 // Skip the original instruction (opcode + 4-byte offset)
-                src_pos = fixup.fixup_position + 4;
+                src_pos = fixup
+                    .fixup_position
+                    .checked_add(4)
+                    .ok_or_else(|| malformed_error!("Branch fixup position overflow"))?;
             } else {
                 // Copy original instruction
-                let instr_end = fixup.fixup_position + fixup.offset_size as usize;
-                new_bytecode.extend_from_slice(&self.bytecode[src_pos..instr_end]);
+                let instr_end = fixup
+                    .fixup_position
+                    .checked_add(fixup.offset_size as usize)
+                    .ok_or_else(|| malformed_error!("Branch end position overflow"))?;
+                let chunk = self
+                    .bytecode
+                    .get(src_pos..instr_end)
+                    .ok_or(out_of_bounds_error!())?;
+                new_bytecode.extend_from_slice(chunk);
                 src_pos = instr_end;
             }
         }
 
         // Copy remaining bytes
         if src_pos < self.bytecode.len() {
-            new_bytecode.extend_from_slice(&self.bytecode[src_pos..]);
+            let chunk = self.bytecode.get(src_pos..).ok_or(out_of_bounds_error!())?;
+            new_bytecode.extend_from_slice(chunk);
         }
 
         // Update labels
@@ -1315,7 +1373,9 @@ impl InstructionEncoder {
             if shrinkable_set.contains(&idx) {
                 // This branch was shrunk
                 fixup.instruction_position = new_instr_pos;
-                fixup.fixup_position = new_instr_pos + 1; // opcode + offset position
+                fixup.fixup_position = new_instr_pos
+                    .checked_add(1)
+                    .ok_or_else(|| malformed_error!("Shrunk branch fixup position overflow"))?;
                 fixup.offset_size = 1;
                 fixup.short_form_mnemonic = None; // Already optimized
             } else {
@@ -1485,7 +1545,11 @@ impl InstructionEncoder {
                 }
                 let offset_i8 = i8::try_from(offset)
                     .map_err(|_| malformed_error!("Branch offset exceeds i8 range"))?;
-                self.bytecode[fixup.fixup_position] = offset_i8.to_le_bytes()[0];
+                let slot = self
+                    .bytecode
+                    .get_mut(fixup.fixup_position)
+                    .ok_or(out_of_bounds_error!())?;
+                *slot = offset_i8.to_le_bytes()[0];
             }
             2 => {
                 if offset < i32::from(i16::MIN) || offset > i32::from(i16::MAX) {
@@ -1496,12 +1560,24 @@ impl InstructionEncoder {
                 let offset_i16 = i16::try_from(offset)
                     .map_err(|_| malformed_error!("Branch offset exceeds i16 range"))?;
                 let bytes = offset_i16.to_le_bytes();
-                self.bytecode[fixup.fixup_position..fixup.fixup_position + 2]
+                let end = fixup
+                    .fixup_position
+                    .checked_add(2)
+                    .ok_or_else(|| malformed_error!("Branch fixup end overflow"))?;
+                self.bytecode
+                    .get_mut(fixup.fixup_position..end)
+                    .ok_or(out_of_bounds_error!())?
                     .copy_from_slice(&bytes);
             }
             4 => {
                 let bytes = offset.to_le_bytes();
-                self.bytecode[fixup.fixup_position..fixup.fixup_position + 4]
+                let end = fixup
+                    .fixup_position
+                    .checked_add(4)
+                    .ok_or_else(|| malformed_error!("Branch fixup end overflow"))?;
+                self.bytecode
+                    .get_mut(fixup.fixup_position..end)
+                    .ok_or(out_of_bounds_error!())?
                     .copy_from_slice(&bytes);
             }
             _ => {
@@ -1528,9 +1604,12 @@ impl InstructionEncoder {
     ///
     /// Returns an error if stack underflow would occur (negative stack depth).
     fn update_stack_depth(&mut self, pops: u8, pushes: u8) -> Result<()> {
-        // Apply stack effect
-        let net_effect = i16::from(pushes) - i16::from(pops);
-        self.current_stack_depth += net_effect;
+        // Apply stack effect; both pushes/pops are u8 so this fits in i16.
+        let net_effect = i16::from(pushes).wrapping_sub(i16::from(pops));
+        self.current_stack_depth = self
+            .current_stack_depth
+            .checked_add(net_effect)
+            .ok_or_else(|| malformed_error!("Stack depth overflow"))?;
 
         // Check for stack underflow - but only in reachable code.
         // In unreachable code, the stack depth is meaningless, so we don't error.

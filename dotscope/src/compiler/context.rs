@@ -5,7 +5,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::Arc,
+    sync::{Arc, RwLock},
     time::{Duration, Instant},
 };
 
@@ -13,12 +13,15 @@ use dashmap::{DashMap, DashSet};
 use rayon::prelude::*;
 
 use crate::{
-    analysis::{CallGraph, ConstValue, SsaFunction, SsaOp, SsaVarId, ValueRange},
+    analysis::{
+        CallGraph, ConstValue, SsaFunction, SsaFunctionCilExt, SsaOp, SsaVarId, ValueRange,
+    },
     compiler::{
-        events::EventLog,
         summary::{CallSiteInfo, MethodSummary},
+        EventLog, ProcessingState,
     },
     metadata::token::Token,
+    CilObject,
 };
 
 /// Compiler context for the SSA pipeline phase.
@@ -85,6 +88,20 @@ pub struct CompilerContext {
     /// Local variable remappings after optimization, per method.
     local_remappings: DashMap<Token, Vec<Option<u16>>>,
 
+    /// Assembly under analysis. Set by the pipeline before running passes
+    /// via [`set_assembly`](Self::set_assembly). Test contexts may leave
+    /// this `None`. Stored as a `parking_lot::RwLock<Option<Arc<CilObject>>>`-like
+    /// behavior via interior mutability through `arc_swap`-style atomic
+    /// pointer; here we use a once-set `RwLock<Option<...>>` for
+    /// simplicity since the assembly set rarely changes after init.
+    assembly_slot: RwLock<Option<Arc<CilObject>>>,
+
+    /// Per-method dirty-tracking state for incremental fixpoint
+    /// scheduling. Embedded so [`crate::compiler::CompilerContext`] can
+    /// implement [`analyssa::DirtySet<crate::analysis::CilTarget>`] without
+    /// holding an external reference.
+    pub processing_state: ProcessingState,
+
     /// When analysis started.
     start_time: Instant,
 }
@@ -109,7 +126,36 @@ impl CompilerContext {
             known_values: DashMap::new(),
             known_ranges: DashMap::new(),
             local_remappings: DashMap::new(),
+            assembly_slot: RwLock::new(None),
+            processing_state: ProcessingState::new(),
             start_time: Instant::now(),
+        }
+    }
+
+    /// Sets the assembly under analysis. Idempotent; the pipeline calls
+    /// this before scheduler dispatch so passes can read the assembly
+    /// via [`assembly`](Self::assembly).
+    pub fn set_assembly(&self, assembly: Arc<CilObject>) {
+        if let Ok(mut slot) = self.assembly_slot.write() {
+            *slot = Some(assembly);
+        }
+    }
+
+    /// Returns the assembly currently under analysis, if set. Passes
+    /// that need access to .NET metadata reach through this. Returns
+    /// `None` in test contexts where no assembly was supplied.
+    #[must_use]
+    pub fn assembly(&self) -> Option<Arc<CilObject>> {
+        self.assembly_slot.read().ok().and_then(|s| s.clone())
+    }
+
+    /// Releases the assembly handle held in this context. Required
+    /// before unwrapping the assembly from its `Arc` (e.g. for code
+    /// generation), since `set_assembly` adds a reference that would
+    /// otherwise prevent the strong-count from reaching one.
+    pub fn clear_assembly(&self) {
+        if let Ok(mut slot) = self.assembly_slot.write() {
+            *slot = None;
         }
     }
 

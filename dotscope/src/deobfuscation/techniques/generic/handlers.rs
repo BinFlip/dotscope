@@ -84,7 +84,9 @@ impl Technique for GenericHandlers {
                 continue;
             }
 
-            let body_data = &file.data()[offset..offset + available];
+            let Some(body_data) = file.data().get(offset..offset.saturating_add(available)) else {
+                continue;
+            };
 
             if let Ok((_, filtered)) = MethodBody::from_lenient(body_data) {
                 if filtered > 0 {

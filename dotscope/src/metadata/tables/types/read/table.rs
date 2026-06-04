@@ -160,7 +160,7 @@ impl<'a, T: RowReadable> MetadataTable<'a, T> {
     /// The total size in bytes as a `u64` to accommodate large tables.
     #[must_use]
     pub fn size(&self) -> u64 {
-        u64::from(self.row_count) * u64::from(self.row_size)
+        u64::from(self.row_count).saturating_mul(u64::from(self.row_size))
     }
 
     /// Retrieves a specific row by its 1-based index.
@@ -185,7 +185,9 @@ impl<'a, T: RowReadable> MetadataTable<'a, T> {
 
         T::row_read(
             self.data,
-            &mut ((index as usize - 1) * self.row_size as usize),
+            &mut (index as usize)
+                .saturating_sub(1)
+                .saturating_mul(self.row_size as usize),
             index,
             &self.sizes,
         )

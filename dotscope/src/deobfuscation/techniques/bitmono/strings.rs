@@ -54,12 +54,14 @@ use std::{
 #[cfg(feature = "legacy-crypto")]
 use crate::deobfuscation::passes::bitmono::StringDecryptionPass;
 use crate::{
-    analysis::{ConstValue, SsaFunction, SsaOp, SsaVarId},
+    analysis::{CilTarget, ConstValue, SsaFunction, SsaOp, SsaVarId},
     cilassembly::CleanupRequest,
-    compiler::{PassPhase, SsaPass},
+    compiler::{CompilerContext, PassPhase, SsaPass},
     deobfuscation::{
+        config::EngineConfig,
         context::AnalysisContext,
         techniques::{Detection, Evidence, Technique, TechniqueCategory},
+        utils::build_init_array_map,
     },
     metadata::{
         tables::{MemberRefRaw, TableId, TypeDefRaw, TypeRefRaw},
@@ -117,12 +119,12 @@ impl Technique for BitMonoStrings {
     }
 
     #[cfg(feature = "legacy-crypto")]
-    fn enabled(&self, _config: &crate::deobfuscation::config::EngineConfig) -> bool {
+    fn enabled(&self, _config: &EngineConfig) -> bool {
         true
     }
 
     #[cfg(not(feature = "legacy-crypto"))]
-    fn enabled(&self, _config: &crate::deobfuscation::config::EngineConfig) -> bool {
+    fn enabled(&self, _config: &EngineConfig) -> bool {
         false
     }
 
@@ -146,7 +148,7 @@ impl Technique for BitMonoStrings {
             if has_crypto_ops(ssa, assembly) {
                 decryptor_tokens.push(method_token);
                 if decryptor_type.is_none() {
-                    if let Some(method) = assembly.method(&method_token) {
+                    if let Ok(method) = assembly.method(&method_token) {
                         if let Some(decl_type) = method.declaring_type_rc() {
                             decryptor_type = Some(decl_type.token);
                         }
@@ -190,7 +192,7 @@ impl Technique for BitMonoStrings {
                     if !decryptor_set.contains(&call_token) {
                         continue;
                     }
-                    call_site_count += 1;
+                    call_site_count = call_site_count.saturating_add(1);
 
                     // Trace LoadStaticField args to collect infrastructure field tokens
                     for arg in args {
@@ -244,7 +246,7 @@ impl Technique for BitMonoStrings {
         _ctx: &AnalysisContext,
         detection: &Detection,
         _assembly: &Arc<CilObject>,
-    ) -> Vec<Box<dyn SsaPass>> {
+    ) -> Vec<Box<dyn SsaPass<CilTarget, CompilerContext>>> {
         let Some(findings) = detection.findings::<StringFindings>() else {
             return Vec::new();
         };
@@ -260,7 +262,7 @@ impl Technique for BitMonoStrings {
         _ctx: &AnalysisContext,
         _detection: &Detection,
         _assembly: &Arc<CilObject>,
-    ) -> Vec<Box<dyn SsaPass>> {
+    ) -> Vec<Box<dyn SsaPass<CilTarget, CompilerContext>>> {
         Vec::new()
     }
 
@@ -318,7 +320,7 @@ fn collect_constant_data_tokens(
     }
 
     // Build mapping: byte_array_field_token → backing_field_token
-    let init_map = crate::deobfuscation::utils::build_init_array_map(assembly);
+    let init_map = build_init_array_map(assembly);
     if init_map.is_empty() {
         return (constant_data_fields, constant_data_types);
     }
@@ -433,7 +435,9 @@ fn extract_crypto_parameters(ssa: &SsaFunction, assembly: &CilObject) -> CryptoP
                     if let Some(name) = resolve_type_name(assembly, ctor.token()) {
                         if name.contains("Rfc2898DeriveBytes") && args.len() >= 3 {
                             // 3rd arg (index 2) is the iteration count
-                            if let Some(ConstValue::I32(iters)) = const_map.get(&args[2]) {
+                            if let Some(ConstValue::I32(iters)) =
+                                args.get(2).and_then(|a| const_map.get(a))
+                            {
                                 if *iters > 0 {
                                     params.iterations = *iters as u32;
                                 }
@@ -449,7 +453,9 @@ fn extract_crypto_parameters(ssa: &SsaFunction, assembly: &CilObject) -> CryptoP
                     if let Some(name) = assembly.resolve_method_name(method.token()) {
                         if name == "GetBytes" && args.len() == 2 {
                             // args[0] = this (Rfc2898DeriveBytes instance), args[1] = size
-                            if let Some(ConstValue::I32(size)) = const_map.get(&args[1]) {
+                            if let Some(ConstValue::I32(size)) =
+                                args.get(1).and_then(|a| const_map.get(a))
+                            {
                                 if *size > 0 {
                                     get_bytes_sizes.push(*size as u32);
                                 }

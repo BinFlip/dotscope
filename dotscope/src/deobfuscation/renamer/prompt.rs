@@ -7,7 +7,7 @@
 //! Each [`IdentifierKind`] has a distinct template optimized for the
 //! information most useful for that kind of rename.
 
-use crate::deobfuscation::renamer::context::{IdentifierKind, PhaseInfo, RenameContext};
+use crate::deobfuscation::renamer::context::{IdentifierKind, ParamInfo, PhaseInfo, RenameContext};
 
 /// Builds a FIM prompt from a rename context.
 ///
@@ -121,7 +121,11 @@ fn build_method_prompt(context: &RenameContext, max_phases: usize) -> (String, S
         // Large method: use phase narrative
         let phases = truncate_phases(&context.phase_narrative, max_phases);
         for (i, phase) in phases.iter().enumerate() {
-            prefix.push_str(&format!("// Phase {}: {}\n", i + 1, phase.label));
+            prefix.push_str(&format!(
+                "// Phase {}: {}\n",
+                i.saturating_add(1),
+                phase.label
+            ));
             if !phase.call_targets.is_empty() {
                 let calls = phase.call_targets.join(", ");
                 prefix.push_str(&format!("//   [calls: {calls}]\n"));
@@ -412,7 +416,7 @@ fn build_parameter_prompt(context: &RenameContext) -> (String, String) {
 /// # Returns
 ///
 /// A comma-separated parameter string (e.g., `"string path, int param_1"`).
-fn format_params(params: &[crate::deobfuscation::renamer::context::ParamInfo]) -> String {
+fn format_params(params: &[ParamInfo]) -> String {
     if params.is_empty() {
         return String::new();
     }
@@ -462,16 +466,22 @@ fn truncate_phases(phases: &[PhaseInfo], max_phases: usize) -> Vec<&PhaseInfo> {
 
     let half = max_phases / 2;
     let mut result: Vec<&PhaseInfo> = Vec::new();
-    result.extend(&phases[..half]);
-    result.extend(&phases[phases.len() - half..]);
+    if let Some(front) = phases.get(..half) {
+        result.extend(front);
+    }
+    let tail_start = phases.len().saturating_sub(half);
+    if let Some(back) = phases.get(tail_start..) {
+        result.extend(back);
+    }
     result
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::deobfuscation::renamer::{
-        context::{IdentifierKind, ParamInfo, PhaseInfo, RenameContext},
-        prompt::{build_fim_prompt, build_phase_label_prompt},
+    use super::*;
+
+    use crate::deobfuscation::renamer::context::{
+        ApiCallInfo, IdentifierKind, ParamInfo, PhaseInfo, RenameContext,
     };
 
     /// Default max phases used in tests.
@@ -704,8 +714,6 @@ mod tests {
     /// Parameter prompt should include call targets from the owning method.
     #[test]
     fn test_prompt_parameter_with_method_context() {
-        use crate::deobfuscation::renamer::context::ApiCallInfo;
-
         let ctx = RenameContext {
             kind: Some(IdentifierKind::Parameter),
             dotnet_type: Some("byte[]".to_string()),

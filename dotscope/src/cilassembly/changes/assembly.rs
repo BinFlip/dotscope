@@ -461,7 +461,7 @@ impl AssemblyChanges {
         self.method_bodies.insert(placeholder_rva, body_bytes);
 
         // Increment to next placeholder (simple sequential allocation)
-        self.next_method_placeholder += 1;
+        self.next_method_placeholder = self.next_method_placeholder.saturating_add(1);
 
         placeholder_rva
     }
@@ -518,7 +518,7 @@ impl AssemblyChanges {
                 let size = u32::try_from(body.len())
                     .map_err(|_| malformed_error!("Method body size exceeds u32 range"))?;
                 // Align each method body to 4-byte boundary
-                Ok((size + 3) & !3)
+                Ok(size.saturating_add(3) & !3u32)
             })
             .sum()
     }
@@ -623,7 +623,7 @@ impl AssemblyChanges {
         self.field_data.insert(placeholder_rva, data);
 
         // Increment to next placeholder (simple sequential allocation)
-        self.next_field_placeholder += 1;
+        self.next_field_placeholder = self.next_field_placeholder.saturating_add(1);
 
         placeholder_rva
     }
@@ -656,7 +656,7 @@ impl AssemblyChanges {
                 let size = u32::try_from(data.len())
                     .map_err(|_| malformed_error!("Field data size exceeds u32 range"))?;
                 // Align each entry to 4-byte boundary (same as method bodies)
-                Ok((size + 3) & !3)
+                Ok(size.saturating_add(3) & !3u32)
             })
             .sum()
     }

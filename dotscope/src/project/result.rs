@@ -176,14 +176,14 @@ impl ProjectResult {
         if let Some(identity) = identity {
             self.loaded_assemblies.push(identity);
         }
-        self.loaded_count += 1;
+        self.loaded_count = self.loaded_count.saturating_add(1);
     }
 
     /// Record a failed assembly load.
     pub(crate) fn record_failure(&mut self, file_path: String, error_message: String) {
         self.failed_loads.push((file_path.clone(), error_message));
         self.missing_dependencies.push(file_path);
-        self.failed_count += 1;
+        self.failed_count = self.failed_count.saturating_add(1);
     }
 
     /// Record a version mismatch between required and actual assembly.

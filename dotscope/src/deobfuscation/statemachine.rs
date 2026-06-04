@@ -42,13 +42,18 @@
 //! - `init_ops = [Mul, Mul, Mul, Mul]`
 //! - `slot_ops = [Xor, Add, Xor, Sub]` (incremental mode operations)
 
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::HashSet,
+    fmt::{self, Debug, Display, Formatter},
+    sync::Arc,
+};
+
+use analyssa::graph::{algorithms::DominatorTree, NodeId};
 
 use crate::{
     analysis::{ConstValue, SsaFunction, SsaOp, SsaVarId},
     compiler::CompilerContext,
     metadata::token::Token,
-    utils::graph::{algorithms::DominatorTree, NodeId},
     CilObject,
 };
 
@@ -107,7 +112,9 @@ impl StateMachineCallSite {
     /// Returns a location identifier for this call site.
     #[must_use]
     pub fn location(&self) -> usize {
-        self.block_idx * 1000 + self.instr_idx
+        self.block_idx
+            .saturating_mul(1000)
+            .saturating_add(self.instr_idx)
     }
 }
 
@@ -158,7 +165,7 @@ pub struct CfgInfo<'a> {
 ///     }
 /// }
 /// ```
-pub trait StateMachineProvider: Send + Sync + std::fmt::Debug {
+pub trait StateMachineProvider: Send + Sync + Debug {
     /// Returns the name of this state machine provider (for diagnostics).
     fn name(&self) -> &'static str;
 
@@ -310,8 +317,8 @@ pub trait StateMachineProvider: Send + Sync + std::fmt::Debug {
             return None;
         }
 
-        if seeds.len() == 1 {
-            return Some(seeds[0].2);
+        if let [single] = seeds {
+            return Some(single.2);
         }
 
         // Multiple seeds - find the one that dominates this decryptor
@@ -392,8 +399,8 @@ pub enum SsaOpKind {
     Neg,
 }
 
-impl std::fmt::Display for SsaOpKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for SsaOpKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::Xor => write!(f, "xor"),
             Self::Add => write!(f, "add"),
@@ -501,7 +508,7 @@ impl StateSlotOperation {
             SsaOpKind::Rol => left.rotate_left((right & 63) as u32),
             SsaOpKind::Ror => left.rotate_right((right & 63) as u32),
             SsaOpKind::Not => !left,
-            SsaOpKind::Neg => (-left.cast_signed()).cast_unsigned(),
+            SsaOpKind::Neg => left.wrapping_neg(),
         }
     }
 
@@ -522,7 +529,7 @@ impl StateSlotOperation {
             SsaOpKind::Rol => left.rotate_left(right & 31),
             SsaOpKind::Ror => left.rotate_right(right & 31),
             SsaOpKind::Not => !left,
-            SsaOpKind::Neg => (-left.cast_signed()).cast_unsigned(),
+            SsaOpKind::Neg => left.wrapping_neg(),
         }
     }
 }
@@ -665,11 +672,8 @@ impl StateMachineSemantics {
     #[must_use]
     pub fn init_operation(&self, slot: usize) -> Option<&StateSlotOperation> {
         // If we have fewer init_ops than slots, cycle through them
-        if self.init_ops.is_empty() {
-            None
-        } else {
-            Some(&self.init_ops[slot % self.init_ops.len()])
-        }
+        let idx = slot.checked_rem(self.init_ops.len())?;
+        self.init_ops.get(idx)
     }
 }
 
@@ -783,20 +787,29 @@ impl StateMachineState {
         let is_explicit = (flag & (1 << self.semantics.explicit_flag_bit)) != 0;
 
         // Ensure slots exist
-        let update_slot = update_slot % self.slots.len().max(1);
-        let get_slot = get_slot % self.slots.len().max(1);
+        let len = self.slots.len();
+        let (Some(update_slot), Some(get_slot)) =
+            (update_slot.checked_rem(len), get_slot.checked_rem(len))
+        else {
+            return 0;
+        };
 
         // Update the specified slot
         if is_explicit {
             // Explicit: set slot to value
-            self.slots[update_slot] = value;
+            if let Some(slot) = self.slots.get_mut(update_slot) {
+                *slot = value;
+            }
         } else if let Some(op) = self.semantics.slot_operation(update_slot) {
             // Incremental: apply operation
-            self.slots[update_slot] = op.apply(self.slots[update_slot], value);
+            let current = self.slots.get(update_slot).copied().unwrap_or(0);
+            if let Some(slot) = self.slots.get_mut(update_slot) {
+                *slot = op.apply(current, value);
+            }
         }
 
         // Return value from requested slot
-        self.slots[get_slot]
+        self.slots.get(get_slot).copied().unwrap_or(0)
     }
 
     /// Applies the Next operation with u32 values.
@@ -810,20 +823,28 @@ impl StateMachineState {
         let is_explicit = (flag & (1 << self.semantics.explicit_flag_bit)) != 0;
 
         // Ensure slots exist
-        let update_slot = update_slot % self.slots.len().max(1);
-        let get_slot = get_slot % self.slots.len().max(1);
+        let len = self.slots.len();
+        let (Some(update_slot), Some(get_slot)) =
+            (update_slot.checked_rem(len), get_slot.checked_rem(len))
+        else {
+            return 0;
+        };
 
         // Update the specified slot
         if is_explicit {
-            self.slots[update_slot] = u64::from(value);
+            if let Some(slot) = self.slots.get_mut(update_slot) {
+                *slot = u64::from(value);
+            }
         } else if let Some(op) = self.semantics.slot_operation(update_slot) {
             #[allow(clippy::cast_possible_truncation)]
-            let current = self.slots[update_slot] as u32;
-            self.slots[update_slot] = u64::from(op.apply_u32(current, value));
+            let current = self.slots.get(update_slot).copied().unwrap_or(0) as u32;
+            if let Some(slot) = self.slots.get_mut(update_slot) {
+                *slot = u64::from(op.apply_u32(current, value));
+            }
         }
 
         #[allow(clippy::cast_possible_truncation)]
-        let result = self.slots[get_slot] as u32;
+        let result = self.slots.get(get_slot).copied().unwrap_or(0) as u32;
         result
     }
 
@@ -842,8 +863,8 @@ impl StateMachineState {
 
     /// Sets the value of a specific state slot.
     pub fn set(&mut self, slot: usize, value: u64) {
-        if slot < self.slots.len() {
-            self.slots[slot] = value;
+        if let Some(s) = self.slots.get_mut(slot) {
+            *s = value;
         }
     }
 

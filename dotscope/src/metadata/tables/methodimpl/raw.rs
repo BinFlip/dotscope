@@ -302,9 +302,10 @@ impl TableRow for MethodImplRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* class */               sizes.table_index_bytes(TableId::TypeDef) +
-            /* method_body */         sizes.coded_index_bytes(CodedIndexType::MethodDefOrRef) +
-            /* method_declaration */  sizes.coded_index_bytes(CodedIndexType::MethodDefOrRef)
+            /* class */               sizes.table_index_bytes(TableId::TypeDef)
+            /* method_body */         .saturating_add(sizes.coded_index_bytes(CodedIndexType::MethodDefOrRef))
+            /* method_declaration */  .saturating_add(sizes.coded_index_bytes(CodedIndexType::MethodDefOrRef))
+
         )
     }
 }

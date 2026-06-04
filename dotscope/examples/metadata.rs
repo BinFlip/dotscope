@@ -24,8 +24,9 @@ use std::{collections::HashMap, env, path::Path};
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: {} <path-to-dotnet-assembly>", args[0]);
+    let prog = args.first().map_or("metadata", String::as_str);
+    let Some(path_arg) = args.get(1) else {
+        eprintln!("Usage: {prog} <path-to-dotnet-assembly>");
         eprintln!();
         eprintln!("This example explores metadata tables and streams in detail:");
         eprintln!("  • Raw metadata table access and analysis");
@@ -33,9 +34,9 @@ fn main() -> Result<()> {
         eprintln!("  • Cross-table relationship analysis");
         eprintln!("  • Assembly dependency tracking");
         return Ok(());
-    }
+    };
 
-    let path = Path::new(&args[1]);
+    let path = Path::new(path_arg);
     println!("🔬 Metadata exploration of: {}", path.display());
 
     let assembly = CilObject::from_path(path)?;
@@ -95,14 +96,14 @@ fn print_heap_analysis(assembly: &CilObject) {
 
     // String heap analysis with iterator demonstration
     if let Some(strings) = assembly.strings() {
-        let mut string_count = 0;
-        let mut total_length = 0;
+        let mut string_count: u64 = 0;
+        let mut total_length: usize = 0;
         let mut sample_strings = Vec::new();
 
         println!("  String heap analysis:");
         for (offset, string) in strings.iter().take(1000) {
-            string_count += 1;
-            total_length += string.len();
+            string_count = string_count.saturating_add(1u64);
+            total_length = total_length.saturating_add(string.len());
 
             // Collect interesting samples
             if sample_strings.len() < 5 && !string.is_empty() && string.len() > 3 {
@@ -141,15 +142,15 @@ fn print_heap_analysis(assembly: &CilObject) {
 
     // Blob heap analysis with iterator demonstration
     if let Some(blob) = assembly.blob() {
-        let mut blob_count = 0;
-        let mut total_size = 0;
+        let mut blob_count: u64 = 0;
+        let mut total_size: usize = 0;
         let mut size_histogram: HashMap<String, usize> = HashMap::new();
 
         println!("  Blob heap analysis:");
         for (offset, blob_data) in blob.iter().take(500) {
             // Limit to avoid overwhelming output
-            blob_count += 1;
-            total_size += blob_data.len();
+            blob_count = blob_count.saturating_add(1u64);
+            total_size = total_size.saturating_add(blob_data.len());
 
             // Categorize by size
             let size_category = match blob_data.len() {
@@ -159,7 +160,10 @@ fn print_heap_analysis(assembly: &CilObject) {
                 65..=256 => "large (65-256 bytes)",
                 _ => "huge (>256 bytes)",
             };
-            *size_histogram.entry(size_category.to_string()).or_insert(0) += 1;
+            let entry = size_histogram
+                .entry(size_category.to_string())
+                .or_insert(0usize);
+            *entry = entry.saturating_add(1);
 
             // Show a sample of the first few blobs
             if blob_count <= 3 && !blob_data.is_empty() {
@@ -195,13 +199,13 @@ fn print_heap_analysis(assembly: &CilObject) {
 
     // User strings heap analysis with iterator demonstration
     if let Some(user_strings) = assembly.userstrings() {
-        let mut string_count = 0;
+        let mut string_count: u64 = 0;
         let mut sample_user_strings = Vec::new();
 
         println!("  User strings heap analysis:");
         for (offset, string) in user_strings.iter().take(100) {
             // Limit for readability
-            string_count += 1;
+            string_count = string_count.saturating_add(1);
 
             // Collect interesting samples
             if sample_user_strings.len() < 3 {
@@ -217,7 +221,7 @@ fn print_heap_analysis(assembly: &CilObject) {
             println!("    Sample user strings:");
             for (offset, string) in sample_user_strings {
                 let truncated = if string.len() > 50 {
-                    format!("{}...", &string[..47])
+                    format!("{}...", string.get(..47).unwrap_or(string.as_str()))
                 } else {
                     string
                 };
@@ -242,23 +246,25 @@ fn print_type_system_analysis(assembly: &CilObject) {
             type_def.namespace.clone()
         };
 
-        *namespace_stats.entry(namespace).or_insert(0) += 1;
+        let entry = namespace_stats.entry(namespace).or_insert(0usize);
+        *entry = entry.saturating_add(1);
 
-        // Categorize by common patterns
-        if type_def.name.ends_with("Attribute") {
-            *type_kind_stats.entry("Attributes").or_insert(0) += 1;
+        let category = if type_def.name.ends_with("Attribute") {
+            "Attributes"
         } else if type_def.name.ends_with("Exception") {
-            *type_kind_stats.entry("Exceptions").or_insert(0) += 1;
+            "Exceptions"
         } else if type_def.name.ends_with("EventArgs") {
-            *type_kind_stats.entry("EventArgs").or_insert(0) += 1;
+            "EventArgs"
         } else if type_def.name.starts_with('I')
             && type_def.name.len() > 1
-            && type_def.name.chars().nth(1).unwrap().is_uppercase()
+            && type_def.name.chars().nth(1).is_some_and(char::is_uppercase)
         {
-            *type_kind_stats.entry("Interfaces").or_insert(0) += 1;
+            "Interfaces"
         } else {
-            *type_kind_stats.entry("Classes").or_insert(0) += 1;
-        }
+            "Classes"
+        };
+        let entry = type_kind_stats.entry(category).or_insert(0usize);
+        *entry = entry.saturating_add(1);
     }
 
     // Display namespace statistics
@@ -282,7 +288,7 @@ fn print_custom_attributes_analysis(assembly: &CilObject) {
     // Show custom attributes from Types
     println!("  Custom attributes on Types:");
     let types = assembly.types();
-    let mut type_count = 0;
+    let mut type_count: u64 = 0;
     for entry in types.iter().take(20) {
         let type_def = entry.value();
         let custom_attrs = &type_def.custom_attributes;
@@ -292,11 +298,14 @@ fn print_custom_attributes_analysis(assembly: &CilObject) {
         if attr_count > 0 && type_count < 2 {
             println!("    Type: {}", type_def.fullname());
             for (i, attr) in custom_attrs.iter().take(5) {
-                print_custom_attribute_info(i + 1, attr);
+                print_custom_attribute_info(i.saturating_add(1), attr);
             }
-            type_count += 1;
+            type_count = type_count.saturating_add(1u64);
             if attr_count > 5 {
-                println!("      ... and {} more attributes", attr_count - 5);
+                println!(
+                    "      ... and {} more attributes",
+                    attr_count.saturating_sub(5)
+                );
             }
         }
     }
@@ -304,7 +313,7 @@ fn print_custom_attributes_analysis(assembly: &CilObject) {
     // Show custom attributes from Methods
     println!("  Custom attributes on Methods:");
     let methods = assembly.methods();
-    let mut method_count = 0;
+    let mut method_count: u64 = 0;
     for entry in methods.iter().take(50) {
         let method = entry.value();
         let custom_attrs = &method.custom_attributes;
@@ -314,18 +323,21 @@ fn print_custom_attributes_analysis(assembly: &CilObject) {
         if attr_count > 0 && method_count < 2 {
             println!("    Method: {}", method.name);
             for (i, attr) in custom_attrs.iter().take(5) {
-                print_custom_attribute_info(i + 1, attr);
+                print_custom_attribute_info(i.saturating_add(1), attr);
             }
-            method_count += 1;
+            method_count = method_count.saturating_add(1u64);
             if attr_count > 5 {
-                println!("      ... and {} more attributes", attr_count - 5);
+                println!(
+                    "      ... and {} more attributes",
+                    attr_count.saturating_sub(5)
+                );
             }
         }
     }
 
     // Show custom attributes from Events
     println!("  Custom attributes on Events:");
-    let mut event_count = 0;
+    let mut event_count: u64 = 0;
     for entry in types.iter().take(20) {
         let type_def = entry.value();
         let events = &type_def.events;
@@ -337,11 +349,14 @@ fn print_custom_attributes_analysis(assembly: &CilObject) {
             if attr_count > 0 && event_count < 2 {
                 println!("    Event: {}", event.name);
                 for (i, attr) in custom_attrs.iter().take(5) {
-                    print_custom_attribute_info(i + 1, attr);
+                    print_custom_attribute_info(i.saturating_add(1), attr);
                 }
-                event_count += 1;
+                event_count = event_count.saturating_add(1u64);
                 if attr_count > 5 {
-                    println!("      ... and {} more attributes", attr_count - 5);
+                    println!(
+                        "      ... and {} more attributes",
+                        attr_count.saturating_sub(5)
+                    );
                 }
             }
         }
@@ -426,7 +441,12 @@ fn print_dependency_analysis(assembly: &CilObject) {
                 flag_descriptions.join(", ")
             };
 
-            println!("    {}. {} v{}", i + 1, assembly_ref.name, version);
+            println!(
+                "    {}. {} v{}",
+                i.saturating_add(1),
+                assembly_ref.name,
+                version
+            );
             println!("       Culture: {culture}, Flags: {flags_str}");
 
             // Show identifier information if available
@@ -450,7 +470,10 @@ fn print_dependency_analysis(assembly: &CilObject) {
             }
         }
         if assembly_refs.len() > 10 {
-            println!("    ... and {} more", assembly_refs.len() - 10);
+            println!(
+                "    ... and {} more",
+                assembly_refs.len().saturating_sub(10)
+            );
         }
     }
 
@@ -462,10 +485,10 @@ fn print_dependency_analysis(assembly: &CilObject) {
         println!("  Referenced modules:");
         for (i, entry) in module_refs.iter().take(10).enumerate() {
             let module_ref = entry.value();
-            println!("    {}. {}", i + 1, module_ref.name);
+            println!("    {}. {}", i.saturating_add(1), module_ref.name);
         }
         if module_refs.len() > 10 {
-            println!("    ... and {} more", module_refs.len() - 10);
+            println!("    ... and {} more", module_refs.len().saturating_sub(10));
         }
     }
 

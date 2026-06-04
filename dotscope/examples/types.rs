@@ -23,8 +23,9 @@ use std::{collections::HashMap, env, path::Path};
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: {} <path-to-dotnet-assembly>", args[0]);
+    let prog = args.first().map_or("types", String::as_str);
+    let Some(path_arg) = args.get(1) else {
+        eprintln!("Usage: {prog} <path-to-dotnet-assembly>");
         eprintln!();
         eprintln!("This example explores the .NET type system in detail:");
         eprintln!("  • Type categorization and analysis");
@@ -32,9 +33,9 @@ fn main() -> Result<()> {
         eprintln!("  • Inheritance hierarchy mapping");
         eprintln!("  • Interface implementation tracking");
         return Ok(());
-    }
+    };
 
-    let path = Path::new(&args[1]);
+    let path = Path::new(path_arg);
     println!("🏗️  Type system analysis of: {}", path.display());
 
     let assembly = CilObject::from_path(path)?;
@@ -67,65 +68,82 @@ fn print_type_registry_analysis(assembly: &CilObject) {
 
     // Analyze type definitions
     for type_def in &types.all_types() {
-        type_categories.total_types += 1;
+        type_categories.total_types = type_categories.total_types.saturating_add(1);
 
         // Categorize by visibility
         match type_def.flags.bits() & 0x07 {
             // TypeAttributes.VisibilityMask
-            0 => type_categories.not_public += 1, // NotPublic
-            1 => type_categories.public += 1,     // Public
-            2 => type_categories.nested_public += 1, // NestedPublic
-            3 => type_categories.nested_private += 1, // NestedPrivate
-            4 => type_categories.nested_family += 1, // NestedFamily
-            5 => type_categories.nested_assembly += 1, // NestedAssembly
-            6 => type_categories.nested_fam_and_assem += 1, // NestedFamANDAssem
-            7 => type_categories.nested_fam_or_assem += 1, // NestedFamORAssem
+            0 => type_categories.not_public = type_categories.not_public.saturating_add(1), // NotPublic
+            1 => type_categories.public = type_categories.public.saturating_add(1), // Public
+            2 => type_categories.nested_public = type_categories.nested_public.saturating_add(1), // NestedPublic
+            3 => type_categories.nested_private = type_categories.nested_private.saturating_add(1), // NestedPrivate
+            4 => type_categories.nested_family = type_categories.nested_family.saturating_add(1), // NestedFamily
+            5 => {
+                type_categories.nested_assembly = type_categories.nested_assembly.saturating_add(1)
+            } // NestedAssembly
+            6 => {
+                type_categories.nested_fam_and_assem =
+                    type_categories.nested_fam_and_assem.saturating_add(1)
+            } // NestedFamANDAssem
+            7 => {
+                type_categories.nested_fam_or_assem =
+                    type_categories.nested_fam_or_assem.saturating_add(1)
+            } // NestedFamORAssem
             _ => {}
         }
 
         // Categorize by layout
         match type_def.flags.bits() & 0x18 {
             // TypeAttributes.LayoutMask
-            0x00 => type_categories.auto_layout += 1, // AutoLayout
-            0x08 => type_categories.sequential_layout += 1, // SequentialLayout
-            0x10 => type_categories.explicit_layout += 1, // ExplicitLayout
+            0x00 => type_categories.auto_layout = type_categories.auto_layout.saturating_add(1), // AutoLayout
+            0x08 => {
+                type_categories.sequential_layout =
+                    type_categories.sequential_layout.saturating_add(1)
+            } // SequentialLayout
+            0x10 => {
+                type_categories.explicit_layout = type_categories.explicit_layout.saturating_add(1)
+            } // ExplicitLayout
             _ => {}
         }
 
         // Categorize by semantics
         match type_def.flags.bits() & 0x20 {
             // TypeAttributes.ClassSemanticsMask
-            0x00 => type_categories.class_types += 1, // Class
-            0x20 => type_categories.interface_types += 1, // Interface
+            0x00 => type_categories.class_types = type_categories.class_types.saturating_add(1), // Class
+            0x20 => {
+                type_categories.interface_types = type_categories.interface_types.saturating_add(1)
+            } // Interface
             _ => {}
         }
 
         // Check for special types
         if type_def.flags.bits() & 0x80 != 0 {
             // Abstract
-            type_categories.abstract_types += 1;
+            type_categories.abstract_types = type_categories.abstract_types.saturating_add(1);
         }
         if type_def.flags.bits() & 0x100 != 0 {
             // Sealed
-            type_categories.sealed_types += 1;
+            type_categories.sealed_types = type_categories.sealed_types.saturating_add(1);
         }
         if type_def.flags.bits() & 0x400 != 0 {
             // Serializable
-            type_categories.serializable_types += 1;
+            type_categories.serializable_types =
+                type_categories.serializable_types.saturating_add(1);
         }
 
         // Analyze by naming patterns
         if type_def.name.ends_with("Attribute") {
-            type_categories.attribute_types += 1;
+            type_categories.attribute_types = type_categories.attribute_types.saturating_add(1);
         } else if type_def.name.ends_with("Exception") {
-            type_categories.exception_types += 1;
+            type_categories.exception_types = type_categories.exception_types.saturating_add(1);
         } else if type_def.name.ends_with("EventArgs") {
-            type_categories.event_arg_types += 1;
+            type_categories.event_arg_types = type_categories.event_arg_types.saturating_add(1);
         } else if type_def.name.starts_with('I')
             && type_def.name.len() > 1
-            && type_def.name.chars().nth(1).unwrap().is_uppercase()
+            && type_def.name.chars().nth(1).is_some_and(char::is_uppercase)
         {
-            type_categories.interface_named_types += 1;
+            type_categories.interface_named_types =
+                type_categories.interface_named_types.saturating_add(1);
         }
     }
 
@@ -172,12 +190,19 @@ fn print_generic_analysis(assembly: &CilObject) {
     for type_def in types.all_types().iter().take(100) {
         // Look for generic type indicators
         if type_def.name.contains('`') {
-            generic_stats.generic_types += 1;
+            generic_stats.generic_types = generic_stats.generic_types.saturating_add(1);
 
             // Extract generic parameter count
             if let Some(backtick_pos) = type_def.name.rfind('`') {
-                if let Ok(param_count) = type_def.name[backtick_pos + 1..].parse::<u32>() {
-                    generic_stats.total_type_parameters += param_count;
+                if let Ok(param_count) = type_def
+                    .name
+                    .get(backtick_pos.saturating_add(1)..)
+                    .unwrap_or("")
+                    .parse::<u32>()
+                {
+                    generic_stats.total_type_parameters = generic_stats
+                        .total_type_parameters
+                        .saturating_add(param_count);
                     if param_count > generic_stats.max_type_parameters {
                         generic_stats.max_type_parameters = param_count;
                         generic_stats.most_generic_type = type_def.name.clone();
@@ -198,7 +223,8 @@ fn print_generic_analysis(assembly: &CilObject) {
 
         // Simple heuristic: methods with generic naming patterns
         if method.name.contains('<') || method.name.contains("Generic") {
-            generic_stats.potentially_generic_methods += 1;
+            generic_stats.potentially_generic_methods =
+                generic_stats.potentially_generic_methods.saturating_add(1);
         }
     }
 
@@ -230,16 +256,18 @@ fn print_inheritance_analysis(assembly: &CilObject) {
     let mut base_class_counts: HashMap<String, u32> = HashMap::new();
 
     for type_def in types.all_types().iter().take(50) {
-        inheritance_stats.total_types += 1;
+        inheritance_stats.total_types = inheritance_stats.total_types.saturating_add(1);
 
         // Check if type has a base class (extends something)
         if let Some(base_type) = type_def.base() {
-            inheritance_stats.types_with_base_class += 1;
+            inheritance_stats.types_with_base_class =
+                inheritance_stats.types_with_base_class.saturating_add(1);
 
             let base_class_name = format!("{}:{}", base_type.namespace, base_type.name);
-            *base_class_counts.entry(base_class_name).or_insert(0) += 1;
+            let entry = base_class_counts.entry(base_class_name).or_insert(0u32);
+            *entry = entry.saturating_add(1);
         } else {
-            inheritance_stats.root_types += 1;
+            inheritance_stats.root_types = inheritance_stats.root_types.saturating_add(1);
         }
 
         // Check for interface implementations
@@ -247,7 +275,9 @@ fn print_inheritance_analysis(assembly: &CilObject) {
         if type_def.flags.bits() & 0x20 == 0 {
             // Not an interface itself
             // This is a placeholder - real implementation would check InterfaceImpl table
-            inheritance_stats.types_implementing_interfaces += 1;
+            inheritance_stats.types_implementing_interfaces = inheritance_stats
+                .types_implementing_interfaces
+                .saturating_add(1);
         }
     }
 
@@ -284,19 +314,21 @@ fn print_interface_analysis(assembly: &CilObject) {
     for type_def in types.all_types().iter().take(100) {
         if type_def.flags.bits() & 0x20 != 0 {
             // Interface flag
-            interface_stats.interface_count += 1;
+            interface_stats.interface_count = interface_stats.interface_count.saturating_add(1);
             interface_names.push(format!("{}.{}", type_def.namespace, type_def.name));
 
             // Analyze interface naming patterns
             if type_def.name.starts_with('I')
                 && type_def.name.len() > 1
-                && type_def.name.chars().nth(1).unwrap().is_uppercase()
+                && type_def.name.chars().nth(1).is_some_and(char::is_uppercase)
             {
-                interface_stats.conventionally_named += 1;
+                interface_stats.conventionally_named =
+                    interface_stats.conventionally_named.saturating_add(1);
             }
 
             if type_def.namespace.starts_with("System") {
-                interface_stats.system_interfaces += 1;
+                interface_stats.system_interfaces =
+                    interface_stats.system_interfaces.saturating_add(1);
             }
         }
     }
@@ -331,30 +363,37 @@ fn print_signature_analysis(assembly: &CilObject) {
 
     for entry in methods.iter().take(50) {
         let method = entry.value();
-        signature_stats.methods_analyzed += 1;
+        signature_stats.methods_analyzed = signature_stats.methods_analyzed.saturating_add(1);
 
         // Analyze method naming patterns for signature complexity
-        let param_count =
-            method.name.matches(',').count() + if method.name.contains('(') { 1 } else { 0 };
+        let param_count = method
+            .name
+            .matches(',')
+            .count()
+            .saturating_add(usize::from(method.name.contains('(')));
 
         if param_count > signature_stats.max_parameters {
             signature_stats.max_parameters = param_count;
             signature_stats.most_complex_method = method.name.clone();
         }
 
-        signature_stats.total_parameters += param_count;
+        signature_stats.total_parameters =
+            signature_stats.total_parameters.saturating_add(param_count);
 
         // Check for special method types
         if method.name.starts_with("get_") || method.name.starts_with("set_") {
-            signature_stats.property_accessors += 1;
+            signature_stats.property_accessors =
+                signature_stats.property_accessors.saturating_add(1);
         } else if method.name.starts_with("add_") || method.name.starts_with("remove_") {
-            signature_stats.event_accessors += 1;
+            signature_stats.event_accessors = signature_stats.event_accessors.saturating_add(1);
         } else if method.name.starts_with("op_") {
-            signature_stats.operator_overloads += 1;
+            signature_stats.operator_overloads =
+                signature_stats.operator_overloads.saturating_add(1);
         } else if method.name == ".ctor" {
-            signature_stats.constructors += 1;
+            signature_stats.constructors = signature_stats.constructors.saturating_add(1);
         } else if method.name == ".cctor" {
-            signature_stats.static_constructors += 1;
+            signature_stats.static_constructors =
+                signature_stats.static_constructors.saturating_add(1);
         }
     }
 

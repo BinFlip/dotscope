@@ -246,10 +246,13 @@ impl MethodDefRaw {
         let type_params = if self.param_list == 0 || params_map.is_empty() {
             Arc::new(boxcar::Vec::new())
         } else {
-            let next_row_id = self.rid + 1;
+            let next_row_id = self
+                .rid
+                .checked_add(1)
+                .ok_or_else(|| malformed_error!("MethodDef rid overflow: {}", self.rid))?;
             let start = self.param_list as usize;
             let end = if next_row_id > table.row_count {
-                params_map.len() + 1
+                params_map.len().saturating_add(1)
             } else {
                 match table.get(next_row_id) {
                     Some(next_row) => next_row.param_list as usize,
@@ -262,10 +265,10 @@ impl MethodDefRaw {
                 }
             };
 
-            if start > params_map.len() || end > (params_map.len() + 1) || end < start {
+            if start > params_map.len() || end > params_map.len().saturating_add(1) || end < start {
                 Arc::new(boxcar::Vec::new())
             } else {
-                let type_params = Arc::new(boxcar::Vec::with_capacity(end - start));
+                let type_params = Arc::new(boxcar::Vec::with_capacity(end.saturating_sub(start)));
                 for counter in start..end {
                     let actual_param_token = if param_ptr_map.is_empty() {
                         let token_value = u32::try_from(counter | 0x0800_0000).map_err(|_| {
@@ -382,12 +385,13 @@ impl TableRow for MethodDefRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* rva */           4 +
-            /* impl_flags */    2 +
-            /* flags */         2 +
-            /* name */          sizes.str_bytes() +
-            /* signature */     sizes.blob_bytes() +
-            /* param_list */    sizes.table_index_bytes(TableId::Param)
+            /* rva */        4u8
+            /* impl_flags */ .saturating_add(2)
+            /* flags */      .saturating_add(2)
+            /* name */       .saturating_add(sizes.str_bytes())
+            /* signature */  .saturating_add(sizes.blob_bytes())
+            /* param_list */ .saturating_add(sizes.table_index_bytes(TableId::Param))
+
         )
     }
 }

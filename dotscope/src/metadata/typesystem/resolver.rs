@@ -630,7 +630,7 @@ impl TypeResolver {
             TypeSignature::Array(array) => {
                 let mut token_init = self.token_init.take();
 
-                let element_type = self.resolve_with_depth(&array.base, depth + 1)?;
+                let element_type = self.resolve_with_depth(&array.base, depth.saturating_add(1))?;
 
                 let array_flavor = CilFlavor::Array {
                     element_type: Box::new(element_type.flavor().clone()),
@@ -643,11 +643,8 @@ impl TypeResolver {
                 let name = if array.rank == 1 {
                     format!("{}[]", element_type.name)
                 } else {
-                    format!(
-                        "{}[{}]",
-                        element_type.name,
-                        ",".repeat(array.rank as usize - 1)
-                    )
+                    let commas = (array.rank as usize).saturating_sub(1);
+                    format!("{}[{}]", element_type.name, ",".repeat(commas))
                 };
 
                 let array_type = self.registry.get_or_create_type(&CompleteTypeSpec {
@@ -668,7 +665,8 @@ impl TypeResolver {
             TypeSignature::SzArray(szarray) => {
                 let mut token_init = self.token_init.take();
 
-                let element_type = self.resolve_with_depth(&szarray.base, depth + 1)?;
+                let element_type =
+                    self.resolve_with_depth(&szarray.base, depth.saturating_add(1))?;
 
                 let namespace = element_type.namespace.clone();
                 let name = format!("{}[]", element_type.name);
@@ -709,7 +707,7 @@ impl TypeResolver {
             TypeSignature::Ptr(ptr) => {
                 let mut token_init = self.token_init.take();
 
-                let pointed_type = self.resolve_with_depth(&ptr.base, depth + 1)?;
+                let pointed_type = self.resolve_with_depth(&ptr.base, depth.saturating_add(1))?;
 
                 let namespace = pointed_type.namespace.clone();
                 let name = format!("{}*", pointed_type.name);
@@ -741,7 +739,7 @@ impl TypeResolver {
             TypeSignature::ByRef(type_sig) => {
                 let mut token_init = self.token_init.take();
 
-                let ref_type = self.resolve_with_depth(type_sig, depth + 1)?;
+                let ref_type = self.resolve_with_depth(type_sig, depth.saturating_add(1))?;
 
                 let namespace = ref_type.namespace.clone();
                 let name = format!("{}&", ref_type.name);
@@ -781,7 +779,7 @@ impl TypeResolver {
             TypeSignature::Pinned(type_sig) => {
                 let mut token_init = self.token_init.take();
 
-                let pinned_type = self.resolve_with_depth(type_sig, depth + 1)?;
+                let pinned_type = self.resolve_with_depth(type_sig, depth.saturating_add(1))?;
 
                 let namespace = pinned_type.namespace.clone();
                 let name = format!("pinned {}", pinned_type.name);
@@ -803,7 +801,7 @@ impl TypeResolver {
             TypeSignature::GenericInst(base_sig, type_args) => {
                 let mut token_init = self.token_init.take();
 
-                let base_type = self.resolve_with_depth(base_sig, depth + 1)?;
+                let base_type = self.resolve_with_depth(base_sig, depth.saturating_add(1))?;
 
                 let namespace = base_type.namespace.clone();
                 let name = Self::format_generic_name(&base_type.name, type_args.len());
@@ -831,14 +829,15 @@ impl TypeResolver {
 
                 let mut generic_args = Vec::with_capacity(type_args.len());
                 for arg_sig in type_args {
-                    let arg_type = self.resolve_with_depth(arg_sig, depth + 1)?;
+                    let arg_type = self.resolve_with_depth(arg_sig, depth.saturating_add(1))?;
                     generic_args.push(arg_type);
                 }
 
                 for (index, arg_type) in generic_args.into_iter().enumerate() {
                     let rid = u32::try_from(index)
                         .map_err(|_| malformed_error!("Generic argument index too large"))?
-                        + 1;
+                        .checked_add(1)
+                        .ok_or_else(|| malformed_error!("Generic argument rid overflow"))?;
                     let token_value =
                         0x2B00_0000_u32
                             .checked_add(u32::try_from(index).map_err(|_| {

@@ -52,9 +52,9 @@ use std::{
 };
 
 use crate::{
-    analysis::{SsaFunction, SsaOp, SsaVarId},
+    analysis::{CilTarget, SsaFunction, SsaOp, SsaVarId},
     cilassembly::CleanupRequest,
-    compiler::{PassPhase, SsaPass},
+    compiler::{CompilerContext, PassPhase, SsaPass},
     deobfuscation::{
         context::AnalysisContext,
         passes::OpaqueFieldPredicatePass,
@@ -436,7 +436,7 @@ impl Technique for GenericOpaquePredicates {
         ctx: &AnalysisContext,
         detection: &Detection,
         _assembly: &Arc<CilObject>,
-    ) -> Vec<Box<dyn SsaPass>> {
+    ) -> Vec<Box<dyn SsaPass<CilTarget, CompilerContext>>> {
         let Some(pool) = ctx.template_pool.get().cloned() else {
             return Vec::new();
         };

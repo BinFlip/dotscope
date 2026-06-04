@@ -35,18 +35,20 @@
 
 use std::collections::BTreeMap;
 
+use analyssa::BitSet;
+
 use crate::{
     analysis::{
-        simplify_op, CmpKind, ConstValue, ConstantPropagation, MethodRef, SccpResult,
-        SimplifyResult, SsaCfg, SsaEvaluator, SsaFunction, SsaOp, SsaType, SsaVarId,
+        simplify_op, CilTarget, CmpKind, ConstValue, ConstValueCilExt, ConstantPropagation,
+        MethodRef, SccpResult, SimplifyResult, SsaCfg, SsaEvaluator, SsaFunction, SsaOp, SsaType,
+        SsaVarId,
     },
     compiler::{
         pass::{ModificationScope, SsaPass},
         CompilerContext, EventKind, EventLog,
     },
-    metadata::{token::Token, typesystem::PointerSize},
-    utils::BitSet,
-    CilObject, Result,
+    metadata::{tables::TableId, token::Token, typesystem::PointerSize},
+    CilObject,
 };
 
 /// Checks whether `token` resolves to a method whose declaring type name contains `type_name`.
@@ -58,6 +60,7 @@ fn is_method_on_type(assembly: &CilObject, token: Token, type_name: &str) -> boo
     match token.table() {
         0x06 => assembly
             .method(&token)
+            .ok()
             .and_then(|m| m.declaring_type_rc())
             .is_some_and(|ty| ty.name.contains(type_name)),
         0x0A => assembly
@@ -307,7 +310,9 @@ impl ConstantPropagationPass {
         // Apply the transformations
         for (block_idx, instr_idx, result) in transformations {
             if let Some(block) = ssa.block_mut(block_idx) {
-                let instr = &mut block.instructions_mut()[instr_idx];
+                let Some(instr) = block.instructions_mut().get_mut(instr_idx) else {
+                    continue;
+                };
                 let old_op_str = format!("{}", instr.op());
 
                 match result {
@@ -395,10 +400,11 @@ impl ConstantPropagationPass {
                 } = instr.op()
                 {
                     if let Some(operand_val) = constants.get(operand) {
+                        let ptr_bytes = ptr_size.bytes() as u32;
                         let result = if *overflow_check {
-                            operand_val.convert_to_checked(target, *unsigned, ptr_size)
+                            operand_val.convert_to_checked(target, *unsigned, ptr_bytes)
                         } else {
-                            operand_val.convert_to(target, *unsigned, ptr_size)
+                            operand_val.convert_to(target, *unsigned, ptr_bytes)
                         };
                         if let Some(result) = result {
                             new_constants.push((*dest, result, block_idx, instr_idx));
@@ -413,18 +419,19 @@ impl ConstantPropagationPass {
             constants.insert(dest, value.clone());
 
             if let Some(block) = ssa.block_mut(block_idx) {
-                let instr = &mut block.instructions_mut()[instr_idx];
-                let old_op_str = format!("{}", instr.op());
+                if let Some(instr) = block.instructions_mut().get_mut(instr_idx) {
+                    let old_op_str = format!("{}", instr.op());
 
-                instr.set_op(SsaOp::Const {
-                    dest,
-                    value: value.clone(),
-                });
+                    instr.set_op(SsaOp::Const {
+                        dest,
+                        value: value.clone(),
+                    });
 
-                changes
-                    .record(EventKind::ConstantFolded)
-                    .at(method_token, instr_idx)
-                    .message(format!("{old_op_str} → {value} (conv)"));
+                    changes
+                        .record(EventKind::ConstantFolded)
+                        .at(method_token, instr_idx)
+                        .message(format!("{old_op_str} → {value} (conv)"));
+                }
             }
         }
     }
@@ -589,23 +596,24 @@ impl ConstantPropagationPass {
                     reason,
                 } => {
                     if let Some(block) = ssa.block_mut(block_idx) {
-                        let instr = &mut block.instructions_mut()[instr_idx];
-                        let old_op_str = format!("{}", instr.op());
+                        if let Some(instr) = block.instructions_mut().get_mut(instr_idx) {
+                            let old_op_str = format!("{}", instr.op());
 
-                        instr.set_op(SsaOp::Conv {
-                            dest,
-                            operand: new_operand,
-                            target: target.clone(),
-                            overflow_check: false,
-                            unsigned,
-                        });
+                            instr.set_op(SsaOp::Conv {
+                                dest,
+                                operand: new_operand,
+                                target: target.clone(),
+                                overflow_check: false,
+                                unsigned,
+                            });
 
-                        changes
-                            .record(EventKind::ConstantFolded)
-                            .at(method_token, instr_idx)
-                            .message(format!(
-                                "{old_op_str} → conv.{target} {new_operand} ({reason})"
-                            ));
+                            changes
+                                .record(EventKind::ConstantFolded)
+                                .at(method_token, instr_idx)
+                                .message(format!(
+                                    "{old_op_str} → conv.{target} {new_operand} ({reason})"
+                                ));
+                        }
                     }
                 }
                 ConvTransform::ReplaceWithCopy {
@@ -616,15 +624,16 @@ impl ConstantPropagationPass {
                     reason,
                 } => {
                     if let Some(block) = ssa.block_mut(block_idx) {
-                        let instr = &mut block.instructions_mut()[instr_idx];
-                        let old_op_str = format!("{}", instr.op());
+                        if let Some(instr) = block.instructions_mut().get_mut(instr_idx) {
+                            let old_op_str = format!("{}", instr.op());
 
-                        instr.set_op(SsaOp::Copy { dest, src });
+                            instr.set_op(SsaOp::Copy { dest, src });
 
-                        changes
-                            .record(EventKind::ConstantFolded)
-                            .at(method_token, instr_idx)
-                            .message(format!("{old_op_str} → copy {src} ({reason})"));
+                            changes
+                                .record(EventKind::ConstantFolded)
+                                .at(method_token, instr_idx)
+                                .message(format!("{old_op_str} → copy {src} ({reason})"));
+                        }
                     }
                 }
             }
@@ -763,18 +772,19 @@ impl ConstantPropagationPass {
             constants.insert(dest, value.clone());
 
             if let Some(block) = ssa.block_mut(block_idx) {
-                let instr = &mut block.instructions_mut()[instr_idx];
-                let old_op_str = format!("{}", instr.op());
+                if let Some(instr) = block.instructions_mut().get_mut(instr_idx) {
+                    let old_op_str = format!("{}", instr.op());
 
-                instr.set_op(SsaOp::Const {
-                    dest,
-                    value: value.clone(),
-                });
+                    instr.set_op(SsaOp::Const {
+                        dest,
+                        value: value.clone(),
+                    });
 
-                changes
-                    .record(EventKind::ConstantFolded)
-                    .at(method_token, instr_idx)
-                    .message(format!("{old_op_str} → {value} (ovf)"));
+                    changes
+                        .record(EventKind::ConstantFolded)
+                        .at(method_token, instr_idx)
+                        .message(format!("{old_op_str} → {value} (ovf)"));
+                }
             }
         }
     }
@@ -792,6 +802,7 @@ impl ConstantPropagationPass {
                 left,
                 right,
                 unsigned,
+                ..
             } => {
                 let l = constants.get(left)?;
                 let r = constants.get(right)?;
@@ -816,6 +827,7 @@ impl ConstantPropagationPass {
                 left,
                 right,
                 unsigned,
+                ..
             } => {
                 let l = constants.get(left)?;
                 let r = constants.get(right)?;
@@ -840,6 +852,7 @@ impl ConstantPropagationPass {
                 left,
                 right,
                 unsigned,
+                ..
             } => {
                 let l = constants.get(left)?;
                 let r = constants.get(right)?;
@@ -900,7 +913,7 @@ impl ConstantPropagationPass {
                 };
 
                 // Only handle MethodDef tokens (same-assembly methods)
-                if !callee_token.is_table(crate::metadata::tables::TableId::MethodDef) {
+                if !callee_token.is_table(TableId::MethodDef) {
                     continue;
                 }
 
@@ -940,7 +953,10 @@ impl ConstantPropagationPass {
                     instr.set_op(SsaOp::Const { dest, value });
                     changes
                         .record(EventKind::ConstantFolded)
-                        .at(method_token, block_idx * 1000 + instr_idx)
+                        .at(
+                            method_token,
+                            block_idx.saturating_mul(1000).saturating_add(instr_idx),
+                        )
                         .message("folded pure call with constant arguments");
                 }
             }
@@ -975,6 +991,7 @@ impl ConstantPropagationPass {
                     left,
                     right,
                     unsigned,
+                    ..
                 } = instr.op()
                 {
                     let lval = constants
@@ -996,11 +1013,9 @@ impl ConstantPropagationPass {
                         if r != 0 {
                             #[allow(clippy::cast_sign_loss)]
                             let result = if *unsigned {
-                                ((l as u64) % (r as u64)) as i64
-                            } else if l != i64::MIN || r != -1 {
-                                l % r
+                                (l as u64).checked_rem(r as u64).unwrap_or(0) as i64
                             } else {
-                                0
+                                l.checked_rem(r).unwrap_or(0)
                             };
                             #[allow(clippy::cast_possible_truncation)]
                             let value = ConstValue::I32(result as i32);
@@ -1018,7 +1033,10 @@ impl ConstantPropagationPass {
                     instr.set_op(SsaOp::Const { dest, value });
                     changes
                         .record(EventKind::ConstantFolded)
-                        .at(method_token, block_idx * 1000 + instr_idx)
+                        .at(
+                            method_token,
+                            block_idx.saturating_mul(1000).saturating_add(instr_idx),
+                        )
                         .message("folded arithmetic with constant operands");
                 }
             }
@@ -1035,7 +1053,7 @@ impl ConstantPropagationPass {
         args: &[ConstValue],
         ptr_size: PointerSize,
     ) -> Option<ConstValue> {
-        let method = assembly.method(&callee_token)?;
+        let method = assembly.method(&callee_token).ok()?;
         let callee_ssa = method.ssa(assembly).ok()?;
 
         let mut eval = SsaEvaluator::new(&callee_ssa, ptr_size);
@@ -1111,18 +1129,19 @@ impl ConstantPropagationPass {
             constants.insert(dest, value.clone());
 
             if let Some(block) = ssa.block_mut(block_idx) {
-                let instr = &mut block.instructions_mut()[instr_idx];
-                let old_op_str = format!("{}", instr.op());
+                if let Some(instr) = block.instructions_mut().get_mut(instr_idx) {
+                    let old_op_str = format!("{}", instr.op());
 
-                instr.set_op(SsaOp::Const {
-                    dest,
-                    value: value.clone(),
-                });
+                    instr.set_op(SsaOp::Const {
+                        dest,
+                        value: value.clone(),
+                    });
 
-                changes
-                    .record(EventKind::ConstantFolded)
-                    .at(method_token, instr_idx)
-                    .message(format!("{old_op_str} → {value} (string fold)"));
+                    changes
+                        .record(EventKind::ConstantFolded)
+                        .at(method_token, instr_idx)
+                        .message(format!("{old_op_str} → {value} (string fold)"));
+                }
             }
         }
     }
@@ -1205,54 +1224,51 @@ impl ConstantPropagationPass {
                     })
                     .collect();
                 let result = strings?.concat();
-                Some((dest, ConstValue::DecryptedString(result)))
+                Some((dest, ConstValue::DecryptedString(result.into())))
             }
             StringFoldOp::SubstringFrom => {
-                let this_str = constants.get(&args[0])?.as_string_content(assembly)?;
+                let this_str = constants.get(args.first()?)?.as_string_content(assembly)?;
                 // Bail on non-ASCII: .NET uses UTF-16 char indices, Rust uses bytes.
                 if !this_str.is_ascii() {
                     return None;
                 }
-                let start = constants.get(&args[1])?.as_i32()? as usize;
-                if start > this_str.len() {
-                    return None;
-                }
-                Some((
-                    dest,
-                    ConstValue::DecryptedString(this_str[start..].to_string()),
-                ))
+                let start = constants.get(args.get(1)?)?.as_i32()? as usize;
+                let tail = this_str.get(start..)?;
+                Some((dest, ConstValue::DecryptedString(tail.into())))
             }
             StringFoldOp::SubstringRange => {
-                let this_str = constants.get(&args[0])?.as_string_content(assembly)?;
+                let this_str = constants.get(args.first()?)?.as_string_content(assembly)?;
                 if !this_str.is_ascii() {
                     return None;
                 }
-                let start = constants.get(&args[1])?.as_i32()? as usize;
-                let len = constants.get(&args[2])?.as_i32()? as usize;
-                if start.saturating_add(len) > this_str.len() {
-                    return None;
-                }
-                Some((
-                    dest,
-                    ConstValue::DecryptedString(this_str[start..start + len].to_string()),
-                ))
+                let start = constants.get(args.get(1)?)?.as_i32()? as usize;
+                let len = constants.get(args.get(2)?)?.as_i32()? as usize;
+                let end = start.checked_add(len)?;
+                let slice = this_str.get(start..end)?;
+                Some((dest, ConstValue::DecryptedString(slice.into())))
             }
             StringFoldOp::Replace => {
-                let this_str = constants.get(&args[0])?.as_string_content(assembly)?;
-                let old = constants.get(&args[1])?.as_string_content(assembly)?;
-                let new = constants.get(&args[2])?.as_string_content(assembly)?;
+                let this_str = constants.get(args.first()?)?.as_string_content(assembly)?;
+                let old = constants.get(args.get(1)?)?.as_string_content(assembly)?;
+                let new = constants.get(args.get(2)?)?.as_string_content(assembly)?;
                 Some((
                     dest,
-                    ConstValue::DecryptedString(this_str.replace(&old, &new)),
+                    ConstValue::DecryptedString(this_str.replace(&old, &new).into()),
                 ))
             }
             StringFoldOp::ToLower => {
-                let this_str = constants.get(&args[0])?.as_string_content(assembly)?;
-                Some((dest, ConstValue::DecryptedString(this_str.to_lowercase())))
+                let this_str = constants.get(args.first()?)?.as_string_content(assembly)?;
+                Some((
+                    dest,
+                    ConstValue::DecryptedString(this_str.to_lowercase().into()),
+                ))
             }
             StringFoldOp::ToUpper => {
-                let this_str = constants.get(&args[0])?.as_string_content(assembly)?;
-                Some((dest, ConstValue::DecryptedString(this_str.to_uppercase())))
+                let this_str = constants.get(args.first()?)?.as_string_content(assembly)?;
+                Some((
+                    dest,
+                    ConstValue::DecryptedString(this_str.to_uppercase().into()),
+                ))
             }
         }
     }
@@ -1348,12 +1364,14 @@ impl ConstantPropagationPass {
                 definitions.insert(dest, (block_idx, instr_idx));
             }
             for use_var in instr.op().uses() {
-                *use_counts.entry(use_var).or_default() += 1;
+                let slot = use_counts.entry(use_var).or_default();
+                *slot = slot.saturating_add(1);
             }
         }
         for phi in ssa.all_phi_nodes() {
             for operand in phi.operands() {
-                *use_counts.entry(operand.value()).or_default() += 1;
+                let slot = use_counts.entry(operand.value()).or_default();
+                *slot = slot.saturating_add(1);
             }
         }
 
@@ -1388,8 +1406,8 @@ impl ConstantPropagationPass {
 
         for (block_idx, instr_idx, instr) in ssa.iter_instructions() {
             let (dest, operand, is_neg) = match instr.op() {
-                SsaOp::Neg { dest, operand } => (*dest, *operand, true),
-                SsaOp::Not { dest, operand } => (*dest, *operand, false),
+                SsaOp::Neg { dest, operand, .. } => (*dest, *operand, true),
+                SsaOp::Not { dest, operand, .. } => (*dest, *operand, false),
                 _ => continue,
             };
 
@@ -1428,14 +1446,19 @@ impl ConstantPropagationPass {
                     break;
                 };
 
-                let inner = match def_block_ref.instructions()[def_instr].op() {
+                let Some(def_instr_ref) = def_block_ref.instructions().get(def_instr) else {
+                    break;
+                };
+                let inner = match def_instr_ref.op() {
                     SsaOp::Neg {
                         dest: d,
                         operand: inner,
+                        ..
                     } if is_neg => (*d, *inner),
                     SsaOp::Not {
                         dest: d,
                         operand: inner,
+                        ..
                     } if !is_neg => (*d, *inner),
                     _ => break,
                 };
@@ -1473,7 +1496,7 @@ impl ConstantPropagationPass {
                 // Even chain: all cancel out, result = innermost_operand
                 ssa.replace_uses_including_phis(t.outermost_dest, t.innermost_operand);
                 for &(b, i) in &t.instructions_to_nop {
-                    ssa.remove_instruction(b, i);
+                    ssa.replace_instruction_op(b, i, SsaOp::Nop);
                 }
                 changes
                     .record(EventKind::ConstantFolded)
@@ -1486,22 +1509,27 @@ impl ConstantPropagationPass {
                 // Odd chain: one operation remains, rewrite outermost to use innermost_operand
                 let (b, i) = t.outermost_location;
                 if let Some(block) = ssa.block_mut(b) {
-                    let instr = &mut block.instructions_mut()[i];
-                    if t.is_neg {
-                        instr.set_op(SsaOp::Neg {
-                            dest: t.outermost_dest,
-                            operand: t.innermost_operand,
-                        });
-                    } else {
-                        instr.set_op(SsaOp::Not {
-                            dest: t.outermost_dest,
-                            operand: t.innermost_operand,
-                        });
+                    if let Some(instr) = block.instructions_mut().get_mut(i) {
+                        if t.is_neg {
+                            instr.set_op(SsaOp::Neg {
+                                dest: t.outermost_dest,
+                                operand: t.innermost_operand,
+                                flags: None,
+                            });
+                        } else {
+                            instr.set_op(SsaOp::Not {
+                                dest: t.outermost_dest,
+                                operand: t.innermost_operand,
+                                flags: None,
+                            });
+                        }
                     }
                 }
                 // Nop all except the outermost
-                for &(b, i) in &t.instructions_to_nop[1..] {
-                    ssa.remove_instruction(b, i);
+                if let Some(rest) = t.instructions_to_nop.get(1..) {
+                    for &(b, i) in rest {
+                        ssa.replace_instruction_op(b, i, SsaOp::Nop);
+                    }
                 }
                 changes
                     .record(EventKind::ConstantFolded)
@@ -1541,7 +1569,7 @@ impl ConstantPropagationPass {
         }
 
         // Check for back-edges from blocks with higher indices.
-        for bi in (block_idx + 1)..ssa.block_count() {
+        for bi in block_idx.saturating_add(1)..ssa.block_count() {
             if let Some(block) = ssa.block(bi) {
                 if let Some(op) = block.terminator_op() {
                     let targets_block = match op {
@@ -1728,7 +1756,7 @@ impl ConstantPropagationPass {
     }
 }
 
-impl SsaPass for ConstantPropagationPass {
+impl SsaPass<CilTarget, CompilerContext> for ConstantPropagationPass {
     fn name(&self) -> &'static str {
         "constant-propagation"
     }
@@ -1744,12 +1772,15 @@ impl SsaPass for ConstantPropagationPass {
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
-        method_token: Token,
-        ctx: &CompilerContext,
-        assembly: &CilObject,
-    ) -> Result<bool> {
+        method: &MethodRef,
+        host: &CompilerContext,
+    ) -> analyssa::Result<bool> {
+        let assembly = host
+            .assembly()
+            .ok_or_else(|| analyssa::Error::new("ConstantPropagationPass requires an assembly"))?;
+        let method_token = method.0;
         let mut changes = EventLog::new();
-        let ptr_size = PointerSize::from_pe(assembly.file().pe().is_64bit);
+        let ptr_size = PointerSize::from_is_64bit(assembly.file().pe().is_64bit);
 
         // Run constant propagation and transformation
         let constants = Self::run_constant_propagation(
@@ -1758,17 +1789,17 @@ impl SsaPass for ConstantPropagationPass {
             &mut changes,
             ptr_size,
             self.max_iterations,
-            assembly,
+            &assembly,
         );
 
         // Cache the constants we found for other passes
         for (var, value) in &constants {
-            ctx.add_known_value(method_token, *var, value.clone());
+            host.add_known_value(method_token, *var, value.clone());
         }
 
         let changed = !changes.is_empty();
         if changed {
-            ctx.events.merge(&changes);
+            host.events.merge(&changes);
         }
         Ok(changed)
     }

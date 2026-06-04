@@ -569,11 +569,10 @@ impl AssemblyIdentity {
 
         let parts: Vec<&str> = display_name.split(',').map(str::trim).collect();
 
-        if parts.is_empty() {
-            return Err(malformed_error!("Empty assembly display name"));
-        }
-
-        let name = parts[0].to_string();
+        let name = parts
+            .first()
+            .ok_or_else(|| malformed_error!("Empty assembly display name"))?
+            .to_string();
         if name.is_empty() {
             return Err(malformed_error!("Assembly name cannot be empty"));
         }
@@ -650,7 +649,7 @@ impl AssemblyIdentity {
     pub fn display_name(&self) -> String {
         // Pre-allocate with estimated capacity to minimize reallocations
         // Typical format: "Name, Version=x.x.x.x, Culture=neutral, PublicKeyToken=xxxxxxxxxxxxxxxx"
-        let mut result = String::with_capacity(self.name.len() + 80);
+        let mut result = String::with_capacity(self.name.len().saturating_add(80));
 
         result.push_str(&self.name);
 
@@ -1045,7 +1044,10 @@ impl AssemblyVersion {
         let mut components = [0u16; 4];
 
         for (i, part) in parts.iter().enumerate() {
-            components[i] = part
+            let slot = components
+                .get_mut(i)
+                .ok_or_else(|| malformed_error!("Invalid version format: {}", version_str))?;
+            *slot = part
                 .parse::<u16>()
                 .map_err(|_| malformed_error!("Invalid version component: {}", part))?;
         }

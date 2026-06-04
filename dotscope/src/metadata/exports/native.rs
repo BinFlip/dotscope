@@ -419,7 +419,9 @@ impl NativeExports {
 
         // Update next ordinal
         if ordinal >= self.next_ordinal {
-            self.next_ordinal = ordinal + 1;
+            self.next_ordinal = ordinal
+                .checked_add(1)
+                .ok_or_else(|| malformed_error!("Ordinal counter overflow"))?;
         }
 
         Ok(())
@@ -479,7 +481,9 @@ impl NativeExports {
 
         // Update next ordinal
         if ordinal >= self.next_ordinal {
-            self.next_ordinal = ordinal + 1;
+            self.next_ordinal = ordinal
+                .checked_add(1)
+                .ok_or_else(|| malformed_error!("Ordinal counter overflow"))?;
         }
 
         Ok(())
@@ -568,11 +572,18 @@ impl NativeExports {
             self.name_to_ordinal.insert(name.to_owned(), ordinal);
         }
 
-        self.directory.function_count = to_u32(self.functions.len() + self.forwarders.len())?;
+        self.directory.function_count = to_u32(
+            self.functions
+                .len()
+                .checked_add(self.forwarders.len())
+                .ok_or_else(|| malformed_error!("Function/forwarder count overflow"))?,
+        )?;
         self.directory.name_count = to_u32(self.name_to_ordinal.len())?;
 
         if ordinal >= self.next_ordinal {
-            self.next_ordinal = ordinal + 1;
+            self.next_ordinal = ordinal
+                .checked_add(1)
+                .ok_or_else(|| malformed_error!("Ordinal counter overflow"))?;
         }
 
         Ok(())
@@ -610,7 +621,7 @@ impl NativeExports {
     /// ```
     #[must_use]
     pub fn function_count(&self) -> usize {
-        self.functions.len() + self.forwarders.len()
+        self.functions.len().saturating_add(self.forwarders.len())
     }
 
     /// Get the number of forwarder exports.
@@ -918,34 +929,76 @@ impl NativeExports {
 
         // EAT must cover from base_ordinal to highest ordinal
         let eat_entry_count = if max_ordinal >= self.directory.base_ordinal {
-            u32::from(max_ordinal - self.directory.base_ordinal + 1)
+            let span = max_ordinal
+                .checked_sub(self.directory.base_ordinal)
+                .and_then(|v| v.checked_add(1))
+                .ok_or_else(|| malformed_error!("EAT entry count overflow"))?;
+            u32::from(span)
         } else {
             0
         };
 
-        let eat_size = eat_entry_count * 4; // 4 bytes per address
-        let name_table_size = self.directory.name_count * 4; // 4 bytes per name RVA
-        let ordinal_table_size = self.directory.name_count * 2; // 2 bytes per ordinal
+        let eat_size = eat_entry_count
+            .checked_mul(4)
+            .ok_or_else(|| malformed_error!("EAT size overflow"))?;
+        let name_table_size = self
+            .directory
+            .name_count
+            .checked_mul(4)
+            .ok_or_else(|| malformed_error!("Name table size overflow"))?;
+        let ordinal_table_size = self
+            .directory
+            .name_count
+            .checked_mul(2)
+            .ok_or_else(|| malformed_error!("Ordinal table size overflow"))?;
 
-        let eat_rva = base_rva + export_dir_size;
-        let name_table_rva = eat_rva + eat_size;
-        let ordinal_table_rva = name_table_rva + name_table_size;
-        let strings_rva = ordinal_table_rva + ordinal_table_size;
+        let eat_rva = base_rva
+            .checked_add(export_dir_size)
+            .ok_or_else(|| malformed_error!("EAT RVA overflow"))?;
+        let name_table_rva = eat_rva
+            .checked_add(eat_size)
+            .ok_or_else(|| malformed_error!("Name table RVA overflow"))?;
+        let ordinal_table_rva = name_table_rva
+            .checked_add(name_table_size)
+            .ok_or_else(|| malformed_error!("Ordinal table RVA overflow"))?;
+        let strings_rva = ordinal_table_rva
+            .checked_add(ordinal_table_size)
+            .ok_or_else(|| malformed_error!("Strings RVA overflow"))?;
 
         // Calculate total size needed for strings
-        let mut total_strings_size = self.directory.dll_name.len() + 1; // DLL name + null
+        let mut total_strings_size: usize = self
+            .directory
+            .dll_name
+            .len()
+            .checked_add(1)
+            .ok_or_else(|| malformed_error!("DLL name size overflow"))?;
         for name in self.name_to_ordinal.keys() {
-            total_strings_size += name.len() + 1; // name + null
+            let name_size = name
+                .len()
+                .checked_add(1)
+                .ok_or_else(|| malformed_error!("Name size overflow"))?;
+            total_strings_size = total_strings_size
+                .checked_add(name_size)
+                .ok_or_else(|| malformed_error!("Strings size overflow"))?;
         }
         for forwarder in self.forwarders.values() {
-            total_strings_size += forwarder.target.len() + 1; // target + null
+            let target_size = forwarder
+                .target
+                .len()
+                .checked_add(1)
+                .ok_or_else(|| malformed_error!("Forwarder target size overflow"))?;
+            total_strings_size = total_strings_size
+                .checked_add(target_size)
+                .ok_or_else(|| malformed_error!("Strings size overflow"))?;
         }
 
+        let total_strings_size_u32 = to_u32(total_strings_size)?;
         let total_size = export_dir_size
-            + eat_size
-            + name_table_size
-            + ordinal_table_size
-            + to_u32(total_strings_size)?;
+            .checked_add(eat_size)
+            .and_then(|s| s.checked_add(name_table_size))
+            .and_then(|s| s.checked_add(ordinal_table_size))
+            .and_then(|s| s.checked_add(total_strings_size_u32))
+            .ok_or_else(|| malformed_error!("Export table total size overflow"))?;
         let mut data = vec![0u8; total_size as usize];
         let mut offset = 0;
 
@@ -976,13 +1029,31 @@ impl NativeExports {
 
         // Calculate string offsets for forwarders
         let mut forwarder_string_offsets = HashMap::new();
-        let mut current_forwarder_offset = self.directory.dll_name.len() + 1; // After DLL name
+        let mut current_forwarder_offset = self
+            .directory
+            .dll_name
+            .len()
+            .checked_add(1)
+            .ok_or_else(|| malformed_error!("DLL name size overflow"))?; // After DLL name
         for (name, _) in &named_exports {
-            current_forwarder_offset += name.len() + 1; // +1 for null terminator
+            let name_size = name
+                .len()
+                .checked_add(1)
+                .ok_or_else(|| malformed_error!("Name size overflow"))?;
+            current_forwarder_offset = current_forwarder_offset
+                .checked_add(name_size)
+                .ok_or_else(|| malformed_error!("Forwarder offset overflow"))?;
         }
         for forwarder in self.forwarders.values() {
             forwarder_string_offsets.insert(forwarder.ordinal, current_forwarder_offset);
-            current_forwarder_offset += forwarder.target.len() + 1;
+            let target_size = forwarder
+                .target
+                .len()
+                .checked_add(1)
+                .ok_or_else(|| malformed_error!("Forwarder target size overflow"))?;
+            current_forwarder_offset = current_forwarder_offset
+                .checked_add(target_size)
+                .ok_or_else(|| malformed_error!("Forwarder offset overflow"))?;
         }
 
         // Write Export Address Table (EAT)
@@ -995,36 +1066,65 @@ impl NativeExports {
         // Go back and populate known entries
         let mut temp_offset = eat_start_offset;
         for ordinal_index in 0..eat_entry_count {
-            #[allow(clippy::cast_possible_truncation)]
-            let ordinal = self.directory.base_ordinal + (ordinal_index as u16);
+            let ordinal_index_u16 = u16::try_from(ordinal_index)
+                .map_err(|_| malformed_error!("Ordinal index exceeds u16 range"))?;
+            let ordinal = self
+                .directory
+                .base_ordinal
+                .checked_add(ordinal_index_u16)
+                .ok_or_else(|| malformed_error!("Ordinal computation overflow"))?;
+
+            let temp_end = temp_offset
+                .checked_add(4)
+                .ok_or_else(|| malformed_error!("EAT entry offset overflow"))?;
 
             if let Some(function) = self.functions.get(&ordinal) {
                 // Regular function - write address
-                data[temp_offset..temp_offset + 4].copy_from_slice(&function.address.to_le_bytes());
+                data.get_mut(temp_offset..temp_end)
+                    .ok_or(out_of_bounds_error!())?
+                    .copy_from_slice(&function.address.to_le_bytes());
             } else if let Some(_forwarder) = self.forwarders.get(&ordinal) {
                 // Forwarder - write RVA to forwarder string
                 if let Some(&string_offset) = forwarder_string_offsets.get(&ordinal) {
-                    let forwarder_rva = strings_rva + to_u32(string_offset)?;
-                    data[temp_offset..temp_offset + 4]
+                    let forwarder_rva = strings_rva
+                        .checked_add(to_u32(string_offset)?)
+                        .ok_or_else(|| malformed_error!("Forwarder RVA overflow"))?;
+                    data.get_mut(temp_offset..temp_end)
+                        .ok_or(out_of_bounds_error!())?
                         .copy_from_slice(&forwarder_rva.to_le_bytes());
                 }
             }
             // Otherwise leave as 0 (no function at this ordinal)
 
-            temp_offset += 4;
+            temp_offset = temp_end;
         }
 
         // Write Export Name Table
-        let mut name_string_offset = self.directory.dll_name.len() + 1; // After DLL name
+        let mut name_string_offset = self
+            .directory
+            .dll_name
+            .len()
+            .checked_add(1)
+            .ok_or_else(|| malformed_error!("DLL name size overflow"))?; // After DLL name
         for (name, _) in &named_exports {
-            let name_rva = strings_rva + to_u32(name_string_offset)?;
+            let name_rva = strings_rva
+                .checked_add(to_u32(name_string_offset)?)
+                .ok_or_else(|| malformed_error!("Name RVA overflow"))?;
             write_le_at(&mut data, &mut offset, name_rva)?;
-            name_string_offset += name.len() + 1; // +1 for null terminator
+            let name_size = name
+                .len()
+                .checked_add(1)
+                .ok_or_else(|| malformed_error!("Name size overflow"))?;
+            name_string_offset = name_string_offset
+                .checked_add(name_size)
+                .ok_or_else(|| malformed_error!("Name offset overflow"))?;
         }
 
         // Write Export Ordinal Table
         for (_, ordinal) in &named_exports {
-            let adjusted_ordinal = ordinal - self.directory.base_ordinal;
+            let adjusted_ordinal = ordinal
+                .checked_sub(self.directory.base_ordinal)
+                .ok_or_else(|| malformed_error!("Ordinal adjustment underflow"))?;
             write_le_at(&mut data, &mut offset, adjusted_ordinal)?;
         }
 

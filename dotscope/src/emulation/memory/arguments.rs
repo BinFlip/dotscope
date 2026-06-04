@@ -132,14 +132,10 @@ impl ArgumentStorage {
     ///
     /// Returns [`EmulationError::ArgumentIndexOutOfBounds`] if index is out of bounds.
     pub fn get(&self, index: usize) -> Result<&EmValue> {
-        if index >= self.values.len() {
-            return Err(EmulationError::ArgumentIndexOutOfBounds {
-                index,
-                count: self.values.len(),
-            }
-            .into());
-        }
-        Ok(&self.values[index])
+        let count = self.values.len();
+        self.values
+            .get(index)
+            .ok_or_else(|| EmulationError::ArgumentIndexOutOfBounds { index, count }.into())
     }
 
     /// Gets a mutable reference to an argument.
@@ -152,14 +148,10 @@ impl ArgumentStorage {
     ///
     /// Returns [`EmulationError::ArgumentIndexOutOfBounds`] if index is out of bounds.
     pub fn get_mut(&mut self, index: usize) -> Result<&mut EmValue> {
-        if index >= self.values.len() {
-            return Err(EmulationError::ArgumentIndexOutOfBounds {
-                index,
-                count: self.values.len(),
-            }
-            .into());
-        }
-        Ok(&mut self.values[index])
+        let count = self.values.len();
+        self.values
+            .get_mut(index)
+            .ok_or_else(|| EmulationError::ArgumentIndexOutOfBounds { index, count }.into())
     }
 
     /// Sets the value of an argument.
@@ -175,19 +167,13 @@ impl ArgumentStorage {
     ///
     /// Returns error if index is out of bounds or type mismatches.
     pub fn set(&mut self, index: usize, value: EmValue) -> Result<()> {
-        if index >= self.values.len() {
-            return Err(EmulationError::ArgumentIndexOutOfBounds {
-                index,
-                count: self.values.len(),
-            }
-            .into());
-        }
-
-        // Type check (relaxed for compatible types and symbolic values)
-        let expected = &self.types[index];
+        let count = self.values.len();
+        let expected = self.types.get(index).ok_or_else(|| -> crate::Error {
+            EmulationError::ArgumentIndexOutOfBounds { index, count }.into()
+        })?;
         let found = value.cil_flavor();
 
-        // Check type compatibility using CilFlavor's stack compatibility rules
+        // Type check (relaxed for compatible types and symbolic values)
         if !expected.is_stack_assignable_from(&found) && !value.is_symbolic() {
             return Err(EmulationError::ArgumentFlavorMismatch {
                 index,
@@ -197,7 +183,10 @@ impl ArgumentStorage {
             .into());
         }
 
-        self.values[index] = value;
+        let slot = self.values.get_mut(index).ok_or_else(|| -> crate::Error {
+            EmulationError::ArgumentIndexOutOfBounds { index, count }.into()
+        })?;
+        *slot = value;
         Ok(())
     }
 
@@ -211,14 +200,10 @@ impl ArgumentStorage {
     ///
     /// Returns error if index is out of bounds.
     pub fn get_type(&self, index: usize) -> Result<&CilFlavor> {
-        if index >= self.types.len() {
-            return Err(EmulationError::ArgumentIndexOutOfBounds {
-                index,
-                count: self.types.len(),
-            }
-            .into());
-        }
-        Ok(&self.types[index])
+        let count = self.types.len();
+        self.types
+            .get(index)
+            .ok_or_else(|| EmulationError::ArgumentIndexOutOfBounds { index, count }.into())
     }
 
     /// Gets the `this` reference for instance methods.
@@ -228,8 +213,8 @@ impl ArgumentStorage {
     /// `Some(&EmValue)` if this is an instance method, `None` otherwise.
     #[must_use]
     pub fn this(&self) -> Option<&EmValue> {
-        if self.has_this && !self.values.is_empty() {
-            Some(&self.values[0])
+        if self.has_this {
+            self.values.first()
         } else {
             None
         }

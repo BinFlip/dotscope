@@ -121,7 +121,9 @@ impl MemberRefRaw {
         method_sig: &SignatureMethod,
         _strings: &Strings,
     ) -> Arc<boxcar::Vec<ParamRc>> {
-        let params = Arc::new(boxcar::Vec::with_capacity(method_sig.params.len() + 1));
+        let params = Arc::new(boxcar::Vec::with_capacity(
+            method_sig.params.len().saturating_add(1),
+        ));
 
         // Create return parameter (sequence 0)
         let return_param = Arc::new(Param {
@@ -148,7 +150,7 @@ impl MemberRefRaw {
                 offset: 0,
                 flags: ParamAttributes::ZERO,
                 #[allow(clippy::cast_possible_truncation)]
-                sequence: (index + 1) as u32, // Parameter sequence starts at 1
+                sequence: index.saturating_add(1) as u32, // Parameter sequence starts at 1
                 name: None, // MemberRef parameters don't have names from metadata
                 default: OnceLock::new(),
                 marshal: OnceLock::new(),
@@ -225,7 +227,7 @@ impl MemberRefRaw {
             return Err(malformed_error!("Invalid signature data"));
         }
 
-        let (signature, params) = if signature_data[0] == 0x6 {
+        let (signature, params) = if *signature_data.first().ok_or(out_of_bounds_error!())? == 0x6 {
             (
                 MemberRefSignature::Field(parse_field_signature(signature_data)?),
                 Arc::new(boxcar::Vec::new()),
@@ -245,7 +247,7 @@ impl MemberRefRaw {
                     )?;
                 } else {
                     // Regular parameter
-                    let index = (param.sequence - 1) as usize;
+                    let index = param.sequence.saturating_sub(1) as usize;
                     if let Some(param_signature) = method_sig.params.get(index) {
                         param.apply_signature(
                             param_signature,
@@ -337,9 +339,10 @@ impl TableRow for MemberRefRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* class */     sizes.coded_index_bytes(CodedIndexType::MemberRefParent) +
-            /* name */      sizes.str_bytes() +
-            /* signature */ sizes.blob_bytes()
+            /* class */     sizes.coded_index_bytes(CodedIndexType::MemberRefParent)
+            /* name */      .saturating_add(sizes.str_bytes())
+            /* signature */ .saturating_add(sizes.blob_bytes())
+
         )
     }
 }

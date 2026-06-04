@@ -720,10 +720,10 @@ impl CilType {
 
         // Look up the inheritance chain without computing flavors (avoid infinite recursion)
         let mut current = base_type.base();
-        let mut depth = 0;
+        let mut depth: usize = 0;
 
         while let Some(ancestor) = current {
-            depth += 1;
+            depth = depth.saturating_add(1);
             if depth > MAX_INHERITANCE_DEPTH {
                 break;
             }

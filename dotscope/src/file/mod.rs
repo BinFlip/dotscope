@@ -133,7 +133,7 @@ use crate::{
     },
     utils::align_to,
     Error::{self, Goblin, LayoutFailed, Other},
-    Result,
+    ParseFailure, ParseStage, Result,
 };
 use goblin::pe::PE;
 use pe::{DataDirectory, DataDirectoryType, Pe};
@@ -878,11 +878,11 @@ impl File {
     /// ```
     pub fn data_slice(&self, offset: usize, len: usize) -> Result<&[u8]> {
         let base = self.data.data();
-        let end = offset.checked_add(len).ok_or(out_of_bounds_error!())?;
-        if end > base.len() {
-            return Err(out_of_bounds_error!());
-        }
-        Ok(&base[offset..end])
+        let oob = || ParseFailure::OutOfBounds {
+            stage: ParseStage::DataDirectory,
+        };
+        let end = offset.checked_add(len).ok_or_else(|| Error::from(oob()))?;
+        base.get(offset..end).ok_or_else(|| Error::from(oob()))
     }
 
     /// Converts a virtual address (VA) to a file offset.
@@ -918,13 +918,16 @@ impl File {
     /// ```
     pub fn va_to_offset(&self, va: usize) -> Result<usize> {
         let ib = self.imagebase();
-        if ib > va as u64 {
-            return Err(out_of_bounds_error!());
-        }
-
-        let rva_u64 = va as u64 - ib;
-        let rva = usize::try_from(rva_u64)
-            .map_err(|_| malformed_error!("RVA too large to fit in usize: {}", rva_u64))?;
+        let rva_u64 = (va as u64).checked_sub(ib).ok_or_else(|| {
+            Error::from(ParseFailure::OutOfBounds {
+                stage: ParseStage::DataDirectory,
+            })
+        })?;
+        let rva = usize::try_from(rva_u64).map_err(|_| ParseFailure::InvalidField {
+            stage: ParseStage::DataDirectory,
+            field: "rva",
+            reason: format!("RVA too large to fit in usize: {rva_u64}"),
+        })?;
         self.rva_to_offset(rva)
     }
 
@@ -961,29 +964,41 @@ impl File {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn rva_to_offset(&self, rva: usize) -> Result<usize> {
+        let invalid = |field: &'static str, reason: String| ParseFailure::InvalidField {
+            stage: ParseStage::SectionTable,
+            field,
+            reason,
+        };
         for section in &self.pe.sections {
             let Some(section_max) = section.virtual_address.checked_add(section.virtual_size)
             else {
-                return Err(malformed_error!(
-                    "Section malformed, causing integer overflow - {} + {}",
-                    section.virtual_address,
-                    section.virtual_size
-                ));
+                return Err(invalid(
+                    "section_extent",
+                    format!(
+                        "section malformed, causing integer overflow - {} + {}",
+                        section.virtual_address, section.virtual_size
+                    ),
+                )
+                .into());
             };
 
             let rva_u32 = u32::try_from(rva)
-                .map_err(|_| malformed_error!("RVA too large to fit in u32: {}", rva))?;
+                .map_err(|_| invalid("rva", format!("RVA too large to fit in u32: {rva}")))?;
             if section.virtual_address <= rva_u32 && section_max > rva_u32 {
-                return Ok(
-                    (rva - section.virtual_address as usize) + section.pointer_to_raw_data as usize
-                );
+                let delta = rva
+                    .checked_sub(section.virtual_address as usize)
+                    .ok_or_else(|| invalid("rva", "RVA underflow vs section base".into()))?;
+                return delta
+                    .checked_add(section.pointer_to_raw_data as usize)
+                    .ok_or_else(|| Error::from(invalid("rva", "RVA-to-offset overflow".into())));
             }
         }
 
-        Err(malformed_error!(
-            "RVA could not be converted to offset - {}",
-            rva
-        ))
+        Err(invalid(
+            "rva",
+            format!("RVA could not be converted to offset - {rva}"),
+        )
+        .into())
     }
 
     /// Converts a file offset to a relative virtual address (RVA).
@@ -1018,30 +1033,49 @@ impl File {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn offset_to_rva(&self, offset: usize) -> Result<usize> {
+        let invalid = |field: &'static str, reason: String| ParseFailure::InvalidField {
+            stage: ParseStage::SectionTable,
+            field,
+            reason,
+        };
         for section in &self.pe.sections {
             let Some(section_max) = section
                 .pointer_to_raw_data
                 .checked_add(section.size_of_raw_data)
             else {
-                return Err(malformed_error!(
-                    "Section malformed, causing integer overflow - {} + {}",
-                    section.pointer_to_raw_data,
-                    section.size_of_raw_data
-                ));
+                return Err(invalid(
+                    "section_extent",
+                    format!(
+                        "section malformed, causing integer overflow - {} + {}",
+                        section.pointer_to_raw_data, section.size_of_raw_data
+                    ),
+                )
+                .into());
             };
 
-            let offset_u32 = u32::try_from(offset)
-                .map_err(|_| malformed_error!("Offset too large to fit in u32: {}", offset))?;
+            let offset_u32 = u32::try_from(offset).map_err(|_| {
+                invalid(
+                    "offset",
+                    format!("offset too large to fit in u32: {offset}"),
+                )
+            })?;
             if section.pointer_to_raw_data <= offset_u32 && section_max > offset_u32 {
-                return Ok((offset - section.pointer_to_raw_data as usize)
-                    + section.virtual_address as usize);
+                let delta = offset
+                    .checked_sub(section.pointer_to_raw_data as usize)
+                    .ok_or_else(|| invalid("offset", "offset underflow vs section base".into()))?;
+                return delta
+                    .checked_add(section.virtual_address as usize)
+                    .ok_or_else(|| {
+                        Error::from(invalid("offset", "offset-to-RVA overflow".into()))
+                    });
             }
         }
 
-        Err(malformed_error!(
-            "Offset could not be converted to RVA - {}",
-            offset
-        ))
+        Err(invalid(
+            "offset",
+            format!("offset could not be converted to RVA - {offset}"),
+        )
+        .into())
     }
 
     /// Determines if a section contains .NET metadata by checking the actual metadata RVA.
@@ -1089,12 +1123,13 @@ impl File {
             return false;
         };
 
-        if clr_data.len() < 12 {
+        let Some(rva_bytes) = clr_data
+            .get(8..12)
+            .and_then(|s| <[u8; 4]>::try_from(s).ok())
+        else {
             return false;
-        }
-
-        let meta_data_rva =
-            u32::from_le_bytes([clr_data[8], clr_data[9], clr_data[10], clr_data[11]]);
+        };
+        let meta_data_rva = u32::from_le_bytes(rva_bytes);
 
         if meta_data_rva == 0 {
             return false; // No metadata
@@ -1105,7 +1140,10 @@ impl File {
 
             if current_section_name == section_name {
                 let section_start = section.virtual_address;
-                let section_end = section.virtual_address + section.virtual_size;
+                let Some(section_end) = section.virtual_address.checked_add(section.virtual_size)
+                else {
+                    return false;
+                };
                 return meta_data_rva >= section_start && meta_data_rva < section_end;
             }
         }
@@ -1259,7 +1297,11 @@ impl File {
         }
 
         // PE offset is at offset 0x3C in DOS header
-        let pe_offset = u32::from_le_bytes([data[60], data[61], data[62], data[63]]);
+        let bytes = data
+            .get(60..64)
+            .and_then(|s| <[u8; 4]>::try_from(s).ok())
+            .ok_or_else(|| LayoutFailed("DOS header truncated".to_string()))?;
+        let pe_offset = u32::from_le_bytes(bytes);
         Ok(u64::from(pe_offset))
     }
 
@@ -1280,24 +1322,40 @@ impl File {
         let pe_sig_offset = self.pe_signature_offset()?;
         let data = self.data();
 
-        let coff_header_offset = pe_sig_offset + 4; // Skip PE signature
+        let coff_header_offset = pe_sig_offset
+            .checked_add(4)
+            .ok_or_else(|| LayoutFailed("COFF header offset overflow".to_string()))?; // Skip PE signature
 
-        #[allow(clippy::cast_possible_truncation)]
-        if data.len() < (coff_header_offset + 20) as usize {
+        let coff_end = coff_header_offset
+            .checked_add(20)
+            .ok_or_else(|| LayoutFailed("COFF header end overflow".to_string()))?;
+        let coff_end_usize = usize::try_from(coff_end)
+            .map_err(|_| LayoutFailed("COFF header end exceeds usize".to_string()))?;
+        if data.len() < coff_end_usize {
             return Err(LayoutFailed(
                 "File too small to contain COFF header".to_string(),
             ));
         }
 
         // Optional header size is at offset 16 in COFF header
-        let opt_header_size_offset = coff_header_offset + 16;
-        #[allow(clippy::cast_possible_truncation)]
-        let opt_header_size = u16::from_le_bytes([
-            data[opt_header_size_offset as usize],
-            data[opt_header_size_offset as usize + 1],
-        ]);
+        let opt_header_size_offset = coff_header_offset
+            .checked_add(16)
+            .ok_or_else(|| LayoutFailed("Optional header size offset overflow".to_string()))?;
+        let opt_offset_usize = usize::try_from(opt_header_size_offset)
+            .map_err(|_| LayoutFailed("Optional header offset exceeds usize".to_string()))?;
+        let opt_end_usize = opt_offset_usize
+            .checked_add(2)
+            .ok_or_else(|| LayoutFailed("Optional header offset+2 overflow".to_string()))?;
+        let opt_bytes = data
+            .get(opt_offset_usize..opt_end_usize)
+            .and_then(|s| <[u8; 2]>::try_from(s).ok())
+            .ok_or_else(|| LayoutFailed("Optional header size truncated".to_string()))?;
+        let opt_header_size = u16::from_le_bytes(opt_bytes);
 
-        Ok(4 + 20 + u64::from(opt_header_size)) // PE sig + COFF + Optional header
+        // PE sig + COFF + Optional header
+        24u64
+            .checked_add(u64::from(opt_header_size))
+            .ok_or_else(|| LayoutFailed("PE headers size overflow".to_string()))
     }
 
     /// Aligns an offset to this file's PE file alignment boundary.

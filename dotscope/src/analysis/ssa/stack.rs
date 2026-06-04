@@ -259,18 +259,18 @@ impl StackSimulator {
     /// * `num_locals` - Number of local variables
     #[must_use]
     pub fn new(num_args: usize, num_locals: usize) -> Self {
-        let mut next_sim_id = SIMULATION_ID_OFFSET;
+        let mut next_sim_id: usize = SIMULATION_ID_OFFSET;
 
         let mut args = Vec::with_capacity(num_args);
         for _ in 0..num_args {
             args.push(VariableState::new(SsaVarId::from_index(next_sim_id)));
-            next_sim_id += 1;
+            next_sim_id = next_sim_id.saturating_add(1);
         }
 
         let mut locals = Vec::with_capacity(num_locals);
         for _ in 0..num_locals {
             locals.push(VariableState::new(SsaVarId::from_index(next_sim_id)));
-            next_sim_id += 1;
+            next_sim_id = next_sim_id.saturating_add(1);
         }
 
         Self {
@@ -292,7 +292,7 @@ impl StackSimulator {
     /// These IDs are temporary placeholders replaced during the SSA rename phase.
     fn alloc_sim_id(&mut self) -> SsaVarId {
         let id = SsaVarId::from_index(self.next_sim_id);
-        self.next_sim_id += 1;
+        self.next_sim_id = self.next_sim_id.saturating_add(1);
         id
     }
 
@@ -453,10 +453,10 @@ impl StackSimulator {
         let var = self.alloc_sim_id();
         let depth = self.stack.len();
         #[allow(clippy::cast_possible_truncation)]
-        let local_idx = self.num_locals as u16 + depth as u16;
+        let local_idx = (self.num_locals as u16).saturating_add(depth as u16);
         let origin = VariableOrigin::Local(local_idx);
         // Track max depth for total_stack_slots()
-        let depth_count = (depth + 1) as u32;
+        let depth_count = depth.saturating_add(1) as u32;
         if depth_count > self.next_stack_slot {
             self.next_stack_slot = depth_count;
         }
@@ -583,8 +583,8 @@ impl StackSimulator {
 
         let new_var = self.alloc_sim_id();
 
-        let state = &mut self.args[index];
-        state.version += 1;
+        let state = self.args.get_mut(index)?;
+        state.version = state.version.saturating_add(1);
         state.current_var = new_var;
 
         // Return new_var as def to enable Copy op generation for constant propagation
@@ -611,8 +611,8 @@ impl StackSimulator {
         }
 
         let new_var = self.alloc_sim_id();
-        let state = &mut self.locals[index];
-        state.version += 1;
+        let state = self.locals.get_mut(index)?;
+        state.version = state.version.saturating_add(1);
         state.current_var = new_var;
 
         // Return new_var as def to enable Copy op generation for constant propagation
@@ -737,10 +737,10 @@ impl StackSimulator {
         }
 
         let mut result = Vec::with_capacity(count);
-        let start_idx = self.stack.len() - count;
+        let start_idx = self.stack.len().saturating_sub(count);
 
         for i in start_idx..self.stack.len() {
-            result.push(self.stack[i].var);
+            result.push(self.stack.get(i)?.var);
         }
 
         self.stack.truncate(start_idx);

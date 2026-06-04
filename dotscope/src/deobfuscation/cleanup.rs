@@ -89,7 +89,9 @@ pub(crate) fn build_cleanup_request(
         if !detections.is_detected(tech.id()) {
             continue;
         }
-        let detection = detections.get(tech.id()).unwrap();
+        let Some(detection) = detections.get(tech.id()) else {
+            continue;
+        };
         if let Some(tech_cleanup) = tech.cleanup(detection) {
             request.merge(&tech_cleanup);
         }
@@ -363,7 +365,7 @@ fn repair_duplicate_assembly_rows(cil_assembly: &mut CilAssembly, ctx: &Analysis
     }
 
     // Remove duplicate rows (keep RID 1, remove RID 2..N)
-    let duplicates = row_count - 1;
+    let duplicates = row_count.saturating_sub(1);
     for rid in (2..=row_count).rev() {
         if let Err(e) = cil_assembly.table_row_remove(TableId::Assembly, rid) {
             log::warn!("Failed to remove duplicate Assembly row {rid}: {e}");
@@ -392,7 +394,7 @@ fn repair_duplicate_module_rows(cil_assembly: &mut CilAssembly, ctx: &AnalysisCo
         return;
     }
 
-    let duplicates = row_count - 1;
+    let duplicates = row_count.saturating_sub(1);
     for rid in (2..=row_count).rev() {
         if let Err(e) = cil_assembly.table_row_remove(TableId::Module, rid) {
             log::warn!("Failed to remove duplicate Module row {rid}: {e}");
@@ -588,17 +590,18 @@ fn repair_duplicate_typedef_rows(
         } else {
             // Check if the duplicate has methods or fields
             let method_start = row.method_list;
+            let next_rid = row.rid.saturating_add(1);
             let method_end = typedef_rows
                 .iter()
-                .find(|t| t.rid == row.rid + 1)
+                .find(|t| t.rid == next_rid)
                 .map(|t| t.method_list)
-                .unwrap_or(method_count + 1);
+                .unwrap_or_else(|| method_count.saturating_add(1));
             let field_start = row.field_list;
             let field_end = typedef_rows
                 .iter()
-                .find(|t| t.rid == row.rid + 1)
+                .find(|t| t.rid == next_rid)
                 .map(|t| t.field_list)
-                .unwrap_or(field_count + 1);
+                .unwrap_or_else(|| field_count.saturating_add(1));
 
             let has_methods = method_end > method_start;
             let has_fields = field_end > field_start;
@@ -641,7 +644,7 @@ fn repair_duplicate_typedef_rows(
         }
     }
 
-    let total = removed_count + cleanup_count;
+    let total = removed_count.saturating_add(cleanup_count);
     log::info!(
         "Repaired TypeDef table: {removed_count} removed, {cleanup_count} scheduled for cleanup ({total} total duplicates, ECMA-335 §22.37)"
     );
@@ -672,16 +675,17 @@ fn repair_global_field_visibility(cil_assembly: &mut CilAssembly, ctx: &Analysis
 
     // Find <Module> type (always RID 1) and its field range
     let typedef_rows: Vec<TypeDefRaw> = typedefs.into_iter().collect();
-    if typedef_rows.is_empty() {
+    let Some(module_type) = typedef_rows.first() else {
         return;
-    }
-    let module_type = &typedef_rows[0];
+    };
     let field_start = module_type.field_list;
-    let field_end = if typedef_rows.len() > 1 {
-        typedef_rows[1].field_list
+    let field_end = if let Some(next) = typedef_rows.get(1) {
+        next.field_list
     } else {
         // If there's only one type, the field end is the total field count + 1
-        cil_assembly.original_table_row_count(TableId::Field) + 1
+        cil_assembly
+            .original_table_row_count(TableId::Field)
+            .saturating_add(1)
     };
 
     if field_start >= field_end {
@@ -693,14 +697,13 @@ fn repair_global_field_visibility(cil_assembly: &mut CilAssembly, ctx: &Analysis
         return;
     };
     let fields: Vec<FieldRaw> = fields_table.into_iter().collect();
-    let mut repaired = 0;
+    let mut repaired: usize = 0;
 
     for rid in field_start..field_end {
-        let idx = (rid - 1) as usize;
-        if idx >= fields.len() {
+        let idx = rid.saturating_sub(1) as usize;
+        let Some(field) = fields.get(idx) else {
             break;
-        }
-        let field = &fields[idx];
+        };
         let access = field.flags & 0x0007; // FieldAccessMask per ECMA-335 §II.23.1.5
 
         // Valid access for global fields: CompilerControlled(0), Private(1), or Public(6)
@@ -712,7 +715,7 @@ fn repair_global_field_visibility(cil_assembly: &mut CilAssembly, ctx: &Analysis
             {
                 log::warn!("Failed to repair <Module> field {rid} visibility: {e}");
             } else {
-                repaired += 1;
+                repaired = repaired.saturating_add(1);
             }
         }
     }
@@ -779,8 +782,9 @@ fn sweep_dead_module_methods(
             let callers = callers_of.get(&method.token);
             let has_callers = callers.is_some_and(|c| !c.is_empty());
             // A method is dead if it has known callers and ALL of them are deleted.
-            let all_callers_deleted =
-                has_callers && callers.unwrap().iter().all(|c| deleted_methods.contains(c));
+            let all_callers_deleted = callers.is_some_and(|c| {
+                !c.is_empty() && c.iter().all(|caller| deleted_methods.contains(caller))
+            });
 
             // Methods with NO callers in the SSA graph are conservatively kept —
             // the SSA call graph only covers successfully-converted methods, so

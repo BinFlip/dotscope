@@ -186,10 +186,11 @@ impl TableRow for DocumentRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            sizes.blob_bytes() +  // name
-            sizes.guid_bytes() +  // hash_algorithm
-            sizes.blob_bytes() +  // hash
-            sizes.guid_bytes()    // language
+            /* name */           sizes.blob_bytes()
+            /* hash_algorithm */ .saturating_add(sizes.guid_bytes())
+            /* hash */           .saturating_add(sizes.blob_bytes())
+            /* language */       .saturating_add(sizes.guid_bytes())
+
         )
     }
 }

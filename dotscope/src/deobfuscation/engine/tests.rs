@@ -79,7 +79,7 @@ fn test_pipeline_passes_selective() {
 #[test]
 fn test_analyze_return_void() {
     // Create SSA with void return
-    let mut ssa = SsaFunction::new(0, 0);
+    let mut ssa: SsaFunction = SsaFunction::new(0, 0);
     let mut block = SsaBlock::new(0);
     block.add_instruction(SsaInstruction::synthetic(SsaOp::Return { value: None }));
     ssa.add_block(block);
@@ -91,7 +91,7 @@ fn test_analyze_return_void() {
 #[test]
 fn test_analyze_return_constant() {
     // Create SSA that returns a constant
-    let mut ssa = SsaFunction::new(0, 0);
+    let mut ssa: SsaFunction = SsaFunction::new(0, 0);
     let mut block = SsaBlock::new(0);
 
     // Define a constant
@@ -114,7 +114,7 @@ fn test_analyze_return_constant() {
 #[test]
 fn test_analyze_return_no_returns_is_void() {
     // Create SSA with no return statements (unusual but possible)
-    let mut ssa = SsaFunction::new(0, 0);
+    let mut ssa: SsaFunction = SsaFunction::new(0, 0);
     let block = SsaBlock::new(0);
     ssa.add_block(block);
 
@@ -125,7 +125,7 @@ fn test_analyze_return_no_returns_is_void() {
 #[test]
 fn test_analyze_purity_pure() {
     // Create SSA with only pure operations
-    let mut ssa = SsaFunction::new(0, 0);
+    let mut ssa: SsaFunction = SsaFunction::new(0, 0);
     let mut block = SsaBlock::new(0);
 
     // Pure arithmetic operation
@@ -136,6 +136,7 @@ fn test_analyze_purity_pure() {
         dest,
         left: src1,
         right: src2,
+        flags: None,
     }));
     block.add_instruction(SsaInstruction::synthetic(SsaOp::Return {
         value: Some(dest),
@@ -149,7 +150,7 @@ fn test_analyze_purity_pure() {
 #[test]
 fn test_analyze_purity_impure_store_field() {
     // Create SSA with a field store
-    let mut ssa = SsaFunction::new(0, 0);
+    let mut ssa: SsaFunction = SsaFunction::new(0, 0);
     let mut block = SsaBlock::new(0);
 
     let obj = SsaVarId::from_index(0);
@@ -169,7 +170,7 @@ fn test_analyze_purity_impure_store_field() {
 #[test]
 fn test_analyze_purity_impure_throw() {
     // Create SSA with a throw
-    let mut ssa = SsaFunction::new(0, 0);
+    let mut ssa: SsaFunction = SsaFunction::new(0, 0);
     let mut block = SsaBlock::new(0);
 
     let exc = SsaVarId::from_index(0);
@@ -183,7 +184,7 @@ fn test_analyze_purity_impure_throw() {
 #[test]
 fn test_analyze_purity_readonly() {
     // Create SSA with only field reads
-    let mut ssa = SsaFunction::new(0, 0);
+    let mut ssa: SsaFunction = SsaFunction::new(0, 0);
     let mut block = SsaBlock::new(0);
 
     let dest = SsaVarId::from_index(0);
@@ -208,7 +209,7 @@ fn test_analyze_purity_readonly() {
 #[test]
 fn test_analyze_purity_unknown_calls() {
     // Create SSA with a call
-    let mut ssa = SsaFunction::new(0, 0);
+    let mut ssa: SsaFunction = SsaFunction::new(0, 0);
     let mut block = SsaBlock::new(0);
 
     let dest = SsaVarId::from_index(0);
@@ -232,13 +233,18 @@ fn test_analyze_purity_unknown_calls() {
 #[test]
 fn test_detect_string_decryptor_xor() {
     // Create small SSA with XOR operations (typical of string decryption)
-    let mut ssa = SsaFunction::new(0, 0);
+    let mut ssa: SsaFunction = SsaFunction::new(0, 0);
     let mut block = SsaBlock::new(0);
 
     let dest = SsaVarId::from_index(0);
     let left = SsaVarId::from_index(1);
     let right = SsaVarId::from_index(2);
-    block.add_instruction(SsaInstruction::synthetic(SsaOp::Xor { dest, left, right }));
+    block.add_instruction(SsaInstruction::synthetic(SsaOp::Xor {
+        dest,
+        left,
+        right,
+        flags: None,
+    }));
     block.add_instruction(SsaInstruction::synthetic(SsaOp::Return {
         value: Some(dest),
     }));
@@ -251,7 +257,7 @@ fn test_detect_string_decryptor_xor() {
 #[test]
 fn test_detect_string_decryptor_large_method() {
     // Create large SSA (over 200 instructions)
-    let mut ssa = SsaFunction::new(0, 0);
+    let mut ssa: SsaFunction = SsaFunction::new(0, 0);
     let mut block = SsaBlock::new(0);
 
     // Add 250 instructions
@@ -273,7 +279,7 @@ fn test_detect_string_decryptor_large_method() {
 #[test]
 fn test_detect_dispatcher_with_switch() {
     // Create SSA with a switch having 5+ targets
-    let mut ssa = SsaFunction::new(0, 0);
+    let mut ssa: SsaFunction = SsaFunction::new(0, 0);
     let mut block = SsaBlock::new(0);
 
     let value = SsaVarId::from_index(0);
@@ -291,7 +297,7 @@ fn test_detect_dispatcher_with_switch() {
 #[test]
 fn test_detect_dispatcher_small_switch() {
     // Create SSA with a small switch (< 5 targets)
-    let mut ssa = SsaFunction::new(0, 0);
+    let mut ssa: SsaFunction = SsaFunction::new(0, 0);
     let mut block = SsaBlock::new(0);
 
     let value = SsaVarId::from_index(0);
@@ -309,7 +315,7 @@ fn test_detect_dispatcher_small_switch() {
 #[test]
 fn test_detect_dispatcher_no_switch() {
     // Create SSA without switch
-    let mut ssa = SsaFunction::new(0, 0);
+    let mut ssa: SsaFunction = SsaFunction::new(0, 0);
     let mut block = SsaBlock::new(0);
     block.add_instruction(SsaInstruction::synthetic(SsaOp::Return { value: None }));
     ssa.add_block(block);
@@ -323,7 +329,7 @@ fn test_compute_method_summary() {
     let engine = DeobfuscationEngine::default();
 
     // Create a simple pure method with constant return
-    let mut ssa = SsaFunction::new(0, 0);
+    let mut ssa: SsaFunction = SsaFunction::new(0, 0);
     let mut block = SsaBlock::new(0);
 
     let var = SsaVarId::from_index(0);

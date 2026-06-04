@@ -11,9 +11,12 @@ use std::{
 
 use log::{debug, info, warn};
 
+use analyssa::scheduling::SsaPass as AnalyssaSsaPass;
+
 use crate::{
+    analysis::{CilTarget, MethodRef},
     cilassembly::{expand_type_tokens, CleanupRequest},
-    compiler::{DeadMethodEliminationPass, EventLog, PassScheduler, SsaPass},
+    compiler::{CompilerContext, DeadMethodEliminationPass, EventLog, PassScheduler},
     deobfuscation::{
         cleanup::{build_cleanup_request, execute_cleanup},
         context::AnalysisContext,
@@ -104,7 +107,7 @@ impl<'a> PipelineRun<'a> {
             if pipeline_iteration > 0 {
                 info!(
                     "Pipeline iteration {}: ByteTransform requested, re-running byte transforms",
-                    pipeline_iteration + 1
+                    pipeline_iteration.saturating_add(1)
                 );
                 assembly = self.run_byte_transforms(assembly)?;
                 self.record_detections();
@@ -174,7 +177,9 @@ impl<'a> PipelineRun<'a> {
             if self.detections.is_transformed(tech.id()) {
                 continue;
             }
-            let detection = self.detections.get(tech.id()).unwrap();
+            let Some(detection) = self.detections.get(tech.id()) else {
+                continue;
+            };
             let tech_start = Instant::now();
             let Some(transform_result) =
                 tech.byte_transform(&mut working, detection, &self.detections)
@@ -308,8 +313,8 @@ impl<'a> PipelineRun<'a> {
             }
             info!(
                 "[technique] SSA re-detected (outer {}, round {}): {}",
-                outer_iteration + 1,
-                *detection_round + 1,
+                outer_iteration.saturating_add(1),
+                detection_round.saturating_add(1),
                 tech.name()
             );
             self.detections.merge(tech.id(), ssa_det);
@@ -320,13 +325,13 @@ impl<'a> PipelineRun<'a> {
             return Ok(false);
         }
 
-        *detection_round += 1;
+        *detection_round = detection_round.saturating_add(1);
         self.record_detections();
 
         let passes_before = scheduler.pass_count();
         self.engine
             .initialize_and_create_passes(ctx, assembly_arc, &self.detections, scheduler);
-        let passes_added = scheduler.pass_count() - passes_before;
+        let passes_added = scheduler.pass_count().saturating_sub(passes_before);
         self.engine.configure_no_inline(ctx);
 
         if passes_added > 0 {
@@ -479,7 +484,7 @@ impl<'a> PipelineRun<'a> {
 
             let round_iterations =
                 scheduler.run_pipeline(ctx, assembly_arc, Some(&ctx.processing_state))?;
-            self.iterations += round_iterations;
+            self.iterations = self.iterations.saturating_add(round_iterations);
 
             let has_pending_work_items = !ctx.work_queue.is_empty();
             let mut detection_added_work = false;
@@ -501,7 +506,7 @@ impl<'a> PipelineRun<'a> {
             if !has_work {
                 debug!(
                     "SSA fixpoint reached after {} iteration(s)",
-                    outer_iteration + 1
+                    outer_iteration.saturating_add(1)
                 );
                 break;
             }
@@ -557,7 +562,14 @@ impl<'a> PipelineRun<'a> {
     ) -> Result<(CilObject, DeobfuscationResult)> {
         if ctx.config.cleanup.remove_unused_methods {
             let dead_method_pass = DeadMethodEliminationPass::new();
-            let _ = dead_method_pass.run_global(&ctx, &assembly_arc)?;
+            // Ensure the assembly handle is set on the context so the
+            // global pass can reach it via the analyssa host trait.
+            ctx.compiler.set_assembly(assembly_arc.clone());
+            let _ = AnalyssaSsaPass::<CilTarget, CompilerContext>::run_global(
+                &dead_method_pass,
+                &ctx.compiler,
+            )
+            .map_err(|e| Error::SsaError(e.0))?;
         }
 
         let ssa_call_graph = ctx.build_ssa_call_graph();
@@ -636,9 +648,20 @@ impl<'a> PipelineRun<'a> {
         let pass = NeutralizationPass::new(&all_tokens);
         let mut neutralized = false;
         let method_tokens: Vec<Token> = ctx.ssa_functions.iter().map(|e| *e.key()).collect();
+        // Ensure the assembly handle is set on the context so passes can
+        // reach it through the analyssa host trait.
+        ctx.set_assembly(assembly_arc.clone());
         for method_token in &method_tokens {
             if let Some(mut ssa) = ctx.ssa_functions.get_mut(method_token) {
-                if pass.run_on_method(&mut ssa, *method_token, ctx, assembly_arc)? {
+                let method_ref = MethodRef::from(*method_token);
+                if AnalyssaSsaPass::<CilTarget, CompilerContext>::run_on_method(
+                    &pass,
+                    &mut ssa,
+                    &method_ref,
+                    ctx,
+                )
+                .map_err(|e| Error::SsaError(e.0))?
+                {
                     neutralized = true;
                     // Ensure neutralized methods get code-generated. Without this,
                     // methods modified only by neutralization keep their original IL
@@ -650,8 +673,11 @@ impl<'a> PipelineRun<'a> {
         }
 
         if neutralized {
-            self.iterations +=
-                scheduler.run_pipeline(ctx, assembly_arc, Some(&ctx.processing_state))?;
+            self.iterations = self.iterations.saturating_add(scheduler.run_pipeline(
+                ctx,
+                assembly_arc,
+                Some(&ctx.processing_state),
+            )?);
         }
 
         Ok(())
@@ -665,6 +691,13 @@ impl<'a> PipelineRun<'a> {
         if let Some(pool) = ctx.template_pool.get() {
             pool.release();
         }
+        // Drop the assembly reference held by `CompilerContext` so the
+        // strong-count can drop to one. The analyssa scheduler's
+        // `run_pipeline` already clears it on its own exit, but nested
+        // global-pass invocations (e.g. dead-method elimination outside
+        // the scheduler) and re-entrant pipeline iterations can leave a
+        // stray reference here.
+        ctx.compiler.clear_assembly();
         Arc::try_unwrap(assembly_arc).map_err(|_| {
             Error::Deobfuscation("Cannot unwrap assembly - still has other references".into())
         })

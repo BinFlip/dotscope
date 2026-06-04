@@ -7,17 +7,21 @@
 //!
 //! # Architecture
 //!
-//! The SSA module is organized into focused sub-modules:
+//! The SSA primitives ([`SsaVarId`], [`PhiNode`], [`SsaBlock`],
+//! [`SsaFunction`], [`SsaOp`]) and analyses ([`SsaCfg`], [`PhiAnalyzer`],
+//! [`SsaEvaluator`], …) live in `analyssa::ir` / `analyssa::analysis`. The
+//! files in this directory are CIL-side boundary code:
 //!
-//! - [`variable`] - SSA variable representation and identifiers
-//! - [`phi`] - Phi node representation for control flow merges
-//! - [`instruction`] - SSA-form instructions with explicit def/use chains
-//! - [`block`] - SSA basic blocks containing phi nodes and instructions
-//! - [`function`] - Complete SSA representation of a method
-//! - [`builder`] - SSA construction algorithm (Cytron et al.)
-//! - [`types`] - SSA type system for CIL types
-//! - [`value`] - Value tracking for constant propagation and CSE
-//! - [`ops`] - Decomposed SSA operations
+//! - [`builder`] - SSA construction driver (Cytron et al.) for CIL
+//! - [`converter`] - CIL → SSA conversion
+//! - [`decompose`] - CIL instruction decomposition into SSA ops
+//! - [`stack`] - CIL stack-typing simulator
+//! - [`types`] - CIL type system (`SsaType`, `TypeRef`, `MethodRef`, …)
+//! - [`target`] - `CilTarget` impl of `analyssa::Target`
+//! - [`exception`] - CIL exception handler bridge
+//! - [`value`], [`ops`] - CIL extension impls on `analyssa::ConstValue` / `analyssa::SsaOp`
+//! - [`function`] - CIL-pinned `SsaFunctionCilExt`/`Semantics` extensions
+//! - [`resolver`] - CIL-side value resolver for inline values
 //!
 //! # CIL to SSA Transformation
 //!
@@ -70,51 +74,103 @@
 //!   Control Dependence Graph", ACM TOPLAS 1991
 //! - Cooper & Torczon, "Engineering a Compiler", Chapter 9
 
-mod block;
+// CIL-bound boundary code stays in dotscope (CIL → SSA conversion, stack
+// typing, codegen extensions on analyssa types).
 mod builder;
-mod cfg;
-mod constraints;
-mod consts;
 mod converter;
 mod decompose;
-mod evaluator;
 mod exception;
 mod function;
-mod instruction;
-mod liveness;
-mod memory;
 mod ops;
-mod patterns;
-mod phi;
-mod phis;
 mod resolver;
 mod stack;
 mod symbolic;
+mod target;
 mod types;
 mod value;
-mod variable;
-pub(crate) mod verifier;
 
-pub use block::{ReplaceResult, SsaBlock};
+// Generic SSA primitives + analyses live in analyssa. The thin re-export
+// shims that used to mediate via `mod cfg/consts/phi/...` collapsed into
+// the `pub use` block below.
+
 pub use builder::SsaFunctionBuilder;
-pub use cfg::SsaCfg;
-pub use consts::{evaluate_const_op, ConstEvaluator};
 pub use converter::SsaConverter;
-pub use evaluator::{ControlFlow, SsaEvaluator};
-pub use exception::SsaExceptionHandler;
-pub use function::{MethodPurity, ReturnInfo, SsaFunction, TrivialPhiOptions};
-pub use instruction::SsaInstruction;
-pub use ops::{BinaryOpKind, CmpKind, SsaOp, UnaryOpKind};
-pub use phi::{PhiNode, PhiOperand};
-pub use phis::PhiAnalyzer;
+pub use exception::{SsaExceptionHandler, SsaExceptionHandlerCilExt};
+pub use function::{SsaFunctionCilExt, SsaFunctionSemanticsExt};
+pub use ops::{BinaryOpKind, CmpKind, SsaOp, SsaOpCilExt, UnaryOpKind};
+
+// `SsaFunction`/`ReturnInfo`/`MethodPurity` live in `analyssa::ir::function`.
+pub use analyssa::ir::function::MethodPurity;
+/// CIL-defaulted alias of [`analyssa::ir::function::SsaFunction`].
+pub type SsaFunction<T = CilTarget> = analyssa::ir::function::SsaFunction<T>;
+/// CIL-defaulted alias of [`analyssa::ir::function::ReturnInfo`].
+pub type ReturnInfo<T = CilTarget> = analyssa::ir::function::ReturnInfo<T>;
 pub use resolver::ValueResolver;
 pub use stack::{SimulationResult, StackSimulator, StackSlot, StackSlotSource};
 #[cfg(feature = "z3")]
 pub use symbolic::Z3Solver;
 pub use symbolic::{SymbolicEvaluator, SymbolicExpr, SymbolicOp};
+pub use target::CilTarget;
 pub use types::{
     resolve_corelib_valuetype, FieldRef, MethodRef, SsaType, TypeClass, TypeContext, TypeProvider,
     TypeRef,
 };
-pub use value::{AbstractValue, ConstValue};
-pub use variable::{DefSite, FunctionVarAllocator, SsaVarId, SsaVariable, UseSite, VariableOrigin};
+pub use value::{AbstractValue, ConstValue, ConstValueCilExt};
+
+// Direct re-exports from analyssa for the now-collapsed shim files. Each line
+// here used to be a one-line module file in `dotscope/src/analysis/ssa/`.
+pub use analyssa::ir::phi::{PhiNode, PhiOperand};
+pub use analyssa::ir::variable::{
+    DefSite, FunctionVarAllocator, SsaVarId, UseSite, VariableOrigin,
+};
+pub use analyssa::Target;
+
+#[allow(unused_imports)]
+pub use analyssa::analysis::consts::evaluate_const_op;
+pub use analyssa::analysis::evaluator::ControlFlow;
+pub use analyssa::analysis::phis::{place_pruned_phis, PhiAnalyzer, PhiPlacementConfig};
+
+/// CIL-defaulted alias of [`analyssa::ir::block::SsaBlock`].
+pub type SsaBlock<T = CilTarget> = analyssa::ir::block::SsaBlock<T>;
+/// CIL-defaulted alias of [`analyssa::ir::instruction::SsaInstruction`].
+pub type SsaInstruction<T = CilTarget> = analyssa::ir::instruction::SsaInstruction<T>;
+/// CIL-defaulted alias of [`analyssa::ir::variable::SsaVariable`].
+pub type SsaVariable<T = CilTarget> = analyssa::ir::variable::SsaVariable<T>;
+/// CIL-defaulted alias of [`analyssa::analysis::SsaCfg`].
+pub type SsaCfg<'a, T = CilTarget> = analyssa::analysis::cfg::SsaCfg<'a, T>;
+/// CIL-defaulted alias of [`analyssa::analysis::consts::ConstEvaluator`].
+pub type ConstEvaluator<'a, T = CilTarget> = analyssa::analysis::consts::ConstEvaluator<'a, T>;
+/// CIL-defaulted alias of [`analyssa::analysis::evaluator::SsaEvaluator`].
+pub type SsaEvaluator<'a, T = CilTarget> = analyssa::analysis::evaluator::SsaEvaluator<'a, T>;
+/// CIL-defaulted alias of [`analyssa::analysis::evaluator::ExecutionTrace`].
+pub type ExecutionTrace<T = CilTarget> = analyssa::analysis::evaluator::ExecutionTrace<T>;
+/// CIL-defaulted alias of [`analyssa::analysis::patterns::PatternDetector`].
+pub type PatternDetector<'a, T = CilTarget> = analyssa::analysis::patterns::PatternDetector<'a, T>;
+/// CIL-defaulted alias of [`analyssa::analysis::patterns::DispatcherPattern`].
+pub type DispatcherPattern<T = CilTarget> = analyssa::analysis::patterns::DispatcherPattern<T>;
+/// CIL-defaulted alias of [`analyssa::analysis::patterns::SourceBlock`].
+pub type SourceBlock<T = CilTarget> = analyssa::analysis::patterns::SourceBlock<T>;
+/// CIL-defaulted alias of [`analyssa::analysis::patterns::OpaquePredicatePattern`].
+pub type OpaquePredicatePattern<T = CilTarget> =
+    analyssa::analysis::patterns::OpaquePredicatePattern<T>;
+/// CIL-defaulted alias of [`analyssa::analysis::patterns::PredicateResolution`].
+pub type PredicateResolution<T = CilTarget> = analyssa::analysis::patterns::PredicateResolution<T>;
+/// CIL-defaulted alias of [`analyssa::analysis::constraints::Constraint`].
+pub type Constraint<T = CilTarget> = analyssa::analysis::constraints::Constraint<T>;
+/// CIL-defaulted alias of [`analyssa::analysis::constraints::PathConstraint`].
+pub type PathConstraint<T = CilTarget> = analyssa::analysis::constraints::PathConstraint<T>;
+/// CIL-defaulted alias of [`analyssa::analysis::memory::MemoryLocation`].
+pub type MemoryLocation<T = CilTarget> = analyssa::analysis::memory::MemoryLocation<T>;
+/// CIL-defaulted alias of [`analyssa::analysis::memory::MemoryOp`].
+pub type MemoryOp<T = CilTarget> = analyssa::analysis::memory::MemoryOp<T>;
+/// CIL-defaulted alias of [`analyssa::analysis::memory::MemoryPhi`].
+pub type MemoryPhi<T = CilTarget> = analyssa::analysis::memory::MemoryPhi<T>;
+/// CIL-defaulted alias of [`analyssa::analysis::memory::MemoryVersion`].
+pub type MemoryVersion<T = CilTarget> = analyssa::analysis::memory::MemoryVersion<T>;
+/// CIL-defaulted alias of [`analyssa::analysis::verifier::SsaVerifier`].
+pub type SsaVerifier<'a, T = CilTarget> = analyssa::analysis::verifier::SsaVerifier<'a, T>;
+
+/// Liveness analysis lifted to analyssa. Shim kept for back-compat.
+pub mod liveness {
+    pub use analyssa::analysis::liveness::*;
+}

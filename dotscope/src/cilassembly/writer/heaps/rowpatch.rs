@@ -127,7 +127,7 @@ pub fn patch_row_heap_refs(
 /// * `size` - Size of the field (2 or 4 bytes)
 /// * `remap` - Mapping from old heap offsets/indices to new values
 fn patch_heap_field(row_data: &mut [u8], offset: usize, size: usize, remap: &HashMap<u32, u32>) {
-    if offset + size > row_data.len() {
+    if offset.saturating_add(size) > row_data.len() {
         return;
     }
 

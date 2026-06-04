@@ -199,11 +199,7 @@ fn compressed_stream_read_pre(
         };
 
         // Use data from the underlying stream's current position, not from offset 0
-        let effective_data = if underlying_pos < compressed_data.len() {
-            &compressed_data[underlying_pos..]
-        } else {
-            &[]
-        };
+        let effective_data = compressed_data.get(underlying_pos..).unwrap_or(&[]);
 
         let decompressed = match compression_type {
             0 => decompress_deflate(effective_data).ok(),
@@ -224,7 +220,7 @@ fn compressed_stream_read_pre(
     for (i, &byte) in bytes.iter().enumerate() {
         try_hook!(thread.heap_mut().set_array_element(
             buffer_ref,
-            offset + i,
+            offset.saturating_add(i),
             EmValue::I32(i32::from(byte)),
         ));
     }

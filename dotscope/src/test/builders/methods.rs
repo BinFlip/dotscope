@@ -160,6 +160,11 @@ impl MethodBuilder {
         self
     }
 
+    pub fn with_impl_code_type(mut self, impl_code_type: MethodImplCodeType) -> Self {
+        self.impl_code_type = impl_code_type;
+        self
+    }
+
     /// Add a typed input parameter by name and type flavor
     pub fn add_typed_param(mut self, name: &str, type_flavor: CilFlavor) -> Self {
         let sequence = self.param_builders.len() as u32 + 1;

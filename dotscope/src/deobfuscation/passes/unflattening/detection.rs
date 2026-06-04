@@ -17,7 +17,10 @@
 //! The confidence score combines these signals to distinguish CFF from normal
 //! loops or state machines.
 
-use std::collections::{HashSet, VecDeque};
+use std::{
+    cmp::Ordering,
+    collections::{HashSet, VecDeque},
+};
 
 use rayon::prelude::*;
 
@@ -28,13 +31,13 @@ use crate::{
         statevar::{identify_state_variable, StateVariable},
         UnflattenConfig,
     },
-    utils::{
-        graph::{
-            algorithms::{compute_dominators, DominatorTree},
-            GraphBase, NodeId, Successors,
-        },
-        BitSet,
+};
+use analyssa::{
+    graph::{
+        algorithms::{compute_dominators, DominatorTree},
+        GraphBase, NodeId, Successors,
     },
+    BitSet,
 };
 
 /// Entry point into a CFF region.
@@ -338,7 +341,9 @@ impl<'a> CffDetector<'a> {
 
         // Pre-compute the dominator tree so candidate analysis can be parallel
         let _ = self.get_dom_tree();
-        let dom_tree = self.dom_tree.as_ref().unwrap();
+        let Some(dom_tree) = self.dom_tree.as_ref() else {
+            return Vec::new();
+        };
 
         let mut patterns: Vec<CffPattern> = candidates
             .into_par_iter()
@@ -349,7 +354,7 @@ impl<'a> CffDetector<'a> {
         patterns.sort_by(|a, b| {
             b.confidence
                 .partial_cmp(&a.confidence)
-                .unwrap_or(std::cmp::Ordering::Equal)
+                .unwrap_or(Ordering::Equal)
         });
 
         patterns
@@ -450,7 +455,7 @@ impl<'a> CffDetector<'a> {
 
         // Pre-compute dominator tree once
         let _ = self.get_dom_tree();
-        let dom_tree = self.dom_tree.as_ref().unwrap();
+        let dom_tree = self.dom_tree.as_ref()?;
 
         // Score each candidate and pick the best
         let mut best_pattern: Option<CffPattern> = None;
@@ -558,7 +563,7 @@ impl<'a> CffDetector<'a> {
                 .instructions()
                 .iter()
                 .any(|i| i.op().successors().contains(&block_idx));
-            let effective_preds = pred_count + usize::from(has_self_loop);
+            let effective_preds = pred_count.saturating_add(usize::from(has_self_loop));
             return effective_preds >= 2;
         }
 
@@ -688,8 +693,12 @@ impl<'a> CffDetector<'a> {
             .collect();
 
         if entry_blocks.is_empty() {
-            // No separate entry blocks - dispatcher is the entry
-            let entry = EntryPoint::new(dispatcher_block);
+            let mut entry = EntryPoint::new(dispatcher_block);
+            if let Some(dispatcher_var) = state_var.and_then(|sv| sv.dispatcher_var) {
+                if let Some(initial) = self.initial_state_from_state_phi(dispatcher_var) {
+                    entry.initial_state = Some(initial);
+                }
+            }
             entries.push(entry);
             return entries;
         }
@@ -794,6 +803,31 @@ impl<'a> CffDetector<'a> {
         None
     }
 
+    /// Recovers the initial state from the dispatcher's state phi when the
+    /// region has no distinct entry block.
+    ///
+    /// In nested CFF (e.g. ConfuserEx handler dispatchers), the setup block
+    /// that assigns the initial state is itself one of the dispatcher's switch
+    /// case targets, so it is filtered out as a "case block" and there is no
+    /// separate entry to read the initial value from. The state phi at the
+    /// dispatcher still distinguishes the two roles: back-edge operands trace
+    /// to computed state updates (`mul`/`xor`/…), while the setup operand
+    /// traces to a constant. Return that constant.
+    fn initial_state_from_state_phi(&self, dispatcher_var: SsaVarId) -> Option<i64> {
+        for block in self.ssa.blocks() {
+            for phi in block.phi_nodes() {
+                if phi.result() == dispatcher_var {
+                    for op in phi.operands() {
+                        if let Some(val) = self.trace_to_constant(op.value(), 20) {
+                            return Some(val);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// Traces a variable backward through SSA definitions to find a constant value.
     ///
     /// Handles Const, Copy, and PHI definitions. For PHI nodes, tries each
@@ -823,7 +857,7 @@ impl<'a> CffDetector<'a> {
                         }
                     }
                     SsaOp::Copy { src, .. } => {
-                        stack.push((*src, depth - 1));
+                        stack.push((*src, depth.saturating_sub(1)));
                     }
                     _ => {}
                 }
@@ -846,7 +880,7 @@ impl<'a> CffDetector<'a> {
                     // Push operands in reverse so pops happen in original order
                     // — matches the recursive "return first constant" semantics.
                     for op in phi.operands().iter().rev() {
-                        stack.push((op.value(), depth - 1));
+                        stack.push((op.value(), depth.saturating_sub(1)));
                     }
                     break;
                 }
@@ -1140,7 +1174,7 @@ fn can_reach_dispatcher(
         }
         for succ in ssa.block_successors(block) {
             if !visited.contains(succ) {
-                queue.push_back((succ, depth + 1));
+                queue.push_back((succ, depth.saturating_add(1)));
             }
         }
     }
@@ -1149,10 +1183,11 @@ fn can_reach_dispatcher(
 
 #[cfg(test)]
 mod tests {
+    use analyssa::BitSet;
+
     use crate::{
         analysis::SsaVarId,
         deobfuscation::passes::unflattening::dispatcher::{DispatcherInfo, StateTransform},
-        utils::BitSet,
     };
 
     use super::{CffPattern, EntryCondition, EntryPoint};

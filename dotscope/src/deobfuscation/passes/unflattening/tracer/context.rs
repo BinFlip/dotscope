@@ -14,13 +14,17 @@
 
 use std::{collections::BTreeSet, mem};
 
+use analyssa::BitSet;
+
 use crate::{
     analysis::{
         cff_taint_config, ConstValue, SsaEvaluator, SsaFunction, SsaOp, SsaVarId, SsaVariable,
         TaintAnalysis,
     },
-    deobfuscation::passes::unflattening::{tracer::types::TracedDispatcher, UnflattenConfig},
-    utils::BitSet,
+    deobfuscation::passes::unflattening::{
+        tracer::{helpers, types::TracedDispatcher},
+        UnflattenConfig,
+    },
     CilObject,
 };
 
@@ -172,8 +176,8 @@ impl<'a> TreeTraceContext<'a> {
 
         // Size the case visit counter to fit the dispatcher's switch targets
         // (+1 for default, which uses targets.len() as its index).
-        ctx.visited_case_counts = vec![0u8; dispatcher.targets.len() + 1];
-        ctx.last_case_state = vec![None; dispatcher.targets.len() + 1];
+        ctx.visited_case_counts = vec![0u8; dispatcher.targets.len().saturating_add(1)];
+        ctx.last_case_state = vec![None; dispatcher.targets.len().saturating_add(1)];
         ctx.dispatcher = Some(dispatcher);
         ctx
     }
@@ -207,7 +211,7 @@ impl<'a> TreeTraceContext<'a> {
     /// Allocates and returns the next unique node ID.
     pub fn next_id(&mut self) -> usize {
         let id = self.next_node_id;
-        self.next_node_id += 1;
+        self.next_node_id = self.next_node_id.saturating_add(1);
         id
     }
 
@@ -274,7 +278,7 @@ impl<'a> TreeTraceContext<'a> {
     /// Encapsulates the borrow of both `ssa` and `state_tainted` within one method
     /// to avoid split-borrow issues at call sites.
     pub fn propagate_taint_forward(&mut self) {
-        super::helpers::propagate_taint_forward(self.ssa, &mut self.state_tainted);
+        helpers::propagate_taint_forward(self.ssa, &mut self.state_tainted);
     }
 
     /// Gets the current CFF state value (if we can determine it).
@@ -295,11 +299,11 @@ impl<'a> TreeTraceContext<'a> {
     /// allowing re-entry from different CFF case paths.
     fn visit_state(&self) -> i64 {
         self.current_state().unwrap_or_else(|| {
-            let count = if self.last_case_index < self.visited_case_counts.len() {
-                self.visited_case_counts[self.last_case_index] as i64
-            } else {
-                0
-            };
+            let count = self
+                .visited_case_counts
+                .get(self.last_case_index)
+                .copied()
+                .map_or(0, i64::from);
             (self.last_case_index as i64)
                 .wrapping_mul(256)
                 .wrapping_add(count)
@@ -318,7 +322,7 @@ impl<'a> TreeTraceContext<'a> {
 
     /// Increments the visit counter and returns true if the budget is exceeded.
     pub fn check_visit_budget(&mut self) -> bool {
-        self.total_visits += 1;
+        self.total_visits = self.total_visits.saturating_add(1);
         self.total_visits > self.max_block_visits
     }
 
@@ -330,9 +334,8 @@ impl<'a> TreeTraceContext<'a> {
     /// Records that the dispatcher dispatched to the given case index.
     /// Increments the visit count for the case and updates the last case index.
     pub fn record_case_dispatch(&mut self, case_idx: usize) {
-        if case_idx < self.visited_case_counts.len() {
-            self.visited_case_counts[case_idx] =
-                self.visited_case_counts[case_idx].saturating_add(1);
+        if let Some(slot) = self.visited_case_counts.get_mut(case_idx) {
+            *slot = slot.saturating_add(1);
         }
         self.last_case_index = case_idx;
     }
@@ -355,8 +358,8 @@ impl<'a> TreeTraceContext<'a> {
 
     /// Records the state value used for this dispatch of `case_idx`.
     pub fn record_case_state(&mut self, case_idx: usize, state: i64) {
-        if case_idx < self.last_case_state.len() {
-            self.last_case_state[case_idx] = Some(state);
+        if let Some(slot) = self.last_case_state.get_mut(case_idx) {
+            *slot = Some(state);
         }
     }
 
@@ -365,8 +368,9 @@ impl<'a> TreeTraceContext<'a> {
     /// to avoid false positives on small dispatchers.
     pub fn is_case_loop(&self, case_idx: usize, targets_len: usize) -> bool {
         let loop_threshold = (targets_len / 2).max(2) as u8;
-        case_idx < self.visited_case_counts.len()
-            && self.visited_case_counts[case_idx] >= loop_threshold
+        self.visited_case_counts
+            .get(case_idx)
+            .is_some_and(|count| *count >= loop_threshold)
     }
 
     /// Returns true when the tracer should follow one path instead of forking

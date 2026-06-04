@@ -171,7 +171,15 @@ impl EvaluationStack {
         if depth >= self.values.len() {
             return Err(EmulationError::StackUnderflow.into());
         }
-        Ok(&self.values[self.values.len() - 1 - depth])
+        let idx = self
+            .values
+            .len()
+            .checked_sub(1)
+            .and_then(|n| n.checked_sub(depth))
+            .ok_or(EmulationError::StackUnderflow)?;
+        self.values
+            .get(idx)
+            .ok_or_else(|| EmulationError::StackUnderflow.into())
     }
 
     /// Pops a value and verifies it has the expected CIL flavor.
@@ -338,7 +346,9 @@ impl EvaluationStack {
         if len < 2 {
             return Err(EmulationError::StackUnderflow.into());
         }
-        self.values.swap(len - 1, len - 2);
+        let top = len.saturating_sub(1);
+        let next = len.saturating_sub(2);
+        self.values.swap(top, next);
         Ok(())
     }
 

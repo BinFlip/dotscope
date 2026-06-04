@@ -30,31 +30,37 @@ pub fn base64_encode(data: &[u8]) -> String {
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
     let mut result = String::new();
-    let mut i = 0;
+    let mut i: usize = 0;
 
     while i < data.len() {
-        let b0 = data[i];
-        let b1 = data.get(i + 1).copied().unwrap_or(0);
-        let b2 = data.get(i + 2).copied().unwrap_or(0);
+        // Safe: loop condition guarantees i < data.len()
+        let b0 = data.get(i).copied().unwrap_or(0);
+        let b1 = data.get(i.saturating_add(1)).copied().unwrap_or(0);
+        let b2 = data.get(i.saturating_add(2)).copied().unwrap_or(0);
 
         let n = u32::from(b0) << 16 | u32::from(b1) << 8 | u32::from(b2);
 
-        result.push(char::from(ALPHABET[(n >> 18 & 0x3F) as usize]));
-        result.push(char::from(ALPHABET[(n >> 12 & 0x3F) as usize]));
+        // ALPHABET has 64 entries; mask `& 0x3F` keeps the index in [0, 63].
+        let idx0 = ((n >> 18) & 0x3F) as usize;
+        let idx1 = ((n >> 12) & 0x3F) as usize;
+        result.push(char::from(ALPHABET.get(idx0).copied().unwrap_or(b'A')));
+        result.push(char::from(ALPHABET.get(idx1).copied().unwrap_or(b'A')));
 
-        if i + 1 < data.len() {
-            result.push(char::from(ALPHABET[(n >> 6 & 0x3F) as usize]));
+        if i.saturating_add(1) < data.len() {
+            let idx2 = ((n >> 6) & 0x3F) as usize;
+            result.push(char::from(ALPHABET.get(idx2).copied().unwrap_or(b'A')));
         } else {
             result.push('=');
         }
 
-        if i + 2 < data.len() {
-            result.push(char::from(ALPHABET[(n & 0x3F) as usize]));
+        if i.saturating_add(2) < data.len() {
+            let idx3 = (n & 0x3F) as usize;
+            result.push(char::from(ALPHABET.get(idx3).copied().unwrap_or(b'A')));
         } else {
             result.push('=');
         }
 
-        i += 3;
+        i = i.saturating_add(3);
     }
 
     result
@@ -104,21 +110,26 @@ pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
         return None;
     }
 
-    let mut i = 0;
+    let mut i: usize = 0;
     while i < bytes.len() {
         let mut n: u32 = 0;
-        let mut pad_count = 0;
+        let mut pad_count: u32 = 0;
 
-        for j in 0..4 {
-            let b = bytes[i + j];
+        // Pre-computed shifts so we don't perform `18 - j * 6` arithmetic at runtime.
+        const SHIFTS: [u32; 4] = [18, 12, 6, 0];
+        for (j, &shift) in SHIFTS.iter().enumerate() {
+            // Safe: i + j < bytes.len() because length is multiple of 4
+            // and i is incremented in steps of 4 within `i < bytes.len()`.
+            let idx = i.checked_add(j)?;
+            let b = *bytes.get(idx)?;
             if b == b'=' {
-                pad_count += 1;
+                pad_count = pad_count.saturating_add(1);
                 continue;
             }
             if b >= 128 {
                 return None;
             }
-            let val = DECODE_TABLE[usize::from(b)];
+            let val = *DECODE_TABLE.get(usize::from(b))?;
             if val < 0 {
                 return None;
             }
@@ -126,7 +137,7 @@ pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
             // Sign loss is intentional: we've validated val >= 0
             #[allow(clippy::cast_sign_loss)]
             let val_u32 = val as u32;
-            n |= val_u32 << (18 - j * 6);
+            n |= val_u32 << shift;
         }
 
         // Truncation to u8 is intentional - we're extracting individual bytes
@@ -141,7 +152,7 @@ pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
             }
         }
 
-        i += 4;
+        i = i.saturating_add(4);
     }
 
     Some(result)

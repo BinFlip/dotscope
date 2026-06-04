@@ -335,8 +335,10 @@ impl<'a> ReferenceValidator<'a> {
             .references_from(token)
             .map_or(0, std::collections::HashSet::len);
 
-        analysis.total_tokens += 1;
-        analysis.total_references += incoming_count + outgoing_count;
+        analysis.total_tokens = analysis.total_tokens.saturating_add(1);
+        analysis.total_references = analysis
+            .total_references
+            .saturating_add(incoming_count.saturating_add(outgoing_count));
 
         if incoming_count == 0 {
             analysis.orphaned_tokens.insert(token);

@@ -131,9 +131,10 @@ impl TableRow for LocalVariableRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            2 +  // attributes (always 2 bytes)
-            2 +  // index (always 2 bytes)
-            sizes.str_bytes()  // name (strings heap index)
+            /* attributes */ 2u8
+            /* index */      .saturating_add(2)
+            /* name */       .saturating_add(sizes.str_bytes())
+
         )
     }
 }

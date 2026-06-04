@@ -163,7 +163,7 @@ pub struct MethodSemanticsRaw {
     ///
     /// 2-byte value defining the method's semantic role using [`MethodSemanticsAttributes`]:
     /// - `SETTER` (0x0001) - Property setter method
-    /// - `GETTER` (0x0002) - Property getter method  
+    /// - `GETTER` (0x0002) - Property getter method
     /// - `OTHER` (0x0004) - Other property/event method
     /// - `ADD_ON` (0x0008) - Event add method
     /// - `REMOVE_ON` (0x0010) - Event remove method
@@ -369,9 +369,10 @@ impl TableRow for MethodSemanticsRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* semantics */   2 +
-            /* method */      sizes.table_index_bytes(TableId::MethodDef) +
-            /* association */ sizes.coded_index_bytes(CodedIndexType::HasSemantics)
+            /* semantics */   2u8
+            /* method */      .saturating_add(sizes.table_index_bytes(TableId::MethodDef))
+            /* association */ .saturating_add(sizes.coded_index_bytes(CodedIndexType::HasSemantics))
+
         )
     }
 }

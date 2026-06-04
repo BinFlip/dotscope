@@ -96,7 +96,9 @@ impl Page {
     pub fn from_slice(data: &[u8]) -> Self {
         let mut page_data = [0u8; PAGE_SIZE];
         let copy_len = data.len().min(PAGE_SIZE);
-        page_data[..copy_len].copy_from_slice(&data[..copy_len]);
+        if let (Some(dst), Some(src)) = (page_data.get_mut(..copy_len), data.get(..copy_len)) {
+            dst.copy_from_slice(src);
+        }
         Self::new(page_data)
     }
 
@@ -122,9 +124,15 @@ impl Page {
             .map_err(|_| EmulationError::LockPoisoned {
                 description: "page local buffer",
             })?;
-        Ok(local
-            .as_ref()
-            .map_or(self.backing[offset], |data| data[offset]))
+        let byte = local.as_ref().map_or_else(
+            || self.backing.get(offset).copied(),
+            |data| data.get(offset).copied(),
+        );
+        byte.ok_or(EmulationError::PageOutOfBounds {
+            offset,
+            size: 1,
+            page_size: PAGE_SIZE,
+        })
     }
 
     /// Reads a range of bytes into the provided buffer.
@@ -154,9 +162,15 @@ impl Page {
             .map_err(|_| EmulationError::LockPoisoned {
                 description: "page local buffer",
             })?;
-        let src = local
-            .as_ref()
-            .map_or(&self.backing[offset..end], |data| &data[offset..end]);
+        let src = local.as_ref().map_or_else(
+            || self.backing.get(offset..end),
+            |data| data.get(offset..end),
+        );
+        let src = src.ok_or(EmulationError::PageOutOfBounds {
+            offset,
+            size: buf.len(),
+            page_size: PAGE_SIZE,
+        })?;
         buf.copy_from_slice(src);
         Ok(())
     }
@@ -197,7 +211,12 @@ impl Page {
                 description: "page local buffer",
             })?;
         let buf = local.get_or_insert_with(|| Box::new(*self.backing));
-        buf[offset] = value;
+        let slot = buf.get_mut(offset).ok_or(EmulationError::PageOutOfBounds {
+            offset,
+            size: 1,
+            page_size: PAGE_SIZE,
+        })?;
+        *slot = value;
         Ok(())
     }
 
@@ -231,7 +250,14 @@ impl Page {
                 description: "page local buffer",
             })?;
         let buf = local.get_or_insert_with(|| Box::new(*self.backing));
-        buf[offset..end].copy_from_slice(data);
+        let dst = buf
+            .get_mut(offset..end)
+            .ok_or(EmulationError::PageOutOfBounds {
+                offset,
+                size: data.len(),
+                page_size: PAGE_SIZE,
+            })?;
+        dst.copy_from_slice(data);
         Ok(())
     }
 

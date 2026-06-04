@@ -163,7 +163,7 @@ impl CustomDebugInformationRaw {
     ///
     /// Returns [`crate::Error`] if:
     /// - The GUID heap index is invalid or out of bounds
-    /// - The blob heap index is invalid or out of bounds  
+    /// - The blob heap index is invalid or out of bounds
     /// - The blob data cannot be parsed for known debug info types
     pub fn to_owned<F>(
         &self,
@@ -206,9 +206,10 @@ impl TableRow for CustomDebugInformationRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* parent */ sizes.coded_index_bytes(CodedIndexType::HasCustomDebugInformation) +
-            /* kind */   sizes.guid_bytes() +
-            /* value */  sizes.blob_bytes()
+            /* parent */ sizes.coded_index_bytes(CodedIndexType::HasCustomDebugInformation)
+            /* kind */   .saturating_add(sizes.guid_bytes())
+            /* value */  .saturating_add(sizes.blob_bytes())
+
         )
     }
 }

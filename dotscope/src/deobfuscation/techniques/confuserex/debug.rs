@@ -74,8 +74,9 @@
 use std::{collections::HashSet, sync::Arc};
 
 use crate::{
+    analysis::CilTarget,
     cilassembly::CleanupRequest,
-    compiler::{PassPhase, SsaPass},
+    compiler::{CompilerContext, PassPhase, SsaPass},
     deobfuscation::{
         context::AnalysisContext,
         passes::{SentinelCondition, SentinelTaintRemovalPass},
@@ -246,7 +247,7 @@ impl Technique for ConfuserExAntiDebug {
         _ctx: &AnalysisContext,
         detection: &Detection,
         _assembly: &Arc<CilObject>,
-    ) -> Vec<Box<dyn SsaPass>> {
+    ) -> Vec<Box<dyn SsaPass<CilTarget, CompilerContext>>> {
         let Some(findings) = detection.findings::<AntiDebugFindings>() else {
             return Vec::new();
         };

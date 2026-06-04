@@ -32,14 +32,18 @@ static ILASM_RESERVED: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     let mut set = HashSet::with_capacity(512);
 
     // All CIL instruction mnemonics from the opcode tables
-    for instr in &INSTRUCTIONS[..INSTRUCTIONS_MAX as usize] {
-        if !instr.instr.is_empty() {
-            set.insert(instr.instr);
+    if let Some(slice) = INSTRUCTIONS.get(..INSTRUCTIONS_MAX as usize) {
+        for instr in slice {
+            if !instr.instr.is_empty() {
+                set.insert(instr.instr);
+            }
         }
     }
-    for instr in &INSTRUCTIONS_FE[..INSTRUCTIONS_FE_MAX as usize] {
-        if !instr.instr.is_empty() {
-            set.insert(instr.instr);
+    if let Some(slice) = INSTRUCTIONS_FE.get(..INSTRUCTIONS_FE_MAX as usize) {
+        for instr in slice {
+            if !instr.instr.is_empty() {
+                set.insert(instr.instr);
+            }
         }
     }
 
@@ -381,8 +385,12 @@ pub(super) fn assembly_scoped_name(cil_type: &CilType, asm: &CilObject) -> Strin
 /// Strip a trailing generic arity suffix (`` `N ``) from a type name.
 fn strip_arity(name: &str) -> &str {
     if let Some(pos) = name.rfind('`') {
-        if name[pos + 1..].chars().all(|c| c.is_ascii_digit()) {
-            return &name[..pos];
+        if let Some(rest) = name.get(pos.saturating_add(1)..) {
+            if rest.chars().all(|c| c.is_ascii_digit()) {
+                if let Some(prefix) = name.get(..pos) {
+                    return prefix;
+                }
+            }
         }
     }
     name

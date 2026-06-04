@@ -316,7 +316,7 @@ pub fn write_field_data(ctx: &mut WriteContext) -> Result<()> {
     let view = ctx.assembly.view();
     let file = view.file();
     let changes = ctx.changes;
-    let ptr_size = PointerSize::from_pe(file.pe().is_64bit);
+    let ptr_size = PointerSize::from_is_64bit(file.pe().is_64bit);
 
     let entries = collect_field_data(view, file, changes, ptr_size)?;
 
@@ -351,11 +351,13 @@ pub fn write_field_data(ctx: &mut WriteContext) -> Result<()> {
 /// * `buffer` - The raw FieldRVA row bytes
 /// * `field_data_rva_map` - Mapping from old/placeholder RVAs to actual RVAs
 pub fn resolve_field_data_rva(buffer: &mut [u8], field_data_rva_map: &HashMap<u32, u32>) {
-    if buffer.len() < 4 {
+    let Some(rva_bytes) = buffer.get(..4) else {
         return;
-    }
+    };
 
-    let rva = u32::from_le_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]);
+    let mut bytes = [0u8; 4];
+    bytes.copy_from_slice(rva_bytes);
+    let rva = u32::from_le_bytes(bytes);
 
     // RVA 0 means no data
     if rva == 0 {
@@ -365,10 +367,9 @@ pub fn resolve_field_data_rva(buffer: &mut [u8], field_data_rva_map: &HashMap<u3
     // Check if this RVA needs to be remapped (either placeholder or relocated original)
     if let Some(&new_rva) = field_data_rva_map.get(&rva) {
         let new_bytes = new_rva.to_le_bytes();
-        buffer[0] = new_bytes[0];
-        buffer[1] = new_bytes[1];
-        buffer[2] = new_bytes[2];
-        buffer[3] = new_bytes[3];
+        if let Some(dest) = buffer.get_mut(..4) {
+            dest.copy_from_slice(&new_bytes);
+        }
     }
     // RVAs not in the map are kept as-is (they point to sections that weren't relocated)
 }

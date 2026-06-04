@@ -21,8 +21,9 @@ use std::{env, path::Path};
 fn main() -> Result<()> {
     // Get the path from command line arguments or use a default
     let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: {} <path-to-dotnet-assembly>", args[0]);
+    let prog = args.first().map_or("basic", String::as_str);
+    let Some(path_arg) = args.get(1) else {
+        eprintln!("Usage: {prog} <path-to-dotnet-assembly>");
         eprintln!();
         eprintln!("This example demonstrates basic .NET assembly analysis patterns:");
         eprintln!("  • Loading assemblies with error handling");
@@ -30,9 +31,9 @@ fn main() -> Result<()> {
         eprintln!("  • Iterating through methods safely");
         eprintln!("  • Using the prelude for clean, consistent code");
         return Ok(());
-    }
+    };
 
-    let path = Path::new(&args[1]);
+    let path = Path::new(path_arg);
 
     // Load and analyze a .NET assembly using dotscope
     // This demonstrates the primary entry point for assembly analysis
@@ -53,7 +54,7 @@ fn main() -> Result<()> {
             eprintln!("  • File is not in PE format");
             eprintln!();
             eprintln!("Try with a known good .NET assembly like:");
-            eprintln!("  {} tests/samples/WindowsBase.dll", args[0]);
+            eprintln!("  {prog} tests/samples/WindowsBase.dll");
             return Err(e);
         }
     };
@@ -71,7 +72,7 @@ fn main() -> Result<()> {
         let method = entry.value();
         println!(
             "{}. Method: {} (Token: 0x{:08X})",
-            count + 1,
+            count.saturating_add(1),
             method.name,
             token.value()
         );

@@ -99,8 +99,16 @@ use crate::{
     },
     utils::read_le,
     Error::{self, TypeConversionInvalid, TypeNotPrimitive},
-    Result,
+    ParseFailure, ParseStage, Result,
 };
+
+#[inline]
+fn primitives_oob() -> Error {
+    ParseFailure::OutOfBounds {
+        stage: ParseStage::Generic,
+    }
+    .into()
+}
 
 /// Type-safe storage for constant primitive values.
 ///
@@ -402,20 +410,17 @@ impl CilPrimitiveData {
     pub fn from_bytes(type_byte: u8, data: &[u8]) -> Result<Self> {
         match type_byte {
             ELEMENT_TYPE::BOOLEAN => {
-                if data.is_empty() {
-                    Err(out_of_bounds_error!())
-                } else {
-                    Ok(CilPrimitiveData::Boolean(data[0] != 0))
-                }
+                let b = data.first().ok_or(primitives_oob())?;
+                Ok(CilPrimitiveData::Boolean(*b != 0))
             }
             ELEMENT_TYPE::CHAR => {
-                if data.len() < 2 {
-                    Err(out_of_bounds_error!())
-                } else {
-                    let code = u16::from_le_bytes([data[0], data[1]]);
-                    // .NET System.Char is a UTF-16 code unit, so any u16 value is valid
-                    Ok(CilPrimitiveData::Char(code))
-                }
+                let bytes = data.get(0..2).ok_or(primitives_oob())?;
+                let code = u16::from_le_bytes([
+                    *bytes.first().ok_or(primitives_oob())?,
+                    *bytes.get(1).ok_or(primitives_oob())?,
+                ]);
+                // .NET System.Char is a UTF-16 code unit, so any u16 value is valid
+                Ok(CilPrimitiveData::Char(code))
             }
             ELEMENT_TYPE::I1 => Ok(CilPrimitiveData::I1(read_le::<i8>(data)?)),
             ELEMENT_TYPE::U1 => Ok(CilPrimitiveData::U1(read_le::<u8>(data)?)),
@@ -435,22 +440,32 @@ impl CilPrimitiveData {
                 }
 
                 if !data.len().is_multiple_of(2) {
-                    return Err(malformed_error!(
-                        "Invalid UTF-16 string length: {} (must be even)",
-                        data.len()
-                    ));
+                    return Err(ParseFailure::InvalidField {
+                        stage: ParseStage::Generic,
+                        field: "utf16_length",
+                        reason: format!(
+                            "invalid UTF-16 string length: {} (must be even)",
+                            data.len()
+                        ),
+                    }
+                    .into());
                 }
 
-                let utf16_chars: Vec<u16> = data
-                    .chunks_exact(2)
-                    .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
-                    .collect();
+                let mut utf16_chars: Vec<u16> = Vec::with_capacity(data.len() / 2);
+                for chunk in data.chunks_exact(2) {
+                    let b0 = *chunk.first().ok_or(primitives_oob())?;
+                    let b1 = *chunk.get(1).ok_or(primitives_oob())?;
+                    utf16_chars.push(u16::from_le_bytes([b0, b1]));
+                }
 
                 match String::from_utf16(&utf16_chars) {
                     Ok(utf_string) => Ok(CilPrimitiveData::String(utf_string)),
-                    Err(_) => Err(malformed_error!(
-                        "Invalid UTF-16 sequence in primitive string"
-                    )),
+                    Err(_) => Err(ParseFailure::InvalidField {
+                        stage: ParseStage::Generic,
+                        field: "utf16_string",
+                        reason: "invalid UTF-16 sequence in primitive string".into(),
+                    }
+                    .into()),
                 }
             }
             ELEMENT_TYPE::CLASS => {
@@ -756,6 +771,53 @@ impl CilPrimitiveKind {
             ELEMENT_TYPE::CLASS => Ok(CilPrimitiveKind::Class),
             _ => Err(TypeNotPrimitive),
         }
+    }
+
+    /// Returns a stable `&'static str` identifier for this primitive kind.
+    ///
+    /// The strings follow ILAsm / ECMA-335 §I.8.2.2 conventions and are part
+    /// of the stable public API — safe to persist (file, database, log line)
+    /// and to parse. Pointer-sized integers and the structural kinds use the
+    /// short ILAsm names rather than the C# / `System.*` aliases:
+    ///
+    /// `"void"`, `"bool"`, `"char"`, `"int8"`, `"uint8"`, `"int16"`,
+    /// `"uint16"`, `"int32"`, `"uint32"`, `"int64"`, `"uint64"`,
+    /// `"float32"`, `"float64"`, `"native int"`, `"native uint"`,
+    /// `"object"`, `"string"`, `"null"`, `"typedref"`, `"valuetype"`,
+    /// `"var"`, `"mvar"`, `"class"`.
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            CilPrimitiveKind::Void => "void",
+            CilPrimitiveKind::Boolean => "bool",
+            CilPrimitiveKind::Char => "char",
+            CilPrimitiveKind::I1 => "int8",
+            CilPrimitiveKind::U1 => "uint8",
+            CilPrimitiveKind::I2 => "int16",
+            CilPrimitiveKind::U2 => "uint16",
+            CilPrimitiveKind::I4 => "int32",
+            CilPrimitiveKind::U4 => "uint32",
+            CilPrimitiveKind::I8 => "int64",
+            CilPrimitiveKind::U8 => "uint64",
+            CilPrimitiveKind::R4 => "float32",
+            CilPrimitiveKind::R8 => "float64",
+            CilPrimitiveKind::I => "native int",
+            CilPrimitiveKind::U => "native uint",
+            CilPrimitiveKind::Object => "object",
+            CilPrimitiveKind::String => "string",
+            CilPrimitiveKind::Null => "null",
+            CilPrimitiveKind::TypedReference => "typedref",
+            CilPrimitiveKind::ValueType => "valuetype",
+            CilPrimitiveKind::Var => "var",
+            CilPrimitiveKind::MVar => "mvar",
+            CilPrimitiveKind::Class => "class",
+        }
+    }
+}
+
+impl fmt::Display for CilPrimitiveKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -1335,7 +1397,7 @@ impl CilPrimitive {
             CilPrimitiveData::I(value) => value.to_le_bytes().to_vec(),
             CilPrimitiveData::String(value) => {
                 let utf16_chars: Vec<u16> = value.encode_utf16().collect();
-                let mut bytes = Vec::with_capacity(utf16_chars.len() * 2);
+                let mut bytes = Vec::with_capacity(utf16_chars.len().saturating_mul(2));
                 for ch in utf16_chars {
                     bytes.extend_from_slice(&ch.to_le_bytes());
                 }
@@ -1528,6 +1590,7 @@ impl TryFrom<CilFlavor> for CilPrimitive {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ParseFailure;
     use std::convert::TryFrom;
 
     #[test]
@@ -2361,15 +2424,24 @@ mod tests {
     fn test_from_blob_error_cases() {
         let result = CilPrimitiveData::from_bytes(ELEMENT_TYPE::BOOLEAN, &[]);
         assert!(result.is_err());
-        assert!(matches!(result, Err(Error::OutOfBounds { .. })));
+        assert!(matches!(
+            result,
+            Err(Error::Parse(ParseFailure::OutOfBounds { .. }))
+        ));
 
         let result = CilPrimitiveData::from_bytes(ELEMENT_TYPE::CHAR, &[]);
         assert!(result.is_err());
-        assert!(matches!(result, Err(Error::OutOfBounds { .. })));
+        assert!(matches!(
+            result,
+            Err(Error::Parse(ParseFailure::OutOfBounds { .. }))
+        ));
 
         let result = CilPrimitiveData::from_bytes(ELEMENT_TYPE::I4, &[1, 2]);
         assert!(result.is_err());
-        assert!(matches!(result, Err(Error::OutOfBounds { .. })));
+        assert!(matches!(
+            result,
+            Err(Error::Parse(ParseFailure::OutOfBounds { .. }))
+        ));
 
         let result = CilPrimitiveData::from_bytes(ELEMENT_TYPE::STRING, &[]);
         assert!(result.is_ok());
@@ -2676,6 +2748,42 @@ mod tests {
             assert_eq!(decoded_value, -0.0f32);
         } else {
             panic!("Expected R4 data");
+        }
+    }
+
+    #[test]
+    fn test_cil_primitive_kind_stable_strings() {
+        // The strings here are part of the stable public API. They follow
+        // ILAsm / ECMA-335 §I.8.2.2 conventions. Changing them is a breaking
+        // change for downstream consumers that persist these values.
+        let cases = [
+            (CilPrimitiveKind::Void, "void"),
+            (CilPrimitiveKind::Boolean, "bool"),
+            (CilPrimitiveKind::Char, "char"),
+            (CilPrimitiveKind::I1, "int8"),
+            (CilPrimitiveKind::U1, "uint8"),
+            (CilPrimitiveKind::I2, "int16"),
+            (CilPrimitiveKind::U2, "uint16"),
+            (CilPrimitiveKind::I4, "int32"),
+            (CilPrimitiveKind::U4, "uint32"),
+            (CilPrimitiveKind::I8, "int64"),
+            (CilPrimitiveKind::U8, "uint64"),
+            (CilPrimitiveKind::R4, "float32"),
+            (CilPrimitiveKind::R8, "float64"),
+            (CilPrimitiveKind::I, "native int"),
+            (CilPrimitiveKind::U, "native uint"),
+            (CilPrimitiveKind::Object, "object"),
+            (CilPrimitiveKind::String, "string"),
+            (CilPrimitiveKind::Null, "null"),
+            (CilPrimitiveKind::TypedReference, "typedref"),
+            (CilPrimitiveKind::ValueType, "valuetype"),
+            (CilPrimitiveKind::Var, "var"),
+            (CilPrimitiveKind::MVar, "mvar"),
+            (CilPrimitiveKind::Class, "class"),
+        ];
+        for (variant, expected) in cases {
+            assert_eq!(variant.as_str(), expected);
+            assert_eq!(format!("{variant}"), expected);
         }
     }
 }

@@ -17,15 +17,20 @@ fn bench_permission_set_parse(c: &mut Criterion) {
     let path =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WB_DeclSecurity_1.bin");
 
-    let data = fs::read(&path).expect("Failed to read security declaration file");
+    let Ok(data) = fs::read(&path) else {
+        eprintln!(
+            "Skipping security benchmark: failed to read {}",
+            path.display()
+        );
+        return;
+    };
     let file_size = data.len();
 
     let mut group = c.benchmark_group("permission_set");
     group.throughput(Throughput::Bytes(file_size as u64));
     group.bench_function("parse_binary", |b| {
         b.iter(|| {
-            let perm_set = PermissionSet::new(black_box(&data)).unwrap();
-            black_box(perm_set)
+            black_box(PermissionSet::new(black_box(&data)).ok());
         });
     });
     group.finish();
@@ -49,8 +54,7 @@ fn bench_permission_set_minimal(c: &mut Criterion) {
 
     c.bench_function("permission_set_minimal", |b| {
         b.iter(|| {
-            let perm_set = PermissionSet::new(black_box(&data)).unwrap();
-            black_box(perm_set)
+            black_box(PermissionSet::new(black_box(&data)).ok());
         });
     });
 }
@@ -64,8 +68,7 @@ fn bench_permission_set_xml_minimal(c: &mut Criterion) {
 
     c.bench_function("permission_set_xml_minimal", |b| {
         b.iter(|| {
-            let perm_set = PermissionSet::new(black_box(data)).unwrap();
-            black_box(perm_set)
+            black_box(PermissionSet::new(black_box(data)).ok());
         });
     });
 }
@@ -78,8 +81,7 @@ fn bench_permission_set_xml_with_permission(c: &mut Criterion) {
 
     c.bench_function("permission_set_xml_with_permission", |b| {
         b.iter(|| {
-            let perm_set = PermissionSet::new(black_box(data)).unwrap();
-            black_box(perm_set)
+            black_box(PermissionSet::new(black_box(data)).ok());
         });
     });
 }
@@ -89,15 +91,20 @@ fn bench_permission_set_repeated(c: &mut Criterion) {
     let path =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WB_DeclSecurity_1.bin");
 
-    let data = fs::read(&path).expect("Failed to read security declaration file");
+    let Ok(data) = fs::read(&path) else {
+        eprintln!(
+            "Skipping security benchmark: failed to read {}",
+            path.display()
+        );
+        return;
+    };
 
     let mut group = c.benchmark_group("permission_set");
     group.throughput(Throughput::Elements(100));
     group.bench_function("parse_100x", |b| {
         b.iter(|| {
             for _ in 0..100 {
-                let perm_set = PermissionSet::new(black_box(&data)).unwrap();
-                black_box(perm_set);
+                black_box(PermissionSet::new(black_box(&data)).ok());
             }
         });
     });

@@ -75,7 +75,7 @@ use crate::utils::{compute_md5, compute_sha1};
 use crate::{
     metadata::tables::AssemblyHashAlgorithm,
     utils::{compute_sha256, compute_sha384, compute_sha512, read_le},
-    Result,
+    ParseFailure, ParseStage, Result,
 };
 
 /// Assembly identity representation for .NET CIL assemblies.
@@ -347,7 +347,12 @@ impl Identity {
             }
         };
         // Token is the last 8 bytes of the hash as little-endian u64
-        read_le::<u64>(&hash[hash.len() - 8..])
+        let start = hash.len().saturating_sub(8);
+        read_le::<u64>(hash.get(start..).ok_or(ParseFailure::Truncated {
+            stage: ParseStage::Generic,
+            expected: 8,
+            found: hash.len(),
+        })?)
     }
 }
 

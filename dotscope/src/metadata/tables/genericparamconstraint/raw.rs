@@ -235,8 +235,9 @@ impl TableRow for GenericParamConstraintRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* owner */      sizes.table_index_bytes(TableId::GenericParam) +
-            /* constraint */ sizes.coded_index_bytes(CodedIndexType::TypeDefOrRef)
+            /* owner */      sizes.table_index_bytes(TableId::GenericParam)
+            /* constraint */ .saturating_add(sizes.coded_index_bytes(CodedIndexType::TypeDefOrRef))
+
         )
     }
 }

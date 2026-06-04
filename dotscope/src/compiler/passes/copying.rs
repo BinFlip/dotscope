@@ -1,71 +1,33 @@
-//! Copy propagation pass.
+//! Copy propagation pass — thin wrapper.
 //!
-//! This pass eliminates redundant copy operations by replacing uses of
-//! copy destinations with their sources. This simplifies the SSA graph
-//! and enables further optimizations.
+//! Pure-SSA transformation logic lives in [`analyssa::passes::copying`]. This
+//! file contributes:
 //!
-//! # Example
-//!
-//! Before:
-//! ```text
-//! v1 = v0        // Copy
-//! v2 = add v1, 5
-//! ret v1
-//! ```
-//!
-//! After (with v1 replaced by v0):
-//! ```text
-//! v1 = v0        // Can now be eliminated by DCE
-//! v2 = add v0, 5
-//! ret v0
-//! ```
-//!
-//! # Algorithm
-//!
-//! The pass uses an iterative fixed-point algorithm:
-//!
-//! 1. Build a map of all copy-like operations:
-//!    - Explicit `Copy` instructions
-//!    - Trivial phi nodes (all operands identical after excluding self-references)
-//! 2. Resolve copy chains to find ultimate sources (v2 → v1 → v0 becomes v2 → v0)
-//! 3. Replace all uses of copy destinations with their ultimate sources
-//! 4. Repeat until no more changes (fixed point)
-//!
-//! Dead code elimination will then remove the now-unused copy instructions.
-//!
-//! # Complexity
-//!
-//! - Time: O(n × m) where n is the number of variables and m is the number of iterations
-//! - Space: O(n) for the copy map
-//!
-//! In practice, the algorithm converges quickly (usually 1-3 iterations).
+//! 1. The [`SsaPass`] trait impl that the dotscope scheduler consumes.
+//! 2. `propagate_local_types` — the CIL-side post-step that runs once per
+//!    iteration and propagates `SsaType` from local-origin destinations to
+//!    their ultimate sources. It uses `ssa.original_local_types()` (CIL
+//!    signature data) and `SsaType::from_type_signature(..., assembly)`,
+//!    so it cannot move into analyssa.
 
 use std::collections::BTreeMap;
 
+use analyssa::passes::copying;
+
 use crate::{
-    analysis::{PhiAnalyzer, SsaFunction, SsaOp, SsaType, SsaVarId, VariableOrigin},
+    analysis::{CilTarget, MethodRef, SsaFunction, SsaType, SsaVarId, VariableOrigin},
     compiler::{
         pass::{ModificationScope, SsaPass},
-        passes::utils::resolve_chain,
-        CompilerContext, EventKind, EventLog,
+        CompilerContext,
     },
-    metadata::token::Token,
-    utils::BitSet,
-    CilObject, Result,
+    CilObject,
 };
 
 /// Copy propagation pass.
 ///
-/// Tracks copy operations and propagates the source to all uses of the copy.
-/// Uses an iterative fixed-point algorithm to handle cascading copies and
-/// newly exposed opportunities after each round of propagation.
-///
-/// # Handled Cases
-///
-/// - Direct copy instructions: `v1 = copy v0`
-/// - Trivial phi nodes: `v1 = phi(v0, v0, v0)` (all operands identical)
-/// - Self-referential phis: `v1 = phi(v0, v1)` → `v1 = v0`
-/// - Copy chains: `v2 = v1; v1 = v0` → both map to `v0`
+/// Tracks copy operations and propagates the source to all uses of the
+/// copy. Uses an iterative fixed-point algorithm to handle cascading copies
+/// and newly exposed opportunities after each round of propagation.
 pub struct CopyPropagationPass {
     /// Maximum fixpoint iterations before stopping.
     max_iterations: usize,
@@ -74,274 +36,15 @@ pub struct CopyPropagationPass {
 impl CopyPropagationPass {
     /// Creates a new copy propagation pass.
     ///
-    /// # Arguments
-    ///
-    /// * `max_iterations` - Maximum fixpoint iterations before stopping. Copy chains
-    ///   converge in ~3 iterations; the default config value is 15.
+    /// `max_iterations` caps the inner fixpoint loop. Copy chains converge
+    /// in ~3 iterations; the default config value is 15.
     #[must_use]
     pub fn new(max_iterations: usize) -> Self {
         Self { max_iterations }
     }
-
-    /// Removes copies from the map when they are the sole instruction-based
-    /// definition of a local or argument group and the source is in a different
-    /// group.
-    ///
-    /// After CFF unflattening, `stloc.0` becomes a Copy from a stack-temp
-    /// variable to a Local(0) variable. If copy propagation eliminates this
-    /// Copy, Local(0)'s group loses its only definition. Subsequent
-    /// `rebuild_ssa` calls then assign the entry value (null) to all uses
-    /// of Local(0), corrupting the data flow.
-    fn protect_sole_local_defs(ssa: &SsaFunction, copies: &mut BTreeMap<SsaVarId, SsaVarId>) {
-        let real_local_limit = (ssa.num_args() + ssa.num_locals()) as u32;
-
-        // Count instruction-based definitions per local/argument group.
-        let mut group_def_count: BTreeMap<u32, usize> = BTreeMap::new();
-        for block in ssa.blocks() {
-            for instr in block.instructions() {
-                if let Some(dest) = instr.op().dest() {
-                    let group = ssa.rename_group(dest);
-                    if group < real_local_limit {
-                        *group_def_count.entry(group).or_insert(0) += 1;
-                    }
-                }
-            }
-        }
-
-        // Identify local/arg groups whose variables appear as phi operands.
-        // These are the groups at risk: after copy-prop eliminates the bridging
-        // Copy, rebuild_ssa's rename may not be able to reconstruct the correct
-        // reaching definition through phi chains.
-        let group_bound = ssa.num_locals() + ssa.num_args() + 1;
-        let mut groups_in_phis = BitSet::new(group_bound);
-        for block in ssa.blocks() {
-            for phi in block.phi_nodes() {
-                for operand in phi.operands() {
-                    let group = ssa.rename_group(operand.value());
-                    if group < real_local_limit {
-                        groups_in_phis.insert(group as usize);
-                    }
-                }
-                let result_group = ssa.rename_group(phi.result());
-                if result_group < real_local_limit {
-                    groups_in_phis.insert(result_group as usize);
-                }
-            }
-        }
-
-        // Identify address-taken local groups (locals accessed via ldloca).
-        // These locals are read through pointers, not through SSA variables.
-        // If copy-prop eliminates the stloc Copy, the local is never
-        // initialized and reads through the pointer see the default value
-        // (0/null) instead of the stored constant.
-        let mut address_taken_groups = BitSet::new(group_bound);
-        for block in ssa.blocks() {
-            for instr in block.instructions() {
-                if let SsaOp::LoadLocalAddr { local_index, .. } = instr.op() {
-                    let group = ssa.num_args() as u32 + *local_index as u32;
-                    if group < real_local_limit {
-                        address_taken_groups.insert(group as usize);
-                    }
-                }
-            }
-        }
-
-        // Collect copy dests to protect: dest is in a local/arg group with
-        // the source in a different group, AND either:
-        //   (a) the group has exactly 1 instruction def and participates in
-        //       phi nodes (cross-block flow — removing the sole def would
-        //       leave the group undefined), OR
-        //   (b) the group is address-taken (accessed via ldloca). ALL stores
-        //       to address-taken locals must be preserved regardless of def
-        //       count, because the runtime reads the actual memory location
-        //       through the pointer. Removing any store causes the pointer
-        //       read to see stale/default values (e.g., Monitor.Enter reads
-        //       lockTaken=true from a previous lock instead of the fresh
-        //       false initialization).
-        let mut protected = BitSet::new(ssa.var_id_capacity());
-        for (&dest, &src) in copies.iter() {
-            let dest_group = ssa.rename_group(dest);
-            if dest_group >= real_local_limit {
-                continue; // Not a local/arg group
-            }
-
-            if ssa.rename_group(src) == dest_group {
-                continue; // Same group — safe to propagate
-            }
-            let def_count = group_def_count.get(&dest_group).copied().unwrap_or(0);
-            if address_taken_groups.contains(dest_group as usize)
-                || (def_count <= 1 && groups_in_phis.contains(dest_group as usize))
-            {
-                protected.insert(dest.index());
-            }
-        }
-
-        if !protected.is_empty() {
-            copies.retain(|dest, _| !protected.contains(dest.index()));
-        }
-    }
-
-    /// Resolves all copy chains to their ultimate sources.
-    ///
-    /// Uses the shared `resolve_chain` utility to follow each copy to its
-    /// ultimate source, handling cycles correctly.
-    ///
-    /// # Arguments
-    ///
-    /// * `copies` - Map of direct copies (dest → immediate source).
-    ///
-    /// # Returns
-    ///
-    /// Map of each copy destination to its ultimate source.
-    fn resolve_chains(copies: &BTreeMap<SsaVarId, SsaVarId>) -> BTreeMap<SsaVarId, SsaVarId> {
-        copies
-            .iter()
-            .map(|(&dest, &src)| (dest, resolve_chain(copies, src)))
-            .collect()
-    }
-
-    /// Runs a single iteration of copy propagation.
-    ///
-    /// # Arguments
-    ///
-    /// * `ssa` - The SSA function to modify.
-    /// * `method_token` - The method token for change tracking.
-    /// * `changes` - The change set to record modifications.
-    /// * `assembly` - The assembly context for type resolution.
-    ///
-    /// # Returns
-    ///
-    /// The number of uses that were replaced.
-    fn run_iteration(
-        ssa: &mut SsaFunction,
-        method_token: Token,
-        changes: &mut EventLog,
-        assembly: &CilObject,
-    ) -> usize {
-        // Step 1: Collect all copy-like operations
-        let mut copies = PhiAnalyzer::new(ssa).collect_all_copies();
-
-        if copies.is_empty() {
-            return 0;
-        }
-
-        // Step 1b: Protect cross-group copies that are the sole definition
-        // of a local/argument group. Without this, propagating the copy
-        // replaces all uses of the local-group variable with the source
-        // (from a different group), and DCE removes the now-dead Copy.
-        // Subsequent rebuild_ssa then finds the local group has no
-        // instruction-based definitions, producing the entry value (null/0)
-        // instead of the actual stored value.
-        //
-        // This specifically prevents the JIEJIE.NET Issue 13 pattern where
-        // `stloc.0` creates a Copy bridging a stack-temp group to Local(0),
-        // and propagating it disconnects the local from its value.
-        Self::protect_sole_local_defs(ssa, &mut copies);
-
-        // Step 2: Resolve chains to ultimate sources
-        let resolved = Self::resolve_chains(&copies);
-
-        // Step 3: Propagate types from Local-origin destinations to their sources
-        Self::propagate_local_types(ssa, &resolved, assembly);
-
-        // Step 4: Apply propagations and record events
-        let result = ssa.propagate_copies(&resolved);
-
-        for dest_idx in result
-            .fully_propagated
-            .iter()
-            .chain(result.partially_propagated.iter())
-        {
-            let dest = SsaVarId::from_index(dest_idx);
-            if let Some(src) = resolved.get(&dest) {
-                changes
-                    .record(EventKind::CopyPropagated)
-                    .method(method_token)
-                    .message(format!("{dest} → {src}"));
-            }
-        }
-
-        // Step 5: Neutralize dead Copy instructions whose dests were fully propagated
-        for dest_idx in result.fully_propagated.iter() {
-            ssa.nop_copy_defining(SsaVarId::from_index(dest_idx));
-        }
-
-        result.total_replaced
-    }
-
-    /// Propagates types from Local-origin destinations to their ultimate sources.
-    ///
-    /// When a Local-origin variable is a copy destination (e.g., `local_0 = copy phi_result`),
-    /// the source variable should inherit the local's original type. This ensures that
-    /// after copy propagation eliminates the intermediate copy, the source retains the
-    /// correct type information for code generation.
-    ///
-    /// This follows the .NET JIT's approach of keeping local slot types (`lvType`)
-    /// separate from IR/computational types (`gtType`), ensuring original types are
-    /// preserved through optimization.
-    fn propagate_local_types(
-        ssa: &mut SsaFunction,
-        resolved: &BTreeMap<SsaVarId, SsaVarId>,
-        assembly: &CilObject,
-    ) {
-        // Get the original local types from the SSA function
-        let original_types = match ssa.original_local_types() {
-            Some(types) => types.to_vec(),
-            None => return,
-        };
-
-        // Collect type assignments first (can't borrow mutably while iterating)
-        let mut type_assignments: Vec<(SsaVarId, SsaType)> = Vec::new();
-
-        for (dest, src) in resolved {
-            if dest == src {
-                continue;
-            }
-
-            // Check if the destination is a Local-origin variable
-            let Some(dest_var) = ssa.variable(*dest) else {
-                continue;
-            };
-            let VariableOrigin::Local(local_idx) = dest_var.origin() else {
-                continue;
-            };
-
-            // Get the original type for this local
-            let local_type = match original_types.get(local_idx as usize) {
-                Some(sig) => &sig.base,
-                None => continue,
-            };
-
-            // Convert to SsaType
-            let ssa_type = SsaType::from_type_signature(local_type, assembly);
-
-            // Only propagate if the type is known (not Unknown/I32)
-            if ssa_type.is_unknown() || matches!(ssa_type, SsaType::I32) {
-                continue;
-            }
-
-            // Check if the source variable currently has Unknown type
-            // Only propagate if we're improving the type information
-            let should_propagate = match ssa.variable(*src) {
-                Some(src_var) => src_var.var_type().is_unknown(),
-                None => false,
-            };
-
-            if should_propagate {
-                type_assignments.push((*src, ssa_type));
-            }
-        }
-
-        // Apply type assignments
-        for (var_id, ssa_type) in type_assignments {
-            if let Some(var) = ssa.variable_mut(var_id) {
-                var.set_type(ssa_type);
-            }
-        }
-    }
 }
 
-impl SsaPass for CopyPropagationPass {
+impl SsaPass<CilTarget, CompilerContext> for CopyPropagationPass {
     fn name(&self) -> &'static str {
         "copy-propagation"
     }
@@ -357,677 +60,82 @@ impl SsaPass for CopyPropagationPass {
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
-        method_token: Token,
-        ctx: &CompilerContext,
-        assembly: &CilObject,
-    ) -> Result<bool> {
-        let mut changes = EventLog::new();
-
-        // Iterate until fixed point
-        for _ in 0..self.max_iterations {
-            let replaced = Self::run_iteration(ssa, method_token, &mut changes, assembly);
-
-            if replaced == 0 {
-                break;
-            }
-        }
-
-        let changed = !changes.is_empty();
-        if changed {
-            ctx.events.merge(&changes);
-        }
+        method: &MethodRef,
+        host: &CompilerContext,
+    ) -> analyssa::Result<bool> {
+        let assembly = host
+            .assembly()
+            .ok_or_else(|| analyssa::Error::new("CopyPropagationPass requires an assembly"))?;
+        let changed = copying::run_with_hook(
+            ssa,
+            method,
+            &host.events,
+            self.max_iterations,
+            |ssa, resolved| propagate_local_types(ssa, resolved, &assembly),
+        );
         Ok(changed)
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::{collections::BTreeMap, sync::Arc};
-
-    use crate::{
-        analysis::{
-            CallGraph, ConstValue, DefSite, PhiAnalyzer, PhiNode, PhiOperand, SsaBlock,
-            SsaFunction, SsaFunctionBuilder, SsaInstruction, SsaOp, SsaType, SsaVarId,
-            VariableOrigin,
-        },
-        compiler::CompilerContext,
-        compiler::{CopyPropagationPass, SsaPass},
-        metadata::token::Token,
-        test::helpers::test_assembly_arc,
+/// CIL-side post-step: propagates types from Local-origin destinations to
+/// their ultimate sources.
+///
+/// When a Local-origin variable is a copy destination (e.g.
+/// `local_0 = copy phi_result`), the source variable should inherit the
+/// local's original type. This ensures that after copy propagation
+/// eliminates the intermediate copy, the source retains the correct type
+/// information for code generation.
+///
+/// Mirrors the .NET JIT's approach of keeping local slot types (`lvType`)
+/// separate from IR/computational types (`gtType`).
+fn propagate_local_types(
+    ssa: &mut SsaFunction,
+    resolved: &BTreeMap<SsaVarId, SsaVarId>,
+    assembly: &CilObject,
+) {
+    let original_types = match ssa.original_local_types() {
+        Some(types) => types.to_vec(),
+        None => return,
     };
 
-    /// Helper to create a minimal analysis context for testing.
-    fn test_context() -> CompilerContext {
-        let call_graph = Arc::new(CallGraph::new());
-        CompilerContext::new(call_graph)
-    }
+    let mut type_assignments: Vec<(SsaVarId, SsaType)> = Vec::new();
 
-    #[test]
-    fn test_collect_empty_function() {
-        let ssa = SsaFunctionBuilder::new(0, 0)
-            .build_with(|f| {
-                f.block(0, |b| b.ret());
-            })
-            .unwrap();
-        let copies = PhiAnalyzer::new(&ssa).collect_all_copies();
-        assert!(copies.is_empty());
-    }
-
-    #[test]
-    fn test_collect_single_copy() {
-        let (ssa, v0, v1) = {
-            let mut v0_out = SsaVarId::from_index(0);
-            let mut v1_out = SsaVarId::from_index(1);
-            let ssa = SsaFunctionBuilder::new(0, 0)
-                .build_with(|f| {
-                    f.block(0, |b| {
-                        let v0 = b.const_i32(42);
-                        let v1 = b.copy(v0);
-                        v0_out = v0;
-                        v1_out = v1;
-                        b.ret();
-                    });
-                })
-                .unwrap();
-            (ssa, v0_out, v1_out)
-        };
-
-        let copies = PhiAnalyzer::new(&ssa).collect_all_copies();
-        assert_eq!(copies.len(), 1);
-        assert_eq!(copies.get(&v1), Some(&v0));
-    }
-
-    #[test]
-    fn test_collect_multiple_copies() {
-        let (ssa, v0, v1, v2) = {
-            let mut v0_out = SsaVarId::from_index(0);
-            let mut v1_out = SsaVarId::from_index(1);
-            let mut v2_out = SsaVarId::from_index(2);
-            let ssa = SsaFunctionBuilder::new(0, 0)
-                .build_with(|f| {
-                    f.block(0, |b| {
-                        let v0 = b.const_i32(42);
-                        let v1 = b.copy(v0);
-                        let v2 = b.copy(v1);
-                        v0_out = v0;
-                        v1_out = v1;
-                        v2_out = v2;
-                        b.ret();
-                    });
-                })
-                .unwrap();
-            (ssa, v0_out, v1_out, v2_out)
-        };
-
-        let copies = PhiAnalyzer::new(&ssa).collect_all_copies();
-        assert_eq!(copies.len(), 2);
-        assert_eq!(copies.get(&v1), Some(&v0));
-        assert_eq!(copies.get(&v2), Some(&v1));
-    }
-
-    #[test]
-    fn test_collect_trivial_phi_all_same() {
-        let (ssa, v0, v_phi) = {
-            let mut v0_out = SsaVarId::from_index(0);
-            let mut v_phi_out = SsaVarId::from_index(1);
-            let ssa = SsaFunctionBuilder::new(0, 0)
-                .build_with(|f| {
-                    f.block(0, |b| {
-                        let v0 = b.const_i32(42);
-                        let cond = b.const_true();
-                        v0_out = v0;
-                        b.branch(cond, 1, 2);
-                    });
-                    f.block(1, |b| b.jump(3));
-                    f.block(2, |b| b.jump(3));
-                    f.block(3, |b| {
-                        // phi with all same operands (v0 from both paths)
-                        let phi_result = b.phi(&[(1, v0_out), (2, v0_out)]);
-                        v_phi_out = phi_result;
-                        b.ret_val(phi_result);
-                    });
-                })
-                .unwrap();
-            (ssa, v0_out, v_phi_out)
-        };
-
-        let copies = PhiAnalyzer::new(&ssa).collect_all_copies();
-        assert_eq!(copies.len(), 1);
-        assert_eq!(copies.get(&v_phi), Some(&v0));
-    }
-
-    #[test]
-    fn test_collect_trivial_phi_with_self_reference() {
-        // Self-referential phi where the phi references itself (for loop back-edges)
-        // We need to manually construct this since the builder can't create self-references
-        let mut ssa = SsaFunction::new(0, 0);
-
-        // Create variables
-        let v0 = ssa.create_variable(
-            VariableOrigin::Local(0),
-            0,
-            DefSite::instruction(0, 0),
-            SsaType::Unknown,
-        );
-        let phi_var = ssa.create_variable(
-            VariableOrigin::Local(1),
-            0,
-            DefSite::phi(1),
-            SsaType::Unknown,
-        );
-
-        // Block 0: entry, defines v0, jumps to block 1
-        let mut block0 = SsaBlock::new(0);
-        block0.add_instruction(SsaInstruction::synthetic(SsaOp::Const {
-            dest: v0,
-            value: ConstValue::I32(42),
-        }));
-        block0.add_instruction(SsaInstruction::synthetic(SsaOp::Jump { target: 1 }));
-        ssa.add_block(block0);
-
-        // Block 1: loop header with self-referential phi
-        // phi_var = phi(v0 from block 0, phi_var from block 1)
-        let mut block1 = SsaBlock::new(1);
-        let mut phi = PhiNode::new(phi_var, VariableOrigin::Local(1));
-        phi.add_operand(PhiOperand::new(v0, 0)); // from block 0
-        phi.add_operand(PhiOperand::new(phi_var, 1)); // from block 1 (self-reference)
-        block1.add_phi(phi);
-        block1.add_instruction(SsaInstruction::synthetic(SsaOp::Return {
-            value: Some(phi_var),
-        }));
-        ssa.add_block(block1);
-
-        let copies = PhiAnalyzer::new(&ssa).collect_all_copies();
-        // phi_var = phi(v0, phi_var) should be detected as trivial (phi_var → v0)
-        assert_eq!(copies.len(), 1);
-        assert_eq!(copies.get(&phi_var), Some(&v0));
-    }
-
-    #[test]
-    fn test_collect_non_trivial_phi() {
-        let ssa = {
-            let mut v0_out = SsaVarId::from_index(0);
-            let mut v1_out = SsaVarId::from_index(1);
-            SsaFunctionBuilder::new(0, 0)
-                .build_with(|f| {
-                    f.block(0, |b| {
-                        let cond = b.const_true();
-                        b.branch(cond, 1, 2);
-                    });
-                    f.block(1, |b| {
-                        let v0 = b.const_i32(10);
-                        v0_out = v0;
-                        b.jump(3);
-                    });
-                    f.block(2, |b| {
-                        let v1 = b.const_i32(20);
-                        v1_out = v1;
-                        b.jump(3);
-                    });
-                    f.block(3, |b| {
-                        // phi with different operands
-                        let phi_result = b.phi(&[(1, v0_out), (2, v1_out)]);
-                        b.ret_val(phi_result);
-                    });
-                })
-                .unwrap()
-        };
-
-        let copies = PhiAnalyzer::new(&ssa).collect_all_copies();
-        // Non-trivial phi should not be collected
-        assert!(copies.is_empty());
-    }
-
-    #[test]
-    fn test_resolve_simple_chain() {
-        let v0 = SsaVarId::from_index(0);
-        let v1 = SsaVarId::from_index(1);
-        let v2 = SsaVarId::from_index(2);
-        let mut copies = BTreeMap::new();
-        // v2 → v1 → v0
-        copies.insert(v2, v1);
-        copies.insert(v1, v0);
-
-        let resolved = CopyPropagationPass::resolve_chains(&copies);
-
-        // Both should resolve to v0
-        assert_eq!(resolved.get(&v1), Some(&v0));
-        assert_eq!(resolved.get(&v2), Some(&v0));
-    }
-
-    #[test]
-    fn test_resolve_long_chain() {
-        let v0 = SsaVarId::from_index(0);
-        let v1 = SsaVarId::from_index(1);
-        let v2 = SsaVarId::from_index(2);
-        let v3 = SsaVarId::from_index(3);
-        let v4 = SsaVarId::from_index(4);
-        let mut copies = BTreeMap::new();
-        // v4 → v3 → v2 → v1 → v0
-        copies.insert(v4, v3);
-        copies.insert(v3, v2);
-        copies.insert(v2, v1);
-        copies.insert(v1, v0);
-
-        let resolved = CopyPropagationPass::resolve_chains(&copies);
-
-        // All should resolve to v0
-        assert_eq!(resolved.get(&v1), Some(&v0));
-        assert_eq!(resolved.get(&v2), Some(&v0));
-        assert_eq!(resolved.get(&v3), Some(&v0));
-        assert_eq!(resolved.get(&v4), Some(&v0));
-    }
-
-    #[test]
-    fn test_resolve_cycle() {
-        let v1 = SsaVarId::from_index(0);
-        let v2 = SsaVarId::from_index(1);
-        let mut copies = BTreeMap::new();
-        // v1 → v2 → v1 (cycle)
-        copies.insert(v1, v2);
-        copies.insert(v2, v1);
-
-        let resolved = CopyPropagationPass::resolve_chains(&copies);
-
-        // Should handle cycle gracefully (stop at some point in the cycle)
-        assert!(resolved.contains_key(&v1));
-        assert!(resolved.contains_key(&v2));
-    }
-
-    #[test]
-    fn test_resolve_multiple_independent_chains() {
-        let v0 = SsaVarId::from_index(0);
-        let v1 = SsaVarId::from_index(1);
-        let v2 = SsaVarId::from_index(2);
-        let v3 = SsaVarId::from_index(3);
-        let v4 = SsaVarId::from_index(4);
-        let v5 = SsaVarId::from_index(5);
-        let mut copies = BTreeMap::new();
-        // Chain 1: v2 → v1 → v0
-        copies.insert(v2, v1);
-        copies.insert(v1, v0);
-        // Chain 2: v5 → v4 → v3
-        copies.insert(v5, v4);
-        copies.insert(v4, v3);
-
-        let resolved = CopyPropagationPass::resolve_chains(&copies);
-
-        // Chain 1 resolves to v0
-        assert_eq!(resolved.get(&v1), Some(&v0));
-        assert_eq!(resolved.get(&v2), Some(&v0));
-        // Chain 2 resolves to v3
-        assert_eq!(resolved.get(&v4), Some(&v3));
-        assert_eq!(resolved.get(&v5), Some(&v3));
-    }
-
-    #[test]
-    fn test_trivial_phi_single_operand() {
-        let ssa = SsaFunction::new(0, 0);
-        let analyzer = PhiAnalyzer::new(&ssa);
-
-        let result = SsaVarId::from_index(0);
-        let v0 = SsaVarId::from_index(1);
-        let mut phi = PhiNode::new(result, VariableOrigin::Local(0));
-        phi.add_operand(PhiOperand::new(v0, 0));
-
-        let source = analyzer.is_trivial(&phi);
-        assert_eq!(source, Some(v0));
-    }
-
-    #[test]
-    fn test_trivial_phi_all_same_operands() {
-        let ssa = SsaFunction::new(0, 0);
-        let analyzer = PhiAnalyzer::new(&ssa);
-
-        let result = SsaVarId::from_index(0);
-        let v0 = SsaVarId::from_index(1);
-        let mut phi = PhiNode::new(result, VariableOrigin::Local(0));
-        phi.add_operand(PhiOperand::new(v0, 0));
-        phi.add_operand(PhiOperand::new(v0, 1));
-        phi.add_operand(PhiOperand::new(v0, 2));
-
-        let source = analyzer.is_trivial(&phi);
-        assert_eq!(source, Some(v0));
-    }
-
-    #[test]
-    fn test_trivial_phi_with_self_references() {
-        let ssa = SsaFunction::new(0, 0);
-        let analyzer = PhiAnalyzer::new(&ssa);
-
-        let v0 = SsaVarId::from_index(0);
-        let v1 = SsaVarId::from_index(1);
-        let mut phi = PhiNode::new(v1, VariableOrigin::Local(0));
-        phi.add_operand(PhiOperand::new(v0, 0)); // Non-self
-        phi.add_operand(PhiOperand::new(v1, 1)); // Self-reference
-        phi.add_operand(PhiOperand::new(v1, 2)); // Self-reference
-
-        let source = analyzer.is_trivial(&phi);
-        assert_eq!(source, Some(v0));
-    }
-
-    #[test]
-    fn test_non_trivial_phi_different_operands() {
-        let ssa = SsaFunction::new(0, 0);
-        let analyzer = PhiAnalyzer::new(&ssa);
-
-        let v0 = SsaVarId::from_index(0);
-        let v1 = SsaVarId::from_index(1);
-        let v5 = SsaVarId::from_index(2);
-        let mut phi = PhiNode::new(v5, VariableOrigin::Local(0));
-        phi.add_operand(PhiOperand::new(v0, 0));
-        phi.add_operand(PhiOperand::new(v1, 1));
-
-        let source = analyzer.is_trivial(&phi);
-        assert_eq!(source, None);
-    }
-
-    #[test]
-    fn test_trivial_phi_all_self_references() {
-        let ssa = SsaFunction::new(0, 0);
-        let analyzer = PhiAnalyzer::new(&ssa);
-
-        let v1 = SsaVarId::from_index(0);
-        let mut phi = PhiNode::new(v1, VariableOrigin::Local(0));
-        phi.add_operand(PhiOperand::new(v1, 0)); // Self
-        phi.add_operand(PhiOperand::new(v1, 1)); // Self
-
-        let source = analyzer.is_trivial(&phi);
-        // All self-references means no unique source
-        assert_eq!(source, None);
-    }
-
-    #[test]
-    fn test_propagate_single_copy() {
-        let (mut ssa, v0, _v1) = {
-            let mut v0_out = SsaVarId::from_index(0);
-            let mut v1_out = SsaVarId::from_index(1);
-            let ssa = SsaFunctionBuilder::new(0, 0)
-                .build_with(|f| {
-                    f.block(0, |b| {
-                        let v0 = b.const_i32(42);
-                        let v1 = b.copy(v0);
-                        let _v2 = b.add(v1, v1);
-                        v0_out = v0;
-                        v1_out = v1;
-                        b.ret_val(v1);
-                    });
-                })
-                .unwrap();
-            (ssa, v0_out, v1_out)
-        };
-
-        // Run pass
-        let pass = CopyPropagationPass::new(15);
-        let ctx = test_context();
-        let changed = pass
-            .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc())
-            .unwrap();
-
-        // Should have propagated v1 → v0
-        assert!(changed);
-
-        // Verify: add should now use v0
-        let block = ssa.block(0).unwrap();
-        let add_instr = &block.instructions()[2];
-        if let SsaOp::Add { left, right, .. } = add_instr.op() {
-            assert_eq!(*left, v0);
-            assert_eq!(*right, v0);
-        } else {
-            panic!("Expected Add instruction");
+    for (dest, src) in resolved {
+        if dest == src {
+            continue;
         }
 
-        // Verify: return should now use v0
-        let ret_instr = &block.instructions()[3];
-        if let SsaOp::Return { value } = ret_instr.op() {
-            assert_eq!(*value, Some(v0));
-        } else {
-            panic!("Expected Return instruction");
+        let Some(dest_var) = ssa.variable(*dest) else {
+            continue;
+        };
+        let VariableOrigin::Local(local_idx) = dest_var.origin() else {
+            continue;
+        };
+
+        let local_type = match original_types.get(local_idx as usize) {
+            Some(sig) => &sig.base,
+            None => continue,
+        };
+
+        let ssa_type = SsaType::from_type_signature(local_type, assembly);
+
+        if ssa_type.is_unknown() || matches!(ssa_type, SsaType::I32) {
+            continue;
+        }
+
+        let should_propagate = match ssa.variable(*src) {
+            Some(src_var) => src_var.var_type().is_unknown(),
+            None => false,
+        };
+
+        if should_propagate {
+            type_assignments.push((*src, ssa_type));
         }
     }
 
-    #[test]
-    fn test_propagate_copy_chain() {
-        let (mut ssa, v0) = {
-            let mut v0_out = SsaVarId::from_index(0);
-            let ssa = SsaFunctionBuilder::new(0, 0)
-                .build_with(|f| {
-                    f.block(0, |b| {
-                        let v0 = b.const_i32(42);
-                        let v1 = b.copy(v0);
-                        let v2 = b.copy(v1);
-                        let v3 = b.copy(v2);
-                        v0_out = v0;
-                        b.ret_val(v3);
-                    });
-                })
-                .unwrap();
-            (ssa, v0_out)
-        };
-
-        // Run pass
-        let pass = CopyPropagationPass::new(15);
-        let ctx = test_context();
-        let _changes = pass
-            .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc())
-            .unwrap();
-
-        // Verify: return should now use v0 (ultimate source)
-        let block = ssa.block(0).unwrap();
-        if let Some(SsaOp::Return { value }) = block.terminator_op() {
-            assert_eq!(*value, Some(v0));
-        } else {
-            panic!("Expected Return instruction");
+    for (var_id, ssa_type) in type_assignments {
+        if let Some(var) = ssa.variable_mut(var_id) {
+            var.set_type(ssa_type);
         }
-    }
-
-    #[test]
-    fn test_propagate_trivial_phi() {
-        let (mut ssa, v0) = {
-            let mut v0_out = SsaVarId::from_index(0);
-            let ssa = SsaFunctionBuilder::new(0, 0)
-                .build_with(|f| {
-                    // Block 0: entry
-                    f.block(0, |b| {
-                        v0_out = b.const_i32(42);
-                        let cond = b.const_true();
-                        b.branch(cond, 1, 2);
-                    });
-                    // Block 1
-                    f.block(1, |b| b.jump(3));
-                    // Block 2
-                    f.block(2, |b| b.jump(3));
-                    // Block 3: trivial phi (both operands are v0)
-                    f.block(3, |b| {
-                        let phi_result = b.phi(&[(1, v0_out), (2, v0_out)]);
-                        // Use phi result
-                        let _ = b.add(phi_result, phi_result);
-                        b.ret_val(phi_result);
-                    });
-                })
-                .unwrap();
-            (ssa, v0_out)
-        };
-
-        // Run pass
-        let pass = CopyPropagationPass::new(15);
-        let ctx = test_context();
-        let changed = pass
-            .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc())
-            .unwrap();
-
-        assert!(changed);
-
-        // Verify: uses of phi should be replaced with v0
-        let block3 = ssa.block(3).unwrap();
-        let add_instr = &block3.instructions()[0];
-        if let SsaOp::Add { left, right, .. } = add_instr.op() {
-            assert_eq!(*left, v0);
-            assert_eq!(*right, v0);
-        }
-    }
-
-    #[test]
-    fn test_no_propagation_needed() {
-        let mut ssa = SsaFunctionBuilder::new(0, 0)
-            .build_with(|f| {
-                f.block(0, |b| {
-                    let v0 = b.const_i32(42);
-                    b.ret_val(v0); // no copies
-                });
-            })
-            .unwrap();
-
-        // Run pass
-        let pass = CopyPropagationPass::new(15);
-        let ctx = test_context();
-        let changed = pass
-            .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc())
-            .unwrap();
-
-        // No copies, no changes
-        assert!(!changed);
-    }
-
-    #[test]
-    fn test_iterative_convergence() {
-        // Test that the pass converges even with complex copy patterns
-        let (mut ssa, v0) = {
-            let mut v0_out = SsaVarId::from_index(0);
-            let ssa = SsaFunctionBuilder::new(0, 0)
-                .build_with(|f| {
-                    f.block(0, |b| {
-                        let v0 = b.const_i32(42);
-                        v0_out = v0;
-                        // Create a chain: v1 = v0, v2 = v1, v3 = v2
-                        let v1 = b.copy(v0);
-                        let v2 = b.copy(v1);
-                        let v3 = b.copy(v2);
-                        // Use all copies
-                        let v10 = b.add(v1, v2);
-                        let v11 = b.add(v10, v3);
-                        b.ret_val(v11);
-                    });
-                })
-                .unwrap();
-            (ssa, v0_out)
-        };
-
-        // Run pass
-        let pass = CopyPropagationPass::new(15);
-        let ctx = test_context();
-        let result =
-            pass.run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc());
-
-        // Should complete without error (convergence)
-        assert!(result.is_ok());
-
-        // Verify all uses point to v0
-        let block = ssa.block(0).unwrap();
-
-        // Check first add: should be add v0, v0
-        let add1 = &block.instructions()[4];
-        if let SsaOp::Add { left, right, .. } = add1.op() {
-            assert_eq!(*left, v0);
-            assert_eq!(*right, v0);
-        }
-
-        // Check second add: right should be v0
-        let add2 = &block.instructions()[5];
-        if let SsaOp::Add { right, .. } = add2.op() {
-            assert_eq!(*right, v0);
-        }
-    }
-
-    #[test]
-    fn test_copy_not_propagated_to_definition() {
-        // Ensure we don't replace the copy's own definition
-        let (mut ssa, v0, v1) = {
-            let mut v0_out = SsaVarId::from_index(0);
-            let mut v1_out = SsaVarId::from_index(1);
-            let ssa = SsaFunctionBuilder::new(0, 0)
-                .build_with(|f| {
-                    f.block(0, |b| {
-                        let v0 = b.const_i32(42);
-                        v0_out = v0;
-                        let v1 = b.copy(v0);
-                        v1_out = v1;
-                        b.ret_val(v1);
-                    });
-                })
-                .unwrap();
-            (ssa, v0_out, v1_out)
-        };
-
-        // Run pass
-        let pass = CopyPropagationPass::new(15);
-        let ctx = test_context();
-        let _changes = pass
-            .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc())
-            .unwrap();
-
-        // The copy instruction itself should remain unchanged (dest is still v1)
-        let block = ssa.block(0).unwrap();
-        let copy_instr = &block.instructions()[1];
-        if let SsaOp::Copy { dest, src } = copy_instr.op() {
-            assert_eq!(*dest, v1);
-            assert_eq!(*src, v0);
-        }
-    }
-
-    #[test]
-    fn test_phi_operands_preserved() {
-        // Test that copy propagation does NOT replace PHI operands.
-        // This is intentional: replacing PHI operands can create cross-origin
-        // references that break rebuild_ssa's assumption that each variable
-        // flows to at most one PHI origin.
-        let (mut ssa, _v0, v1, v2) = {
-            let mut v0_out = SsaVarId::from_index(0);
-            let mut v1_out = SsaVarId::from_index(1);
-            let mut v2_out = SsaVarId::from_index(2);
-            let ssa = SsaFunctionBuilder::new(0, 0)
-                .build_with(|f| {
-                    // Block 0: entry
-                    f.block(0, |b| {
-                        let v0 = b.const_i32(42);
-                        v0_out = v0;
-                        let v1 = b.copy(v0);
-                        v1_out = v1;
-                        let cond = b.const_true();
-                        b.branch(cond, 1, 2);
-                    });
-                    // Block 1: defines v2
-                    f.block(1, |b| {
-                        v2_out = b.const_i32(100);
-                        b.jump(3);
-                    });
-                    // Block 2: just jumps
-                    f.block(2, |b| b.jump(3));
-                    // Block 3: phi using v1 (copy of v0) and v2
-                    f.block(3, |b| {
-                        let phi_result = b.phi(&[(1, v2_out), (2, v1_out)]);
-                        b.ret_val(phi_result);
-                    });
-                })
-                .unwrap();
-            (ssa, v0_out, v1_out, v2_out)
-        };
-
-        // Run pass
-        let pass = CopyPropagationPass::new(15);
-        let ctx = test_context();
-        let _changes = pass
-            .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc())
-            .unwrap();
-
-        // Verify: phi operands should be PRESERVED (not replaced)
-        // v1 should remain in the PHI, not be replaced with v0
-        let block3 = ssa.block(3).unwrap();
-        let phi = &block3.phi_nodes()[0];
-        let operand_values: Vec<_> = phi.operands().iter().map(|op| op.value()).collect();
-
-        // One operand should be v2, the other should still be v1 (preserved)
-        assert!(operand_values.contains(&v2));
-        assert!(operand_values.contains(&v1)); // v1 is preserved, not replaced with v0
     }
 }

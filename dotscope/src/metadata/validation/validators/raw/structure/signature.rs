@@ -203,21 +203,20 @@ impl RawSignatureValidator {
                     message: format!("Signature blob index {blob_index} exceeds blob heap bounds"),
                 })?;
 
-        if blob_data.is_empty() {
+        let Some((&calling_convention, rest)) = blob_data.split_first() else {
             return Err(Error::ValidationRawFailed {
                 validator: "RawSignatureValidator".to_string(),
                 message: format!("Signature blob at index {blob_index} is empty"),
             });
-        }
+        };
 
-        let calling_convention = blob_data[0];
         Self::validate_calling_convention(calling_convention, expected_kind, blob_index)?;
 
         if matches!(
             expected_kind,
             SignatureKind::Method | SignatureKind::LocalVar | SignatureKind::Property
         ) {
-            if blob_data.len() < 2 {
+            if rest.is_empty() {
                 return Err(Error::ValidationRawFailed {
                     validator: "RawSignatureValidator".to_string(),
                     message: format!(
@@ -226,7 +225,7 @@ impl RawSignatureValidator {
                 });
             }
 
-            Self::validate_compressed_integer(&blob_data[1..], blob_index)?;
+            Self::validate_compressed_integer(rest, blob_index)?;
         }
 
         Self::validate_blob_bounds(blob_data, blob_index)?;
@@ -332,14 +331,12 @@ impl RawSignatureValidator {
     ///
     /// Returns validation error if compressed integer encoding is malformed.
     fn validate_compressed_integer(data: &[u8], blob_index: u32) -> Result<()> {
-        if data.is_empty() {
+        let Some(&first_byte) = data.first() else {
             return Err(Error::ValidationRawFailed {
                 validator: "RawSignatureValidator".to_string(),
                 message: format!("Insufficient data for compressed integer in blob {blob_index}"),
             });
-        }
-
-        let first_byte = data[0];
+        };
 
         if (first_byte & 0x80) == 0 {
             // 1-byte encoding: 0bbbbbbb
@@ -449,8 +446,7 @@ impl RawValidator for RawSignatureValidator {
             for method in table {
                 if let Some(blob_heap) = assembly_view.blobs() {
                     if let Ok(blob_data) = blob_heap.get(method.signature as usize) {
-                        if !blob_data.is_empty() {
-                            let calling_convention = blob_data[0];
+                        if let Some(&calling_convention) = blob_data.first() {
                             let signature_kind = match calling_convention {
                                 0x06 => SignatureKind::Field,
                                 _ => SignatureKind::Method,
@@ -497,8 +493,7 @@ impl RawValidator for RawSignatureValidator {
             for standalone_sig in table {
                 if let Some(blob_heap) = assembly_view.blobs() {
                     if let Ok(blob_data) = blob_heap.get(standalone_sig.signature as usize) {
-                        if !blob_data.is_empty() {
-                            let calling_convention = blob_data[0];
+                        if let Some(&calling_convention) = blob_data.first() {
                             let signature_kind = match calling_convention {
                                 0x07 => SignatureKind::LocalVar,
                                 0x06 => SignatureKind::Field,
@@ -530,8 +525,7 @@ impl RawValidator for RawSignatureValidator {
             for member_ref in table {
                 if let Some(blob_heap) = assembly_view.blobs() {
                     if let Ok(blob_data) = blob_heap.get(member_ref.signature as usize) {
-                        if !blob_data.is_empty() {
-                            let calling_convention = blob_data[0];
+                        if let Some(&calling_convention) = blob_data.first() {
                             let signature_kind = match calling_convention {
                                 0x06 => SignatureKind::Field,
                                 _ => SignatureKind::Method,

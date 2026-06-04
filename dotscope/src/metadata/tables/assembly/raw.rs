@@ -7,7 +7,7 @@
 //! # Assembly Table Format
 //!
 //! The Assembly table (0x20) contains exactly one row (if present) with these fields:
-//! - **`HashAlgId`** (4 bytes): Hash algorithm identifier  
+//! - **`HashAlgId`** (4 bytes): Hash algorithm identifier
 //! - **`MajorVersion`** (2 bytes): Major version number
 //! - **`MinorVersion`** (2 bytes): Minor version number
 //! - **`BuildNumber`** (2 bytes): Build number
@@ -212,15 +212,16 @@ impl TableRow for AssemblyRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* hash_alg_id */     4 +
-            /* major_version */   2 +
-            /* minor_version */   2 +
-            /* build_number */    2 +
-            /* revision_number */ 2 +
-            /* flags */           4 +
-            /* public_key */      sizes.blob_bytes() +
-            /* name */            sizes.str_bytes() +
-            /* culture */         sizes.str_bytes()
+            /* hash_alg_id */     4u8
+            /* major_version */   .saturating_add(2)
+            /* minor_version */   .saturating_add(2)
+            /* build_number */    .saturating_add(2)
+            /* revision_number */ .saturating_add(2)
+            /* flags */           .saturating_add(4)
+            /* public_key */      .saturating_add(sizes.blob_bytes())
+            /* name */            .saturating_add(sizes.str_bytes())
+            /* culture */         .saturating_add(sizes.str_bytes())
+
         )
     }
 }

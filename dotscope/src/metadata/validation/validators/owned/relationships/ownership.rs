@@ -435,7 +435,7 @@ impl OwnedOwnershipValidator {
                 self.validate_nested_type_circularity_deep(
                     &nested_type,
                     recursion_stack,
-                    depth + 1,
+                    depth.saturating_add(1),
                 )?;
             }
         }

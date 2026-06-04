@@ -82,7 +82,7 @@ fn display_streams(view: &CilAssemblyView) {
     println!("{}", "-".repeat(40));
 
     for (idx, stream) in view.streams().iter().enumerate() {
-        println!("{}. {} stream:", idx + 1, stream.name);
+        println!("{}. {} stream:", idx.saturating_add(1), stream.name);
         println!("   • Offset: 0x{:08X}", stream.offset);
         println!("   • Size: {} bytes", stream.size);
 
@@ -191,7 +191,7 @@ fn demonstrate_blob_access(view: &CilAssemblyView) -> Result<()> {
                 "  • Offset: {} - Size: {} bytes - Data: {:02X?}...",
                 offset,
                 data.len(),
-                &data[..data.len().min(8)]
+                data.get(..data.len().min(8)).unwrap_or(&[])
             );
         }
     } else {

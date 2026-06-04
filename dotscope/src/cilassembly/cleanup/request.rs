@@ -502,14 +502,15 @@ impl CleanupRequest {
     /// Returns the total count of items to delete.
     #[must_use]
     pub fn deletion_count(&self) -> usize {
-        self.types.len()
-            + self.methods.len()
-            + self.methodspecs.len()
-            + self.fields.len()
-            + self.attributes.len()
-            + self.assemblyrefs.len()
-            + self.modulerefs.len()
-            + self.manifest_resources.len()
+        self.types
+            .len()
+            .saturating_add(self.methods.len())
+            .saturating_add(self.methodspecs.len())
+            .saturating_add(self.fields.len())
+            .saturating_add(self.attributes.len())
+            .saturating_add(self.assemblyrefs.len())
+            .saturating_add(self.modulerefs.len())
+            .saturating_add(self.manifest_resources.len())
     }
 
     /// Checks if a specific token is marked for deletion.

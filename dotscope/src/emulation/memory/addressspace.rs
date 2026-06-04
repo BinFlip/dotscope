@@ -380,8 +380,14 @@ impl AddressSpace {
     ///
     /// Returns the new lock count (1 for first acquisition).
     pub fn monitor_enter(&self, object_id: u64) -> u32 {
-        let mut locks = self.monitor_locks.write().unwrap();
-        let count = locks.get(&object_id).copied().unwrap_or(0) + 1;
+        let Ok(mut locks) = self.monitor_locks.write() else {
+            return 0;
+        };
+        let count = locks
+            .get(&object_id)
+            .copied()
+            .unwrap_or(0)
+            .saturating_add(1);
         *locks = locks.update(object_id, count);
         count
     }
@@ -392,10 +398,12 @@ impl AddressSpace {
     /// held and successfully released, `false` if Exit was called without a
     /// matching Enter (would throw `SynchronizationLockException` in .NET).
     pub fn monitor_exit(&self, object_id: u64) -> bool {
-        let mut locks = self.monitor_locks.write().unwrap();
+        let Ok(mut locks) = self.monitor_locks.write() else {
+            return false;
+        };
         match locks.get(&object_id).copied() {
             Some(count) if count > 1 => {
-                *locks = locks.update(object_id, count - 1);
+                *locks = locks.update(object_id, count.saturating_sub(1));
                 true
             }
             Some(1) => {
@@ -467,7 +475,7 @@ impl AddressSpace {
     /// Returns an error if the mapping fails.
     pub fn map(&self, region: MemoryRegion) -> Result<u64> {
         let size = region.size();
-        let aligned_size = (size + 0xFFF) & !0xFFF; // Page align
+        let aligned_size = size.saturating_add(0xFFF) & !0xFFF; // Page align
 
         // Find next available address
         let base = self
@@ -611,7 +619,7 @@ impl AddressSpace {
         // Check pinned arrays first
         if let Ok(pins) = self.pinned_arrays.read() {
             for entry in pins.values() {
-                let end = entry.base_addr + entry.byte_length as u64;
+                let end = entry.base_addr.saturating_add(entry.byte_length as u64);
                 if address >= entry.base_addr && address < end {
                     return true;
                 }
@@ -727,14 +735,14 @@ impl AddressSpace {
 
         // Calculate end page
         let end_addr = address.saturating_add(size as u64);
-        let end_page = (end_addr + Self::PAGE_SIZE - 1) & !(Self::PAGE_SIZE - 1);
+        let end_page = end_addr.saturating_add(Self::PAGE_SIZE - 1) & !(Self::PAGE_SIZE - 1);
 
         // Update protection for all affected pages
         if let Ok(mut overrides) = self.protection_overrides.write() {
             let mut page = start_page;
             while page < end_page {
                 overrides.insert(page, new_protection);
-                page += Self::PAGE_SIZE;
+                page = page.saturating_add(Self::PAGE_SIZE);
             }
         }
 
@@ -827,7 +835,7 @@ impl AddressSpace {
     /// Used for pinned arrays where the backing store is the managed heap.
     /// The returned address is guaranteed not to conflict with other allocations.
     pub fn reserve_address_range(&self, size: usize) -> u64 {
-        let aligned_size = (size + 0xFFF) & !0xFFF; // Align to 4KB
+        let aligned_size = size.saturating_add(0xFFF) & !0xFFF; // Align to 4KB
         self.next_address
             .fetch_add(aligned_size as u64, Ordering::SeqCst)
     }
@@ -855,7 +863,11 @@ impl AddressSpace {
         let entry = PinnedArrayEntry {
             array_ref,
             base_addr,
-            byte_length: element_size * element_count,
+            byte_length: element_size.checked_mul(element_count).ok_or_else(|| {
+                EmulationError::InternalError {
+                    description: "pinned array byte length overflow".to_string(),
+                }
+            })?,
             element_size,
         };
         let mut pins = self.pinned_arrays.write().map_err(|_| {
@@ -881,8 +893,9 @@ impl AddressSpace {
         }
 
         for entry in pins.values() {
-            let end = entry.base_addr + entry.byte_length as u64;
-            if addr >= entry.base_addr && addr + len as u64 <= end {
+            let end = entry.base_addr.saturating_add(entry.byte_length as u64);
+            let read_end = addr.saturating_add(len as u64);
+            if addr >= entry.base_addr && read_end <= end {
                 return Some(self.read_pinned_bytes(entry, addr, len));
             }
         }
@@ -896,14 +909,19 @@ impl AddressSpace {
         addr: u64,
         len: usize,
     ) -> Result<Vec<u8>> {
-        let byte_offset = (addr - entry.base_addr) as usize;
+        let byte_offset =
+            addr.checked_sub(entry.base_addr)
+                .ok_or_else(|| EmulationError::InvalidAddress {
+                    address: addr,
+                    reason: "pinned array address underflow".to_string(),
+                })? as usize;
         let heap = self.managed_heap();
         let mut result = vec![0u8; len];
 
         if entry.element_size == 1 {
             // Byte array fast path: each element is one byte
             for (i, slot) in result.iter_mut().enumerate().take(len) {
-                let elem_idx = byte_offset + i;
+                let elem_idx = byte_offset.saturating_add(i);
                 match heap.get_array_element(entry.array_ref, elem_idx) {
                     Ok(EmValue::I32(v)) => {
                         #[allow(clippy::cast_sign_loss)]
@@ -916,8 +934,9 @@ impl AddressSpace {
             }
         } else {
             // Multi-byte element path: deserialize elements to bytes
-            let start_elem = byte_offset / entry.element_size;
-            let end_elem = (byte_offset + len).div_ceil(entry.element_size);
+            let start_elem = byte_offset.checked_div(entry.element_size).unwrap_or(0);
+            let read_end_offset = byte_offset.saturating_add(len);
+            let end_elem = read_end_offset.div_ceil(entry.element_size);
             let mut elem_buf = vec![0u8; entry.element_size];
 
             for elem_idx in start_elem..end_elem {
@@ -927,11 +946,13 @@ impl AddressSpace {
                         .unwrap_or(EmValue::I32(0)),
                     &mut elem_buf,
                 );
-                let elem_byte_start = elem_idx * entry.element_size;
+                let elem_byte_start = elem_idx.saturating_mul(entry.element_size);
                 for (j, &b) in elem_buf.iter().enumerate() {
-                    let abs_byte = elem_byte_start + j;
-                    if abs_byte >= byte_offset && abs_byte < byte_offset + len {
-                        result[abs_byte - byte_offset] = b;
+                    let abs_byte = elem_byte_start.saturating_add(j);
+                    if abs_byte >= byte_offset && abs_byte < read_end_offset {
+                        if let Some(slot) = result.get_mut(abs_byte.saturating_sub(byte_offset)) {
+                            *slot = b;
+                        }
                     }
                 }
             }
@@ -953,8 +974,9 @@ impl AddressSpace {
         }
 
         for entry in pins.values() {
-            let end = entry.base_addr + entry.byte_length as u64;
-            if addr >= entry.base_addr && addr + data.len() as u64 <= end {
+            let end = entry.base_addr.saturating_add(entry.byte_length as u64);
+            let write_end = addr.saturating_add(data.len() as u64);
+            if addr >= entry.base_addr && write_end <= end {
                 return Some(self.write_pinned_bytes(entry, addr, data));
             }
         }
@@ -963,22 +985,28 @@ impl AddressSpace {
 
     /// Writes bytes to a pinned array by delegating to the managed heap.
     fn write_pinned_bytes(&self, entry: &PinnedArrayEntry, addr: u64, data: &[u8]) -> Result<()> {
-        let byte_offset = (addr - entry.base_addr) as usize;
+        let byte_offset =
+            addr.checked_sub(entry.base_addr)
+                .ok_or_else(|| EmulationError::InvalidAddress {
+                    address: addr,
+                    reason: "pinned array address underflow".to_string(),
+                })? as usize;
         let heap = self.managed_heap();
 
         if entry.element_size == 1 {
             // Byte array fast path: each byte is one element
             for (i, &byte) in data.iter().enumerate() {
-                let elem_idx = byte_offset + i;
+                let elem_idx = byte_offset.saturating_add(i);
                 heap.set_array_element(entry.array_ref, elem_idx, EmValue::I32(i32::from(byte)))?;
             }
         } else {
             // Multi-byte element path: read-modify-write for partial elements
-            let start_elem = byte_offset / entry.element_size;
-            let end_elem = (byte_offset + data.len()).div_ceil(entry.element_size);
+            let start_elem = byte_offset.checked_div(entry.element_size).unwrap_or(0);
+            let write_end_offset = byte_offset.saturating_add(data.len());
+            let end_elem = write_end_offset.div_ceil(entry.element_size);
 
             for elem_idx in start_elem..end_elem {
-                let elem_byte_start = elem_idx * entry.element_size;
+                let elem_byte_start = elem_idx.saturating_mul(entry.element_size);
                 let mut elem_buf = vec![0u8; entry.element_size];
 
                 // Read existing element value
@@ -991,9 +1019,11 @@ impl AddressSpace {
 
                 // Overwrite the affected bytes
                 for (j, byte) in elem_buf.iter_mut().enumerate() {
-                    let abs_byte = elem_byte_start + j;
-                    if abs_byte >= byte_offset && abs_byte < byte_offset + data.len() {
-                        *byte = data[abs_byte - byte_offset];
+                    let abs_byte = elem_byte_start.saturating_add(j);
+                    if abs_byte >= byte_offset && abs_byte < write_end_offset {
+                        if let Some(&src) = data.get(abs_byte.saturating_sub(byte_offset)) {
+                            *byte = src;
+                        }
                     }
                 }
 
@@ -1007,27 +1037,17 @@ impl AddressSpace {
 
     /// Serializes an `EmValue` to little-endian bytes.
     fn emvalue_to_bytes(value: &EmValue, buf: &mut [u8]) {
+        fn copy_le(buf: &mut [u8], bytes: &[u8]) {
+            let copy_len = buf.len().min(bytes.len());
+            if let (Some(dst), Some(src)) = (buf.get_mut(..copy_len), bytes.get(..copy_len)) {
+                dst.copy_from_slice(src);
+            }
+        }
         match value {
-            EmValue::I32(v) => {
-                let bytes = v.to_le_bytes();
-                let copy_len = buf.len().min(4);
-                buf[..copy_len].copy_from_slice(&bytes[..copy_len]);
-            }
-            EmValue::I64(v) | EmValue::NativeInt(v) => {
-                let bytes = v.to_le_bytes();
-                let copy_len = buf.len().min(8);
-                buf[..copy_len].copy_from_slice(&bytes[..copy_len]);
-            }
-            EmValue::F32(v) => {
-                let bytes = v.to_le_bytes();
-                let copy_len = buf.len().min(4);
-                buf[..copy_len].copy_from_slice(&bytes[..copy_len]);
-            }
-            EmValue::F64(v) => {
-                let bytes = v.to_le_bytes();
-                let copy_len = buf.len().min(8);
-                buf[..copy_len].copy_from_slice(&bytes[..copy_len]);
-            }
+            EmValue::I32(v) => copy_le(buf, &v.to_le_bytes()),
+            EmValue::I64(v) | EmValue::NativeInt(v) => copy_le(buf, &v.to_le_bytes()),
+            EmValue::F32(v) => copy_le(buf, &v.to_le_bytes()),
+            EmValue::F64(v) => copy_le(buf, &v.to_le_bytes()),
             _ => buf.fill(0),
         }
     }
@@ -1035,12 +1055,22 @@ impl AddressSpace {
     /// Deserializes little-endian bytes to an `EmValue`.
     fn bytes_to_emvalue(bytes: &[u8]) -> EmValue {
         match bytes.len() {
-            1 => EmValue::I32(i32::from(bytes[0])),
-            2 => EmValue::I32(i32::from(i16::from_le_bytes([bytes[0], bytes[1]]))),
-            4 => EmValue::I32(i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
-            8 => EmValue::I64(i64::from_le_bytes([
-                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-            ])),
+            1 => match bytes.first() {
+                Some(&b) => EmValue::I32(i32::from(b)),
+                None => EmValue::I32(0),
+            },
+            2 => match <[u8; 2]>::try_from(bytes) {
+                Ok(arr) => EmValue::I32(i32::from(i16::from_le_bytes(arr))),
+                Err(_) => EmValue::I32(0),
+            },
+            4 => match <[u8; 4]>::try_from(bytes) {
+                Ok(arr) => EmValue::I32(i32::from_le_bytes(arr)),
+                Err(_) => EmValue::I32(0),
+            },
+            8 => match <[u8; 8]>::try_from(bytes) {
+                Ok(arr) => EmValue::I64(i64::from_le_bytes(arr)),
+                Err(_) => EmValue::I32(0),
+            },
             _ => EmValue::I32(0),
         }
     }

@@ -13,7 +13,7 @@ impl RowReadable for MethodImplRaw {
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(MethodImplRaw {
             rid,
-            token: Token::new(0x1900_0000 + rid),
+            token: Token::new(0x1900_0000u32.saturating_add(rid)),
             offset: *offset,
             class: read_le_at_dyn(data, offset, sizes.is_large(TableId::TypeDef))?,
             method_body: CodedIndex::read(data, offset, sizes, CodedIndexType::MethodDefOrRef)?,

@@ -119,19 +119,19 @@ pub fn get_heap_fields(table_id: TableId, table_info: &TableInfoRef) -> Vec<Heap
                 size: str_size,
                 heap_type: HeapType::String,
             });
-            offset += str_size;
+            offset = offset.saturating_add(str_size);
             fields.push(HeapFieldDescriptor {
                 offset,
                 size: guid_size,
                 heap_type: HeapType::Guid,
             });
-            offset += guid_size;
+            offset = offset.saturating_add(guid_size);
             fields.push(HeapFieldDescriptor {
                 offset,
                 size: guid_size,
                 heap_type: HeapType::Guid,
             });
-            offset += guid_size;
+            offset = offset.saturating_add(guid_size);
             fields.push(HeapFieldDescriptor {
                 offset,
                 size: guid_size,
@@ -149,7 +149,7 @@ pub fn get_heap_fields(table_id: TableId, table_info: &TableInfoRef) -> Vec<Heap
                 size: str_size,
                 heap_type: HeapType::String,
             });
-            offset += str_size;
+            offset = offset.saturating_add(str_size);
             fields.push(HeapFieldDescriptor {
                 offset,
                 size: str_size,
@@ -166,7 +166,7 @@ pub fn get_heap_fields(table_id: TableId, table_info: &TableInfoRef) -> Vec<Heap
                 size: str_size,
                 heap_type: HeapType::String,
             });
-            offset += str_size;
+            offset = offset.saturating_add(str_size);
             fields.push(HeapFieldDescriptor {
                 offset,
                 size: str_size,
@@ -183,7 +183,7 @@ pub fn get_heap_fields(table_id: TableId, table_info: &TableInfoRef) -> Vec<Heap
                 size: str_size,
                 heap_type: HeapType::String,
             });
-            offset += str_size;
+            offset = offset.saturating_add(str_size);
             fields.push(HeapFieldDescriptor {
                 offset,
                 size: blob_size,
@@ -200,7 +200,7 @@ pub fn get_heap_fields(table_id: TableId, table_info: &TableInfoRef) -> Vec<Heap
                 size: str_size,
                 heap_type: HeapType::String,
             });
-            offset += str_size;
+            offset = offset.saturating_add(str_size);
             fields.push(HeapFieldDescriptor {
                 offset,
                 size: blob_size,
@@ -228,7 +228,7 @@ pub fn get_heap_fields(table_id: TableId, table_info: &TableInfoRef) -> Vec<Heap
                 size: str_size,
                 heap_type: HeapType::String,
             });
-            offset += str_size;
+            offset = offset.saturating_add(str_size);
             fields.push(HeapFieldDescriptor {
                 offset,
                 size: blob_size,
@@ -241,7 +241,7 @@ pub fn get_heap_fields(table_id: TableId, table_info: &TableInfoRef) -> Vec<Heap
         TableId::Constant => {
             let coded_size = table_info.coded_index_bytes(CodedIndexType::HasConstant) as usize;
             fields.push(HeapFieldDescriptor {
-                offset: 2 + coded_size,
+                offset: 2usize.saturating_add(coded_size),
                 size: blob_size,
                 heap_type: HeapType::Blob,
             });
@@ -255,7 +255,7 @@ pub fn get_heap_fields(table_id: TableId, table_info: &TableInfoRef) -> Vec<Heap
             let type_size =
                 table_info.coded_index_bytes(CodedIndexType::CustomAttributeType) as usize;
             fields.push(HeapFieldDescriptor {
-                offset: parent_size + type_size,
+                offset: parent_size.saturating_add(type_size),
                 size: blob_size,
                 heap_type: HeapType::Blob,
             });
@@ -277,7 +277,7 @@ pub fn get_heap_fields(table_id: TableId, table_info: &TableInfoRef) -> Vec<Heap
         TableId::DeclSecurity => {
             let coded_size = table_info.coded_index_bytes(CodedIndexType::HasDeclSecurity) as usize;
             fields.push(HeapFieldDescriptor {
-                offset: 2 + coded_size,
+                offset: 2usize.saturating_add(coded_size),
                 size: blob_size,
                 heap_type: HeapType::Blob,
             });
@@ -318,7 +318,7 @@ pub fn get_heap_fields(table_id: TableId, table_info: &TableInfoRef) -> Vec<Heap
         TableId::ImplMap => {
             let coded_size = table_info.coded_index_bytes(CodedIndexType::MemberForwarded) as usize;
             fields.push(HeapFieldDescriptor {
-                offset: 2 + coded_size,
+                offset: 2usize.saturating_add(coded_size),
                 size: str_size,
                 heap_type: HeapType::String,
             });
@@ -333,13 +333,13 @@ pub fn get_heap_fields(table_id: TableId, table_info: &TableInfoRef) -> Vec<Heap
                 size: blob_size,
                 heap_type: HeapType::Blob,
             });
-            offset += blob_size;
+            offset = offset.saturating_add(blob_size);
             fields.push(HeapFieldDescriptor {
                 offset,
                 size: str_size,
                 heap_type: HeapType::String,
             });
-            offset += str_size;
+            offset = offset.saturating_add(str_size);
             fields.push(HeapFieldDescriptor {
                 offset,
                 size: str_size,
@@ -356,19 +356,19 @@ pub fn get_heap_fields(table_id: TableId, table_info: &TableInfoRef) -> Vec<Heap
                 size: blob_size,
                 heap_type: HeapType::Blob,
             });
-            offset += blob_size;
+            offset = offset.saturating_add(blob_size);
             fields.push(HeapFieldDescriptor {
                 offset,
                 size: str_size,
                 heap_type: HeapType::String,
             });
-            offset += str_size;
+            offset = offset.saturating_add(str_size);
             fields.push(HeapFieldDescriptor {
                 offset,
                 size: str_size,
                 heap_type: HeapType::String,
             });
-            offset += str_size;
+            offset = offset.saturating_add(str_size);
             fields.push(HeapFieldDescriptor {
                 offset,
                 size: blob_size,
@@ -385,7 +385,7 @@ pub fn get_heap_fields(table_id: TableId, table_info: &TableInfoRef) -> Vec<Heap
                 size: str_size,
                 heap_type: HeapType::String,
             });
-            offset += str_size;
+            offset = offset.saturating_add(str_size);
             fields.push(HeapFieldDescriptor {
                 offset,
                 size: blob_size,
@@ -402,7 +402,7 @@ pub fn get_heap_fields(table_id: TableId, table_info: &TableInfoRef) -> Vec<Heap
                 size: str_size,
                 heap_type: HeapType::String,
             });
-            offset += str_size;
+            offset = offset.saturating_add(str_size);
             fields.push(HeapFieldDescriptor {
                 offset,
                 size: str_size,
@@ -425,7 +425,7 @@ pub fn get_heap_fields(table_id: TableId, table_info: &TableInfoRef) -> Vec<Heap
         TableId::GenericParam => {
             let coded_size = table_info.coded_index_bytes(CodedIndexType::TypeOrMethodDef) as usize;
             fields.push(HeapFieldDescriptor {
-                offset: 4 + coded_size,
+                offset: 4usize.saturating_add(coded_size),
                 size: str_size,
                 heap_type: HeapType::String,
             });
@@ -452,19 +452,19 @@ pub fn get_heap_fields(table_id: TableId, table_info: &TableInfoRef) -> Vec<Heap
                 size: blob_size,
                 heap_type: HeapType::Blob,
             });
-            offset += blob_size;
+            offset = offset.saturating_add(blob_size);
             fields.push(HeapFieldDescriptor {
                 offset,
                 size: guid_size,
                 heap_type: HeapType::Guid,
             });
-            offset += guid_size;
+            offset = offset.saturating_add(guid_size);
             fields.push(HeapFieldDescriptor {
                 offset,
                 size: blob_size,
                 heap_type: HeapType::Blob,
             });
-            offset += blob_size;
+            offset = offset.saturating_add(blob_size);
             fields.push(HeapFieldDescriptor {
                 offset,
                 size: guid_size,
@@ -480,7 +480,7 @@ pub fn get_heap_fields(table_id: TableId, table_info: &TableInfoRef) -> Vec<Heap
                 size: str_size,
                 heap_type: HeapType::String,
             });
-            offset += str_size;
+            offset = offset.saturating_add(str_size);
             fields.push(HeapFieldDescriptor {
                 offset,
                 size: blob_size,
@@ -498,7 +498,7 @@ pub fn get_heap_fields(table_id: TableId, table_info: &TableInfoRef) -> Vec<Heap
                 size: guid_size,
                 heap_type: HeapType::Guid,
             });
-            offset += guid_size;
+            offset = offset.saturating_add(guid_size);
             fields.push(HeapFieldDescriptor {
                 offset,
                 size: blob_size,

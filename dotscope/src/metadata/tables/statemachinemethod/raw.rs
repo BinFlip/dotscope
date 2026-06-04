@@ -146,8 +146,9 @@ impl TableRow for StateMachineMethodRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            sizes.table_index_bytes(TableId::MethodDef) +   // move_next_method (MethodDef table index)
-            sizes.table_index_bytes(TableId::MethodDef)     // kickoff_method (MethodDef table index)
+            /* move_next_method */ sizes.table_index_bytes(TableId::MethodDef)
+            /* kickoff_method */   .saturating_add(sizes.table_index_bytes(TableId::MethodDef))
+
         )
     }
 }

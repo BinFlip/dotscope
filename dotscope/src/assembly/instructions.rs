@@ -2515,25 +2515,21 @@ pub const INSTRUCTIONS_FE: [CilInstruction; INSTRUCTIONS_FE_MAX as usize] = [
 /// ```
 #[must_use]
 pub fn il_instruction_size(il_bytes: &[u8], offset: usize) -> usize {
-    if offset >= il_bytes.len() {
+    let Some(&opcode) = il_bytes.get(offset) else {
         return 0;
-    }
-
-    let opcode = il_bytes[offset];
+    };
 
     // Handle two-byte opcodes (0xFE prefix)
     if opcode == 0xFE {
-        if offset + 1 >= il_bytes.len() {
+        let Some(next) = offset.checked_add(1) else {
+            return 1;
+        };
+        let Some(&second_byte) = il_bytes.get(next) else {
             return 1; // Incomplete two-byte opcode
-        }
-
-        let second_byte = il_bytes[offset + 1];
-        if (second_byte as usize) < INSTRUCTIONS_FE.len() {
-            let operand_size = INSTRUCTIONS_FE[second_byte as usize]
-                .op_type
-                .size()
-                .unwrap_or(0);
-            return 2 + operand_size; // 2 bytes for opcode prefix + second byte
+        };
+        if let Some(instr) = INSTRUCTIONS_FE.get(second_byte as usize) {
+            let operand_size = instr.op_type.size().unwrap_or(0);
+            return 2usize.saturating_add(operand_size);
         }
         return 2; // Unknown 0xFE opcode, assume no operand
     }
@@ -2544,9 +2540,9 @@ pub fn il_instruction_size(il_bytes: &[u8], offset: usize) -> usize {
     }
 
     // Single-byte opcodes
-    if (opcode as usize) < INSTRUCTIONS.len() {
-        let operand_size = INSTRUCTIONS[opcode as usize].op_type.size().unwrap_or(0);
-        return 1 + operand_size;
+    if let Some(instr) = INSTRUCTIONS.get(opcode as usize) {
+        let operand_size = instr.op_type.size().unwrap_or(0);
+        return 1usize.saturating_add(operand_size);
     }
 
     1 // Unknown opcode, assume 1 byte
@@ -2567,16 +2563,23 @@ pub fn il_instruction_size(il_bytes: &[u8], offset: usize) -> usize {
 #[inline]
 #[must_use]
 pub fn switch_instruction_size(il_bytes: &[u8], offset: usize) -> usize {
-    if offset + 5 > il_bytes.len() {
+    let Some(start) = offset.checked_add(1) else {
+        return 1;
+    };
+    let Some(end) = offset.checked_add(5) else {
+        return 1;
+    };
+    let Some(slice) = il_bytes.get(start..end) else {
         return 1; // Malformed, just return opcode size
-    }
+    };
+    let Ok(arr) = <[u8; 4]>::try_from(slice) else {
+        return 1;
+    };
+    let count = u32::from_le_bytes(arr) as usize;
 
-    let count = u32::from_le_bytes([
-        il_bytes[offset + 1],
-        il_bytes[offset + 2],
-        il_bytes[offset + 3],
-        il_bytes[offset + 4],
-    ]) as usize;
-
-    1 + 4 + (count * 4) // opcode + count + targets
+    // 1 (opcode) + 4 (count) + count*4 (targets)
+    count
+        .checked_mul(4)
+        .and_then(|t| t.checked_add(5))
+        .unwrap_or(usize::MAX)
 }

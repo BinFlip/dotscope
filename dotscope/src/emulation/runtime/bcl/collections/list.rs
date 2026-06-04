@@ -545,7 +545,7 @@ fn enumerator_move_next_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread)
         let current_pos = try_hook!(thread.heap().get_field(*enum_ref, pos_field));
 
         if let (EmValue::ObjectRef(list_ref), EmValue::I32(pos)) = (list_href, current_pos) {
-            let new_pos = pos + 1;
+            let new_pos = pos.saturating_add(1i32);
             let count = try_hook!(thread.heap().list_count(list_ref));
 
             try_hook!(thread
@@ -608,7 +608,8 @@ fn list_copy_to_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreH
                 .map_or(0, |v| v.max(0) as usize);
             let elements = try_hook!(thread.heap().list_to_vec(*list_ref));
             for (i, elem) in elements.into_iter().enumerate() {
-                try_hook!(thread.heap().set_array_element(*arr_ref, offset + i, elem));
+                let idx = offset.saturating_add(i);
+                try_hook!(thread.heap().set_array_element(*arr_ref, idx, elem));
             }
         }
     }
@@ -626,8 +627,11 @@ fn list_get_range_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> Pr
             let elements = try_hook!(thread.heap().list_to_vec(*list_ref));
             let start_idx = (*start).max(0) as usize;
             let cnt = (*count).max(0) as usize;
-            let end = (start_idx + cnt).min(elements.len());
-            let sub = elements[start_idx.min(elements.len())..end].to_vec();
+            let end = start_idx.saturating_add(cnt).min(elements.len());
+            let begin = start_idx.min(elements.len());
+            let sub = elements
+                .get(begin..end)
+                .map_or_else(Vec::new, <[_]>::to_vec);
             let new_list = try_hook!(thread.heap().alloc_list_with_elements(sub));
             return PreHookResult::Bypass(Some(EmValue::ObjectRef(new_list)));
         }

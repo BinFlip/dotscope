@@ -66,7 +66,7 @@ use crate::{
 ///
 /// All fields contain direct integer values rather than heap indexes:
 /// - No string heap references
-/// - No blob heap references  
+/// - No blob heap references
 /// - All data is self-contained within the table row
 ///
 /// # Reference
@@ -101,7 +101,7 @@ pub struct EncLogRaw {
     ///
     /// 4-byte value specifying what type of Edit-and-Continue operation was performed:
     /// - 0: Create - New metadata item added during edit session
-    /// - 1: Update - Existing metadata item modified during edit session  
+    /// - 1: Update - Existing metadata item modified during edit session
     /// - 2: Delete - Metadata item marked for deletion during edit session
     pub func_code: u32,
 }

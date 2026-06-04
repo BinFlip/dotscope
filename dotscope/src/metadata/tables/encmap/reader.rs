@@ -30,7 +30,7 @@ impl RowReadable for EncMapRaw {
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, _sizes: &TableInfoRef) -> Result<Self> {
         Ok(EncMapRaw {
             rid,
-            token: Token::new(0x1F00_0000 + rid),
+            token: Token::new(0x1F00_0000u32.saturating_add(rid)),
             offset: *offset,
             original_token: Token::new(read_le_at::<u32>(data, offset)?),
         })

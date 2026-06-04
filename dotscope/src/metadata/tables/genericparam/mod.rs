@@ -179,15 +179,26 @@ impl GenericParamAttributes {
     /// specification. These bits should be zero in valid metadata.
     pub const RESERVED_MASK: Self = Self(0xFFC0);
 
-    /// Extract the variance bits from the flags.
+    /// Returns the variance classification of this generic parameter.
     ///
-    /// Returns the variance portion of the flags by masking with [`VARIANCE_MASK`](Self::VARIANCE_MASK).
-    /// The result can be compared with [`COVARIANT`](Self::COVARIANT) or
-    /// [`CONTRAVARIANT`](Self::CONTRAVARIANT).
+    /// Decodes the variance bits per ECMA-335 §II.22.20 and returns a typed
+    /// [`GenericParamVariance`] enum so callers can pattern-match exhaustively
+    /// instead of comparing against the [`COVARIANT`](Self::COVARIANT) /
+    /// [`CONTRAVARIANT`](Self::CONTRAVARIANT) constants by hand.
+    ///
+    /// The mapping is: `0x00` → [`Invariant`](GenericParamVariance::Invariant),
+    /// `0x01` → [`Covariant`](GenericParamVariance::Covariant),
+    /// `0x02` → [`Contravariant`](GenericParamVariance::Contravariant). Bit
+    /// pattern `0x03` is reserved/undefined; it is treated as `Invariant`.
     #[inline]
     #[must_use]
-    pub const fn variance(self) -> Self {
-        Self(self.0 & Self::VARIANCE_MASK.0)
+    pub const fn variance(self) -> GenericParamVariance {
+        match self.0 & Self::VARIANCE_MASK.0 {
+            0x0001 => GenericParamVariance::Covariant,
+            0x0002 => GenericParamVariance::Contravariant,
+            // 0x0000 (invariant) and 0x0003 (reserved/undefined) — both default to Invariant.
+            _ => GenericParamVariance::Invariant,
+        }
     }
 
     /// Extract the special constraint bits from the flags.
@@ -208,9 +219,9 @@ impl GenericParamAttributes {
     #[must_use]
     pub fn variance_keyword(self) -> &'static str {
         match self.variance() {
-            Self::COVARIANT => "+",
-            Self::CONTRAVARIANT => "-",
-            _ => "",
+            GenericParamVariance::Covariant => "+",
+            GenericParamVariance::Contravariant => "-",
+            GenericParamVariance::Invariant => "",
         }
     }
 
@@ -236,5 +247,117 @@ impl GenericParamAttributes {
         }
 
         parts.join(" ")
+    }
+}
+
+/// Variance classification of a generic parameter (ECMA-335 §II.22.20).
+///
+/// Returned by [`GenericParamAttributes::variance`]. The three variants are
+/// fixed by the standard and mutually exclusive — exactly one applies to any
+/// given generic parameter.
+///
+/// # Stability
+///
+/// The string returned by [`GenericParamVariance::as_str`] and by the
+/// [`Display`] impl is part of the stable public API. It is safe to persist
+/// (file, database, log line) and to parse.
+///
+/// [`Display`]: std::fmt::Display
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GenericParamVariance {
+    /// No variance — exact type match required.
+    ///
+    /// Corresponds to ECMA-335 variance bits `0x00` (and the reserved/undefined
+    /// pattern `0x03`).
+    Invariant,
+    /// Covariant — type argument may be a more derived type.
+    ///
+    /// Corresponds to ECMA-335 variance bit `0x01` and the C# `out` keyword
+    /// (e.g. `IEnumerable<out T>`).
+    Covariant,
+    /// Contravariant — type argument may be a less derived type.
+    ///
+    /// Corresponds to ECMA-335 variance bit `0x02` and the C# `in` keyword
+    /// (e.g. `Action<in T>`).
+    Contravariant,
+}
+
+impl GenericParamVariance {
+    /// Returns a stable `&'static str` identifier for this variance.
+    ///
+    /// Identifiers are lowercase (`"invariant"`, `"covariant"`, `"contravariant"`).
+    /// They are part of the stable public API and safe to persist.
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            GenericParamVariance::Invariant => "invariant",
+            GenericParamVariance::Covariant => "covariant",
+            GenericParamVariance::Contravariant => "contravariant",
+        }
+    }
+}
+
+impl std::fmt::Display for GenericParamVariance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generic_param_attributes_variance() {
+        assert_eq!(
+            GenericParamAttributes::new(0).variance(),
+            GenericParamVariance::Invariant
+        );
+        assert_eq!(
+            GenericParamAttributes::COVARIANT.variance(),
+            GenericParamVariance::Covariant
+        );
+        assert_eq!(
+            GenericParamAttributes::CONTRAVARIANT.variance(),
+            GenericParamVariance::Contravariant
+        );
+        // Reserved/undefined bit pattern 0x03 — defensively maps to Invariant.
+        assert_eq!(
+            GenericParamAttributes::new(0x0003).variance(),
+            GenericParamVariance::Invariant
+        );
+        // Constraint bits in higher positions must not affect variance decoding.
+        let with_constraints = GenericParamAttributes::COVARIANT
+            | GenericParamAttributes::REFERENCE_TYPE_CONSTRAINT
+            | GenericParamAttributes::DEFAULT_CONSTRUCTOR_CONSTRAINT;
+        assert_eq!(with_constraints.variance(), GenericParamVariance::Covariant);
+    }
+
+    #[test]
+    fn test_generic_param_variance_stable_strings() {
+        assert_eq!(GenericParamVariance::Invariant.as_str(), "invariant");
+        assert_eq!(GenericParamVariance::Covariant.as_str(), "covariant");
+        assert_eq!(
+            GenericParamVariance::Contravariant.as_str(),
+            "contravariant"
+        );
+
+        assert_eq!(format!("{}", GenericParamVariance::Invariant), "invariant");
+        assert_eq!(format!("{}", GenericParamVariance::Covariant), "covariant");
+        assert_eq!(
+            format!("{}", GenericParamVariance::Contravariant),
+            "contravariant"
+        );
+    }
+
+    #[test]
+    fn test_variance_keyword_after_enum_migration() {
+        // Pre-existing keyword behavior must survive the variance() return-type change.
+        assert_eq!(GenericParamAttributes::new(0).variance_keyword(), "");
+        assert_eq!(GenericParamAttributes::COVARIANT.variance_keyword(), "+");
+        assert_eq!(
+            GenericParamAttributes::CONTRAVARIANT.variance_keyword(),
+            "-"
+        );
     }
 }

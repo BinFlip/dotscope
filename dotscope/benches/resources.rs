@@ -1,4 +1,5 @@
-#![allow(unused)]
+//! Benchmarks for owned vs. zero-copy parsing of standalone `.resources` files.
+
 extern crate dotscope;
 
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
@@ -13,8 +14,13 @@ fn bench_parse_resources_file(c: &mut Criterion) {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/samples/WB_FxResources.WindowsBase.SR.resources.bin");
 
-    // Load the standalone .resources file
-    let data = fs::read(&path).expect("Failed to read resources file");
+    let Ok(data) = fs::read(&path) else {
+        eprintln!(
+            "Skipping resources benchmark: failed to read {}",
+            path.display()
+        );
+        return;
+    };
     let file_size = data.len();
 
     println!(
@@ -28,8 +34,8 @@ fn bench_parse_resources_file(c: &mut Criterion) {
     group.throughput(Throughput::Bytes(file_size as u64));
     group.bench_function("parse_dotnet_resource", |b| {
         b.iter(|| {
-            let parsed = parse_dotnet_resource(black_box(&data)).unwrap();
-            black_box(parsed)
+            let parsed = parse_dotnet_resource(black_box(&data));
+            black_box(parsed.ok());
         });
     });
     group.finish();
@@ -39,8 +45,8 @@ fn bench_parse_resources_file(c: &mut Criterion) {
     group.throughput(Throughput::Bytes(file_size as u64));
     group.bench_function("parse_dotnet_resource_ref", |b| {
         b.iter(|| {
-            let parsed = parse_dotnet_resource_ref(black_box(&data)).unwrap();
-            black_box(parsed)
+            let parsed = parse_dotnet_resource_ref(black_box(&data));
+            black_box(parsed.ok());
         });
     });
     group.finish();

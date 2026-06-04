@@ -98,7 +98,7 @@ impl LocalScope {
     /// ```
     #[must_use]
     pub fn end_offset(&self) -> u32 {
-        self.start_offset + self.length
+        self.start_offset.saturating_add(self.length)
     }
 
     /// Checks if this scope contains any local variables

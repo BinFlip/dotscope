@@ -80,7 +80,7 @@ use crate::{
 ///
 /// Contains the CIL bytecode, stack depth, local variable signatures, and remapped
 /// exception handlers. This is the bridge between code generation and
-/// [`crate::cilassembly::builders::MethodBodyBuilder::from_compilation`].
+/// [`MethodBodyBuilder::from_compilation`](crate::cilassembly::MethodBodyBuilder::from_compilation).
 pub struct CompilationResult {
     /// CIL bytecode.
     pub bytecode: Vec<u8>,
@@ -381,7 +381,7 @@ impl SsaCodeGenerator {
     ///
     /// This is the high-level entry point that wraps [`generate_with_assembly`](Self::generate_with_assembly)
     /// and adds local variable signature building and exception handler remapping.
-    /// The result contains everything needed for [`crate::cilassembly::builders::MethodBodyBuilder::from_compilation`]
+    /// The result contains everything needed for [`MethodBodyBuilder::from_compilation`](crate::cilassembly::MethodBodyBuilder::from_compilation)
     /// to assemble the final method body.
     ///
     /// # Arguments
@@ -549,7 +549,7 @@ impl SsaCodeGenerator {
                         None
                     }
                 })
-                .unwrap_or(eh.try_offset + eh.try_length);
+                .unwrap_or(eh.try_offset.saturating_add(eh.try_length));
 
             let handler_end = eh
                 .handler_end_block
@@ -563,7 +563,7 @@ impl SsaCodeGenerator {
                         None
                     }
                 })
-                .unwrap_or(eh.handler_offset + eh.handler_length);
+                .unwrap_or(eh.handler_offset.saturating_add(eh.handler_length));
 
             let filter_offset = if eh.flags == ExceptionHandlerFlags::FILTER {
                 eh.filter_start_block
@@ -794,7 +794,7 @@ impl SsaCodeGenerator {
             let pos_before = encoder.current_position();
             self.block_offsets.insert(block.id(), pos_before);
 
-            let next_block_idx = block_ids.get(idx + 1).copied();
+            let next_block_idx = block_ids.get(idx.saturating_add(1)).copied();
             self.generate_block(&mut encoder, ssa, block, block.id(), next_block_idx)?;
         }
 
@@ -818,7 +818,12 @@ impl SsaCodeGenerator {
             0
         } else {
             // We need max_index + 1 because local indices are 0-based
-            self.used_locals.iter().max().copied().unwrap_or(0) + 1
+            self.used_locals
+                .iter()
+                .max()
+                .copied()
+                .unwrap_or(0)
+                .saturating_add(1)
         };
         Ok((bytecode, max_stack, num_locals))
     }
@@ -839,27 +844,22 @@ impl SsaCodeGenerator {
                     SsaOp::Const {
                         value: ConstValue::DecryptedString(s),
                         ..
-                    } if !self.interned_strings.contains_key(s) => {
+                    } if !self.interned_strings.contains_key(s.as_ref()) => {
                         let change_ref = assembly.userstring_add(s)?;
                         self.interned_strings
-                            .insert(s.clone(), change_ref.placeholder());
+                            .insert(s.to_string(), change_ref.placeholder());
                     }
                     SsaOp::Const {
-                        value:
-                            ConstValue::DecryptedArray {
-                                data,
-                                element_type_token,
-                                element_size,
-                            },
+                        value: ConstValue::DecryptedArray(arr),
                         ..
-                    } if !self.interned_arrays.contains_key(data) => {
+                    } if !self.interned_arrays.contains_key(&arr.data) => {
                         if let Some(info) = self.intern_array_data(
-                            data,
-                            *element_type_token,
-                            *element_size,
+                            &arr.data,
+                            arr.element_type_ref.token(),
+                            arr.element_size,
                             assembly,
                         )? {
-                            self.interned_arrays.insert(data.clone(), info);
+                            self.interned_arrays.insert(arr.data.clone(), info);
                         }
                     }
                     _ => {}
@@ -1658,11 +1658,11 @@ impl SsaCodeGenerator {
                 // Use the coalescer's slot if available, otherwise allocate fresh
                 let local_idx = if let Some(&slot) = coalesced_slots.get(&phi_result) {
                     // Bump next_local past any coalesced slot to avoid conflicts
-                    self.next_local = self.next_local.max(slot + 1);
+                    self.next_local = self.next_local.max(slot.saturating_add(1));
                     slot
                 } else {
                     let idx = self.next_local;
-                    self.next_local += 1;
+                    self.next_local = self.next_local.saturating_add(1);
                     idx
                 };
                 self.var_storage
@@ -1781,11 +1781,11 @@ impl SsaCodeGenerator {
             // Use the coalescer's slot if available, otherwise allocate fresh
             let local_idx = if let Some(&slot) = coalesced_slots.get(&var_id) {
                 // Bump next_local past any coalesced slot to avoid conflicts
-                self.next_local = self.next_local.max(slot + 1);
+                self.next_local = self.next_local.max(slot.saturating_add(1));
                 slot
             } else {
                 let idx = self.next_local;
-                self.next_local += 1;
+                self.next_local = self.next_local.saturating_add(1);
                 idx
             };
             self.var_storage
@@ -1923,7 +1923,8 @@ impl SsaCodeGenerator {
         for block in ssa.blocks() {
             for instr in block.instructions() {
                 for var in instr.op().uses() {
-                    *use_counts.entry(var).or_insert(0) += 1;
+                    let entry = use_counts.entry(var).or_insert(0);
+                    *entry = entry.saturating_add(1);
                 }
             }
         }
@@ -1978,7 +1979,8 @@ impl SsaCodeGenerator {
             for phi in block.phi_nodes() {
                 if live_phis.contains(&phi.result()) {
                     for operand in phi.operands() {
-                        *use_counts.entry(operand.value()).or_insert(0) += 1;
+                        let entry = use_counts.entry(operand.value()).or_insert(0);
+                        *entry = entry.saturating_add(1);
                     }
                 }
             }
@@ -2093,7 +2095,7 @@ impl SsaCodeGenerator {
         // values onto the stack, burying our value and making it inaccessible.
         // A more sophisticated analysis could check if intervening instructions
         // consume their values before our use, but that's complex and error-prone.
-        if u_idx != d_idx + 1 {
+        if u_idx != d_idx.saturating_add(1) {
             return false;
         }
 
@@ -2102,7 +2104,10 @@ impl SsaCodeGenerator {
 
         // Condition 6: The use itself should not be a terminator operand
         // (terminators trigger spilling, so the value would be stored anyway)
-        if Self::is_terminator(instrs[u_idx].op()) {
+        let Some(use_instr) = instrs.get(u_idx) else {
+            return false;
+        };
+        if Self::is_terminator(use_instr.op()) {
             return false;
         }
 
@@ -2155,7 +2160,7 @@ impl SsaCodeGenerator {
 
         // Default: allocate a new local
         let local = self.next_local;
-        self.next_local += 1;
+        self.next_local = self.next_local.saturating_add(1);
         let storage = VarStorage::Local(local);
         self.var_storage.insert(var, storage);
 
@@ -2210,7 +2215,7 @@ impl SsaCodeGenerator {
 
         // Allocate a new local slot
         let local = self.next_local;
-        self.next_local += 1;
+        self.next_local = self.next_local.saturating_add(1);
         let storage = VarStorage::Local(local);
         self.var_storage.insert(var, storage);
 
@@ -2413,9 +2418,9 @@ impl SsaCodeGenerator {
         // If all phi operands trace to the same storage, return that storage
         if let Some((_, phi)) = ssa.find_phi_defining(var) {
             let operands = phi.operands();
-            if !operands.is_empty() {
+            if let Some(first_op) = operands.first() {
                 // Trace the first operand to get a reference storage
-                let first_storage = self.trace_to_storage(operands[0].value(), ssa, visited)?;
+                let first_storage = self.trace_to_storage(first_op.value(), ssa, visited)?;
 
                 // Check if all other operands trace to the same storage
                 for operand in operands.iter().skip(1) {
@@ -2679,7 +2684,9 @@ impl SsaCodeGenerator {
                     if !defined_in_block.contains(value) {
                         // This Pop consumes a value not defined in this block
                         // (the exception object), so clear its operands
-                        operands_cache[idx].clear();
+                        if let Some(ops_at_idx) = operands_cache.get_mut(idx) {
+                            ops_at_idx.clear();
+                        }
                         has_exception_pop = true;
                     }
                 }
@@ -2800,7 +2807,8 @@ impl SsaCodeGenerator {
         let mut in_progress: BTreeSet<usize> = BTreeSet::new();
         // Track which LoadOperand (idx, operand_idx) pairs are already scheduled
         let mut scheduled_load: BTreeSet<(usize, usize)> = BTreeSet::new();
-        let mut work_stack: Vec<CodeGenWorkItem> = Vec::with_capacity(ctx.ops.len() * 3);
+        let mut work_stack: Vec<CodeGenWorkItem> =
+            Vec::with_capacity(ctx.ops.len().saturating_mul(3));
 
         // Preserve original instruction order as much as possible.
         // For malware analysis and understanding original intent, the order matters.
@@ -2822,9 +2830,13 @@ impl SsaCodeGenerator {
         let mut copy_roots: Vec<usize> = Vec::new();
         let mut other_roots: Vec<usize> = Vec::new();
         for &root_idx in roots {
-            if Self::is_terminator(ctx.ops[root_idx]) {
+            let op = ctx
+                .ops
+                .get(root_idx)
+                .ok_or_else(|| Error::CodegenFailed("root index out of bounds".to_string()))?;
+            if Self::is_terminator(op) {
                 terminator_roots.push(root_idx);
-            } else if matches!(ctx.ops[root_idx], SsaOp::Copy { .. }) {
+            } else if matches!(op, SsaOp::Copy { .. }) {
                 copy_roots.push(root_idx);
             } else {
                 other_roots.push(root_idx);
@@ -2875,7 +2887,9 @@ impl SsaCodeGenerator {
                     // Only spill when the first operand does NOT match the stack
                     // top, because loading it from storage would bury the tracked
                     // stack values.
-                    let operands = &ctx.operands_cache[idx];
+                    let operands = ctx.operands_cache.get(idx).ok_or_else(|| {
+                        Error::CodegenFailed("operands_cache index out of bounds".to_string())
+                    })?;
                     let first_operand_on_stack = operands.first().is_some_and(|first_op| {
                         self.stack_vars.last().is_some_and(|top| *top == *first_op)
                     });
@@ -2903,14 +2917,20 @@ impl SsaCodeGenerator {
 
                 CodeGenWorkItem::LoadOperand(idx, operand_idx) => {
                     scheduled_load.remove(&(idx, operand_idx));
-                    let operand = ctx.operands_cache[idx][operand_idx];
+                    let operand = *ctx
+                        .operands_cache
+                        .get(idx)
+                        .and_then(|ops| ops.get(operand_idx))
+                        .ok_or_else(|| {
+                            Error::CodegenFailed("operands_cache index out of bounds".to_string())
+                        })?;
 
                     if let Some(&dep_idx) = ctx.def_map.get(&operand) {
                         // Operand is defined in this block
                         if generated.contains(&dep_idx) {
                             // Already generated - load from storage or stack
                             self.load_var(encoder, ctx.ssa, operand)?;
-                        } else if let SsaOp::Copy { src, .. } = ctx.ops[dep_idx] {
+                        } else if let Some(SsaOp::Copy { src, .. }) = ctx.ops.get(dep_idx) {
                             // Operand is defined by a Copy that hasn't been generated yet.
                             // This can happen with circular dependencies through Copy chains
                             // (e.g., Add needs Copy result, Copy needs Add result).
@@ -2926,12 +2946,14 @@ impl SsaCodeGenerator {
                                 // This is a cyclic dependency between non-Copy operations,
                                 // which indicates invalid SSA. All operations within a block
                                 // should have a valid topological order.
+                                let cur_op = ctx.ops.get(idx);
+                                let dep_op = ctx.ops.get(dep_idx);
                                 return Err(Error::Deobfuscation(format!(
                                     "Cyclic dependency detected in block {}: \
                                      op {:?} needs {:?} (defined by {:?}), \
                                      but that definition is already being processed. \
                                      This indicates invalid SSA form.",
-                                    ctx.current_block_idx, ctx.ops[idx], operand, ctx.ops[dep_idx]
+                                    ctx.current_block_idx, cur_op, operand, dep_op
                                 )));
                             }
 
@@ -2963,12 +2985,16 @@ impl SsaCodeGenerator {
                         continue; // Already done
                     }
 
+                    let cur_op = *ctx.ops.get(idx).ok_or_else(|| {
+                        Error::CodegenFailed("ops index out of bounds".to_string())
+                    })?;
+
                     // Generate the operation (operands should be on stack)
                     self.generate_op_core(
                         encoder,
                         ctx.ssa,
                         ctx.current_block_idx,
-                        ctx.ops[idx],
+                        cur_op,
                         next_block_idx,
                     )?;
                     generated.insert(idx);
@@ -2977,9 +3003,9 @@ impl SsaCodeGenerator {
                     // and whether it's used outside this block (cross-block use).
                     // Note: Skip Copy instructions - they handle their own storage
                     // in generate_op_core and don't leave a result on the stack.
-                    let is_copy = matches!(ctx.ops[idx], SsaOp::Copy { .. });
+                    let is_copy = matches!(cur_op, SsaOp::Copy { .. });
                     if !is_copy {
-                        if let Some(dest) = ctx.ops[idx].dest() {
+                        if let Some(dest) = cur_op.dest() {
                             let uses = use_counts.get(&dest).copied().unwrap_or(0);
                             // Check if this value is used outside the current block.
                             // If so, it must be stored because stack values don't
@@ -2998,8 +3024,9 @@ impl SsaCodeGenerator {
                                 let next_loads_dest =
                                     work_stack.last().is_some_and(|item| match item {
                                         CodeGenWorkItem::LoadOperand(consumer_idx, op_idx) => ctx
-                                            .operands_cache[*consumer_idx]
-                                            .get(*op_idx)
+                                            .operands_cache
+                                            .get(*consumer_idx)
+                                            .and_then(|ops| ops.get(*op_idx))
                                             .is_some_and(|op| *op == dest),
                                         _ => false,
                                     });
@@ -3039,16 +3066,22 @@ impl SsaCodeGenerator {
             // 3. The terminator (e.g., Jump) may emit phi stores that depend on the Copy results
             for &root_idx in &terminator_roots {
                 if !generated.contains(&root_idx) {
+                    let root_operands = ctx.operands_cache.get(root_idx).ok_or_else(|| {
+                        Error::CodegenFailed("operands_cache index out of bounds".to_string())
+                    })?;
+                    let root_op = *ctx.ops.get(root_idx).ok_or_else(|| {
+                        Error::CodegenFailed("ops index out of bounds".to_string())
+                    })?;
                     // Load any operands the terminator needs.
                     // Always use load_var which handles buried values correctly.
-                    for &operand in &ctx.operands_cache[root_idx] {
+                    for &operand in root_operands {
                         self.load_var(encoder, ctx.ssa, operand)?;
                     }
                     self.generate_op_core(
                         encoder,
                         ctx.ssa,
                         ctx.current_block_idx,
-                        ctx.ops[root_idx],
+                        root_op,
                         next_block_idx,
                     )?;
                     generated.insert(root_idx);
@@ -3103,7 +3136,10 @@ impl SsaCodeGenerator {
             if generated.contains(&copy_idx) {
                 continue;
             }
-            if let SsaOp::Copy { dest, src } = ctx.ops[copy_idx] {
+            let Some(&op) = ctx.ops.get(copy_idx) else {
+                continue;
+            };
+            if let SsaOp::Copy { dest, src } = op {
                 let dest_storage = self.get_or_allocate_storage(ctx.ssa, *dest)?;
                 copies.push(CopyInfo {
                     src_var: *src,
@@ -3227,7 +3263,9 @@ impl SsaCodeGenerator {
             return Ok(());
         }
 
-        let operands = &ctx.operands_cache[idx];
+        let operands = ctx.operands_cache.get(idx).ok_or_else(|| {
+            Error::CodegenFailed("operands_cache index out of bounds".to_string())
+        })?;
 
         for &operand in operands {
             if let Some(&dep_idx) = ctx.def_map.get(&operand) {
@@ -3236,8 +3274,12 @@ impl SsaCodeGenerator {
                         encoder, ctx, dep_idx, generated, visiting, use_counts,
                     )?;
 
+                    let dep_op = *ctx.ops.get(dep_idx).ok_or_else(|| {
+                        Error::CodegenFailed("ops index out of bounds".to_string())
+                    })?;
+
                     // Skip Copy ops - they'll be handled in the parallel copy phase
-                    if matches!(ctx.ops[dep_idx], SsaOp::Copy { .. }) {
+                    if matches!(dep_op, SsaOp::Copy { .. }) {
                         continue;
                     }
 
@@ -3248,17 +3290,24 @@ impl SsaCodeGenerator {
                         self.spill_stack(encoder, ctx.ssa)?;
                     }
 
+                    let dep_operands = ctx.operands_cache.get(dep_idx).ok_or_else(|| {
+                        Error::CodegenFailed("operands_cache index out of bounds".to_string())
+                    })?;
+
                     // Generate operands for this dependency
-                    for &dep_operand in &ctx.operands_cache[dep_idx] {
+                    for &dep_operand in dep_operands {
                         if let Some(&dep_dep_idx) = ctx.def_map.get(&dep_operand) {
+                            let dep_dep_op = ctx.ops.get(dep_dep_idx).copied();
                             if generated.contains(&dep_dep_idx) {
                                 // Operand's defining op is generated, load it
                                 self.load_var(encoder, ctx.ssa, dep_operand)?;
-                            } else if matches!(ctx.ops[dep_dep_idx], SsaOp::Copy { .. }) {
+                            } else if matches!(dep_dep_op, Some(SsaOp::Copy { .. })) {
                                 // Operand is a Copy result that hasn't been generated.
                                 // Load the Copy's source instead - it should be available.
-                                let SsaOp::Copy { src, .. } = ctx.ops[dep_dep_idx] else {
-                                    unreachable!()
+                                let Some(SsaOp::Copy { src, .. }) = dep_dep_op else {
+                                    return Err(Error::CodegenFailed(
+                                        "Copy op pattern mismatch".to_string(),
+                                    ));
                                 };
                                 self.load_var(encoder, ctx.ssa, *src)?;
                             } else {
@@ -3273,17 +3322,11 @@ impl SsaCodeGenerator {
                         }
                     }
 
-                    self.generate_op_core(
-                        encoder,
-                        ctx.ssa,
-                        ctx.current_block_idx,
-                        ctx.ops[dep_idx],
-                        None,
-                    )?;
+                    self.generate_op_core(encoder, ctx.ssa, ctx.current_block_idx, dep_op, None)?;
                     generated.insert(dep_idx);
 
                     // Handle storage for the result
-                    if let Some(dest) = ctx.ops[dep_idx].dest() {
+                    if let Some(dest) = dep_op.dest() {
                         let uses = use_counts.get(&dest).copied().unwrap_or(0);
                         let used_outside_block = self.cross_block_uses.contains(&dest);
 
@@ -3400,7 +3443,8 @@ impl SsaCodeGenerator {
             | SsaOp::Leave { .. }
             | SsaOp::EndFinally
             | SsaOp::EndFilter { .. }
-            | SsaOp::BranchCmp { .. } => {
+            | SsaOp::BranchCmp { .. }
+            | SsaOp::BranchFlags { .. } => {
                 self.generate_branch_op(encoder, ssa, current_block_idx, op, next_block_idx)?;
             }
 
@@ -3446,8 +3490,86 @@ impl SsaCodeGenerator {
                 encoder.emit_instruction("readonly.", None)?;
             }
 
-            SsaOp::Phi { .. } => {
+            SsaOp::Phi { .. }
+            | SsaOp::Fence { .. }
+            | SsaOp::InterruptReturn
+            | SsaOp::Unreachable => {
                 // Phi nodes are eliminated during code generation - no instruction emitted
+            }
+            // Rotate and bit manipulation operations - not emitted as CIL primitives
+            SsaOp::Rol { .. }
+            | SsaOp::Ror { .. }
+            | SsaOp::Rcl { .. }
+            | SsaOp::Rcr { .. }
+            | SsaOp::BSwap { .. }
+            | SsaOp::BRev { .. }
+            | SsaOp::BitScanForward { .. }
+            | SsaOp::BitScanReverse { .. }
+            | SsaOp::Popcount { .. }
+            | SsaOp::Parity { .. }
+            | SsaOp::Select { .. }
+            | SsaOp::ReadFlags { .. }
+            | SsaOp::CmpXchg { .. }
+            | SsaOp::AtomicRmw { .. }
+            // Native SSA substrate operations (wide arithmetic, native
+            // boolean/float-flag ops, SIMD/vector, native atomics, bitcast,
+            // opaque, indirect branch). These never appear in CIL-lifted SSA
+            // and have no direct CIL encoding; enumerated explicitly (no
+            // wildcard) so future substrate additions still trip this
+            // exhaustiveness check.
+            | SsaOp::WideMul { .. }
+            | SsaOp::WideDiv { .. }
+            | SsaOp::FloatCompareFlags { .. }
+            | SsaOp::BoolAnd { .. }
+            | SsaOp::BoolOr { .. }
+            | SsaOp::BoolXor { .. }
+            | SsaOp::BoolNot { .. }
+            | SsaOp::Bitcast { .. }
+            | SsaOp::IndirectBranch { .. }
+            | SsaOp::NativeOpaque(_)
+            | SsaOp::VectorUnary { .. }
+            | SsaOp::VectorBinary { .. }
+            | SsaOp::VectorTernary { .. }
+            | SsaOp::VectorPredicatedUnary { .. }
+            | SsaOp::VectorPredicatedBinary { .. }
+            | SsaOp::VectorPredicatedTernary { .. }
+            | SsaOp::VectorCompare { .. }
+            | SsaOp::VectorLoad { .. }
+            | SsaOp::VectorStore { .. }
+            | SsaOp::VectorMaskedLoad { .. }
+            | SsaOp::VectorMaskedStore { .. }
+            | SsaOp::VectorBroadcastLoad { .. }
+            | SsaOp::VectorGather { .. }
+            | SsaOp::VectorFaultingLoad { .. }
+            | SsaOp::VectorSegmentLoad { .. }
+            | SsaOp::VectorScatter { .. }
+            | SsaOp::VectorSegmentStore { .. }
+            | SsaOp::VectorExtract { .. }
+            | SsaOp::VectorInsert { .. }
+            | SsaOp::VectorSplat { .. }
+            | SsaOp::VectorShuffle { .. }
+            | SsaOp::VectorCast { .. }
+            | SsaOp::VectorReinterpret { .. }
+            | SsaOp::VectorPack { .. }
+            | SsaOp::VectorPackLoad { .. }
+            | SsaOp::VectorPackStore { .. }
+            | SsaOp::VectorZeroUpper { .. }
+            | SsaOp::VectorMaskUnary { .. }
+            | SsaOp::VectorMaskBinary { .. }
+            | SsaOp::VectorReduce { .. }
+            | SsaOp::VectorBitmask { .. }
+            | SsaOp::AtomicLoad { .. }
+            | SsaOp::AtomicStore { .. }
+            | SsaOp::AtomicStoreConditional { .. }
+            | SsaOp::AtomicPairLoad { .. }
+            | SsaOp::AtomicPairStoreConditional { .. }
+            | SsaOp::AtomicExchange { .. }
+            | SsaOp::AtomicLockRmw { .. }
+            | SsaOp::AtomicCmpXchg { .. }
+            | SsaOp::AtomicPairCmpXchg { .. } => {
+                // These operations may appear in the shared SSA but are not
+                // directly expressible in CIL; they should have been lowered
+                // before code generation.
             }
         }
         Ok(())
@@ -3666,7 +3788,7 @@ impl SsaCodeGenerator {
                 ..
             } => {
                 // num_args: function pointer + the method arguments
-                let num_args = u8::try_from(args.len() + 1).unwrap_or(u8::MAX);
+                let num_args = u8::try_from(args.len().saturating_add(1)).unwrap_or(u8::MAX);
                 let has_result = dest.is_some();
                 encoder.emit_call(
                     "calli",
@@ -4355,7 +4477,7 @@ impl SsaCodeGenerator {
 
             // Decrypted strings look up pre-interned index
             ConstValue::DecryptedString(s) => {
-                if let Some(&idx) = self.interned_strings.get(s) {
+                if let Some(&idx) = self.interned_strings.get(s.as_ref()) {
                     let token = Token::new(0x7000_0000 | idx);
                     encoder.emit_instruction("ldstr", Some(Operand::Token(token)))?;
                 } else {
@@ -4399,19 +4521,18 @@ impl SsaCodeGenerator {
             //   dup                        ; push copy (+2)
             //   ldtoken <field_with_rva>   ; push handle (+3)
             //   call InitializeArray       ; pop 2 (+1) — net: 1 value on stack
-            ConstValue::DecryptedArray {
-                data,
-                element_type_token,
-                element_size,
-            } => {
-                let elem_size = element_size.max(&1);
+            ConstValue::DecryptedArray(arr) => {
+                let elem_size = arr.element_size.max(1);
                 #[allow(clippy::cast_possible_truncation)]
-                let num_elements = data.len() / elem_size;
+                let num_elements = arr.data.len().checked_div(elem_size).unwrap_or(0);
 
                 emitter::emit_ldc_i4(encoder, num_elements as i32)?;
-                encoder.emit_instruction("newarr", Some(Operand::Token(*element_type_token)))?;
+                encoder.emit_instruction(
+                    "newarr",
+                    Some(Operand::Token(arr.element_type_ref.token())),
+                )?;
 
-                if let Some(info) = self.interned_arrays.get(data) {
+                if let Some(info) = self.interned_arrays.get(&arr.data) {
                     // Compact: dup + ldtoken + call InitializeArray
                     // Stack: [array] → [array, array] → [array, array, handle] → [array]
                     encoder.emit_instruction("dup", None)?;
@@ -4427,6 +4548,14 @@ impl SsaCodeGenerator {
                 }
                 // If interning failed, array is left uninitialized (zeroed).
                 // This is still valid IL — the values will just be default(T).
+            }
+
+            // SIMD vector constants come from the native SSA substrate and have
+            // no direct CIL `ldc`-style encoding.
+            ConstValue::Vector(_) => {
+                return Err(Error::CodegenFailed(
+                    "Vector constants are not supported in CIL code generation".to_string(),
+                ));
             }
         }
         Ok(())
@@ -4617,7 +4746,7 @@ impl SsaCodeGenerator {
 
         // No pooled slot available - allocate a fresh one
         let slot = self.next_local;
-        self.next_local += 1;
+        self.next_local = self.next_local.saturating_add(1);
         self.local_types.insert(slot, var_type.clone());
         slot
     }
@@ -4916,7 +5045,7 @@ impl SsaCodeGenerator {
         // Use intermediate labels for targets that need phi stores
         let mut switch_labels: Vec<String> = Vec::with_capacity(targets.len());
         for (i, &target) in targets.iter().enumerate() {
-            if needs_intermediate[i] {
+            if needs_intermediate.get(i).copied().unwrap_or(false) {
                 switch_labels.push(format!("phi_switch_{current_block_idx}_{i}"));
             } else {
                 switch_labels.push(
@@ -4947,7 +5076,7 @@ impl SsaCodeGenerator {
 
             // Emit intermediate blocks for targets that need phi stores
             for (i, &target) in targets.iter().enumerate() {
-                if needs_intermediate[i] {
+                if needs_intermediate.get(i).copied().unwrap_or(false) {
                     let intermediate_label = format!("phi_switch_{current_block_idx}_{i}");
                     encoder.define_label(&intermediate_label)?;
                     self.emit_phi_stores_for_successor(encoder, ssa, current_block_idx, target)?;
@@ -4974,7 +5103,7 @@ impl SsaCodeGenerator {
 
             // Emit intermediate blocks for targets that need phi stores
             for (i, &target) in targets.iter().enumerate() {
-                if needs_intermediate[i] {
+                if needs_intermediate.get(i).copied().unwrap_or(false) {
                     let intermediate_label = format!("phi_switch_{current_block_idx}_{i}");
                     encoder.define_label(&intermediate_label)?;
                     self.emit_phi_stores_for_successor(encoder, ssa, current_block_idx, target)?;
@@ -5142,7 +5271,7 @@ impl SsaCodeGenerator {
 
             // Find copies whose destination is not read by any other pending copy
             for i in 0..pending.len() {
-                let Some((_, dst, _)) = pending[i].as_ref() else {
+                let Some((_, dst, _)) = pending.get(i).and_then(|p| p.as_ref()) else {
                     continue;
                 };
                 let dst = *dst;
@@ -5161,7 +5290,7 @@ impl SsaCodeGenerator {
 
                 if !dst_is_read {
                     // Safe to schedule this copy
-                    if let Some(copy) = pending[i].take() {
+                    if let Some(copy) = pending.get_mut(i).and_then(Option::take) {
                         ordered_copies.push(copy);
                         made_progress = true;
                     }

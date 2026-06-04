@@ -376,7 +376,10 @@ impl EmulationProcess {
     ///
     /// Returns an error if the instruction limit is exceeded.
     pub fn increment_instructions(&self, count: u64) -> Result<()> {
-        let new_count = self.instruction_count.fetch_add(count, Ordering::Relaxed) + count;
+        let new_count = self
+            .instruction_count
+            .fetch_add(count, Ordering::Relaxed)
+            .saturating_add(count);
 
         if self.context.config.limits.max_instructions > 0
             && new_count > self.context.config.limits.max_instructions

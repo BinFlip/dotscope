@@ -693,7 +693,7 @@ fn transform_block_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> P
         return PreHookResult::Bypass(Some(EmValue::I32(0)));
     }
 
-    let EmValue::ObjectRef(input_handle) = &ctx.args[0] else {
+    let Some(EmValue::ObjectRef(input_handle)) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::I32(0)));
     };
 
@@ -708,9 +708,15 @@ fn transform_block_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> P
         _ => (0, input_bytes.len()),
     };
 
-    let end = (offset + count).min(input_bytes.len());
+    let end = offset
+        .checked_add(count)
+        .unwrap_or(input_bytes.len())
+        .min(input_bytes.len());
     let data = if offset < input_bytes.len() {
-        input_bytes[offset..end].to_vec()
+        let Some(slice) = input_bytes.get(offset..end) else {
+            return PreHookResult::Bypass(Some(EmValue::I32(0)));
+        };
+        slice.to_vec()
     } else {
         return PreHookResult::Bypass(Some(EmValue::I32(0)));
     };
@@ -735,9 +741,12 @@ fn transform_block_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> P
         _ => {
             // No transform — passthrough: copy input to output
             for (i, &byte) in data.iter().enumerate() {
+                let Some(idx) = output_offset.checked_add(i) else {
+                    break;
+                };
                 try_hook!(thread.heap_mut().set_array_element(
                     output_handle,
-                    output_offset + i,
+                    idx,
                     EmValue::I32(i32::from(byte)),
                 ));
             }
@@ -786,9 +795,12 @@ fn transform_block_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> P
 
     // Write result to output buffer
     for (i, &byte) in result_bytes.iter().enumerate() {
+        let Some(idx) = output_offset.checked_add(i) else {
+            break;
+        };
         try_hook!(thread.heap_mut().set_array_element(
             output_handle,
-            output_offset + i,
+            idx,
             EmValue::I32(i32::from(byte)),
         ));
     }
@@ -816,7 +828,7 @@ fn transform_final_block_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread
         return PreHookResult::Bypass(Some(EmValue::Null));
     }
 
-    let EmValue::ObjectRef(input_handle) = &ctx.args[0] else {
+    let Some(EmValue::ObjectRef(input_handle)) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::Null));
     };
 
@@ -830,10 +842,11 @@ fn transform_final_block_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread
         (Some(EmValue::I32(offset)), Some(EmValue::I32(count))) => {
             let offset = *offset as usize;
             let count = *count as usize;
-            if offset + count <= input_bytes.len() {
-                input_bytes[offset..offset + count].to_vec()
-            } else {
-                input_bytes.clone()
+            match offset.checked_add(count) {
+                Some(end) if end <= input_bytes.len() => input_bytes
+                    .get(offset..end)
+                    .map_or_else(|| input_bytes.clone(), <[u8]>::to_vec),
+                _ => input_bytes.clone(),
             }
         }
         _ => input_bytes.clone(),
@@ -983,11 +996,7 @@ fn crypto_stream_read_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
         };
 
         // Use data from the underlying stream's current position, not from offset 0
-        let effective_data = if underlying_pos < stream_data.len() {
-            &stream_data[underlying_pos..]
-        } else {
-            &[]
-        };
+        let effective_data: &[u8] = stream_data.get(underlying_pos..).unwrap_or(&[]);
 
         let transformed_data = if let Some((algorithm, key, iv, is_encryptor, mode, padding)) =
             try_hook!(thread.heap().get_crypto_transform_info(transform_ref))
@@ -1038,9 +1047,12 @@ fn crypto_stream_read_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
     };
 
     for (i, &byte) in bytes.iter().enumerate() {
+        let Some(idx) = offset.checked_add(i) else {
+            break;
+        };
         try_hook!(thread.heap_mut().set_array_element(
             buffer_ref,
-            offset + i,
+            idx,
             EmValue::I32(i32::from(byte)),
         ));
     }
@@ -1090,9 +1102,15 @@ fn crypto_stream_write_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) 
         return PreHookResult::Bypass(None);
     };
 
-    let end = (offset + count).min(buffer_data.len());
+    let end = offset
+        .checked_add(count)
+        .unwrap_or(buffer_data.len())
+        .min(buffer_data.len());
     let bytes_to_write = if offset < buffer_data.len() {
-        buffer_data[offset..end].to_vec()
+        let Some(slice) = buffer_data.get(offset..end) else {
+            return PreHookResult::Bypass(None);
+        };
+        slice.to_vec()
     } else {
         return PreHookResult::Bypass(None);
     };

@@ -165,7 +165,7 @@ impl CallTreeBuilder {
             }
             TraceEvent::Instruction { .. } => {
                 if let Some(top) = state.stack.last_mut() {
-                    top.instruction_count += 1;
+                    top.instruction_count = top.instruction_count.saturating_add(1);
                 }
             }
             TraceEvent::ExceptionThrow {
@@ -266,12 +266,12 @@ impl CallTreeNode {
     /// Total instruction count including all descendants.
     #[must_use]
     pub fn total_instructions(&self) -> u64 {
-        self.instruction_count
-            + self
-                .children
+        self.instruction_count.saturating_add(
+            self.children
                 .iter()
                 .map(|c| c.total_instructions())
-                .sum::<u64>()
+                .fold(0u64, u64::saturating_add),
+        )
     }
 
     /// Converts the call tree to a JSON string.
@@ -321,7 +321,7 @@ impl CallTreeNode {
             self.exceptions.len()
         )?;
         for child in &self.children {
-            child.fmt_indented(f, indent + 1)?;
+            child.fmt_indented(f, indent.saturating_add(1))?;
         }
         Ok(())
     }

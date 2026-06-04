@@ -202,11 +202,12 @@ impl WorkQueue {
     /// it counts as 1 if the flag is set.
     pub fn len(&self) -> usize {
         let assembly = usize::from(self.redetect_assembly.load(Ordering::Acquire));
-        self.build_ssa.len()
-            + self.inject_ssa.len()
-            + self.redetect_methods.len()
-            + self.redetect_types.len()
-            + assembly
+        self.build_ssa
+            .len()
+            .saturating_add(self.inject_ssa.len())
+            .saturating_add(self.redetect_methods.len())
+            .saturating_add(self.redetect_types.len())
+            .saturating_add(assembly)
     }
 }
 

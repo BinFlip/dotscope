@@ -87,8 +87,8 @@ impl GenericStrings {
             let matches_signature = match param_count {
                 // string(int32), string(uint32), string(string)
                 1 => matches!(
-                    method.signature.params[0].base,
-                    TypeSignature::I4 | TypeSignature::U4 | TypeSignature::String
+                    method.signature.params.first().map(|p| &p.base),
+                    Some(TypeSignature::I4 | TypeSignature::U4 | TypeSignature::String)
                 ),
                 // string(int32, int32) — offset+length based
                 2 => method
@@ -113,9 +113,9 @@ impl GenericStrings {
     /// unsupported signatures.
     fn default_warmup_args(params: &[SignatureParameter]) -> Option<Vec<EmValue>> {
         match params.len() {
-            1 => match params[0].base {
-                TypeSignature::I4 | TypeSignature::U4 => Some(vec![EmValue::I32(0)]),
-                TypeSignature::String => Some(vec![EmValue::Null]),
+            1 => match params.first().map(|p| &p.base) {
+                Some(TypeSignature::I4 | TypeSignature::U4) => Some(vec![EmValue::I32(0)]),
+                Some(TypeSignature::String) => Some(vec![EmValue::Null]),
                 _ => None,
             },
             2 => {
@@ -155,7 +155,7 @@ impl Technique for GenericStrings {
 
         trace!("GenericStrings: {} candidates found", candidates.len());
         for (token, count) in &counts {
-            if let Some(method) = assembly.method(token) {
+            if let Ok(method) = assembly.method(token) {
                 trace!(
                     "  candidate {}: {}({}) → string - calls: {}",
                     token,
@@ -221,7 +221,7 @@ impl Technique for GenericStrings {
 
                     // Direct match
                     if let Some(c) = counts.get_mut(&token) {
-                        *c += 1;
+                        *c = c.saturating_add(1);
                         continue;
                     }
 
@@ -232,7 +232,7 @@ impl Technique for GenericStrings {
                             .or_insert_with(|| assembly.resolver().resolve_memberref_method(token));
                         if let Some(resolved_token) = resolved {
                             if let Some(c) = counts.get_mut(resolved_token) {
-                                *c += 1;
+                                *c = c.saturating_add(1);
                             }
                         }
                     }
@@ -325,7 +325,7 @@ impl Technique for GenericStrings {
         // populates the table on the template process, so forked decryption calls
         // skip the expensive initialization.
         for &token in &findings.decryptor_methods {
-            if let Some(method) = assembly.method(&token) {
+            if let Ok(method) = assembly.method(&token) {
                 let warmup_args = Self::default_warmup_args(&method.signature.params);
                 if let Some(args) = warmup_args {
                     debug!(
@@ -373,7 +373,7 @@ impl Technique for GenericStrings {
 fn collect_decryptor_resources(assembly: &CilObject, decryptors: &HashSet<Token>) -> Vec<Token> {
     let mut declaring_types: HashSet<Token> = HashSet::new();
     for &decryptor in decryptors {
-        if let Some(method) = assembly.method(&decryptor) {
+        if let Ok(method) = assembly.method(&decryptor) {
             if let Some(parent) = method.declaring_type_rc() {
                 declaring_types.insert(parent.token);
             }

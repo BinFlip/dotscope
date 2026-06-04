@@ -47,7 +47,7 @@ use std::{
 };
 
 use crate::{
-    analysis::{ConstValue, SsaFunction, SsaOp, SsaVarId},
+    analysis::{CilTarget, ConstValue, MethodRef, SsaFunction, SsaOp, SsaVarId},
     compiler::{CompilerContext, EventKind, ModificationScope, SsaPass},
     deobfuscation::{
         techniques::BitMonoStringFindings,
@@ -185,7 +185,7 @@ impl StringDecryptionPass {
     }
 }
 
-impl SsaPass for StringDecryptionPass {
+impl SsaPass<CilTarget, CompilerContext> for StringDecryptionPass {
     fn name(&self) -> &'static str {
         "BitMonoStringDecryption"
     }
@@ -201,10 +201,15 @@ impl SsaPass for StringDecryptionPass {
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
-        method_token: Token,
-        ctx: &CompilerContext,
-        assembly: &CilObject,
-    ) -> Result<bool> {
+        method: &MethodRef,
+        host: &CompilerContext,
+    ) -> analyssa::Result<bool> {
+        let assembly_arc = host
+            .assembly()
+            .ok_or_else(|| analyssa::Error::new("StringDecryptionPass requires an assembly"))?;
+        let assembly: &CilObject = &assembly_arc;
+        let ctx = host;
+        let method_token = method.0;
         let mut changed = false;
 
         // Build LoadStaticField index once for the entire method
@@ -250,7 +255,7 @@ impl SsaPass for StringDecryptionPass {
                     if let Some(instr) = block.instruction_mut(*call_idx) {
                         instr.set_op(SsaOp::Const {
                             dest: *call_dest,
-                            value: ConstValue::DecryptedString(decrypted.clone()),
+                            value: ConstValue::DecryptedString(decrypted.clone().into()),
                         });
                     }
                 }
@@ -363,9 +368,13 @@ fn find_decryption_sites(
         let mut all_found = true;
 
         for (arg_idx, arg_var) in args.iter().enumerate() {
-            if let Some(&(blk, idx, token)) = ldsfld_index.get(arg_var) {
-                ldsfld_locations[arg_idx] = (blk, idx);
-                field_tokens[arg_idx] = token;
+            if let (Some(&(blk, idx, token)), Some(loc), Some(tok)) = (
+                ldsfld_index.get(arg_var),
+                ldsfld_locations.get_mut(arg_idx),
+                field_tokens.get_mut(arg_idx),
+            ) {
+                *loc = (blk, idx);
+                *tok = token;
             } else {
                 all_found = false;
                 break;

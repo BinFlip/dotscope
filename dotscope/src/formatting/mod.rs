@@ -1,8 +1,9 @@
 //! ILDasm-compatible CIL disassembly formatter.
 //!
 //! This module provides a comprehensive formatter that produces ILDasm/ILAsm-compatible
-//! text output from .NET assembly metadata. The [`IlFormatter`] is the main entry point,
-//! with [`FormatterOptions`] controlling the level of detail in the output.
+//! text output from .NET assembly metadata. [`crate::formatting::IlFormatter`] is the main
+//! entry point, with [`crate::formatting::FormatterOptions`] controlling the level of detail
+//! in the output.
 //!
 //! # Usage
 //!

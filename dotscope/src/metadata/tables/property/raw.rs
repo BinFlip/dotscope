@@ -167,9 +167,10 @@ impl TableRow for PropertyRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* flags */          2 +
-            /* name */           sizes.str_bytes() +
-            /* type_signature */ sizes.blob_bytes()
+            /* flags */          2u8
+            /* name */           .saturating_add(sizes.str_bytes())
+            /* type_signature */ .saturating_add(sizes.blob_bytes())
+
         )
     }
 }

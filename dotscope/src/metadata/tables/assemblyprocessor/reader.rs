@@ -67,7 +67,7 @@ impl RowReadable for AssemblyProcessorRaw {
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, _sizes: &TableInfoRef) -> Result<Self> {
         Ok(AssemblyProcessorRaw {
             rid,
-            token: Token::new(0x2100_0000 + rid),
+            token: Token::new(0x2100_0000u32.saturating_add(rid)),
             offset: *offset,
             processor: read_le_at::<u32>(data, offset)?,
         })

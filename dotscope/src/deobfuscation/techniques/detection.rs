@@ -165,8 +165,9 @@ impl Detections {
     /// Returns the current generation counter.
     ///
     /// Incremented on any mutation that could affect technique sorting
-    /// (insert, merge, merge_all). Used by [`TechniqueRegistry`] to
-    /// invalidate its sorted cache.
+    /// (insert, merge, merge_all). Used by
+    /// [`TechniqueRegistry`](crate::deobfuscation::techniques::TechniqueRegistry)
+    /// to invalidate its sorted cache.
     #[must_use]
     pub fn generation(&self) -> u64 {
         self.generation
@@ -175,7 +176,7 @@ impl Detections {
     /// Inserts a detection result for a technique.
     pub fn insert(&mut self, id: impl Into<String>, detection: Detection) {
         self.entries.insert(id.into(), detection);
-        self.generation += 1;
+        self.generation = self.generation.saturating_add(1);
     }
 
     /// Gets the detection result for a technique.
@@ -241,7 +242,7 @@ impl Detections {
         if !detection.detected {
             return;
         }
-        self.generation += 1;
+        self.generation = self.generation.saturating_add(1);
         let id = id.into();
         match self.entries.get_mut(&id) {
             Some(existing) if existing.detected => {
@@ -265,7 +266,7 @@ impl Detections {
     /// Uses [`merge`](Self::merge) semantics for each entry: never downgrades
     /// an existing positive detection.
     pub fn merge_all(&mut self, other: Detections) {
-        self.generation += 1;
+        self.generation = self.generation.saturating_add(1);
         for (id, detection) in other.entries {
             if detection.detected {
                 self.merge(id, detection);

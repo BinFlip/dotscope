@@ -198,19 +198,19 @@ fn extract_version_from_blob(assembly: &CilObject, row: &CustomAttributeRaw) -> 
     }
 
     // Check prolog 0x0001
-    if data[0] != 0x01 || data[1] != 0x00 {
+    if *data.first()? != 0x01 || *data.get(1)? != 0x00 {
         return None;
     }
 
     // Read packed string length
-    let (str_len, offset) = read_packed_len(&data[2..])?;
-    let start = 2 + offset;
-    let end = start + str_len;
+    let (str_len, offset) = read_packed_len(data.get(2..)?)?;
+    let start = 2usize.checked_add(offset)?;
+    let end = start.checked_add(str_len)?;
     if end > data.len() {
         return None;
     }
 
-    let s = std::str::from_utf8(&data[start..end]).ok()?;
+    let s = std::str::from_utf8(data.get(start..end)?).ok()?;
     if s.is_empty() {
         return None;
     }

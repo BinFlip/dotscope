@@ -40,10 +40,10 @@ use crate::{
     analysis::{
         cfg::ControlFlowGraph,
         ssa::{
-            decompose::decompose_instruction, liveness, phis::place_pruned_phis,
-            resolve_corelib_valuetype, ConstValue, DefSite, PhiNode, SimulationResult, SsaBlock,
-            SsaFunction, SsaInstruction, SsaOp, SsaType, SsaVarId, StackSimulator, StackSlot,
-            StackSlotSource, TypeProvider, UseSite, VariableOrigin,
+            decompose::decompose_instruction, liveness, place_pruned_phis,
+            resolve_corelib_valuetype, ConstValue, DefSite, PhiNode, PhiPlacementConfig,
+            SimulationResult, SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaType, SsaVarId,
+            StackSimulator, StackSlot, StackSlotSource, TypeProvider, UseSite, VariableOrigin,
         },
     },
     assembly::{opcodes, Immediate, Instruction, Operand},
@@ -53,11 +53,11 @@ use crate::{
         token::Token,
         typesystem::CilTypeReference,
     },
-    utils::{
-        graph::{algorithms::DominatorTree, NodeId},
-        BitSet,
-    },
     CilObject, Error, Result,
+};
+use analyssa::{
+    graph::{algorithms::DominatorTree, NodeId},
+    BitSet,
 };
 
 /// A variable definition record during SSA construction.
@@ -186,7 +186,9 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
     /// Returns the rename group ID for a stack slot at the given depth.
     #[allow(clippy::cast_possible_truncation)]
     fn stack_group(&self, depth: usize) -> u32 {
-        self.num_args as u32 + self.num_locals as u32 + depth as u32
+        (self.num_args as u32)
+            .saturating_add(self.num_locals as u32)
+            .saturating_add(depth as u32)
     }
 
     /// Returns the rename group ID for an argument.
@@ -196,14 +198,14 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 
     /// Returns the rename group ID for a local.
     fn local_group(&self, idx: u16) -> u32 {
-        self.num_args as u32 + idx as u32
+        (self.num_args as u32).saturating_add(idx as u32)
     }
 
     /// If a group ID corresponds to a stack slot, returns the slot index.
     fn stack_slot_from_group(&self, group: u32) -> Option<usize> {
-        let base = self.num_args as u32 + self.num_locals as u32;
+        let base = (self.num_args as u32).saturating_add(self.num_locals as u32);
         if group >= base {
-            Some((group - base) as usize)
+            Some(group.saturating_sub(base) as usize)
         } else {
             None
         }
@@ -215,8 +217,8 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             *origin
         } else if (group as usize) < self.num_args {
             VariableOrigin::Argument(group as u16)
-        } else if (group as usize) < self.num_args + self.num_locals {
-            VariableOrigin::Local((group as usize - self.num_args) as u16)
+        } else if (group as usize) < self.num_args.saturating_add(self.num_locals) {
+            VariableOrigin::Local((group as usize).saturating_sub(self.num_args) as u16)
         } else {
             VariableOrigin::Phi
         }
@@ -224,7 +226,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 
     /// Returns true if a group ID corresponds to a stack slot.
     fn is_stack_group(&self, group: u32) -> bool {
-        group >= self.num_args as u32 + self.num_locals as u32
+        group >= (self.num_args as u32).saturating_add(self.num_locals as u32)
     }
 
     /// Returns the SSA type for a variable origin.
@@ -291,6 +293,8 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                 ConstValue::F64(_) => SsaType::F64,
                 ConstValue::String(_) | ConstValue::DecryptedString(_) => SsaType::String,
                 ConstValue::DecryptedArray { .. } => SsaType::Object,
+                // SIMD vector constant from the native substrate — no CIL type.
+                ConstValue::Vector(_) => SsaType::Unknown,
                 ConstValue::Null => SsaType::Null,
                 ConstValue::True | ConstValue::False => SsaType::Bool,
                 // Runtime handle types (`ldtoken` results). Each handle
@@ -320,8 +324,15 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                     }),
             },
 
-            // Comparison results are always bool (represented as I32 on stack)
-            SsaOp::Ceq { .. } | SsaOp::Clt { .. } | SsaOp::Cgt { .. } => SsaType::Bool,
+            // Comparison results are always bool (represented as I32 on stack).
+            // Native boolean ops from the analyssa substrate likewise yield bool.
+            SsaOp::Ceq { .. }
+            | SsaOp::Clt { .. }
+            | SsaOp::Cgt { .. }
+            | SsaOp::BoolAnd { .. }
+            | SsaOp::BoolOr { .. }
+            | SsaOp::BoolXor { .. }
+            | SsaOp::BoolNot { .. } => SsaType::Bool,
 
             // Conversion - use the target type
             SsaOp::Conv { target, .. } => target.clone(),
@@ -342,6 +353,25 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             | SsaOp::Shr { .. }
             | SsaOp::Neg { .. }
             | SsaOp::Not { .. }
+            // Rotate operations
+            | SsaOp::Rol { .. }
+            | SsaOp::Ror { .. }
+            | SsaOp::Rcl { .. }
+            | SsaOp::Rcr { .. }
+            // Bit manipulation operations
+            | SsaOp::BSwap { .. }
+            | SsaOp::BRev { .. }
+            | SsaOp::BitScanForward { .. }
+            | SsaOp::BitScanReverse { .. }
+            | SsaOp::Popcount { .. }
+            | SsaOp::Parity { .. }
+            // Atomic read-modify-write operations
+            | SsaOp::CmpXchg { .. }
+            | SsaOp::AtomicRmw { .. }
+            // Select produces values of varying types
+            | SsaOp::Select { .. }
+            // ReadFlags reads flag bits into an integer
+            | SsaOp::ReadFlags { .. }
             // Sizeof produces int32
             | SsaOp::SizeOf { .. } => SsaType::I32,
 
@@ -491,7 +521,63 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             | SsaOp::Volatile
             | SsaOp::Unaligned { .. }
             | SsaOp::TailPrefix
-            | SsaOp::Readonly => SsaType::Unknown,
+            | SsaOp::BranchFlags { .. }
+            | SsaOp::Fence { .. }
+            | SsaOp::InterruptReturn
+            | SsaOp::Unreachable
+            | SsaOp::Readonly
+            // Native SSA substrate operations (wide arithmetic, SIMD/vector,
+            // native atomics, bitcast, opaque, indirect branch). These never
+            // appear in CIL-lifted SSA — CIL type inference does not model
+            // them — so they resolve to Unknown. Enumerated explicitly (no
+            // wildcard) so future substrate additions still trip this
+            // exhaustiveness check.
+            | SsaOp::WideMul { .. }
+            | SsaOp::WideDiv { .. }
+            | SsaOp::FloatCompareFlags { .. }
+            | SsaOp::Bitcast { .. }
+            | SsaOp::IndirectBranch { .. }
+            | SsaOp::NativeOpaque(_)
+            | SsaOp::VectorUnary { .. }
+            | SsaOp::VectorBinary { .. }
+            | SsaOp::VectorTernary { .. }
+            | SsaOp::VectorPredicatedUnary { .. }
+            | SsaOp::VectorPredicatedBinary { .. }
+            | SsaOp::VectorPredicatedTernary { .. }
+            | SsaOp::VectorCompare { .. }
+            | SsaOp::VectorLoad { .. }
+            | SsaOp::VectorStore { .. }
+            | SsaOp::VectorMaskedLoad { .. }
+            | SsaOp::VectorMaskedStore { .. }
+            | SsaOp::VectorBroadcastLoad { .. }
+            | SsaOp::VectorGather { .. }
+            | SsaOp::VectorFaultingLoad { .. }
+            | SsaOp::VectorSegmentLoad { .. }
+            | SsaOp::VectorScatter { .. }
+            | SsaOp::VectorSegmentStore { .. }
+            | SsaOp::VectorExtract { .. }
+            | SsaOp::VectorInsert { .. }
+            | SsaOp::VectorSplat { .. }
+            | SsaOp::VectorShuffle { .. }
+            | SsaOp::VectorCast { .. }
+            | SsaOp::VectorReinterpret { .. }
+            | SsaOp::VectorPack { .. }
+            | SsaOp::VectorPackLoad { .. }
+            | SsaOp::VectorPackStore { .. }
+            | SsaOp::VectorZeroUpper { .. }
+            | SsaOp::VectorMaskUnary { .. }
+            | SsaOp::VectorMaskBinary { .. }
+            | SsaOp::VectorReduce { .. }
+            | SsaOp::VectorBitmask { .. }
+            | SsaOp::AtomicLoad { .. }
+            | SsaOp::AtomicStore { .. }
+            | SsaOp::AtomicStoreConditional { .. }
+            | SsaOp::AtomicPairLoad { .. }
+            | SsaOp::AtomicPairStoreConditional { .. }
+            | SsaOp::AtomicExchange { .. }
+            | SsaOp::AtomicLockRmw { .. }
+            | SsaOp::AtomicCmpXchg { .. }
+            | SsaOp::AtomicPairCmpXchg { .. } => SsaType::Unknown,
         }
     }
 
@@ -617,7 +703,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             uses: BTreeMap::new(),
             version_stacks: BTreeMap::new(),
             next_version: BTreeMap::new(),
-            address_taken: BitSet::new(num_args + num_locals),
+            address_taken: BitSet::new(num_args.saturating_add(num_locals)),
             group_origins: BTreeMap::new(),
             load_origins: BTreeMap::new(),
             exit_stacks: BTreeMap::new(),
@@ -819,7 +905,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                     // (CALLI has VarPop/VarPush so net_effect=0 without resolution)
                     let net_effect = match instr.opcode {
                         opcodes::CALL | opcodes::CALLVIRT | opcodes::NEWOBJ => assembly
-                            .and_then(|asm| Self::extract_token(&instr.operand).map(|t| (asm, t)))
+                            .zip(Self::extract_token(&instr.operand))
                             .and_then(|(asm, token)| {
                                 Self::resolve_call_info(asm, token).map(
                                     |(param_count, has_this, has_return)| {
@@ -827,7 +913,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                                         let pops = if is_newobj {
                                             param_count
                                         } else {
-                                            param_count + usize::from(has_this)
+                                            param_count.saturating_add(usize::from(has_this))
                                         };
                                         let pushes = if is_newobj {
                                             1
@@ -838,7 +924,8 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                                             clippy::cast_possible_truncation,
                                             clippy::cast_possible_wrap
                                         )]
-                                        ((pushes as i32 - pops as i32)
+                                        ((pushes as i32)
+                                            .saturating_sub(pops as i32)
                                             .clamp(i32::from(i8::MIN), i32::from(i8::MAX))
                                             as i8)
                                     },
@@ -846,18 +933,21 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                             })
                             .unwrap_or(instr.stack_behavior.net_effect),
                         opcodes::CALLI => assembly
-                            .and_then(|asm| Self::extract_token(&instr.operand).map(|t| (asm, t)))
+                            .zip(Self::extract_token(&instr.operand))
                             .and_then(|(asm, token)| {
                                 Self::resolve_calli_info(asm, token).map(
                                     |(param_count, has_this, has_return)| {
                                         // calli pops: param_count + has_this + 1 (function pointer)
-                                        let pops = param_count + usize::from(has_this) + 1;
+                                        let pops = param_count
+                                            .saturating_add(usize::from(has_this))
+                                            .saturating_add(1);
                                         let pushes = usize::from(has_return);
                                         #[allow(
                                             clippy::cast_possible_truncation,
                                             clippy::cast_possible_wrap
                                         )]
-                                        ((pushes as i32 - pops as i32)
+                                        ((pushes as i32)
+                                            .saturating_sub(pops as i32)
                                             .clamp(i32::from(i8::MIN), i32::from(i8::MAX))
                                             as i8)
                                     },
@@ -872,7 +962,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                     if net_effect < 0 {
                         depth = depth.saturating_sub(net_effect.unsigned_abs() as usize);
                     } else {
-                        depth += net_effect as usize;
+                        depth = depth.saturating_add(net_effect as usize);
                     }
                 }
 
@@ -977,7 +1067,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 
             // Pass successors only for the last instruction (terminator)
             // Non-terminator instructions don't need successor information
-            let instr_successors = if instr_idx == instr_count - 1 {
+            let instr_successors = if instr_idx.saturating_add(1) == instr_count {
                 successors.as_slice()
             } else {
                 &[]
@@ -1059,11 +1149,12 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                 .is_some_and(|instr| instr.op().is_terminator());
 
             if !has_terminator && successors.len() == 1 {
-                let fallthrough_target = successors[0];
-                let jump_instr = SsaInstruction::synthetic(SsaOp::Jump {
-                    target: fallthrough_target,
-                });
-                block.add_instruction(jump_instr);
+                if let Some(&fallthrough_target) = successors.first() {
+                    let jump_instr = SsaInstruction::synthetic(SsaOp::Jump {
+                        target: fallthrough_target,
+                    });
+                    block.add_instruction(jump_instr);
+                }
             }
         }
 
@@ -1213,7 +1304,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                     // newobj doesn't pop 'this' - it creates it
                     param_count
                 } else {
-                    param_count + usize::from(has_this)
+                    param_count.saturating_add(usize::from(has_this))
                 };
 
                 let pushes = if is_newobj {
@@ -1276,7 +1367,9 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                 Self::resolve_calli_info(assembly, token)
             {
                 // calli pops: param_count + has_this args + 1 function pointer
-                let pops = param_count + usize::from(has_this) + 1;
+                let pops = param_count
+                    .saturating_add(usize::from(has_this))
+                    .saturating_add(1);
                 let pushes = usize::from(has_return);
 
                 #[allow(clippy::cast_possible_truncation)]
@@ -1325,7 +1418,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         match token.table() {
             // MethodDef (0x06) - method defined in this assembly
             0x06 => {
-                let method = assembly.method(&token)?;
+                let method = assembly.method(&token).ok()?;
                 let param_count = method.signature.params.len();
                 let has_this = !method.is_static();
                 let has_return = !matches!(method.signature.return_type.base, TypeSignature::Void);
@@ -1345,7 +1438,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 
             // MethodSpec (0x2B) - generic method instantiation
             0x2B => {
-                let method_spec = assembly.method_spec(&token)?;
+                let method_spec = assembly.method_spec(&token).ok()?;
                 // Get the underlying method token from the CilTypeReference
                 let underlying_token = match &method_spec.method {
                     CilTypeReference::MethodDef(method_ref) => {
@@ -1499,23 +1592,25 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         let num_locals = self.num_locals;
         let _ = place_pruned_phis(
             self.function.blocks_mut(),
-            &self.defs,
-            &live_in,
-            dominance_frontiers,
-            None,      // All blocks reachable during initial construction
-            &|_| true, // Process all groups
-            &|group| {
-                group_origins.get(&group).copied().unwrap_or_else(|| {
-                    if (group as usize) < num_args {
-                        VariableOrigin::Argument(group as u16)
-                    } else if (group as usize) < num_args + num_locals {
-                        VariableOrigin::Local((group as usize - num_args) as u16)
-                    } else {
-                        VariableOrigin::Phi
-                    }
-                })
+            PhiPlacementConfig {
+                defs: &self.defs,
+                live_in: &live_in,
+                dominance_frontiers,
+                reachable: None, // All blocks reachable during initial construction
+                group_filter: &|_| true, // Process all groups
+                group_to_origin: &|group| {
+                    group_origins.get(&group).copied().unwrap_or_else(|| {
+                        if (group as usize) < num_args {
+                            VariableOrigin::Argument(group as u16)
+                        } else if (group as usize) < num_args.saturating_add(num_locals) {
+                            VariableOrigin::Local((group as usize).saturating_sub(num_args) as u16)
+                        } else {
+                            VariableOrigin::Phi
+                        }
+                    })
+                },
+                leave_target_fn: None, // No Leave target handling during initial construction
             },
-            None, // No Leave target handling during initial construction
         );
 
         // Second, place PHI nodes for stack positions at merge points
@@ -1687,7 +1782,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             .filter(|&g| g != u32::MAX)
             .max()
             .unwrap_or(0) as usize;
-        let group_capacity = max_phi_group + 1;
+        let group_capacity = max_phi_group.saturating_add(1);
         let mut stack_groups_needing_v0 = BitSet::new(group_capacity);
         for block in self.function.blocks() {
             for phi in block.phi_nodes() {
@@ -1768,7 +1863,8 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                         .entry(group)
                         .or_default()
                         .push((0, var_id));
-                    *scope_pushed.entry(group).or_insert(0) += 1;
+                    let entry = scope_pushed.entry(group).or_insert(0);
+                    *entry = entry.saturating_add(1);
                 }
             }
 
@@ -1973,7 +2069,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                     if old_idx != new_idx {
                         index_remap.insert(old_idx, new_idx);
                     }
-                    new_idx += 1;
+                    new_idx = new_idx.saturating_add(1);
                 }
             }
 
@@ -2027,7 +2123,8 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         var_type: SsaType,
     ) -> SsaVarId {
         let version = *self.next_version.get(&group).unwrap_or(&0);
-        *self.next_version.entry(group).or_insert(0) += 1;
+        let next = self.next_version.entry(group).or_insert(0);
+        *next = next.saturating_add(1);
 
         let def_site = match instr_idx {
             Some(idx) => DefSite::instruction(block_idx, idx),
@@ -2075,8 +2172,8 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         let slot_idx = slot as usize;
 
         // Get the slot value, falling back to TOS for depth mismatch
-        let stack_slot = if slot_idx < stack.len() {
-            &stack[slot_idx]
+        let stack_slot = if let Some(s) = stack.get(slot_idx) {
+            s
         } else if let Some(last) = stack.last() {
             last
         } else {
@@ -2420,7 +2517,10 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                     };
                     // Phi type starts Unknown, resolved by resolve_phi_types() after rename
                     let new_var = self.new_def(origin, group, block_idx, None, SsaType::Unknown);
-                    *pushed_counts.entry(group).or_insert(0) += 1;
+                    {
+                        let entry = pushed_counts.entry(group).or_insert(0);
+                        *entry = entry.saturating_add(1);
+                    }
 
                     if let Some(slot) = self.stack_slot_from_group(group) {
                         if slot < slots_capacity {
@@ -2466,7 +2566,10 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                             let group = self.stack_group(0);
                             let new_var =
                                 self.new_def(origin, group, block_idx, None, exception_type);
-                            *pushed_counts.entry(group).or_insert(0) += 1;
+                            {
+                                let entry = pushed_counts.entry(group).or_insert(0);
+                                *entry = entry.saturating_add(1);
+                            }
                             rename_map.insert(placeholder, new_var);
                             // Mark slot 0 as handled so the resolution loop below skips it
                             slots_with_phis.insert(0);
@@ -2508,7 +2611,10 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                         .entry(group)
                         .or_default()
                         .push((0, resolved));
-                    *pushed_counts.entry(group).or_insert(0) += 1;
+                    {
+                        let entry = pushed_counts.entry(group).or_insert(0);
+                        *entry = entry.saturating_add(1);
+                    }
                 } else {
                     self.try_map_from_predecessors(block_idx, slot, placeholder, rename_map);
                 }
@@ -2577,9 +2683,56 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                     if let Some(block) = self.function.block_mut(block_idx) {
                         if let Some(instr) = block.instruction_mut(instr_idx) {
                             let op = instr.op_mut();
-                            for (old_use, &new_use) in uses.iter().zip(renamed_uses.iter()) {
+                            // Apply the placeholder→final renaming atomically.
+                            //
+                            // `replace_uses(old, new)` rewrites EVERY operand
+                            // equal to `old`, so a naive sequential loop
+                            // miscompiles whenever a freshly-written value
+                            // aliases a not-yet-processed operand's old value
+                            // (e.g. uses=[a,b] renamed=[b,c] collapses both
+                            // operands to `c`). SSA var-id numbering can make a
+                            // final id equal a sibling operand's placeholder id,
+                            // so this is not hypothetical.
+                            //
+                            // Move each changing operand to a unique temporary id
+                            // first, then from the temporary to its final value.
+                            // This is position-wise exact and handles aliasing,
+                            // cycles (swaps), and repeated operands.
+                            //
+                            // Temps only have to be distinct from this op's own
+                            // operands (and each other) — `replace_uses` touches
+                            // no other instruction — so the lowest unused ids
+                            // suffice. They must NOT be derived from `max id + 1`:
+                            // operand ids include the reserved placeholder
+                            // (`u32::MAX - 1`), which would overflow the index
+                            // space and reintroduce collisions.
+                            let mut temps: Vec<SsaVarId> = Vec::with_capacity(uses.len());
+                            let mut candidate = 0usize;
+                            for _ in 0..uses.len() {
+                                loop {
+                                    let id = SsaVarId::from_index(candidate);
+                                    candidate = candidate.saturating_add(1);
+                                    if !uses.contains(&id)
+                                        && !renamed_uses.contains(&id)
+                                        && !temps.contains(&id)
+                                    {
+                                        temps.push(id);
+                                        break;
+                                    }
+                                }
+                            }
+                            for (&temp, (old_use, &new_use)) in
+                                temps.iter().zip(uses.iter().zip(renamed_uses.iter()))
+                            {
                                 if *old_use != new_use {
-                                    op.replace_uses(*old_use, new_use);
+                                    op.replace_uses(*old_use, temp);
+                                }
+                            }
+                            for (&temp, (old_use, &new_use)) in
+                                temps.iter().zip(uses.iter().zip(renamed_uses.iter()))
+                            {
+                                if *old_use != new_use {
+                                    op.replace_uses(temp, new_use);
                                 }
                             }
                         }
@@ -2605,7 +2758,10 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                         let var_type = self.type_for_origin(target_origin);
                         let new_var =
                             self.new_def(origin, dest_group, block_idx, Some(instr_idx), var_type);
-                        *pushed_counts.entry(dest_group).or_insert(0) += 1;
+                        {
+                            let entry = pushed_counts.entry(dest_group).or_insert(0);
+                            *entry = entry.saturating_add(1);
+                        }
 
                         rename_map.insert(sim_var, new_var);
 
@@ -2637,7 +2793,10 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                         };
                         let var_type = self.type_for_origin(origin);
                         let v = self.new_def(origin, group, block_idx, Some(instr_idx), var_type);
-                        *pushed_counts.entry(group).or_insert(0) += 1;
+                        {
+                            let entry = pushed_counts.entry(group).or_insert(0);
+                            *entry = entry.saturating_add(1);
+                        }
                         v
                     } else {
                         // Use the stack depth position recorded during simulation,
@@ -2649,7 +2808,10 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                         let group = self.stack_group(slot);
                         let var_type = self.infer_instruction_result_type(block_idx, instr_idx);
                         let v = self.new_def(origin, group, block_idx, Some(instr_idx), var_type);
-                        *pushed_counts.entry(group).or_insert(0) += 1;
+                        {
+                            let entry = pushed_counts.entry(group).or_insert(0);
+                            *entry = entry.saturating_add(1);
+                        }
                         v
                     };
 
@@ -2676,7 +2838,10 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                         Some(instr_idx),
                         var_type,
                     );
-                    *pushed_counts.entry(store_group).or_insert(0) += 1;
+                    {
+                        let entry = pushed_counts.entry(store_group).or_insert(0);
+                        *entry = entry.saturating_add(1);
+                    }
                 }
             }
         }
@@ -2747,6 +2912,8 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::collections::BTreeSet;
 
     use crate::{
         assembly::{decode_blocks, InstructionAssembler},
@@ -3370,8 +3537,7 @@ mod tests {
             .expect("SSA construction failed");
 
         // For each phi node, verify all operand values reference valid variables
-        let var_ids: std::collections::BTreeSet<_> =
-            ssa.variables().iter().map(|v| v.id()).collect();
+        let var_ids: BTreeSet<_> = ssa.variables().iter().map(|v| v.id()).collect();
 
         for phi in ssa.all_phi_nodes() {
             for operand in phi.operands() {
@@ -3871,8 +4037,8 @@ mod tests {
             .expect("SSA construction failed");
 
         // Collect all variables used in the SSA
-        let mut all_uses = std::collections::BTreeSet::new();
-        let mut all_defs = std::collections::BTreeSet::new();
+        let mut all_uses = BTreeSet::new();
+        let mut all_defs = BTreeSet::new();
 
         for block in ssa.blocks() {
             for instr in block.instructions() {

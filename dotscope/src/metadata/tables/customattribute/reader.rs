@@ -15,7 +15,7 @@ impl RowReadable for CustomAttributeRaw {
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(CustomAttributeRaw {
             rid,
-            token: Token::new(0x0C00_0000 + rid),
+            token: Token::new(0x0C00_0000u32.saturating_add(rid)),
             offset: *offset,
             parent: CodedIndex::read(data, offset, sizes, CodedIndexType::HasCustomAttribute)?,
             constructor: CodedIndex::read(

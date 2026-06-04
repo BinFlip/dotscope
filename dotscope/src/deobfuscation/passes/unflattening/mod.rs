@@ -53,7 +53,7 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 
 use crate::{
-    analysis::SsaFunction,
+    analysis::{CilTarget, MethodRef, SsaFunction},
     compiler::{CompilerContext, PassCapability, SsaPass},
     deobfuscation::{
         config::DetectionWeights,
@@ -61,7 +61,7 @@ use crate::{
         passes::unflattening::tracer::{trace_for_dispatcher, TracedDispatcher},
     },
     metadata::{token::Token, typesystem::PointerSize},
-    CilObject, Result,
+    CilObject,
 };
 
 /// High-level API: Unflatten a method using tree-based tracing and patching.
@@ -319,12 +319,10 @@ impl UnflattenConfig {
 /// obfuscation technique that converts structured control flow into
 /// a state machine.
 ///
-/// When [`FlatteningFindings`] are available from the detection phase,
-/// the pass uses pre-computed dispatchers directly instead of re-running
-/// detection. This avoids duplicate structural analysis (dominance, SCCs,
-/// confidence scoring) for methods already analyzed during `detect_ssa()`.
-///
-/// [`FlatteningFindings`]: crate::deobfuscation::techniques::generic::flattening::FlatteningFindings
+/// When detection-phase findings are available, the pass uses pre-computed
+/// dispatchers directly instead of re-running detection. This avoids duplicate
+/// structural analysis (dominance, SCCs, confidence scoring) for methods
+/// already analyzed during the detection phase's SSA pass.
 pub struct CffReconstructionPass {
     config: UnflattenConfig,
     /// Successfully unflattened dispatcher methods (shared with deob engine).
@@ -375,7 +373,7 @@ impl CffReconstructionPass {
     /// Sets the pre-detected dispatchers from the detection phase.
     ///
     /// When set, `run_on_method` uses these dispatchers directly instead of
-    /// re-running [`CffDetector`] analysis, avoiding duplicate work.
+    /// re-running the internal CFF detector, avoiding duplicate work.
     ///
     /// # Arguments
     ///
@@ -401,7 +399,7 @@ impl CffReconstructionPass {
     }
 }
 
-impl SsaPass for CffReconstructionPass {
+impl SsaPass<CilTarget, CompilerContext> for CffReconstructionPass {
     fn name(&self) -> &'static str {
         "cff-reconstruction"
     }
@@ -418,25 +416,30 @@ impl SsaPass for CffReconstructionPass {
         &[PassCapability::ResolvedStaticFields]
     }
 
-    fn should_run(&self, method_token: Token, _ctx: &CompilerContext) -> bool {
+    fn should_run(&self, method: &MethodRef, _host: &CompilerContext) -> bool {
         // Skip methods already unflattened and also skip methods that were never
         // detected as having dispatchers.
-        !self.unflattened_dispatchers.contains(&method_token)
+        !self.unflattened_dispatchers.contains(&method.0)
             && self
                 .pre_detected
-                .get(&method_token)
+                .get(&method.0)
                 .is_some_and(|d| !d.is_empty())
     }
 
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
-        method_token: Token,
-        ctx: &CompilerContext,
-        assembly: &CilObject,
-    ) -> Result<bool> {
+        method: &MethodRef,
+        host: &CompilerContext,
+    ) -> analyssa::Result<bool> {
+        let assembly_arc = host
+            .assembly()
+            .ok_or_else(|| analyssa::Error::new("CffReconstructionPass requires an assembly"))?;
+        let assembly: &CilObject = &assembly_arc;
+        let ctx = host;
+        let method_token = method.0;
         let mut config = self.config.clone();
-        config.pointer_size = PointerSize::from_pe(assembly.file().pe().is_64bit);
+        config.pointer_size = PointerSize::from_is_64bit(assembly.file().pe().is_64bit);
 
         // Use pre-detected dispatcher block indices from detect_ssa phase, but
         // refresh variable IDs from the current SSA. Earlier passes (opaque field

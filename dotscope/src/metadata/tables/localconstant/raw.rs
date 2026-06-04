@@ -130,8 +130,9 @@ impl TableRow for LocalConstantRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* name */      sizes.str_bytes() +
-            /* signature */ sizes.blob_bytes()
+            /* name */      sizes.str_bytes()
+            /* signature */ .saturating_add(sizes.blob_bytes())
+
         )
     }
 }

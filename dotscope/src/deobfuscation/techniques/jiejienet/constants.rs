@@ -36,7 +36,8 @@
 use std::{any::Any, sync::Arc};
 
 use crate::{
-    compiler::{PassCapability, PassPhase, SsaPass},
+    analysis::CilTarget,
+    compiler::{CompilerContext, PassCapability, PassPhase, SsaPass},
     deobfuscation::{
         context::AnalysisContext,
         passes::{I32Extractor, StaticFieldResolutionPass},
@@ -119,14 +120,14 @@ impl Technique for JiejieNetConstants {
 
                     // Check for the delta chain pattern
                     let instructions: Vec<_> = method.instructions().collect();
-                    let mut ldc_i8_count = 0;
+                    let mut ldc_i8_count: usize = 0;
                     let mut has_conv_i4 = false;
                     let mut has_stsfld = false;
                     let mut has_dup = false;
 
                     for instr in &instructions {
                         match instr.mnemonic {
-                            "ldc.i8" => ldc_i8_count += 1,
+                            "ldc.i8" => ldc_i8_count = ldc_i8_count.saturating_add(1),
                             "conv.i4" => has_conv_i4 = true,
                             "stsfld" => has_stsfld = true,
                             "dup" => has_dup = true,
@@ -204,7 +205,7 @@ impl Technique for JiejieNetConstants {
         ctx: &AnalysisContext,
         detection: &Detection,
         _assembly: &Arc<CilObject>,
-    ) -> Vec<Box<dyn SsaPass>> {
+    ) -> Vec<Box<dyn SsaPass<CilTarget, CompilerContext>>> {
         let Some(findings) = detection.findings::<ConstantsFindings>() else {
             return Vec::new();
         };

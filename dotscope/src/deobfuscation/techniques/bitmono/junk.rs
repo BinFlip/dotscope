@@ -70,13 +70,13 @@ impl Technique for BitMonoJunk {
 
             // Check for br.s at method start with a small positive forward offset.
             // BitMethodDotnet inserts br.s that jumps over 1-10 bytes of junk.
-            if instructions[0].mnemonic == "br.s" {
-                let is_small_forward_jump = matches!(
-                    instructions[0].operand,
-                    Operand::Immediate(Immediate::Int8(1..=10))
-                );
-                if is_small_forward_jump {
-                    junk_method_count += 1;
+            if let Some(first) = instructions.first() {
+                if first.mnemonic == "br.s" {
+                    let is_small_forward_jump =
+                        matches!(first.operand, Operand::Immediate(Immediate::Int8(1..=10)));
+                    if is_small_forward_jump {
+                        junk_method_count = junk_method_count.saturating_add(1);
+                    }
                 }
             }
         }

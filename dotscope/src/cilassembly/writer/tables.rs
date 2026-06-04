@@ -127,10 +127,6 @@ pub trait ResolvePlaceholders {
     fn resolve_placeholders(&mut self, changes: &AssemblyChanges);
 }
 
-// ============================================================================
-// ResolvePlaceholders implementations for each table type
-// ============================================================================
-
 impl ResolvePlaceholders for ModuleRaw {
     fn resolve_placeholders(&mut self, changes: &AssemblyChanges) {
         // String heap refs
@@ -455,10 +451,6 @@ impl ResolvePlaceholders for GenericParamConstraintRaw {
         resolve_coded_index_placeholder(&mut self.constraint, changes);
     }
 }
-
-// ============================================================================
-// Helper function to resolve placeholders by table ID
-// ============================================================================
 
 /// Resolves placeholders in a boxed table row based on its table ID.
 ///

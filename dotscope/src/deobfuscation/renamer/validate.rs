@@ -88,7 +88,9 @@ pub fn is_valid_dotnet_identifier(name: &str) -> bool {
     let mut chars = name.chars();
 
     // First character: letter or underscore
-    let first = chars.next().unwrap();
+    let Some(first) = chars.next() else {
+        return false;
+    };
     if !first.is_alphabetic() && first != '_' {
         return false;
     }
@@ -208,7 +210,9 @@ pub fn to_pascal_case(name: &str) -> String {
     }
 
     let mut chars = name.chars();
-    let first = chars.next().unwrap();
+    let Some(first) = chars.next() else {
+        return String::new();
+    };
     if first.is_lowercase() {
         let upper: String = first.to_uppercase().collect();
         format!("{upper}{}", chars.as_str())
@@ -234,7 +238,9 @@ pub fn to_camel_case(name: &str) -> String {
     }
 
     let mut chars = name.chars();
-    let first = chars.next().unwrap();
+    let Some(first) = chars.next() else {
+        return String::new();
+    };
     if first.is_uppercase() {
         let lower: String = first.to_lowercase().collect();
         format!("{lower}{}", chars.as_str())
@@ -262,9 +268,9 @@ pub fn deconflict_names(proposed: &mut [String], existing: &[String]) {
 
     for name in proposed.iter_mut() {
         let count = used.entry(name.clone()).or_insert(0);
-        *count += 1;
+        *count = count.saturating_add(1);
         if *count > 1 {
-            let mut suffix = *count;
+            let mut suffix: usize = *count;
             loop {
                 let candidate = format!("{name}_{suffix}");
                 if !used.contains_key(&candidate) {
@@ -272,7 +278,7 @@ pub fn deconflict_names(proposed: &mut [String], existing: &[String]) {
                     *name = candidate;
                     break;
                 }
-                suffix += 1;
+                suffix = suffix.saturating_add(1);
             }
         }
     }

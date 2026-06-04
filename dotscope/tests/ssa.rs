@@ -1,3 +1,12 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    missing_docs
+)]
+
 //! SSA (Static Single Assignment) integration tests.
 //!
 //! These tests verify the complete SSA pipeline using the public API:
@@ -15,8 +24,8 @@ use std::collections::HashMap;
 use common::{build_cfg, build_ssa, TestTypeProvider};
 use dotscope::{
     analysis::{
-        ConstValue, ControlFlowGraph, SsaConverter, SsaExceptionHandler, SsaFunction, SsaOp,
-        SsaVarId, SymbolicEvaluator, SymbolicExpr,
+        ConstValue, ControlFlowGraph, SsaConverter, SsaExceptionHandler, SsaExceptionHandlerCilExt,
+        SsaFunction, SsaOp, SsaVarId, SymbolicEvaluator, SymbolicExpr,
     },
     assembly::{decode_blocks, InstructionAssembler},
     metadata::{

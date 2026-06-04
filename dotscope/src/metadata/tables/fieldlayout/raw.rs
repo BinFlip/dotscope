@@ -174,8 +174,9 @@ impl TableRow for FieldLayoutRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* field_offset */ 4 +
-            /* field */        sizes.table_index_bytes(TableId::Field)
+            /* field_offset */ 4u8
+            /* field */        .saturating_add(sizes.table_index_bytes(TableId::Field))
+
         )
     }
 }

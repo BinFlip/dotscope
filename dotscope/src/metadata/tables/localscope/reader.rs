@@ -13,7 +13,7 @@ impl RowReadable for LocalScopeRaw {
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(LocalScopeRaw {
             rid,
-            token: Token::new(0x3200_0000 + rid),
+            token: Token::new(0x3200_0000u32.saturating_add(rid)),
             offset: *offset,
             method: read_le_at_dyn(data, offset, sizes.is_large(TableId::MethodDef))?,
             import_scope: read_le_at_dyn(data, offset, sizes.is_large(TableId::ImportScope))?,

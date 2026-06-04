@@ -103,7 +103,7 @@ impl NativeExportsBuilder {
     pub fn add_function(mut self, name: impl Into<String>, ordinal: u16, address: u32) -> Self {
         self.functions.push((name.into(), ordinal, address));
         if ordinal >= self.next_ordinal {
-            self.next_ordinal = ordinal + 1;
+            self.next_ordinal = ordinal.saturating_add(1);
         }
         self
     }
@@ -134,7 +134,7 @@ impl NativeExportsBuilder {
     pub fn add_function_auto(mut self, name: impl Into<String>, address: u32) -> Self {
         let ordinal = self.next_ordinal;
         self.functions.push((name.into(), ordinal, address));
-        self.next_ordinal += 1;
+        self.next_ordinal = self.next_ordinal.saturating_add(1);
         self
     }
 
@@ -165,7 +165,7 @@ impl NativeExportsBuilder {
     pub fn add_function_by_ordinal(mut self, ordinal: u16, address: u32) -> Self {
         self.ordinal_functions.push((ordinal, address));
         if ordinal >= self.next_ordinal {
-            self.next_ordinal = ordinal + 1;
+            self.next_ordinal = ordinal.saturating_add(1);
         }
         self
     }
@@ -195,7 +195,7 @@ impl NativeExportsBuilder {
     pub fn add_function_by_ordinal_auto(mut self, address: u32) -> Self {
         let ordinal = self.next_ordinal;
         self.ordinal_functions.push((ordinal, address));
-        self.next_ordinal += 1;
+        self.next_ordinal = self.next_ordinal.saturating_add(1);
         self
     }
 
@@ -232,7 +232,7 @@ impl NativeExportsBuilder {
     ) -> Self {
         self.forwarders.push((name.into(), ordinal, target.into()));
         if ordinal >= self.next_ordinal {
-            self.next_ordinal = ordinal + 1;
+            self.next_ordinal = ordinal.saturating_add(1);
         }
         self
     }
@@ -267,7 +267,7 @@ impl NativeExportsBuilder {
     ) -> Self {
         let ordinal = self.next_ordinal;
         self.forwarders.push((name.into(), ordinal, target.into()));
-        self.next_ordinal += 1;
+        self.next_ordinal = self.next_ordinal.saturating_add(1);
         self
     }
 

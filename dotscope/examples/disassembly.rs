@@ -23,8 +23,9 @@ use std::{env, path::Path};
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: {} <path-to-dotnet-assembly>", args[0]);
+    let prog = args.first().map_or("disassembly", String::as_str);
+    let Some(path_arg) = args.get(1) else {
+        eprintln!("Usage: {prog} <path-to-dotnet-assembly>");
         eprintln!();
         eprintln!("This example demonstrates IL disassembly and method analysis:");
         eprintln!("  • CIL instruction decoding with full operand support");
@@ -32,9 +33,9 @@ fn main() -> Result<()> {
         eprintln!("  • Exception handler examination");
         eprintln!("  • Stack and local variable analysis");
         return Ok(());
-    }
+    };
 
-    let path = Path::new(&args[1]);
+    let path = Path::new(path_arg);
     println!("⚙️  IL Disassembly analysis of: {}", path.display());
 
     let assembly = CilObject::from_path(path)?;
@@ -66,37 +67,39 @@ fn print_method_body_analysis(assembly: &CilObject) {
 
     for entry in methods.iter().take(20) {
         let method = entry.value();
-        stats.total_methods += 1;
+        stats.total_methods = stats.total_methods.saturating_add(1);
 
         if let Some(body) = method.body.get() {
-            stats.methods_with_body += 1;
-            stats.total_il_bytes += body.size_code;
+            stats.methods_with_body = stats.methods_with_body.saturating_add(1);
+            stats.total_il_bytes = stats.total_il_bytes.saturating_add(body.size_code);
 
             if body.max_stack > stats.max_stack_size {
                 stats.max_stack_size = body.max_stack;
             }
 
             if body.local_var_sig_token != 0 {
-                stats.methods_with_locals += 1;
+                stats.methods_with_locals = stats.methods_with_locals.saturating_add(1);
             }
 
             if !body.exception_handlers.is_empty() {
-                stats.methods_with_exceptions += 1;
-                stats.total_exception_handlers += body.exception_handlers.len();
+                stats.methods_with_exceptions = stats.methods_with_exceptions.saturating_add(1);
+                stats.total_exception_handlers = stats
+                    .total_exception_handlers
+                    .saturating_add(body.exception_handlers.len());
             }
 
             // Analyze method characteristics
             if body.is_init_local {
-                stats.init_locals += 1;
+                stats.init_locals = stats.init_locals.saturating_add(1);
             }
 
             if body.size_code < 64 {
-                stats.tiny_methods += 1;
+                stats.tiny_methods = stats.tiny_methods.saturating_add(1);
             } else {
-                stats.fat_methods += 1;
+                stats.fat_methods = stats.fat_methods.saturating_add(1);
             }
         } else {
-            stats.abstract_or_extern += 1;
+            stats.abstract_or_extern = stats.abstract_or_extern.saturating_add(1);
         }
     }
 
@@ -154,12 +157,12 @@ fn print_instruction_analysis(assembly: &CilObject) {
                 );
 
                 // Display actual disassembled instructions from blocks
-                let mut total_instructions = 0;
-                let mut block_count = 0;
+                let mut total_instructions: usize = 0;
+                let mut block_count: u64 = 0;
 
                 // Access blocks - blocks are automatically populated when method is loaded
                 for (block_id, block) in method.blocks() {
-                    block_count += 1;
+                    block_count = block_count.saturating_add(1);
                     if block_count <= 3 && !block.instructions.is_empty() {
                         println!(
                             "        Block {} (RVA: 0x{:X}, {} instructions):",
@@ -177,14 +180,17 @@ fn print_instruction_analysis(assembly: &CilObject) {
                                 );
 
                                 // Update instruction statistics
-                                instruction_stats.total_instructions += 1;
+                                instruction_stats.total_instructions =
+                                    instruction_stats.total_instructions.saturating_add(1);
                                 match instruction.flow_type {
                                     dotscope::assembly::FlowType::ConditionalBranch
                                     | dotscope::assembly::FlowType::UnconditionalBranch => {
-                                        instruction_stats.branch_instructions += 1;
+                                        instruction_stats.branch_instructions =
+                                            instruction_stats.branch_instructions.saturating_add(1);
                                     }
                                     dotscope::assembly::FlowType::Call => {
-                                        instruction_stats.call_instructions += 1;
+                                        instruction_stats.call_instructions =
+                                            instruction_stats.call_instructions.saturating_add(1);
                                     }
                                     _ => {}
                                 }
@@ -192,28 +198,34 @@ fn print_instruction_analysis(assembly: &CilObject) {
                                 if instruction.mnemonic.starts_with("ld")
                                     || instruction.mnemonic.starts_with("st")
                                 {
-                                    instruction_stats.load_store_instructions += 1;
+                                    instruction_stats.load_store_instructions =
+                                        instruction_stats.load_store_instructions.saturating_add(1);
                                 }
                             }
                         }
                         if block.instructions.len() > 5 {
                             println!(
                                 "          ... ({} more instructions)",
-                                block.instructions.len() - 5
+                                block.instructions.len().saturating_sub(5)
                             );
                         }
                     }
-                    total_instructions += block.instructions.len();
+                    total_instructions =
+                        total_instructions.saturating_add(block.instructions.len());
                 }
 
                 println!("        Basic blocks: {block_count}");
                 if block_count > 3 {
-                    println!("        ... ({} more blocks)", block_count - 3);
+                    println!(
+                        "        ... ({} more blocks)",
+                        block_count.saturating_sub(3)
+                    );
                 }
 
                 println!("        Total instructions: {total_instructions}");
 
-                instruction_stats.methods_analyzed += 1;
+                instruction_stats.methods_analyzed =
+                    instruction_stats.methods_analyzed.saturating_add(1);
             }
 
             if instruction_stats.methods_analyzed >= 3 {
@@ -256,18 +268,35 @@ fn print_exception_analysis(assembly: &CilObject) {
 
         if let Some(body) = method.body.get() {
             if !body.exception_handlers.is_empty() {
-                exception_stats.methods_with_handlers += 1;
+                exception_stats.methods_with_handlers =
+                    exception_stats.methods_with_handlers.saturating_add(1);
 
                 for handler in &body.exception_handlers {
-                    exception_stats.total_handlers += 1;
+                    exception_stats.total_handlers =
+                        exception_stats.total_handlers.saturating_add(1);
 
                     // Analyze handler types based on flags
                     match handler.flags {
-                        ExceptionHandlerFlags::EXCEPTION => exception_stats.catch_handlers += 1,
-                        ExceptionHandlerFlags::FILTER => exception_stats.filter_handlers += 1,
-                        ExceptionHandlerFlags::FINALLY => exception_stats.finally_handlers += 1,
-                        ExceptionHandlerFlags::FAULT => exception_stats.fault_handlers += 1,
-                        _ => exception_stats.unknown_handlers += 1,
+                        ExceptionHandlerFlags::EXCEPTION => {
+                            exception_stats.catch_handlers =
+                                exception_stats.catch_handlers.saturating_add(1)
+                        }
+                        ExceptionHandlerFlags::FILTER => {
+                            exception_stats.filter_handlers =
+                                exception_stats.filter_handlers.saturating_add(1)
+                        }
+                        ExceptionHandlerFlags::FINALLY => {
+                            exception_stats.finally_handlers =
+                                exception_stats.finally_handlers.saturating_add(1)
+                        }
+                        ExceptionHandlerFlags::FAULT => {
+                            exception_stats.fault_handlers =
+                                exception_stats.fault_handlers.saturating_add(1)
+                        }
+                        _ => {
+                            exception_stats.unknown_handlers =
+                                exception_stats.unknown_handlers.saturating_add(1)
+                        }
                     }
 
                     // Track protected region sizes
@@ -292,7 +321,7 @@ fn print_exception_analysis(assembly: &CilObject) {
                             i,
                             handler_type,
                             handler.try_offset,
-                            handler.try_offset + handler.try_length,
+                            handler.try_offset.saturating_add(handler.try_length),
                             handler.handler_offset
                         );
                     }
@@ -330,10 +359,10 @@ fn print_stack_analysis(assembly: &CilObject) {
         let method = entry.value();
 
         if let Some(body) = method.body.get() {
-            local_stats.methods_analyzed += 1;
+            local_stats.methods_analyzed = local_stats.methods_analyzed.saturating_add(1);
 
             if body.local_var_sig_token != 0 {
-                local_stats.methods_with_locals += 1;
+                local_stats.methods_with_locals = local_stats.methods_with_locals.saturating_add(1);
 
                 // In a real implementation, you would parse the local variable signature
                 // to determine the exact types and count of local variables
@@ -355,7 +384,8 @@ fn print_stack_analysis(assembly: &CilObject) {
 
             // Check init_locals flag
             if body.is_init_local {
-                local_stats.methods_with_init_locals += 1;
+                local_stats.methods_with_init_locals =
+                    local_stats.methods_with_init_locals.saturating_add(1);
             }
         }
     }

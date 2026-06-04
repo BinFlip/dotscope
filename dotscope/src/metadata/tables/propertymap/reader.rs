@@ -91,7 +91,7 @@ impl RowReadable for PropertyMapRaw {
 
         Ok(PropertyMapRaw {
             rid,
-            token: Token::new(0x1500_0000 + rid),
+            token: Token::new(0x1500_0000u32.saturating_add(rid)),
             offset: offset_org,
             parent,
             property_list,

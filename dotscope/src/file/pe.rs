@@ -38,7 +38,20 @@
 //! owned_pe.write_section_table(&mut buffer)?;
 //! ```
 
-use crate::{Error, Result};
+use crate::{
+    utils::{read_le_at, write_le_at},
+    Error, ParseFailure, ParseStage, Result,
+};
+
+#[inline]
+fn pe_invalid(field: &'static str, reason: String) -> Error {
+    ParseFailure::InvalidField {
+        stage: ParseStage::OptionalHeader,
+        field,
+        reason,
+    }
+    .into()
+}
 use std::collections::HashMap;
 use std::fmt;
 use std::io::Write;
@@ -216,7 +229,7 @@ pub mod constants {
     pub const CLR_MAJOR_RUNTIME_VERSION: u16 = 2;
 }
 
-use constants::{IMAGE_RESOURCE_DIRECTORY_SIZE, RESOURCE_DATA_ENTRY_SIZE, RESOURCE_ENTRY_SIZE};
+use constants::{IMAGE_RESOURCE_DIRECTORY_SIZE, RESOURCE_ENTRY_SIZE};
 
 /// Owned PE file representation that doesn't require borrowing from source data.
 ///
@@ -547,11 +560,17 @@ impl Pe {
             .transpose()?;
 
         if optional_header.is_none() {
-            return Err(malformed_error!("File does not have an OptionalHeader"));
+            return Err(pe_invalid(
+                "optional_header",
+                "PE file does not have an OptionalHeader".into(),
+            ));
         }
 
         if goblin_pe.image_base == 0 {
-            return Err(malformed_error!("PE has invalid zero image base"));
+            return Err(pe_invalid(
+                "image_base",
+                "PE has invalid zero image base".into(),
+            ));
         }
 
         let sections = goblin_pe
@@ -660,7 +679,8 @@ impl Pe {
             .as_ref()
             .map_or(0, |_| u64::from(self.coff_header.size_of_optional_header));
 
-        4 + CoffHeader::SIZE as u64 + optional_header_size
+        4u64.saturating_add(CoffHeader::SIZE as u64)
+            .saturating_add(optional_header_size)
     }
 
     /// Calculates the total size of all file headers (DOS header + PE headers).
@@ -672,7 +692,7 @@ impl Pe {
     /// Total size in bytes of DOS header + PE headers
     #[must_use]
     pub fn calculate_total_file_headers_size(&self) -> u64 {
-        DosHeader::SIZE as u64 + self.calculate_headers_size()
+        (DosHeader::SIZE as u64).saturating_add(self.calculate_headers_size())
     }
 
     /// Calculates the total size of all current sections' raw data.
@@ -808,8 +828,9 @@ impl Pe {
             );
             Ok(())
         } else {
-            Err(malformed_error!(
-                "Cannot update CLR data directory: PE has no optional header"
+            Err(pe_invalid(
+                "optional_header",
+                "cannot update CLR data directory: PE has no optional header".into(),
             ))
         }
     }
@@ -846,8 +867,9 @@ impl Pe {
             );
             Ok(())
         } else {
-            Err(malformed_error!(
-                "Cannot update data directory: PE has no optional header"
+            Err(pe_invalid(
+                "optional_header",
+                "cannot update data directory: PE has no optional header".into(),
             ))
         }
     }
@@ -869,8 +891,9 @@ impl Pe {
             optional_header.windows_fields.size_of_image = new_size;
             Ok(())
         } else {
-            Err(malformed_error!(
-                "Cannot update SizeOfImage: PE has no optional header"
+            Err(pe_invalid(
+                "optional_header",
+                "cannot update SizeOfImage: PE has no optional header".into(),
             ))
         }
     }
@@ -892,8 +915,9 @@ impl Pe {
             optional_header.windows_fields.size_of_headers = new_size;
             Ok(())
         } else {
-            Err(malformed_error!(
-                "Cannot update SizeOfHeaders: PE has no optional header"
+            Err(pe_invalid(
+                "optional_header",
+                "cannot update SizeOfHeaders: PE has no optional header".into(),
             ))
         }
     }
@@ -1194,10 +1218,12 @@ impl OptionalHeader {
             0x10b => false, // PE32
             0x20b => true,  // PE32+
             magic => {
-                return Err(malformed_error!(
-                    "Invalid PE optional header magic: 0x{:x} (expected 0x10b or 0x20b)",
-                    magic
-                ))
+                return Err(ParseFailure::BadMagic {
+                    stage: ParseStage::OptionalHeader,
+                    expected: 0x10b,
+                    found: u32::from(magic),
+                }
+                .into())
             }
         };
 
@@ -1225,17 +1251,29 @@ impl OptionalHeader {
     /// * `is_pe32_plus` - `true` for PE32+ (64-bit), `false` for PE32 (32-bit)
     #[must_use]
     pub const fn size_for_format(is_pe32_plus: bool) -> usize {
-        StandardFields::SIZE_FOR_FORMAT[is_pe32_plus as usize]
-            + WindowsFields::SIZE_FOR_FORMAT[is_pe32_plus as usize]
-            + DataDirectories::SIZE
+        let std_size = if is_pe32_plus {
+            StandardFields::SIZE_PE32_PLUS
+        } else {
+            StandardFields::SIZE_PE32
+        };
+        let win_size = if is_pe32_plus {
+            WindowsFields::SIZE_PE32_PLUS
+        } else {
+            WindowsFields::SIZE_PE32
+        };
+        std_size
+            .saturating_add(win_size)
+            .saturating_add(DataDirectories::SIZE)
     }
 }
 
 impl StandardFields {
-    /// Size of standard fields: [PE32, PE32+]
-    /// - PE32: 28 bytes (includes base_of_data)
-    /// - PE32+: 24 bytes (no base_of_data)
-    pub const SIZE_FOR_FORMAT: [usize; 2] = [28, 24];
+    /// Size of standard fields for PE32 (32-bit): 28 bytes (includes base_of_data).
+    pub const SIZE_PE32: usize = 28;
+    /// Size of standard fields for PE32+ (64-bit): 24 bytes (no base_of_data).
+    pub const SIZE_PE32_PLUS: usize = 24;
+    /// Size of standard fields, indexed by `is_pe32_plus as usize`.
+    pub const SIZE_FOR_FORMAT: [usize; 2] = [Self::SIZE_PE32, Self::SIZE_PE32_PLUS];
 
     fn from_goblin(goblin_sf: &goblin::pe::optional_header::StandardFields) -> Result<Self> {
         Ok(Self {
@@ -1243,14 +1281,14 @@ impl StandardFields {
             major_linker_version: goblin_sf.major_linker_version,
             minor_linker_version: goblin_sf.minor_linker_version,
             size_of_code: u32::try_from(goblin_sf.size_of_code)
-                .map_err(|_| malformed_error!("PE size_of_code value too large"))?,
+                .map_err(|_| pe_invalid("size_of_code", "value too large".into()))?,
             size_of_initialized_data: u32::try_from(goblin_sf.size_of_initialized_data)
-                .map_err(|_| malformed_error!("PE size_of_initialized_data value too large"))?,
+                .map_err(|_| pe_invalid("size_of_initialized_data", "value too large".into()))?,
             size_of_uninitialized_data: u32::try_from(goblin_sf.size_of_uninitialized_data)
-                .map_err(|_| malformed_error!("PE size_of_uninitialized_data value too large"))?,
+                .map_err(|_| pe_invalid("size_of_uninitialized_data", "value too large".into()))?,
             address_of_entry_point: goblin_sf.address_of_entry_point,
             base_of_code: u32::try_from(goblin_sf.base_of_code)
-                .map_err(|_| malformed_error!("PE base_of_code value too large"))?,
+                .map_err(|_| pe_invalid("base_of_code", "value too large".into()))?,
             base_of_data: if goblin_sf.magic == 0x10b {
                 Some(goblin_sf.base_of_data)
             } else {
@@ -1283,11 +1321,10 @@ impl StandardFields {
             if let Some(base_of_data) = self.base_of_data {
                 writer.write_all(&base_of_data.to_le_bytes())?;
             } else {
-                return Err(Error::Malformed {
-                    message: "PE32 file missing base_of_data field".to_string(),
-                    file: file!(),
-                    line: line!(),
-                });
+                return Err(pe_invalid(
+                    "base_of_data",
+                    "PE32 file missing base_of_data field".into(),
+                ));
             }
         }
 
@@ -1296,10 +1333,12 @@ impl StandardFields {
 }
 
 impl WindowsFields {
-    /// Size of Windows-specific fields: [PE32, PE32+]
-    /// - PE32: 68 bytes (4-byte image_base and stack/heap sizes)
-    /// - PE32+: 88 bytes (8-byte image_base and stack/heap sizes)
-    pub const SIZE_FOR_FORMAT: [usize; 2] = [68, 88];
+    /// Size of Windows-specific fields for PE32 (32-bit): 68 bytes (4-byte image_base and stack/heap sizes).
+    pub const SIZE_PE32: usize = 68;
+    /// Size of Windows-specific fields for PE32+ (64-bit): 88 bytes (8-byte image_base and stack/heap sizes).
+    pub const SIZE_PE32_PLUS: usize = 88;
+    /// Size of Windows-specific fields, indexed by `is_pe32_plus as usize`.
+    pub const SIZE_FOR_FORMAT: [usize; 2] = [Self::SIZE_PE32, Self::SIZE_PE32_PLUS];
 
     fn from_goblin(goblin_wf: &goblin::pe::optional_header::WindowsFields) -> Self {
         Self {
@@ -1344,7 +1383,7 @@ impl WindowsFields {
         } else {
             writer.write_all(
                 &u32::try_from(self.image_base)
-                    .map_err(|_| malformed_error!("Image base exceeds u32 range"))?
+                    .map_err(|_| pe_invalid("image_base", "exceeds u32 range".into()))?
                     .to_le_bytes(),
             )?;
         }
@@ -1375,22 +1414,22 @@ impl WindowsFields {
             // PE32: 4-byte fields
             writer.write_all(
                 &u32::try_from(self.size_of_stack_reserve)
-                    .map_err(|_| malformed_error!("Stack reserve size exceeds u32 range"))?
+                    .map_err(|_| pe_invalid("stack_reserve_size", "exceeds u32 range".into()))?
                     .to_le_bytes(),
             )?;
             writer.write_all(
                 &u32::try_from(self.size_of_stack_commit)
-                    .map_err(|_| malformed_error!("Stack commit size exceeds u32 range"))?
+                    .map_err(|_| pe_invalid("stack_commit_size", "exceeds u32 range".into()))?
                     .to_le_bytes(),
             )?;
             writer.write_all(
                 &u32::try_from(self.size_of_heap_reserve)
-                    .map_err(|_| malformed_error!("Heap reserve size exceeds u32 range"))?
+                    .map_err(|_| pe_invalid("heap_reserve_size", "exceeds u32 range".into()))?
                     .to_le_bytes(),
             )?;
             writer.write_all(
                 &u32::try_from(self.size_of_heap_commit)
-                    .map_err(|_| malformed_error!("Heap commit size exceeds u32 range"))?
+                    .map_err(|_| pe_invalid("heap_commit_size", "exceeds u32 range".into()))?
                     .to_le_bytes(),
             )?;
         }
@@ -1574,10 +1613,10 @@ impl SectionTable {
 
     fn from_goblin(goblin_section: &goblin::pe::section_table::SectionTable) -> Result<Self> {
         let name = std::str::from_utf8(&goblin_section.name)
-            .map_err(|_| Error::Malformed {
-                message: "Invalid section name".to_string(),
-                file: file!(),
-                line: line!(),
+            .map_err(|_| ParseFailure::InvalidField {
+                stage: ParseStage::SectionTable,
+                field: "section_name",
+                reason: "invalid UTF-8 in section name".into(),
             })?
             .trim_end_matches('\0')
             .to_string();
@@ -1605,7 +1644,7 @@ impl SectionTable {
     /// Total size in bytes for the section table
     #[must_use]
     pub fn calculate_table_size(section_count: usize) -> u64 {
-        (section_count * Self::SIZE) as u64
+        section_count.saturating_mul(Self::SIZE) as u64
     }
 
     /// Creates a SectionTable from layout information.
@@ -1635,9 +1674,9 @@ impl SectionTable {
         characteristics: u32,
     ) -> Result<Self> {
         let size_of_raw_data = u32::try_from(file_size)
-            .map_err(|_| malformed_error!("File size exceeds u32 range: {}", file_size))?;
+            .map_err(|_| pe_invalid("file_size", format!("exceeds u32 range: {file_size}")))?;
         let pointer_to_raw_data = u32::try_from(file_offset)
-            .map_err(|_| malformed_error!("File offset exceeds u32 range: {}", file_offset))?;
+            .map_err(|_| pe_invalid("file_offset", format!("exceeds u32 range: {file_offset}")))?;
 
         Ok(Self {
             name,
@@ -1673,9 +1712,9 @@ impl SectionTable {
     /// Returns an error if the file offset or size exceed u32 range
     pub fn update_file_location(&mut self, file_offset: u64, file_size: u64) -> Result<()> {
         self.pointer_to_raw_data = u32::try_from(file_offset)
-            .map_err(|_| malformed_error!("File offset exceeds u32 range: {}", file_offset))?;
+            .map_err(|_| pe_invalid("file_offset", format!("exceeds u32 range: {file_offset}")))?;
         self.size_of_raw_data = u32::try_from(file_size)
-            .map_err(|_| malformed_error!("File size exceeds u32 range: {}", file_size))?;
+            .map_err(|_| pe_invalid("file_size", format!("exceeds u32 range: {file_size}")))?;
         Ok(())
     }
 
@@ -1699,11 +1738,15 @@ impl SectionTable {
     /// Returns an error if the name exceeds 8 bytes.
     pub fn set_name(&mut self, name: String) -> Result<()> {
         if name.len() > 8 {
-            return Err(malformed_error!(
-                "Section name '{}' exceeds 8-byte PE limit ({} bytes)",
-                name,
-                name.len()
-            ));
+            return Err(ParseFailure::InvalidField {
+                stage: ParseStage::SectionTable,
+                field: "section_name",
+                reason: format!(
+                    "section name '{name}' exceeds 8-byte PE limit ({} bytes)",
+                    name.len()
+                ),
+            }
+            .into());
         }
         self.name = name;
         Ok(())
@@ -1727,7 +1770,9 @@ impl SectionTable {
         let mut name_bytes = [0u8; 8];
         let name_str = self.name.as_bytes();
         let copy_len = std::cmp::min(name_str.len(), 8);
-        name_bytes[..copy_len].copy_from_slice(&name_str[..copy_len]);
+        if let (Some(dst), Some(src)) = (name_bytes.get_mut(..copy_len), name_str.get(..copy_len)) {
+            dst.copy_from_slice(src);
+        }
         writer.write_all(&name_bytes)?;
 
         writer.write_all(&self.virtual_size.to_le_bytes())?;
@@ -1759,10 +1804,10 @@ impl Import {
                 None
             },
             rva: u32::try_from(goblin_import.rva)
-                .map_err(|_| malformed_error!("PE import RVA value too large"))?,
+                .map_err(|_| pe_invalid("import_rva", "value too large".into()))?,
             hint: 0, // Not available from goblin
             ilt_value: u64::try_from(goblin_import.offset)
-                .map_err(|_| malformed_error!("PE import offset value too large"))?,
+                .map_err(|_| pe_invalid("import_offset", "value too large".into()))?,
         })
     }
 
@@ -1784,12 +1829,12 @@ impl Export {
         Ok(Self {
             name: goblin_export.name.map(ToString::to_string),
             rva: u32::try_from(goblin_export.rva)
-                .map_err(|_| malformed_error!("PE export RVA value too large"))?,
+                .map_err(|_| pe_invalid("export_rva", "value too large".into()))?,
             offset: goblin_export
                 .offset
                 .map(|o| {
                     u32::try_from(o)
-                        .map_err(|_| malformed_error!("PE export offset value too large"))
+                        .map_err(|_| pe_invalid("export_offset", "value too large".into()))
                 })
                 .transpose()?,
         })
@@ -1831,55 +1876,32 @@ pub struct ImageResourceDirectory {
 impl ImageResourceDirectory {
     /// Reads an `ImageResourceDirectory` from a byte slice at the given offset.
     pub fn read_from(data: &[u8], offset: usize) -> Result<Self> {
-        if offset + IMAGE_RESOURCE_DIRECTORY_SIZE > data.len() {
-            return Err(malformed_error!(
-                "Resource directory at offset {:#x} exceeds bounds",
-                offset
-            ));
-        }
-
+        let mut pos = offset;
         Ok(Self {
-            characteristics: u32::from_le_bytes([
-                data[offset],
-                data[offset + 1],
-                data[offset + 2],
-                data[offset + 3],
-            ]),
-            time_date_stamp: u32::from_le_bytes([
-                data[offset + 4],
-                data[offset + 5],
-                data[offset + 6],
-                data[offset + 7],
-            ]),
-            major_version: u16::from_le_bytes([data[offset + 8], data[offset + 9]]),
-            minor_version: u16::from_le_bytes([data[offset + 10], data[offset + 11]]),
-            number_of_named_entries: u16::from_le_bytes([data[offset + 12], data[offset + 13]]),
-            number_of_id_entries: u16::from_le_bytes([data[offset + 14], data[offset + 15]]),
+            characteristics: read_le_at::<u32>(data, &mut pos)?,
+            time_date_stamp: read_le_at::<u32>(data, &mut pos)?,
+            major_version: read_le_at::<u16>(data, &mut pos)?,
+            minor_version: read_le_at::<u16>(data, &mut pos)?,
+            number_of_named_entries: read_le_at::<u16>(data, &mut pos)?,
+            number_of_id_entries: read_le_at::<u16>(data, &mut pos)?,
         })
     }
 
     /// Returns the total number of entries (named + ID).
     #[inline]
     pub fn entry_count(&self) -> usize {
-        self.number_of_named_entries as usize + self.number_of_id_entries as usize
+        (self.number_of_named_entries as usize).saturating_add(self.number_of_id_entries as usize)
     }
 
     /// Writes this `ImageResourceDirectory` to a byte slice at the given offset.
     pub fn write_to(&self, data: &mut [u8], offset: usize) -> Result<()> {
-        if offset + IMAGE_RESOURCE_DIRECTORY_SIZE > data.len() {
-            return Err(malformed_error!(
-                "Resource directory at offset {:#x} exceeds bounds for write",
-                offset
-            ));
-        }
-
-        data[offset..offset + 4].copy_from_slice(&self.characteristics.to_le_bytes());
-        data[offset + 4..offset + 8].copy_from_slice(&self.time_date_stamp.to_le_bytes());
-        data[offset + 8..offset + 10].copy_from_slice(&self.major_version.to_le_bytes());
-        data[offset + 10..offset + 12].copy_from_slice(&self.minor_version.to_le_bytes());
-        data[offset + 12..offset + 14].copy_from_slice(&self.number_of_named_entries.to_le_bytes());
-        data[offset + 14..offset + 16].copy_from_slice(&self.number_of_id_entries.to_le_bytes());
-
+        let mut pos = offset;
+        write_le_at::<u32>(data, &mut pos, self.characteristics)?;
+        write_le_at::<u32>(data, &mut pos, self.time_date_stamp)?;
+        write_le_at::<u16>(data, &mut pos, self.major_version)?;
+        write_le_at::<u16>(data, &mut pos, self.minor_version)?;
+        write_le_at::<u16>(data, &mut pos, self.number_of_named_entries)?;
+        write_le_at::<u16>(data, &mut pos, self.number_of_id_entries)?;
         Ok(())
     }
 }
@@ -1905,26 +1927,10 @@ pub struct ResourceEntry {
 impl ResourceEntry {
     /// Reads a `ResourceEntry` from a byte slice at the given offset.
     pub fn read_from(data: &[u8], offset: usize) -> Result<Self> {
-        if offset + RESOURCE_ENTRY_SIZE > data.len() {
-            return Err(malformed_error!(
-                "Resource entry at offset {:#x} exceeds bounds",
-                offset
-            ));
-        }
-
+        let mut pos = offset;
         Ok(Self {
-            name_or_id: u32::from_le_bytes([
-                data[offset],
-                data[offset + 1],
-                data[offset + 2],
-                data[offset + 3],
-            ]),
-            offset_to_data_or_directory: u32::from_le_bytes([
-                data[offset + 4],
-                data[offset + 5],
-                data[offset + 6],
-                data[offset + 7],
-            ]),
+            name_or_id: read_le_at::<u32>(data, &mut pos)?,
+            offset_to_data_or_directory: read_le_at::<u32>(data, &mut pos)?,
         })
     }
 
@@ -1944,17 +1950,9 @@ impl ResourceEntry {
 
     /// Writes this `ResourceEntry` to a byte slice at the given offset.
     pub fn write_to(self, data: &mut [u8], offset: usize) -> Result<()> {
-        if offset + RESOURCE_ENTRY_SIZE > data.len() {
-            return Err(malformed_error!(
-                "Resource entry at offset {:#x} exceeds bounds for write",
-                offset
-            ));
-        }
-
-        data[offset..offset + 4].copy_from_slice(&self.name_or_id.to_le_bytes());
-        data[offset + 4..offset + 8]
-            .copy_from_slice(&self.offset_to_data_or_directory.to_le_bytes());
-
+        let mut pos = offset;
+        write_le_at::<u32>(data, &mut pos, self.name_or_id)?;
+        write_le_at::<u32>(data, &mut pos, self.offset_to_data_or_directory)?;
         Ok(())
     }
 }
@@ -1986,60 +1984,22 @@ pub struct ResourceDataEntry {
 impl ResourceDataEntry {
     /// Reads a `ResourceDataEntry` from a byte slice at the given offset.
     pub fn read_from(data: &[u8], offset: usize) -> Result<Self> {
-        if offset + RESOURCE_DATA_ENTRY_SIZE > data.len() {
-            return Err(malformed_error!(
-                "Resource data entry at offset {:#x} exceeds bounds",
-                offset
-            ));
-        }
-
+        let mut pos = offset;
         Ok(Self {
-            offset_to_data: u32::from_le_bytes([
-                data[offset],
-                data[offset + 1],
-                data[offset + 2],
-                data[offset + 3],
-            ]),
-            size: u32::from_le_bytes([
-                data[offset + 4],
-                data[offset + 5],
-                data[offset + 6],
-                data[offset + 7],
-            ]),
-            code_page: u32::from_le_bytes([
-                data[offset + 8],
-                data[offset + 9],
-                data[offset + 10],
-                data[offset + 11],
-            ]),
-            reserved: u32::from_le_bytes([
-                data[offset + 12],
-                data[offset + 13],
-                data[offset + 14],
-                data[offset + 15],
-            ]),
+            offset_to_data: read_le_at::<u32>(data, &mut pos)?,
+            size: read_le_at::<u32>(data, &mut pos)?,
+            code_page: read_le_at::<u32>(data, &mut pos)?,
+            reserved: read_le_at::<u32>(data, &mut pos)?,
         })
     }
 
     /// Writes this `ResourceDataEntry` to a byte slice at the given offset.
     pub fn write_to(&self, data: &mut [u8], offset: usize) -> Result<()> {
-        if offset + RESOURCE_DATA_ENTRY_SIZE > data.len() {
-            return Err(malformed_error!(
-                "Resource data entry at offset {:#x} exceeds bounds",
-                offset
-            ));
-        }
-
-        let rva_bytes = self.offset_to_data.to_le_bytes();
-        let size_bytes = self.size.to_le_bytes();
-        let code_page_bytes = self.code_page.to_le_bytes();
-        let reserved_bytes = self.reserved.to_le_bytes();
-
-        data[offset..offset + 4].copy_from_slice(&rva_bytes);
-        data[offset + 4..offset + 8].copy_from_slice(&size_bytes);
-        data[offset + 8..offset + 12].copy_from_slice(&code_page_bytes);
-        data[offset + 12..offset + 16].copy_from_slice(&reserved_bytes);
-
+        let mut pos = offset;
+        write_le_at::<u32>(data, &mut pos, self.offset_to_data)?;
+        write_le_at::<u32>(data, &mut pos, self.size)?;
+        write_le_at::<u32>(data, &mut pos, self.code_page)?;
+        write_le_at::<u32>(data, &mut pos, self.reserved)?;
         Ok(())
     }
 }
@@ -2079,7 +2039,15 @@ pub fn relocate_resource_section(data: &mut [u8], old_rva: u32, new_rva: u32) ->
         return Ok(()); // No relocation needed
     }
 
-    let delta = i64::from(new_rva) - i64::from(old_rva);
+    // i64 has plenty of headroom for u32 - u32; checked_sub is overkill but
+    // satisfies clippy's arithmetic_side_effects lint.
+    let delta = i64::from(new_rva)
+        .checked_sub(i64::from(old_rva))
+        .ok_or_else(|| ParseFailure::InvalidField {
+            stage: ParseStage::Resources,
+            field: "rva_delta",
+            reason: "resource RVA delta overflow".into(),
+        })?;
 
     // Process the root directory at offset 0
     relocate_resource_directory(data, 0, delta)
@@ -2089,41 +2057,45 @@ pub fn relocate_resource_section(data: &mut [u8], old_rva: u32, new_rva: u32) ->
 fn relocate_resource_directory(data: &mut [u8], offset: usize, delta: i64) -> Result<()> {
     // Read the directory header
     let dir = ImageResourceDirectory::read_from(data, offset)?;
-    let entries_offset = offset + IMAGE_RESOURCE_DIRECTORY_SIZE;
+    let res_invalid = |field: &'static str, reason: String| ParseFailure::InvalidField {
+        stage: ParseStage::Resources,
+        field,
+        reason,
+    };
+    let entries_offset = offset
+        .checked_add(IMAGE_RESOURCE_DIRECTORY_SIZE)
+        .ok_or_else(|| res_invalid("entries_offset", "directory entries offset overflow".into()))?;
 
     // Process each entry
     for i in 0..dir.entry_count() {
-        let entry_offset = entries_offset + i * RESOURCE_ENTRY_SIZE;
+        let scaled = i
+            .checked_mul(RESOURCE_ENTRY_SIZE)
+            .ok_or_else(|| res_invalid("entry_index", "entry index overflow".into()))?;
+        let entry_offset = entries_offset
+            .checked_add(scaled)
+            .ok_or_else(|| res_invalid("entry_offset", "entry offset overflow".into()))?;
         let entry = ResourceEntry::read_from(data, entry_offset)?;
 
         if entry.is_directory() {
             // Entry points to another directory - recurse
             relocate_resource_directory(data, entry.target_offset(), delta)?;
         } else {
-            // Entry points to a ResourceDataEntry - adjust the RVA in-place
-            // The RVA is the first 4 bytes of the ResourceDataEntry structure
+            // Entry points to a ResourceDataEntry - adjust the RVA in-place.
+            // The RVA is the first 4 bytes of the ResourceDataEntry structure.
             let data_entry_offset = entry.target_offset();
-            if data_entry_offset + 4 > data.len() {
-                return Err(malformed_error!(
-                    "Resource data entry at offset {:#x} exceeds bounds",
-                    data_entry_offset
-                ));
-            }
-            let old_data_rva = u32::from_le_bytes([
-                data[data_entry_offset],
-                data[data_entry_offset + 1],
-                data[data_entry_offset + 2],
-                data[data_entry_offset + 3],
-            ]);
-            let new_data_rva = u32::try_from(i64::from(old_data_rva) + delta).map_err(|_| {
-                malformed_error!(
-                    "Resource RVA relocation overflow: old_rva={:#x}, delta={}",
-                    old_data_rva,
-                    delta
-                )
-            })?;
-            data[data_entry_offset..data_entry_offset + 4]
-                .copy_from_slice(&new_data_rva.to_le_bytes());
+            let mut pos = data_entry_offset;
+            let old_data_rva: u32 = read_le_at(data, &mut pos)?;
+            let new_data_rva = u32::try_from(i64::from(old_data_rva).saturating_add(delta))
+                .map_err(|_| {
+                    res_invalid(
+                        "rva",
+                        format!(
+                            "RVA relocation overflow: old_rva={old_data_rva:#x}, delta={delta}",
+                        ),
+                    )
+                })?;
+            let mut pos = data_entry_offset;
+            write_le_at::<u32>(data, &mut pos, new_data_rva)?;
         }
     }
 

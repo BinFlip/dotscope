@@ -147,7 +147,7 @@ impl DeobfuscationEngine {
         let errors: Vec<(Token, Error)> = method_tokens
             .par_iter()
             .filter_map(|&method_token| {
-                let method = assembly.method(&method_token)?;
+                let method = assembly.method(&method_token).ok()?;
                 match method.ssa(assembly) {
                     Ok(ssa) => {
                         ctx.set_ssa(method_token, ssa);
@@ -298,8 +298,8 @@ impl DeobfuscationEngine {
                 if is_impure {
                     for &var in &uses {
                         if let Some(param_idx) = ssa.is_parameter_variable(var) {
-                            if param_idx < param_count {
-                                pure_only[param_idx] = false;
+                            if let Some(slot) = pure_only.get_mut(param_idx) {
+                                *slot = false;
                             }
                         }
                     }
@@ -309,7 +309,7 @@ impl DeobfuscationEngine {
 
         // Finalize pure_usage_only
         for (i, summary) in summaries.iter_mut().enumerate() {
-            summary.pure_usage_only = pure_only[i] && summary.is_used;
+            summary.pure_usage_only = pure_only.get(i).copied().unwrap_or(false) && summary.is_used;
         }
 
         summaries

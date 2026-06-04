@@ -228,7 +228,9 @@ fn get_effective_method_rva(assembly: &CilAssembly, rid: u32, original_rva: u32)
             }
             TableModifications::Replaced(rows) => {
                 // Full replacement - find the row by index (RID - 1)
-                if let Some(TableDataOwned::MethodDef(row)) = rows.get((rid - 1) as usize) {
+                if let Some(TableDataOwned::MethodDef(row)) =
+                    rows.get(rid.saturating_sub(1) as usize)
+                {
                     return row.rva;
                 }
             }
@@ -255,13 +257,19 @@ fn scan_method_body_bytes(data: &[u8], base_rva: usize, referenced: &mut HashSet
 
     // Get the code bytes (after the header)
     let code_start = body.size_header;
-    let code_end = code_start + body.size_code;
+    let Some(code_end) = code_start.checked_add(body.size_code) else {
+        return;
+    };
     if code_end > data.len() {
         return;
     }
 
-    let code_data = &data[code_start..code_end];
-    let code_rva = base_rva + body.size_header;
+    let Some(code_data) = data.get(code_start..code_end) else {
+        return;
+    };
+    let Some(code_rva) = base_rva.checked_add(body.size_header) else {
+        return;
+    };
 
     // Helper: extract token operands from decoded blocks
     let collect = |blocks: &[BasicBlock], out: &mut HashSet<Token>| {
@@ -287,7 +295,9 @@ fn scan_method_body_bytes(data: &[u8], base_rva: usize, referenced: &mut HashSet
     for handler in &body.exception_handlers {
         let h_offset = handler.handler_offset as usize;
         if h_offset < code_data.len() {
-            let h_rva = code_rva + h_offset;
+            let Some(h_rva) = code_rva.checked_add(h_offset) else {
+                continue;
+            };
             if let Ok(blocks) = decode_blocks(code_data, h_offset, h_rva, None) {
                 collect(&blocks, referenced);
             }

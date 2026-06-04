@@ -66,12 +66,13 @@
 use crate::{
     metadata::{
         tables::TableId,
+        token::Token,
         validation::{
             scanner::{HeapSizes, ReferenceScanner},
             ScannerStatistics,
         },
     },
-    Error, Result,
+    Error, HeapKind, ParseFailure, Result,
 };
 
 /// Shared schema validation utilities.
@@ -334,19 +335,26 @@ impl<'a> SchemaValidator<'a> {
         // The exact decoding depends on the specific coded index type
         // This is a simplified validation - real implementation would decode properly
         let table_bits = allowed_tables.len().next_power_of_two().trailing_zeros();
-        let table_index = coded_index & ((1 << table_bits) - 1);
-        let rid = coded_index >> table_bits;
+        let mask = 1u32.checked_shl(table_bits).unwrap_or(0).saturating_sub(1);
+        let table_index = coded_index & mask;
+        let rid = coded_index.checked_shr(table_bits).unwrap_or(0);
 
         // Validate table index is within allowed range
         if (table_index as usize) >= allowed_tables.len() {
             return Err(Error::InvalidToken {
-                token: crate::metadata::token::Token::new(coded_index),
+                token: Token::new(coded_index),
                 message: format!("Table index {table_index} not in allowed range"),
             });
         }
 
         // Validate RID for the decoded table
-        let table_id = allowed_tables[table_index as usize];
+        let table_id =
+            *allowed_tables
+                .get(table_index as usize)
+                .ok_or_else(|| Error::InvalidToken {
+                    token: Token::new(coded_index),
+                    message: format!("Table index {table_index} not in allowed range"),
+                })?;
         self.validate_rid(table_id, rid)
     }
 
@@ -417,10 +425,10 @@ impl<'a> SchemaValidator<'a> {
         let max_index = guid_heap_size / 16; // Each GUID is 16 bytes
 
         if index > max_index {
-            return Err(Error::HeapBoundsError {
-                heap: "guids".to_string(),
+            return Err(Error::Parse(ParseFailure::HeapOutOfBounds {
+                heap: HeapKind::Guid,
                 index,
-            });
+            }));
         }
 
         Ok(())

@@ -319,7 +319,8 @@ impl LoadedImage {
     /// ```
     #[must_use]
     pub fn entry_point_va(&self) -> Option<u64> {
-        self.entry_point.map(|rva| self.base_address + rva)
+        self.entry_point
+            .map(|rva| self.base_address.saturating_add(rva))
     }
 
     /// Converts a Relative Virtual Address (RVA) to an absolute virtual address.
@@ -344,7 +345,7 @@ impl LoadedImage {
     /// ```
     #[must_use]
     pub fn rva_to_va(&self, rva: u32) -> u64 {
-        self.base_address + u64::from(rva)
+        self.base_address.saturating_add(u64::from(rva))
     }
 
     /// Checks whether an RVA falls within the bounds of this image.
@@ -392,7 +393,10 @@ impl LoadedImage {
     #[must_use]
     pub fn section_for_rva(&self, rva: u32) -> Option<&LoadedSection> {
         self.sections.iter().find(|s| {
-            rva >= s.virtual_address && rva < s.virtual_address + s.virtual_size.max(s.raw_size)
+            rva >= s.virtual_address
+                && rva
+                    < s.virtual_address
+                        .saturating_add(s.virtual_size.max(s.raw_size))
         })
     }
 
@@ -692,7 +696,11 @@ impl PeLoader {
             .optional_header
             .map_or(0x200, |oh| oh.windows_fields.size_of_headers as usize);
         if headers_size <= pe_bytes.len() && headers_size <= image_data.len() {
-            image_data[..headers_size].copy_from_slice(&pe_bytes[..headers_size]);
+            let dst = image_data
+                .get_mut(..headers_size)
+                .ok_or(out_of_bounds_error!())?;
+            let src = pe_bytes.get(..headers_size).ok_or(out_of_bounds_error!())?;
+            dst.copy_from_slice(src);
         }
 
         // Map each section
@@ -730,11 +738,21 @@ impl PeLoader {
             let dest_offset = virtual_address as usize;
             let copy_size = raw_size.min(virtual_size) as usize;
 
-            if raw_offset + copy_size <= pe_bytes.len()
-                && dest_offset + copy_size <= image_data.len()
-            {
-                image_data[dest_offset..dest_offset + copy_size]
-                    .copy_from_slice(&pe_bytes[raw_offset..raw_offset + copy_size]);
+            let raw_end = raw_offset
+                .checked_add(copy_size)
+                .ok_or_else(|| malformed_error!("PE section raw range overflow"))?;
+            let dest_end = dest_offset
+                .checked_add(copy_size)
+                .ok_or_else(|| malformed_error!("PE section virtual range overflow"))?;
+
+            if raw_end <= pe_bytes.len() && dest_end <= image_data.len() {
+                let dst = image_data
+                    .get_mut(dest_offset..dest_end)
+                    .ok_or(out_of_bounds_error!())?;
+                let src = pe_bytes
+                    .get(raw_offset..raw_end)
+                    .ok_or(out_of_bounds_error!())?;
+                dst.copy_from_slice(src);
             }
 
             let section_protection = if self.config.apply_permissions {
@@ -767,7 +785,10 @@ impl PeLoader {
         }
 
         // Apply relocations if loading at a non-preferred base
-        let delta = base_address.cast_signed() - preferred_base.cast_signed();
+        let delta = base_address
+            .cast_signed()
+            .checked_sub(preferred_base.cast_signed())
+            .ok_or_else(|| malformed_error!("PE relocation delta overflow"))?;
         if delta != 0 && self.config.apply_relocations {
             Self::apply_relocations(&pe, &mut image_data, delta, is_64_bit)?;
         }
@@ -906,7 +927,10 @@ impl PeLoader {
         let reloc_size = reloc_dir.size as usize;
 
         // Ensure relocation data is within bounds
-        if reloc_rva + reloc_size > image_data.len() {
+        let end = reloc_rva
+            .checked_add(reloc_size)
+            .ok_or_else(|| malformed_error!("PE relocation directory range overflow"))?;
+        if end > image_data.len() {
             return Err(Error::Other(
                 "Relocation directory extends beyond image bounds".to_string(),
             ));
@@ -914,77 +938,112 @@ impl PeLoader {
 
         // Process relocation blocks
         let mut offset = reloc_rva;
-        let end = reloc_rva + reloc_size;
 
-        while offset + 8 <= end {
+        while offset.checked_add(8).is_some_and(|next| next <= end) {
             // Read block header
-            let page_rva = u32::from_le_bytes([
-                image_data[offset],
-                image_data[offset + 1],
-                image_data[offset + 2],
-                image_data[offset + 3],
-            ]) as usize;
-
-            let block_size = u32::from_le_bytes([
-                image_data[offset + 4],
-                image_data[offset + 5],
-                image_data[offset + 6],
-                image_data[offset + 7],
-            ]) as usize;
+            let header_end = offset
+                .checked_add(8)
+                .ok_or_else(|| malformed_error!("PE relocation block header overflow"))?;
+            let header_slice = image_data
+                .get(offset..header_end)
+                .ok_or(out_of_bounds_error!())?;
+            let page_rva_bytes = header_slice.get(0..4).ok_or(out_of_bounds_error!())?;
+            let block_size_bytes = header_slice.get(4..8).ok_or(out_of_bounds_error!())?;
+            let page_rva = u32::from_le_bytes(
+                page_rva_bytes
+                    .try_into()
+                    .map_err(|_| out_of_bounds_error!())?,
+            ) as usize;
+            let block_size = u32::from_le_bytes(
+                block_size_bytes
+                    .try_into()
+                    .map_err(|_| out_of_bounds_error!())?,
+            ) as usize;
 
             // Validate block size
-            if block_size < 8 || offset + block_size > end {
+            let block_end = match offset.checked_add(block_size) {
+                Some(v) => v,
+                None => break,
+            };
+            if block_size < 8 || block_end > end {
                 break;
             }
 
             // Process entries in this block
-            let entry_count = (block_size - 8) / 2;
+            let entry_count = (block_size.saturating_sub(8)) / 2;
             for i in 0..entry_count {
-                let entry_offset = offset + 8 + i * 2;
-                if entry_offset + 2 > image_data.len() {
+                let entry_offset = match offset
+                    .checked_add(8)
+                    .and_then(|base| i.checked_mul(2).and_then(|delta| base.checked_add(delta)))
+                {
+                    Some(v) => v,
+                    None => break,
+                };
+                let entry_end = match entry_offset.checked_add(2) {
+                    Some(v) => v,
+                    None => break,
+                };
+                if entry_end > image_data.len() {
                     break;
                 }
 
+                let entry_bytes = image_data
+                    .get(entry_offset..entry_end)
+                    .ok_or(out_of_bounds_error!())?;
                 let entry =
-                    u16::from_le_bytes([image_data[entry_offset], image_data[entry_offset + 1]]);
+                    u16::from_le_bytes(entry_bytes.try_into().map_err(|_| out_of_bounds_error!())?);
 
                 let reloc_type = entry >> 12;
                 let reloc_offset = (entry & 0x0FFF) as usize;
-                let target_offset = page_rva + reloc_offset;
+                let target_offset = match page_rva.checked_add(reloc_offset) {
+                    Some(v) => v,
+                    None => break,
+                };
 
                 match reloc_type {
                     // 32-bit fixup
                     reloc_type::IMAGE_REL_BASED_HIGHLOW
-                        if target_offset + 4 <= image_data.len() =>
+                        if target_offset
+                            .checked_add(4)
+                            .is_some_and(|t| t <= image_data.len()) =>
                     {
-                        let value = u32::from_le_bytes([
-                            image_data[target_offset],
-                            image_data[target_offset + 1],
-                            image_data[target_offset + 2],
-                            image_data[target_offset + 3],
-                        ]);
+                        let target_end = target_offset
+                            .checked_add(4)
+                            .ok_or_else(|| malformed_error!("PE reloc target overflow"))?;
+                        let val_slice = image_data
+                            .get(target_offset..target_end)
+                            .ok_or(out_of_bounds_error!())?;
+                        let value = u32::from_le_bytes(
+                            val_slice.try_into().map_err(|_| out_of_bounds_error!())?,
+                        );
                         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                        let new_value = (i64::from(value) + delta) as u32;
-                        image_data[target_offset..target_offset + 4]
-                            .copy_from_slice(&new_value.to_le_bytes());
+                        let new_value = i64::from(value).wrapping_add(delta) as u32;
+                        let dst = image_data
+                            .get_mut(target_offset..target_end)
+                            .ok_or(out_of_bounds_error!())?;
+                        dst.copy_from_slice(&new_value.to_le_bytes());
                     }
                     // 64-bit fixup
                     reloc_type::IMAGE_REL_BASED_DIR64
-                        if is_64_bit && target_offset + 8 <= image_data.len() =>
+                        if is_64_bit
+                            && target_offset
+                                .checked_add(8)
+                                .is_some_and(|t| t <= image_data.len()) =>
                     {
-                        let value = u64::from_le_bytes([
-                            image_data[target_offset],
-                            image_data[target_offset + 1],
-                            image_data[target_offset + 2],
-                            image_data[target_offset + 3],
-                            image_data[target_offset + 4],
-                            image_data[target_offset + 5],
-                            image_data[target_offset + 6],
-                            image_data[target_offset + 7],
-                        ]);
-                        let new_value = (value.cast_signed() + delta).cast_unsigned();
-                        image_data[target_offset..target_offset + 8]
-                            .copy_from_slice(&new_value.to_le_bytes());
+                        let target_end = target_offset
+                            .checked_add(8)
+                            .ok_or_else(|| malformed_error!("PE reloc target overflow"))?;
+                        let val_slice = image_data
+                            .get(target_offset..target_end)
+                            .ok_or(out_of_bounds_error!())?;
+                        let value = u64::from_le_bytes(
+                            val_slice.try_into().map_err(|_| out_of_bounds_error!())?,
+                        );
+                        let new_value = value.cast_signed().wrapping_add(delta).cast_unsigned();
+                        let dst = image_data
+                            .get_mut(target_offset..target_end)
+                            .ok_or(out_of_bounds_error!())?;
+                        dst.copy_from_slice(&new_value.to_le_bytes());
                     }
                     _ => {
                         // ABSOLUTE (padding), out-of-bounds, or unsupported relocation type - skip
@@ -992,7 +1051,10 @@ impl PeLoader {
                 }
             }
 
-            offset += block_size;
+            offset = match offset.checked_add(block_size) {
+                Some(v) => v,
+                None => break,
+            };
         }
 
         Ok(())

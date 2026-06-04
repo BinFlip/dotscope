@@ -25,7 +25,7 @@ use crate::{
         utils::{is_obfuscated_name, is_special_name},
     },
     metadata::{
-        tables::{FieldRaw, MethodDefRaw, ParamRaw, TableId, TypeDefRaw},
+        tables::{FieldRaw, MetadataTable, MethodDefRaw, ParamRaw, TableId, TypeDefRaw},
         token::Token,
     },
     CilObject, Result,
@@ -228,6 +228,7 @@ impl<'a> CascadeRenamer<'a> {
                     .or_else(|| {
                         self.assembly
                             .method(caller_token)
+                            .ok()
                             .filter(|m| !is_obfuscated_name(&m.name))
                             .map(|m| m.name.clone())
                     })
@@ -619,7 +620,7 @@ impl<'a> CascadeRenamer<'a> {
         };
 
         // Get method metadata
-        if let Some(method) = self.assembly.method(&method_token) {
+        if let Ok(method) = self.assembly.method(&method_token) {
             // Return type
             context.dotnet_type = Some(method.signature.return_type.to_string());
 
@@ -823,18 +824,18 @@ impl<'a> CascadeRenamer<'a> {
         // Parent method name (committed or original)
         if let Some(name) = self.committed.get(&method_token) {
             context.parent_type = Some(name.clone());
-        } else if let Some(method) = self.assembly.method(&method_token) {
+        } else if let Ok(method) = self.assembly.method(&method_token) {
             if !is_obfuscated_name(&method.name) {
                 context.parent_type = Some(method.name.clone());
             }
         }
 
         // Parameter type from method signature
-        if let Some(method) = self.assembly.method(&method_token) {
+        if let Ok(method) = self.assembly.method(&method_token) {
             // param.sequence is 1-based (0 = return type), so index = sequence - 1
             let sig_index = (param_sequence as usize).saturating_sub(1);
-            if sig_index < method.signature.params.len() {
-                context.dotnet_type = Some(method.signature.params[sig_index].to_string());
+            if let Some(param) = method.signature.params.get(sig_index) {
+                context.dotnet_type = Some(param.to_string());
             }
         }
 
@@ -984,7 +985,7 @@ impl<'a> CascadeRenamer<'a> {
                 self.reserve_name(scope_key, &candidate);
                 return candidate;
             }
-            suffix += 1;
+            suffix = suffix.saturating_add(1);
         }
     }
 
@@ -1010,7 +1011,7 @@ impl<'a> CascadeRenamer<'a> {
 /// belonging to that method. The range extends to the next method's `param_list`
 /// or the end of the Param table.
 fn build_param_owner_map(
-    methoddef_table: &crate::metadata::tables::MetadataTable<'_, MethodDefRaw>,
+    methoddef_table: &MetadataTable<'_, MethodDefRaw>,
     param_row_count: u32,
 ) -> HashMap<u32, u32> {
     let mut map = HashMap::new();
@@ -1025,13 +1026,15 @@ fn build_param_owner_map(
         }
 
         // End is next method's param_list or end of table
+        let next_method_rid = method_rid.saturating_add(1);
+        let param_end_default = param_row_count.saturating_add(1);
         let param_end = if method_rid < methoddef_table.row_count {
             methoddef_table
-                .get(method_rid + 1)
+                .get(next_method_rid)
                 .map(|next| next.param_list)
-                .unwrap_or(param_row_count + 1)
+                .unwrap_or(param_end_default)
         } else {
-            param_row_count + 1
+            param_end_default
         };
 
         for param_rid in param_start..param_end {
@@ -1047,7 +1050,7 @@ fn build_param_owner_map(
 /// Works for both MethodDef and Field tables by using a closure to extract
 /// the list-start column (`method_list` or `field_list`) from each TypeDef row.
 fn build_member_owner_map(
-    typedef_table: &crate::metadata::tables::MetadataTable<'_, TypeDefRaw>,
+    typedef_table: &MetadataTable<'_, TypeDefRaw>,
     member_row_count: u32,
     get_list_start: fn(&TypeDefRaw) -> u32,
 ) -> HashMap<u32, u32> {
@@ -1062,13 +1065,15 @@ fn build_member_owner_map(
             continue;
         }
 
+        let next_type_rid = type_rid.saturating_add(1);
+        let end_default = member_row_count.saturating_add(1);
         let end = if type_rid < typedef_table.row_count {
             typedef_table
-                .get(type_rid + 1)
+                .get(next_type_rid)
                 .map(|next| get_list_start(&next))
-                .unwrap_or(member_row_count + 1)
+                .unwrap_or(end_default)
         } else {
-            member_row_count + 1
+            end_default
         };
 
         for member_rid in start..end {
@@ -1099,12 +1104,10 @@ fn generate_phase_label_from_context(
     _prefix: &str,
     _suffix: &str,
 ) -> Option<String> {
-    if !phase.call_targets.is_empty() {
-        // Use the first call target as a label
-        let first = &phase.call_targets[0];
+    if let Some(first) = phase.call_targets.first() {
         // Extract just the method name part
         let label = if let Some(idx) = first.rfind("::") {
-            &first[idx + 2..]
+            first.get(idx.saturating_add(2)..).unwrap_or(first.as_str())
         } else {
             first.as_str()
         };
@@ -1126,6 +1129,8 @@ fn generate_phase_label_from_context(
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use crate::{
         deobfuscation::{
             renamer::{
@@ -1236,7 +1241,7 @@ mod tests {
     #[test]
     fn test_cascade_on_bitmono_sample() {
         let path = "tests/samples/packers/bitmono/0.39.0/bitmono_renamer.exe";
-        if !std::path::Path::new(path).exists() {
+        if !Path::new(path).exists() {
             eprintln!("Skipping: sample not found");
             return;
         }
@@ -1264,7 +1269,7 @@ mod tests {
     #[test]
     fn test_cascade_rename_patterns() {
         let path = "tests/samples/packers/bitmono/0.39.0/bitmono_renamer.exe";
-        if !std::path::Path::new(path).exists() {
+        if !Path::new(path).exists() {
             eprintln!("Skipping: sample not found");
             return;
         }
@@ -1335,7 +1340,7 @@ mod tests {
     #[test]
     fn test_cascade_preserves_known_names() {
         let path = "tests/samples/packers/bitmono/0.39.0/original.exe";
-        if !std::path::Path::new(path).exists() {
+        if !Path::new(path).exists() {
             eprintln!("Skipping: original sample not found");
             return;
         }
@@ -1362,7 +1367,7 @@ mod tests {
     #[test]
     fn test_cascade_entry_counts() {
         let path = "tests/samples/packers/bitmono/0.39.0/bitmono_renamer.exe";
-        if !std::path::Path::new(path).exists() {
+        if !Path::new(path).exists() {
             eprintln!("Skipping: sample not found");
             return;
         }
@@ -1414,7 +1419,7 @@ mod tests {
     #[test]
     fn test_cascade_respects_config() {
         let path = "tests/samples/packers/bitmono/0.39.0/bitmono_renamer.exe";
-        if !std::path::Path::new(path).exists() {
+        if !Path::new(path).exists() {
             eprintln!("Skipping: sample not found");
             return;
         }
@@ -1456,7 +1461,7 @@ mod tests {
     #[test]
     fn test_cascade_ssa_context_populated() {
         let path = "tests/samples/packers/confuserex/1.6.0/original.exe";
-        if !std::path::Path::new(path).exists() {
+        if !Path::new(path).exists() {
             eprintln!("Skipping: sample not found");
             return;
         }
@@ -1506,7 +1511,7 @@ mod tests {
     #[test]
     fn test_cascade_context_quality_on_obfuscated() {
         let path = "tests/samples/packers/confuserex/1.6.0/mkaring_maximum.exe";
-        if !std::path::Path::new(path).exists() {
+        if !Path::new(path).exists() {
             eprintln!("Skipping: sample not found");
             return;
         }
@@ -2012,9 +2017,7 @@ mod tests {
         eprintln!("  DIAGNOSTIC CONTEXT DUMP — original.exe (clean, unobfuscated)");
         eprintln!("========================================================================");
 
-        // ---------------------------------------------------------------
         // 1. Enumerate ALL types, methods, fields, params in metadata
-        // ---------------------------------------------------------------
         let tables = assembly.tables().expect("assembly should have tables");
         let strings = assembly.strings().expect("assembly should have strings");
 
@@ -2046,6 +2049,7 @@ mod tests {
                     let method_token = Token::new(0x0600_0000 | rid);
                     let has_cfg = assembly
                         .method(&method_token)
+                        .ok()
                         .map(|m| m.cfg().is_some())
                         .unwrap_or(false);
                     eprintln!(
@@ -2084,9 +2088,7 @@ mod tests {
             }
         }
 
-        // ---------------------------------------------------------------
         // 2. Build infrastructure (SSA + call graph) via CascadeRenamer
-        // ---------------------------------------------------------------
         let provider = SimpleProvider::new();
         let fallback = SimpleProvider::new();
         let config = SmartRenameConfig::default();
@@ -2115,7 +2117,7 @@ mod tests {
                     .get(rid)
                     .and_then(|md| strings.get(md.name as usize).ok())
                     .unwrap_or("?");
-                let method = assembly.method(&method_token);
+                let method = assembly.method(&method_token).ok();
                 let has_cfg = method.as_ref().map(|m| m.cfg().is_some()).unwrap_or(false);
                 let has_body = method
                     .as_ref()
@@ -2135,9 +2137,7 @@ mod tests {
             }
         }
 
-        // ---------------------------------------------------------------
         // 3. For EACH method with SSA: dump all extracted features
-        // ---------------------------------------------------------------
         eprintln!("\n========================================================================");
         eprintln!("  PER-METHOD SSA FEATURE EXTRACTION");
         eprintln!("========================================================================");
@@ -2268,9 +2268,7 @@ mod tests {
             }
         }
 
-        // ---------------------------------------------------------------
         // 4. build_method_context() for each method
-        // ---------------------------------------------------------------
         eprintln!("\n========================================================================");
         eprintln!("  FULL RENAME CONTEXT (build_method_context)");
         eprintln!("========================================================================");
@@ -2327,9 +2325,7 @@ mod tests {
             }
         }
 
-        // ---------------------------------------------------------------
         // 5. Build param contexts
-        // ---------------------------------------------------------------
         eprintln!("\n========================================================================");
         eprintln!("  PARAMETER CONTEXTS");
         eprintln!("========================================================================");
@@ -2365,9 +2361,7 @@ mod tests {
             }
         }
 
-        // ---------------------------------------------------------------
         // 6. Build field contexts
-        // ---------------------------------------------------------------
         eprintln!("\n========================================================================");
         eprintln!("  FIELD CONTEXTS");
         eprintln!("========================================================================");
@@ -2393,9 +2387,7 @@ mod tests {
             }
         }
 
-        // ---------------------------------------------------------------
         // 7. Build type contexts
-        // ---------------------------------------------------------------
         eprintln!("\n========================================================================");
         eprintln!("  TYPE CONTEXTS");
         eprintln!("========================================================================");
@@ -2422,9 +2414,7 @@ mod tests {
             }
         }
 
-        // ---------------------------------------------------------------
         // 8. Run full cascade and dump entries
-        // ---------------------------------------------------------------
         eprintln!("\n========================================================================");
         eprintln!("  FULL CASCADE EXECUTION");
         eprintln!("========================================================================");
@@ -2447,9 +2437,7 @@ mod tests {
             eprintln!("  (No entries -- clean assembly has no obfuscated names, as expected)");
         }
 
-        // ---------------------------------------------------------------
         // 9. Call graph analysis
-        // ---------------------------------------------------------------
         eprintln!("\n========================================================================");
         eprintln!("  CALL GRAPH ANALYSIS");
         eprintln!("========================================================================");
@@ -2460,6 +2448,7 @@ mod tests {
             for (i, token) in topo.iter().enumerate() {
                 let name = assembly
                     .method(token)
+                    .ok()
                     .map(|m| m.name.clone())
                     .or_else(|| assembly.resolve_method_name(*token))
                     .unwrap_or_else(|| format!("0x{:08X}", token.value()));
@@ -2469,9 +2458,7 @@ mod tests {
             eprintln!("  (No call graph available)");
         }
 
-        // ---------------------------------------------------------------
         // 10. Summary statistics
-        // ---------------------------------------------------------------
         eprintln!("\n========================================================================");
         eprintln!("  SUMMARY");
         eprintln!("========================================================================");

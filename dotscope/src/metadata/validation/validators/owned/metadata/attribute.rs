@@ -457,14 +457,16 @@ impl OwnedAttributeValidator {
         }
 
         if custom_attr.named_args.len() > 20 {
-            let mut similar_names = 0;
+            let mut similar_names: usize = 0;
             for i in 0..custom_attr.named_args.len() {
-                for j in (i + 1)..custom_attr.named_args.len() {
-                    if Self::are_similar_names(
-                        &custom_attr.named_args[i].name,
-                        &custom_attr.named_args[j].name,
-                    ) {
-                        similar_names += 1;
+                for j in i.saturating_add(1)..custom_attr.named_args.len() {
+                    let (Some(arg_i), Some(arg_j)) =
+                        (custom_attr.named_args.get(i), custom_attr.named_args.get(j))
+                    else {
+                        continue;
+                    };
+                    if Self::are_similar_names(&arg_i.name, &arg_j.name) {
+                        similar_names = similar_names.saturating_add(1);
                         if similar_names > 5 {
                             return true;
                         }
@@ -506,7 +508,7 @@ impl OwnedAttributeValidator {
                             constructor: CilTypeReference::None,
                             blob_index: 0,
                         };
-                        if self.has_deep_array_nesting(&temp_attr, depth + 1) {
+                        if self.has_deep_array_nesting(&temp_attr, depth.saturating_add(1)) {
                             return true;
                         }
                     }
@@ -536,10 +538,10 @@ impl OwnedAttributeValidator {
             return false;
         }
 
-        let mut differences = 0;
+        let mut differences: usize = 0;
         for (c1, c2) in name1.chars().zip(name2.chars()) {
             if c1 != c2 {
-                differences += 1;
+                differences = differences.saturating_add(1);
                 if differences > 1 {
                     return false;
                 }

@@ -360,7 +360,10 @@ impl CallResolver {
             virtual_methods: self.virtual_dispatch_table.len(),
             polymorphic_methods,
             max_targets,
-            total_types: self.type_subtypes.len() + self.sealed_types.len(),
+            total_types: self
+                .type_subtypes
+                .len()
+                .saturating_add(self.sealed_types.len()),
             interface_types: self.interfaces.len(),
             sealed_types: self.sealed_types.len(),
         }

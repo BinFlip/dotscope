@@ -333,9 +333,10 @@ impl TableRow for CustomAttributeRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* parent */      sizes.coded_index_bytes(CodedIndexType::HasCustomAttribute) +
-            /* constructor */ sizes.coded_index_bytes(CodedIndexType::CustomAttributeType) +
-            /* value */       sizes.blob_bytes()
+            /* parent */      sizes.coded_index_bytes(CodedIndexType::HasCustomAttribute)
+            /* constructor */ .saturating_add(sizes.coded_index_bytes(CodedIndexType::CustomAttributeType))
+            /* value */       .saturating_add(sizes.blob_bytes())
+
         )
     }
 }

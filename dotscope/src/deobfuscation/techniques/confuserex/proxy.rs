@@ -173,13 +173,20 @@ fn is_mild_proxy(instructions: &[&Instruction]) -> bool {
     }
 
     // Last instruction must be ret.
-    let last = instructions.last().unwrap();
+    let Some(last) = instructions.last() else {
+        return false;
+    };
     if last.mnemonic != "ret" {
         return false;
     }
 
     // Second-to-last must be a non-virtual call with a token operand.
-    let call_instr = instructions[instructions.len() - 2];
+    let Some(call_idx) = instructions.len().checked_sub(2) else {
+        return false;
+    };
+    let Some(call_instr) = instructions.get(call_idx) else {
+        return false;
+    };
     if call_instr.mnemonic != "call" || call_instr.flow_type != FlowType::Call {
         return false;
     }
@@ -188,7 +195,10 @@ fn is_mild_proxy(instructions: &[&Instruction]) -> bool {
     }
 
     // All preceding instructions must be ldarg variants.
-    for instr in &instructions[..instructions.len() - 2] {
+    let Some(prefix) = instructions.get(..call_idx) else {
+        return false;
+    };
+    for instr in prefix {
         if !instr.mnemonic.starts_with("ldarg") {
             return false;
         }
@@ -206,18 +216,28 @@ fn is_strong_proxy(instructions: &[&Instruction], _assembly: &CilObject) -> bool
     }
 
     // First instruction must be ldsfld.
-    if instructions[0].mnemonic != "ldsfld" {
+    let Some(first) = instructions.first() else {
+        return false;
+    };
+    if first.mnemonic != "ldsfld" {
         return false;
     }
 
     // Last instruction must be ret.
-    let last = instructions.last().unwrap();
+    let Some(last) = instructions.last() else {
+        return false;
+    };
     if last.mnemonic != "ret" {
         return false;
     }
 
     // Second-to-last must be callvirt (delegate dispatch).
-    let call_instr = instructions[instructions.len() - 2];
+    let Some(call_idx) = instructions.len().checked_sub(2) else {
+        return false;
+    };
+    let Some(call_instr) = instructions.get(call_idx) else {
+        return false;
+    };
     if call_instr.mnemonic != "callvirt" || call_instr.flow_type != FlowType::Call {
         return false;
     }
@@ -229,7 +249,10 @@ fn is_strong_proxy(instructions: &[&Instruction], _assembly: &CilObject) -> bool
     // (ldsfld + ldarg* + callvirt + ret) is specific enough to identify proxy stubs.
 
     // All instructions between ldsfld and callvirt must be ldarg variants.
-    for instr in &instructions[1..instructions.len() - 2] {
+    let Some(middle) = instructions.get(1..call_idx) else {
+        return false;
+    };
+    for instr in middle {
         if !instr.mnemonic.starts_with("ldarg") {
             return false;
         }

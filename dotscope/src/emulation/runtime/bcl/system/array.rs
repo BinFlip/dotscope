@@ -327,12 +327,12 @@ fn array_set_value_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> P
         return PreHookResult::Bypass(None);
     };
 
-    if ctx.args.len() < 2 {
+    let (Some(value_arg), Some(index_arg)) = (ctx.args.first(), ctx.args.get(1)) else {
         return PreHookResult::Bypass(None);
-    }
+    };
 
-    let value = ctx.args[0].clone();
-    let index = usize::try_from(&ctx.args[1]).unwrap_or(0);
+    let value = value_arg.clone();
+    let index = usize::try_from(index_arg).unwrap_or(0);
 
     try_hook!(thread.heap_mut().set_array_element(*href, index, value));
     PreHookResult::Bypass(None)
@@ -372,9 +372,10 @@ fn array_get_dimension_length_pre(
 
     let length = match obj {
         HeapObject::Array { elements, .. } if dimension == 0 => elements.len(),
-        HeapObject::MultiArray { dimensions, .. } if dimension < dimensions.len() => {
-            dimensions[dimension]
-        }
+        HeapObject::MultiArray { dimensions, .. } => match dimensions.get(dimension) {
+            Some(d) => *d,
+            None => return PreHookResult::Bypass(Some(EmValue::I32(0))),
+        },
         _ => return PreHookResult::Bypass(Some(EmValue::I32(0))),
     };
 
@@ -467,28 +468,41 @@ fn array_copy_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHoo
     }
 
     let (src_ref, src_index, dst_ref, dst_index, length) = if ctx.args.len() >= 5 {
-        let src_ref = match &ctx.args[0] {
+        let (Some(a0), Some(a1), Some(a2), Some(a3), Some(a4)) = (
+            ctx.args.first(),
+            ctx.args.get(1),
+            ctx.args.get(2),
+            ctx.args.get(3),
+            ctx.args.get(4),
+        ) else {
+            return PreHookResult::Bypass(None);
+        };
+        let src_ref = match a0 {
             EmValue::ObjectRef(r) => *r,
             _ => return PreHookResult::Bypass(None),
         };
-        let src_index = usize::try_from(&ctx.args[1]).unwrap_or(0);
-        let dst_ref = match &ctx.args[2] {
+        let src_index = usize::try_from(a1).unwrap_or(0);
+        let dst_ref = match a2 {
             EmValue::ObjectRef(r) => *r,
             _ => return PreHookResult::Bypass(None),
         };
-        let dst_index = usize::try_from(&ctx.args[3]).unwrap_or(0);
-        let length = usize::try_from(&ctx.args[4]).unwrap_or(0);
+        let dst_index = usize::try_from(a3).unwrap_or(0);
+        let length = usize::try_from(a4).unwrap_or(0);
         (src_ref, src_index, dst_ref, dst_index, length)
     } else {
-        let src_ref = match &ctx.args[0] {
+        let (Some(a0), Some(a1), Some(a2)) = (ctx.args.first(), ctx.args.get(1), ctx.args.get(2))
+        else {
+            return PreHookResult::Bypass(None);
+        };
+        let src_ref = match a0 {
             EmValue::ObjectRef(r) => *r,
             _ => return PreHookResult::Bypass(None),
         };
-        let dst_ref = match &ctx.args[1] {
+        let dst_ref = match a1 {
             EmValue::ObjectRef(r) => *r,
             _ => return PreHookResult::Bypass(None),
         };
-        let length = usize::try_from(&ctx.args[2]).unwrap_or(0);
+        let length = usize::try_from(a2).unwrap_or(0);
         (src_ref, 0, dst_ref, 0, length)
     };
 
@@ -507,8 +521,13 @@ fn array_copy_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHoo
     try_hook!(thread.heap_mut().with_object_mut(dst_ref, |obj| match obj {
         HeapObject::Array { elements, .. } => {
             for (i, elem) in src_elements.into_iter().enumerate() {
-                if dst_index + i < elements.len() {
-                    elements[dst_index + i] = elem;
+                let Some(target_index) = dst_index.checked_add(i) else {
+                    return Err(crate::malformed_error!(
+                        "Array.Copy: destination index overflow"
+                    ));
+                };
+                if let Some(slot) = elements.get_mut(target_index) {
+                    *slot = elem;
                 }
             }
             Ok(())
@@ -535,17 +554,18 @@ fn array_copy_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHoo
 ///
 /// None. Elements are set to the default value for their element type.
 fn array_clear_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.len() < 3 {
+    let (Some(a0), Some(a1), Some(a2)) = (ctx.args.first(), ctx.args.get(1), ctx.args.get(2))
+    else {
         return PreHookResult::Bypass(None);
-    }
+    };
 
-    let array_ref = match &ctx.args[0] {
+    let array_ref = match a0 {
         EmValue::ObjectRef(r) => *r,
         _ => return PreHookResult::Bypass(None),
     };
 
-    let index = usize::try_from(&ctx.args[1]).unwrap_or(0);
-    let length = usize::try_from(&ctx.args[2]).unwrap_or(0);
+    let index = usize::try_from(a1).unwrap_or(0);
+    let length = usize::try_from(a2).unwrap_or(0);
 
     try_hook!(thread
         .heap_mut()
@@ -555,8 +575,14 @@ fn array_clear_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHo
                 element_type,
             } => {
                 let default = EmValue::default_for_flavor(element_type);
-                for i in index..(index + length).min(elements.len()) {
-                    elements[i] = default.clone();
+                let end = index
+                    .checked_add(length)
+                    .ok_or_else(|| crate::malformed_error!("Array.Clear: index + length overflow"))?
+                    .min(elements.len());
+                for i in index..end {
+                    if let Some(slot) = elements.get_mut(i) {
+                        *slot = default.clone();
+                    }
                 }
                 Ok(())
             }
@@ -583,11 +609,11 @@ fn array_clear_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHo
 ///
 /// None. The array (or section) is reversed in-place.
 fn array_reverse_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(a0) = ctx.args.first() else {
         return PreHookResult::Bypass(None);
-    }
+    };
 
-    let array_ref = match &ctx.args[0] {
+    let array_ref = match a0 {
         EmValue::ObjectRef(r) => *r,
         _ => return PreHookResult::Bypass(None),
     };
@@ -627,16 +653,14 @@ fn array_reverse_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> Pre
 ///
 /// The zero-based index of the first occurrence, or -1 if not found.
 fn array_index_of_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.len() < 2 {
+    let (Some(a0), Some(search_value)) = (ctx.args.first(), ctx.args.get(1)) else {
         return PreHookResult::Bypass(Some(EmValue::I32(-1)));
-    }
+    };
 
-    let array_ref = match &ctx.args[0] {
+    let array_ref = match a0 {
         EmValue::ObjectRef(r) => *r,
         _ => return PreHookResult::Bypass(Some(EmValue::I32(-1))),
     };
-
-    let search_value = &ctx.args[1];
 
     let Ok(obj) = thread.heap().get(array_ref) else {
         return PreHookResult::Bypass(Some(EmValue::I32(-1)));
@@ -675,24 +699,30 @@ fn array_index_of_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> Pr
 /// copying from an `int[]` with `srcOffset=2` means starting at byte 2 within
 /// the first integer element, not at the third integer.
 fn buffer_block_copy_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.len() < 5 {
+    let (Some(a0), Some(a1), Some(a2), Some(a3), Some(a4)) = (
+        ctx.args.first(),
+        ctx.args.get(1),
+        ctx.args.get(2),
+        ctx.args.get(3),
+        ctx.args.get(4),
+    ) else {
         return PreHookResult::Bypass(None);
-    }
+    };
 
-    let src_ref = match &ctx.args[0] {
+    let src_ref = match a0 {
         EmValue::ObjectRef(r) => *r,
         _ => return PreHookResult::Bypass(None),
     };
 
-    let src_offset = usize::try_from(&ctx.args[1]).unwrap_or(0);
+    let src_offset = usize::try_from(a1).unwrap_or(0);
 
-    let dst_ref = match &ctx.args[2] {
+    let dst_ref = match a2 {
         EmValue::ObjectRef(r) => *r,
         _ => return PreHookResult::Bypass(None),
     };
 
-    let dst_offset = usize::try_from(&ctx.args[3]).unwrap_or(0);
-    let count = usize::try_from(&ctx.args[4]).unwrap_or(0);
+    let dst_offset = usize::try_from(a3).unwrap_or(0);
+    let count = usize::try_from(a4).unwrap_or(0);
 
     if count == 0 {
         return PreHookResult::Bypass(None);
@@ -724,11 +754,16 @@ fn buffer_block_copy_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) ->
     };
 
     // Extract the byte range we need to copy
-    let end_offset = (src_offset + count).min(src_bytes.len());
+    let Some(unbounded_end) = src_offset.checked_add(count) else {
+        return PreHookResult::Error("Buffer.BlockCopy: src_offset + count overflow".to_string());
+    };
+    let end_offset = unbounded_end.min(src_bytes.len());
     if src_offset >= src_bytes.len() {
         return PreHookResult::Bypass(None);
     }
-    let bytes_to_copy: Vec<u8> = src_bytes[src_offset..end_offset].to_vec();
+    let Some(bytes_to_copy) = src_bytes.get(src_offset..end_offset).map(<[u8]>::to_vec) else {
+        return PreHookResult::Bypass(None);
+    };
 
     // Apply bytes to destination array
     try_hook!(thread.heap_mut().with_object_mut(dst_ref, |obj| match obj {
@@ -739,7 +774,9 @@ fn buffer_block_copy_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) ->
             let Some(dst_elem_size) = element_type.element_size(ptr_size) else {
                 return Ok(());
             };
-            let dst_byte_len = elements.len() * dst_elem_size;
+            let dst_byte_len = elements.len().checked_mul(dst_elem_size).ok_or_else(|| {
+                crate::malformed_error!("Buffer.BlockCopy: destination byte length overflow")
+            })?;
 
             if dst_offset >= dst_byte_len {
                 return Ok(());
@@ -752,14 +789,25 @@ fn buffer_block_copy_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) ->
                 .collect();
 
             // Copy the bytes
-            let copy_len = bytes_to_copy.len().min(dst_byte_len - dst_offset);
-            dst_bytes[dst_offset..dst_offset + copy_len]
-                .copy_from_slice(&bytes_to_copy[..copy_len]);
+            let remaining = dst_byte_len.checked_sub(dst_offset).ok_or_else(|| {
+                crate::malformed_error!("Buffer.BlockCopy: dst_offset exceeds buffer")
+            })?;
+            let copy_len = bytes_to_copy.len().min(remaining);
+            let copy_end = dst_offset.checked_add(copy_len).ok_or_else(|| {
+                crate::malformed_error!("Buffer.BlockCopy: dst_offset + copy_len overflow")
+            })?;
+            let dst_slice = dst_bytes
+                .get_mut(dst_offset..copy_end)
+                .ok_or(crate::out_of_bounds_error!())?;
+            let src_slice = bytes_to_copy
+                .get(..copy_len)
+                .ok_or(crate::out_of_bounds_error!())?;
+            dst_slice.copy_from_slice(src_slice);
 
             // Convert bytes back to elements
             for (i, chunk) in dst_bytes.chunks(dst_elem_size).enumerate() {
-                if i < elements.len() {
-                    elements[i] = EmValue::from_le_bytes(chunk, element_type, ptr_size);
+                if let Some(slot) = elements.get_mut(i) {
+                    *slot = EmValue::from_le_bytes(chunk, element_type, ptr_size);
                 }
             }
 
@@ -785,11 +833,11 @@ fn buffer_block_copy_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) ->
 ///
 /// The total size of the array in bytes (element count * element size).
 fn buffer_byte_length_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(a0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::I32(0)));
-    }
+    };
 
-    let array_ref = match &ctx.args[0] {
+    let array_ref = match a0 {
         EmValue::ObjectRef(r) => *r,
         _ => return PreHookResult::Bypass(Some(EmValue::I32(0))),
     };
@@ -810,7 +858,7 @@ fn buffer_byte_length_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
                 CilFlavor::I1 | CilFlavor::U1 | CilFlavor::Boolean => 1,
                 _ => std::mem::size_of::<usize>(),
             };
-            elements.len() * element_size
+            elements.len().saturating_mul(element_size)
         }
         _ => return PreHookResult::Bypass(Some(EmValue::I32(0))),
     };
@@ -829,12 +877,12 @@ fn buffer_byte_length_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
 /// The element type is resolved from the `Type` argument via the emulation thread's
 /// type token resolution, which uses the assembly's metadata for accurate mapping.
 fn array_create_instance_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.len() < 2 {
+    let (Some(type_arg), Some(length_arg)) = (ctx.args.first(), ctx.args.get(1)) else {
         return PreHookResult::Continue;
-    }
+    };
 
     // arg[1] = int length (or int[] for multi-dimensional, which we only handle for 1D)
-    let length = match &ctx.args[1] {
+    let length = match length_arg {
         EmValue::I32(n) => *n as usize,
         EmValue::I64(n) => *n as usize,
         EmValue::NativeInt(n) => *n as usize,
@@ -843,7 +891,7 @@ fn array_create_instance_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread
 
     // arg[0] = Type (ObjectRef to ReflectionType on the heap)
     // Resolve the element type through the proper metadata path
-    let element_flavor = match &ctx.args[0] {
+    let element_flavor = match type_arg {
         EmValue::ObjectRef(href) => {
             match thread.heap().get_reflection_type_token(*href) {
                 Ok(Some(type_token)) => {

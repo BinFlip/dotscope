@@ -259,18 +259,19 @@ impl MethodRef {
         self.weak_ref.upgrade()
     }
 
-    /// Get a strong reference to the method, panicking if the method has been dropped.
+    /// Get a strong reference to the method, returning an error if it has been dropped.
     ///
-    /// Use this when you're certain the method should still exist. This provides
-    /// a convenient way to access the method without handling the `Option` case.
+    /// Use this when you expect the method to still exist. The provided message is
+    /// included in the returned error if the underlying weak reference can no longer
+    /// be upgraded.
     ///
     /// # Arguments
     ///
-    /// * `msg` - Error message to display if the method has been dropped
+    /// * `msg` - Diagnostic message included in the returned error if the method has been dropped
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the method has been dropped and the weak reference cannot be upgraded.
+    /// Returns [`crate::Error::Malformed`] if the underlying method has been dropped.
     ///
     /// # Examples
     ///
@@ -282,16 +283,16 @@ impl MethodRef {
     /// if let Some(entry) = assembly.methods().iter().next() {
     ///     let method = entry.value();
     ///     let method_ref = dotscope::metadata::method::MethodRef::new(&method);
-    ///     
-    ///     // Use expect when you're certain the method should exist
-    ///     let method = method_ref.expect("Method should still be available");
+    ///
+    ///     let method = method_ref.expect("Method should still be available")?;
     ///     println!("Accessed method: {}", method.name);
     /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    #[must_use]
-    pub fn expect(&self, msg: &str) -> MethodRc {
-        self.weak_ref.upgrade().expect(msg)
+    pub fn expect(&self, msg: &str) -> Result<MethodRc> {
+        self.weak_ref
+            .upgrade()
+            .ok_or_else(|| malformed_error!("{}", msg))
     }
 
     /// Check if the referenced method is still alive.
@@ -440,6 +441,69 @@ impl MethodRef {
 impl From<MethodRc> for MethodRef {
     fn from(strong_ref: MethodRc) -> Self {
         Self::new(&strong_ref)
+    }
+}
+
+/// Disambiguated reason for a [`Method`]'s RVA value.
+///
+/// Returned by [`Method::rva_kind`]. Lets callers distinguish between a method
+/// with a real IL body (`Resolved(addr)`), one of the legitimate "no IL"
+/// cases (`Abstract`, `PInvoke`, `Runtime`), and a malformed-input case
+/// (`UnresolvedZero` — RVA is `None` with no flag explaining why).
+///
+/// `Method.rva` carried `Option<u32>` does not surface this distinction;
+/// `rva_kind()` is the recommended accessor for downstream code that needs
+/// to log a meaningful reason or take a code path based on the RVA's
+/// provenance.
+///
+/// # Stability
+///
+/// `#[non_exhaustive]` so additional well-known classifications (e.g. an
+/// unmanaged-export variant) can be added later without a breaking change.
+/// Consumers must include a wildcard arm when matching.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MethodRvaKind {
+    /// IL code lives at the given RVA. Equivalent to `Method.rva == Some(addr)`.
+    Resolved(u32),
+    /// Method is declared abstract — body is supplied by an overriding type
+    /// in this or another assembly.
+    Abstract,
+    /// Method is implemented via Platform Invoke — body lives in an external
+    /// native module referenced by `MethodModifiers::PINVOKE_IMPL`.
+    PInvoke,
+    /// Method is runtime-managed — implemented by the CLR rather than by IL
+    /// in this assembly. Identified by `MethodImplCodeType::RUNTIME`.
+    Runtime,
+    /// `Method.rva` is `None` but no flag explains why. Indicates malformed
+    /// metadata or an unsupported method-implementation form.
+    UnresolvedZero,
+}
+
+impl MethodRvaKind {
+    /// Returns a stable `&'static str` identifier for this RVA kind.
+    ///
+    /// Variants render as `"resolved"`, `"abstract"`, `"pinvoke"`,
+    /// `"runtime"`, `"unresolved_zero"`. The strings are part of the stable
+    /// public API and safe to persist.
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            MethodRvaKind::Resolved(_) => "resolved",
+            MethodRvaKind::Abstract => "abstract",
+            MethodRvaKind::PInvoke => "pinvoke",
+            MethodRvaKind::Runtime => "runtime",
+            MethodRvaKind::UnresolvedZero => "unresolved_zero",
+        }
+    }
+}
+
+impl std::fmt::Display for MethodRvaKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MethodRvaKind::Resolved(addr) => write!(f, "resolved(0x{addr:08X})"),
+            other => f.write_str(other.as_str()),
+        }
     }
 }
 
@@ -1014,6 +1078,72 @@ impl Method {
         self.flags_modifiers.contains(MethodModifiers::ABSTRACT)
     }
 
+    /// Returns the disambiguated reason for this method's RVA value.
+    ///
+    /// `Method.rva` is `Some(addr)` for methods with IL bodies and `None`
+    /// for methods that legitimately have no IL (abstract, P/Invoke,
+    /// runtime-managed) — but the bare `Option` cannot tell consumers *why*
+    /// a method has no body. This accessor classifies by examining the
+    /// method's `MethodModifiers` and `MethodImplCodeType` flags so callers
+    /// can log a meaningful reason instead of treating "RVA = 0" as
+    /// generic missing-data.
+    ///
+    /// The classification follows ECMA-335 §II.23.1.10: `ABSTRACT` and
+    /// `PINVOKE_IMPL` are method-attribute bits (`MethodModifiers`), and the
+    /// `RUNTIME` impl-code-type bits live in `MethodImplCodeType`. Variants
+    /// are tested in priority order — `Abstract` first, then `PInvoke`, then
+    /// `Runtime` — so a method tagged with multiple flags reports the most
+    /// informative reason.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use dotscope::metadata::method::MethodRvaKind;
+    /// use dotscope::metadata::token::Token;
+    ///
+    /// let assembly = CilObject::from_path("tests/samples/WindowsBase.dll")?;
+    /// let token = Token::new(0x06000001);
+    ///
+    /// if let Ok(method) = assembly.method(&token) {
+    ///     match method.rva_kind() {
+    ///         MethodRvaKind::Resolved(addr) => {
+    ///             println!("IL at 0x{addr:08X}");
+    ///         }
+    ///         MethodRvaKind::Abstract => {
+    ///             println!("abstract — no body in this assembly");
+    ///         }
+    ///         MethodRvaKind::PInvoke => {
+    ///             println!("P/Invoke — body lives in a native module");
+    ///         }
+    ///         MethodRvaKind::Runtime => {
+    ///             println!("runtime-managed — implemented by the CLR");
+    ///         }
+    ///         MethodRvaKind::UnresolvedZero => {
+    ///             println!("RVA = 0 with no flag explanation; suspicious metadata");
+    ///         }
+    ///         _ => {}
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    #[must_use]
+    pub fn rva_kind(&self) -> MethodRvaKind {
+        if let Some(addr) = self.rva {
+            return MethodRvaKind::Resolved(addr);
+        }
+        if self.flags_modifiers.contains(MethodModifiers::ABSTRACT) {
+            return MethodRvaKind::Abstract;
+        }
+        if self.flags_modifiers.contains(MethodModifiers::PINVOKE_IMPL) {
+            return MethodRvaKind::PInvoke;
+        }
+        if self.impl_code_type.contains(MethodImplCodeType::RUNTIME) {
+            return MethodRvaKind::Runtime;
+        }
+        MethodRvaKind::UnresolvedZero
+    }
+
     /// Returns true if the method has public access.
     #[must_use]
     pub fn is_public(&self) -> bool {
@@ -1166,7 +1296,11 @@ impl Method {
             ));
         }
 
-        let mut body = MethodBody::from(&file.data()[method_offset..])?;
+        let mut body = MethodBody::from(
+            file.data()
+                .get(method_offset..)
+                .ok_or(out_of_bounds_error!())?,
+        )?;
         if body.local_var_sig_token != 0 {
             self.parse_local_variables(&body, blobs, sigs, types)?;
         }
@@ -1291,7 +1425,11 @@ impl Method {
                 )?;
             } else {
                 // Regular parameters (1-indexed in metadata)
-                let index = (parameter.sequence - 1) as usize;
+                let index = parameter
+                    .sequence
+                    .checked_sub(1)
+                    .ok_or_else(|| malformed_error!("Parameter sequence underflow"))?
+                    as usize;
                 if let Some(param_signature) = self.signature.params.get(index) {
                     parameter.apply_signature(
                         param_signature,
@@ -1450,7 +1588,11 @@ impl Method {
         })?;
 
         // Compute argument and local counts
-        let num_args = self.signature.params.len() + usize::from(self.signature.has_this);
+        let num_args = self
+            .signature
+            .params
+            .len()
+            .saturating_add(usize::from(self.signature.has_this));
         let declared_locals = self.local_vars.count();
 
         // If no locals are declared (e.g., Tiny Format method body), infer from IL usage.
@@ -1476,68 +1618,73 @@ impl Method {
                 // Block offsets are absolute file offsets. Get base offset from first block.
                 let base_offset = blocks.first().map_or(0, |b| b.offset);
 
-                let ssa_handlers: Vec<SsaExceptionHandler> = body
-                    .exception_handlers
-                    .iter()
-                    .enumerate()
-                    .map(|(handler_idx, eh)| {
-                        // Map offsets to block indices (add base_offset to convert relative to absolute)
-                        let try_start_block = Self::find_block_at_offset(
-                            blocks,
-                            base_offset + eh.try_offset as usize,
-                        );
-                        let try_end_block = Self::find_block_at_offset(
-                            blocks,
-                            base_offset + (eh.try_offset + eh.try_length) as usize,
-                        );
+                let mut ssa_handlers: Vec<SsaExceptionHandler> =
+                    Vec::with_capacity(body.exception_handlers.len());
+                for (handler_idx, eh) in body.exception_handlers.iter().enumerate() {
+                    let try_offset_abs = base_offset
+                        .checked_add(eh.try_offset as usize)
+                        .ok_or_else(|| malformed_error!("Exception handler try_offset overflow"))?;
+                    let try_end_rel = (eh.try_offset as usize)
+                        .checked_add(eh.try_length as usize)
+                        .ok_or_else(|| malformed_error!("Exception handler try region overflow"))?;
+                    let try_end_abs = base_offset
+                        .checked_add(try_end_rel)
+                        .ok_or_else(|| malformed_error!("Exception handler try end overflow"))?;
+                    let handler_offset_abs = base_offset
+                        .checked_add(eh.handler_offset as usize)
+                        .ok_or_else(|| {
+                            malformed_error!("Exception handler handler_offset overflow")
+                        })?;
+                    let handler_end_rel = (eh.handler_offset as usize)
+                        .checked_add(eh.handler_length as usize)
+                        .ok_or_else(|| malformed_error!("Exception handler region overflow"))?;
+                    let handler_end_abs = base_offset
+                        .checked_add(handler_end_rel)
+                        .ok_or_else(|| malformed_error!("Exception handler end overflow"))?;
 
-                        // For handler blocks, use the handler_entry info from decoder if available
-                        let handler_start_block =
-                            Self::find_handler_entry_block(blocks, handler_idx).or_else(|| {
-                                Self::find_block_at_offset(
-                                    blocks,
-                                    base_offset + eh.handler_offset as usize,
-                                )
-                            });
-                        let handler_end_block = Self::find_block_at_offset(
-                            blocks,
-                            base_offset + (eh.handler_offset + eh.handler_length) as usize,
-                        );
+                    // Map offsets to block indices (add base_offset to convert relative to absolute)
+                    let try_start_block = Self::find_block_at_offset(blocks, try_offset_abs);
+                    let try_end_block = Self::find_block_at_offset(blocks, try_end_abs);
 
-                        let filter_start_block = if eh.flags == ExceptionHandlerFlags::FILTER {
-                            Self::find_block_at_offset(
-                                blocks,
-                                base_offset + eh.filter_offset as usize,
-                            )
-                        } else {
-                            None
-                        };
+                    // For handler blocks, use the handler_entry info from decoder if available
+                    let handler_start_block = Self::find_handler_entry_block(blocks, handler_idx)
+                        .or_else(|| Self::find_block_at_offset(blocks, handler_offset_abs));
+                    let handler_end_block = Self::find_block_at_offset(blocks, handler_end_abs);
 
-                        // Get the class token for catch handlers
-                        let class_token_or_filter = if eh.flags == ExceptionHandlerFlags::EXCEPTION
-                        {
-                            eh.handler.as_ref().map_or(0, |t| t.token.value())
-                        } else if eh.flags == ExceptionHandlerFlags::FILTER {
-                            eh.filter_offset
-                        } else {
-                            0
-                        };
+                    let filter_start_block = if eh.flags == ExceptionHandlerFlags::FILTER {
+                        let filter_offset_abs = base_offset
+                            .checked_add(eh.filter_offset as usize)
+                            .ok_or_else(|| {
+                                malformed_error!("Exception handler filter_offset overflow")
+                            })?;
+                        Self::find_block_at_offset(blocks, filter_offset_abs)
+                    } else {
+                        None
+                    };
 
-                        SsaExceptionHandler {
-                            flags: eh.flags,
-                            try_offset: eh.try_offset,
-                            try_length: eh.try_length,
-                            handler_offset: eh.handler_offset,
-                            handler_length: eh.handler_length,
-                            class_token_or_filter,
-                            try_start_block,
-                            try_end_block,
-                            handler_start_block,
-                            handler_end_block,
-                            filter_start_block,
-                        }
-                    })
-                    .collect();
+                    // Get the class token for catch handlers
+                    let class_token_or_filter = if eh.flags == ExceptionHandlerFlags::EXCEPTION {
+                        eh.handler.as_ref().map_or(0, |t| t.token.value())
+                    } else if eh.flags == ExceptionHandlerFlags::FILTER {
+                        eh.filter_offset
+                    } else {
+                        0
+                    };
+
+                    ssa_handlers.push(SsaExceptionHandler {
+                        flags: eh.flags,
+                        try_offset: eh.try_offset,
+                        try_length: eh.try_length,
+                        handler_offset: eh.handler_offset,
+                        handler_length: eh.handler_length,
+                        class_token_or_filter,
+                        try_start_block,
+                        try_end_block,
+                        handler_start_block,
+                        handler_end_block,
+                        filter_start_block,
+                    });
+                }
 
                 ssa.set_exception_handlers(ssa_handlers);
             }
@@ -1596,7 +1743,7 @@ impl Method {
             }
         }
 
-        max_index.map_or(0, |i| i + 1)
+        max_index.map_or(0, |i| i.saturating_add(1))
     }
 
     /// Finds the block index that starts at or contains the given offset.
@@ -1609,7 +1756,7 @@ impl Method {
         // If no exact match, find block containing the offset
         blocks
             .iter()
-            .position(|b| offset >= b.offset && offset < b.offset + b.size)
+            .position(|b| offset >= b.offset && offset < b.offset.saturating_add(b.size))
     }
 
     /// Finds the block that is marked as an entry point for the given handler index.
@@ -1735,7 +1882,12 @@ impl Method {
         // If fat format with exceptions, align to 4 bytes and add exception handlers
         if has_exceptions {
             // Align to 4-byte boundary
-            let padding = (4 - (result.len() % 4)) % 4;
+            let remainder = result.len() % 4;
+            let padding = if remainder == 0 {
+                0
+            } else {
+                4usize.saturating_sub(remainder)
+            };
             result.extend(std::iter::repeat_n(0u8, padding));
 
             // Encode and append exception handlers
@@ -1765,7 +1917,8 @@ impl Method {
         for block in blocks {
             for instruction in &block.instructions {
                 // instruction.size is u64, safely convert to usize
-                code_size += usize::try_from(instruction.size).ok()?;
+                let size = usize::try_from(instruction.size).ok()?;
+                code_size = code_size.checked_add(size)?;
             }
         }
 
@@ -1774,14 +1927,14 @@ impl Method {
         let has_locals = body.local_var_sig_token != 0;
         let needs_fat = code_size > 63 || body.max_stack > 8 || has_locals || has_exceptions;
 
-        let header_size = if needs_fat { 12 } else { 1 };
+        let header_size: usize = if needs_fat { 12 } else { 1 };
 
-        let mut total = header_size + code_size;
+        let mut total = header_size.checked_add(code_size)?;
 
         // Add exception handler section size if needed
         if has_exceptions {
             // Align to 4 bytes
-            total = (total + 3) & !3;
+            total = total.checked_add(3)? & !3;
 
             // Calculate exception section size
             let handler_count = body.exception_handlers.len();
@@ -1794,13 +1947,12 @@ impl Method {
                         || h.handler_length > 0xFF
                 });
 
-            if needs_fat_exceptions {
-                // Fat format: 4-byte header + 24 bytes per handler
-                total += 4 + handler_count * 24;
-            } else {
-                // Small format: 4-byte header + 12 bytes per handler
-                total += 4 + handler_count * 12;
-            }
+            let per_handler = if needs_fat_exceptions { 24 } else { 12 };
+            // Fat format: 4-byte header + 24 bytes per handler
+            // Small format: 4-byte header + 12 bytes per handler
+            let handlers_size = handler_count.checked_mul(per_handler)?;
+            let section_size = handlers_size.checked_add(4)?;
+            total = total.checked_add(section_size)?;
         }
 
         Some(total)
@@ -2120,5 +2272,67 @@ mod tests {
 
         // Default method should not have forwarded pinvoke flag
         assert!(!method.is_forwarded_pinvoke());
+    }
+
+    #[test]
+    fn test_method_rva_kind() {
+        // Default: rva = Some(0x1000) → Resolved.
+        let resolved = MethodBuilder::new().with_rva(0x1234).build();
+        assert_eq!(resolved.rva_kind(), MethodRvaKind::Resolved(0x1234));
+
+        // Abstract: no rva, ABSTRACT modifier set.
+        let abstract_m = MethodBuilder::new()
+            .without_rva()
+            .with_modifiers(MethodModifiers::ABSTRACT)
+            .build();
+        assert_eq!(abstract_m.rva_kind(), MethodRvaKind::Abstract);
+
+        // P/Invoke: no rva, PINVOKE_IMPL modifier set.
+        let pinvoke = MethodBuilder::new()
+            .without_rva()
+            .with_modifiers(MethodModifiers::PINVOKE_IMPL)
+            .build();
+        assert_eq!(pinvoke.rva_kind(), MethodRvaKind::PInvoke);
+
+        // Runtime: no rva, MethodImplCodeType::RUNTIME.
+        let runtime = MethodBuilder::new()
+            .without_rva()
+            .with_impl_code_type(MethodImplCodeType::RUNTIME)
+            .build();
+        assert_eq!(runtime.rva_kind(), MethodRvaKind::Runtime);
+
+        // UnresolvedZero: no rva, no flag explanation — malformed metadata.
+        let unresolved = MethodBuilder::new().without_rva().build();
+        assert_eq!(unresolved.rva_kind(), MethodRvaKind::UnresolvedZero);
+
+        // Priority: when both ABSTRACT and a runtime-managed flag are set,
+        // Abstract takes precedence (it's the most informative reason).
+        let abstract_runtime = MethodBuilder::new()
+            .without_rva()
+            .with_modifiers(MethodModifiers::ABSTRACT)
+            .with_impl_code_type(MethodImplCodeType::RUNTIME)
+            .build();
+        assert_eq!(abstract_runtime.rva_kind(), MethodRvaKind::Abstract);
+    }
+
+    #[test]
+    fn test_method_rva_kind_stable_strings() {
+        // Strings are part of the stable public API.
+        assert_eq!(MethodRvaKind::Resolved(0).as_str(), "resolved");
+        assert_eq!(MethodRvaKind::Abstract.as_str(), "abstract");
+        assert_eq!(MethodRvaKind::PInvoke.as_str(), "pinvoke");
+        assert_eq!(MethodRvaKind::Runtime.as_str(), "runtime");
+        assert_eq!(MethodRvaKind::UnresolvedZero.as_str(), "unresolved_zero");
+
+        // Display renders Resolved with the address; other variants delegate to as_str.
+        assert_eq!(
+            format!("{}", MethodRvaKind::Resolved(0x1234)),
+            "resolved(0x00001234)"
+        );
+        assert_eq!(format!("{}", MethodRvaKind::Abstract), "abstract");
+        assert_eq!(
+            format!("{}", MethodRvaKind::UnresolvedZero),
+            "unresolved_zero"
+        );
     }
 }

@@ -39,10 +39,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    analysis::{find_token_dependencies, SsaFunction, SsaOp},
+    analysis::{find_token_dependencies, CilTarget, ConstValue, MethodRef, SsaFunction, SsaOp},
     compiler::{CompilerContext, EventKind, SsaPass},
     metadata::token::Token,
-    CilObject, Result,
 };
 
 /// Action to perform on a tainted instruction during neutralization.
@@ -259,7 +258,7 @@ impl<'a> NeutralizationPass<'a> {
         // Find blocks that can reach exit (for fallback target selection)
         let can_reach_exit = Self::find_blocks_reaching_exit(ssa);
 
-        let mut count = 0;
+        let mut count: usize = 0;
 
         // 1. Remove tainted PHI nodes
         // Collect PHIs to remove (block_idx, phi_idx) sorted in reverse order
@@ -271,7 +270,7 @@ impl<'a> NeutralizationPass<'a> {
             if let Some(block) = ssa.block_mut(block_idx) {
                 if phi_idx < block.phi_nodes().len() {
                     block.phi_nodes_mut().remove(phi_idx);
-                    count += 1;
+                    count = count.saturating_add(1);
                 }
             }
         }
@@ -291,7 +290,7 @@ impl<'a> NeutralizationPass<'a> {
                     if matches!(
                         instr.op(),
                         SsaOp::Const {
-                            value: crate::analysis::ConstValue::DecryptedString(_),
+                            value: ConstValue::DecryptedString(_),
                             ..
                         }
                     ) {
@@ -350,7 +349,7 @@ impl<'a> NeutralizationPass<'a> {
                         InstrAction::Nop => instr.set_op(SsaOp::Nop),
                         InstrAction::Jump(target) => instr.set_op(SsaOp::Jump { target }),
                     }
-                    count += 1;
+                    count = count.saturating_add(1);
                 }
             }
         }
@@ -359,7 +358,7 @@ impl<'a> NeutralizationPass<'a> {
     }
 }
 
-impl SsaPass for NeutralizationPass<'_> {
+impl SsaPass<CilTarget, CompilerContext> for NeutralizationPass<'_> {
     fn name(&self) -> &'static str {
         "neutralization"
     }
@@ -371,14 +370,14 @@ impl SsaPass for NeutralizationPass<'_> {
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
-        method_token: Token,
-        ctx: &CompilerContext,
-        _assembly: &CilObject,
-    ) -> Result<bool> {
+        method: &MethodRef,
+        host: &CompilerContext,
+    ) -> analyssa::Result<bool> {
+        let method_token = method.0;
         let neutralized = self.neutralize_method(ssa);
 
         if neutralized > 0 {
-            ctx.events
+            host.events
                 .record(EventKind::InstructionRemoved)
                 .method(method_token)
                 .message(format!(
@@ -441,6 +440,7 @@ mod tests {
             dest: v2,
             left: v0,
             right: v1,
+            flags: None,
         }));
 
         b0.add_instruction(SsaInstruction::synthetic(SsaOp::Return { value: Some(v2) }));

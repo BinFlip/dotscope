@@ -42,7 +42,7 @@
 
 use crate::{
     utils::{read_compressed_int, read_compressed_int_at},
-    Result,
+    Error, HeapKind, ParseFailure, Result,
 };
 
 use widestring::U16Str;
@@ -124,8 +124,12 @@ impl<'a> UserStrings<'a> {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn from(data: &'a [u8]) -> Result<UserStrings<'a>> {
-        if data.is_empty() || data[0] != 0 {
-            return Err(out_of_bounds_error!());
+        if data.first().copied() != Some(0) {
+            return Err(ParseFailure::HeapCorrupt {
+                heap: HeapKind::UserStrings,
+                reason: "first byte must be 0 (empty string sentinel)".into(),
+            }
+            .into());
         }
 
         Ok(UserStrings { data })
@@ -169,18 +173,25 @@ impl<'a> UserStrings<'a> {
     /// used on a raw pointer conversion that is guaranteed to succeed when the input slice
     /// is valid.
     pub fn get(&self, index: usize) -> Result<&'a U16Str> {
+        let oob = || ParseFailure::HeapOutOfBounds {
+            heap: HeapKind::UserStrings,
+            index: u32::try_from(index).unwrap_or(u32::MAX),
+        };
+        let corrupt = |reason: String| ParseFailure::HeapCorrupt {
+            heap: HeapKind::UserStrings,
+            reason,
+        };
         if index >= self.data.len() {
-            return Err(out_of_bounds_error!());
+            return Err(oob().into());
         }
 
         let (total_bytes, compressed_length_size) = read_compressed_int_at(self.data, index)?;
-        let data_start = index + compressed_length_size;
+        let data_start = index
+            .checked_add(compressed_length_size)
+            .ok_or_else(|| corrupt(format!("offset overflow at index {index}")))?;
 
         if total_bytes == 0 {
-            return Err(malformed_error!(
-                "Invalid zero-length string at index {}",
-                index
-            ));
+            return Err(corrupt(format!("zero-length entry at index {index}")).into());
         }
 
         if total_bytes == 1 {
@@ -190,19 +201,28 @@ impl<'a> UserStrings<'a> {
 
         // Total bytes includes UTF-16 data + terminator byte (1 byte)
         // So actual UTF-16 data is total_bytes - 1
-        let utf16_length = total_bytes - 1;
+        let utf16_length = total_bytes
+            .checked_sub(1)
+            .ok_or_else(|| corrupt(format!("length underflow at index {index}")))?;
 
-        let total_data_end = data_start + total_bytes;
+        let total_data_end = data_start
+            .checked_add(total_bytes)
+            .ok_or_else(|| corrupt(format!("end overflow at index {index}")))?;
         if total_data_end > self.data.len() {
-            return Err(out_of_bounds_error!());
+            return Err(oob().into());
         }
 
         if utf16_length % 2 != 0 {
-            return Err(malformed_error!("Invalid UTF-16 length at index {}", index));
+            return Err(corrupt(format!("odd UTF-16 byte count at index {index}")).into());
         }
 
-        let utf16_data_end = data_start + utf16_length;
-        let utf16_data = &self.data[data_start..utf16_data_end];
+        let utf16_data_end = data_start
+            .checked_add(utf16_length)
+            .ok_or_else(|| corrupt(format!("data end overflow at index {index}")))?;
+        let utf16_data = self
+            .data
+            .get(data_start..utf16_data_end)
+            .ok_or_else(|| Error::from(oob()))?;
 
         // Convert byte slice to u16 slice for UTF-16 string construction.
         //
@@ -229,7 +249,7 @@ impl<'a> UserStrings<'a> {
             #[allow(clippy::cast_ptr_alignment)]
             core::ptr::slice_from_raw_parts(ptr.cast::<u16>(), utf16_data.len() / 2)
                 .as_ref()
-                .ok_or_else(|| malformed_error!("null pointer in user string slice conversion"))?
+                .ok_or_else(|| corrupt("null pointer in user string slice conversion".into()))?
         };
 
         Ok(U16Str::from_slice(str_slice))
@@ -472,30 +492,33 @@ impl<'a> Iterator for UserStringsIterator<'a> {
                 read_compressed_int(self.user_strings.data, &mut self.position)
             {
                 // Reset position since read_compressed_int advanced it
-                self.position -= consumed;
+                self.position = self.position.saturating_sub(consumed);
                 (length, consumed)
             } else {
                 // Try to skip over bad data by advancing one byte and trying again
-                self.position += 1;
-                recovery_attempts += 1;
+                self.position = self.position.saturating_add(1);
+                recovery_attempts = recovery_attempts.saturating_add(1);
                 continue;
             };
 
             // Handle zero-length entries (invalid according to .NET spec, but may exist in malformed data)
             if total_bytes == 0 {
-                self.position += compressed_length_size;
-                recovery_attempts += 1;
+                self.position = self.position.saturating_add(compressed_length_size);
+                recovery_attempts = recovery_attempts.saturating_add(1);
                 continue;
             }
 
             let Ok(string) = self.user_strings.get(start_position) else {
-                // Skip over the malformed entry
-                self.position += compressed_length_size + total_bytes;
-                recovery_attempts += 1;
+                // Skip over the malformed entry. On overflow, bail out cleanly.
+                let skip = compressed_length_size.checked_add(total_bytes)?;
+                let next = self.position.checked_add(skip)?;
+                self.position = next;
+                recovery_attempts = recovery_attempts.saturating_add(1);
                 continue;
             };
 
-            let new_position = self.position + compressed_length_size + total_bytes;
+            let skip = compressed_length_size.checked_add(total_bytes)?;
+            let new_position = self.position.checked_add(skip)?;
             self.position = new_position;
 
             return Some((start_position, string));

@@ -266,36 +266,45 @@ fn generate_single_reloc_block(rva: u32, reloc_type: u16) -> Vec<u8> {
 /// Filtered relocation data with .text blocks removed.
 fn filter_relocation_blocks(reloc_data: &[u8], text_rva_range: (u32, u32)) -> Vec<u8> {
     let mut result = Vec::new();
-    let mut offset = 0;
+    let mut offset: usize = 0;
     let (text_start, text_end) = text_rva_range;
 
-    while offset + 8 <= reloc_data.len() {
-        // Read block header
-        let block_va = u32::from_le_bytes([
-            reloc_data[offset],
-            reloc_data[offset + 1],
-            reloc_data[offset + 2],
-            reloc_data[offset + 3],
-        ]);
-        let block_size = u32::from_le_bytes([
-            reloc_data[offset + 4],
-            reloc_data[offset + 5],
-            reloc_data[offset + 6],
-            reloc_data[offset + 7],
-        ]) as usize;
+    while let Some(header) = reloc_data.get(offset..).and_then(|s| s.get(..8)) {
+        // SAFETY: `header` is exactly 8 bytes from the `get(..8)` above; the
+        // sub-slices below are statically known to fit.
+        let Some(va_bytes) = header.get(0..4) else {
+            break;
+        };
+        let Some(size_bytes) = header.get(4..8) else {
+            break;
+        };
+        let Ok(va_arr) = <[u8; 4]>::try_from(va_bytes) else {
+            break;
+        };
+        let Ok(size_arr) = <[u8; 4]>::try_from(size_bytes) else {
+            break;
+        };
+        let block_va = u32::from_le_bytes(va_arr);
+        let block_size = u32::from_le_bytes(size_arr) as usize;
 
-        // Validate block size
-        if block_size < 8 || offset + block_size > reloc_data.len() {
+        // Validate block size and end offset
+        if block_size < 8 {
             break;
         }
+        let Some(block_end) = offset.checked_add(block_size) else {
+            break;
+        };
+        let Some(block) = reloc_data.get(offset..block_end) else {
+            break;
+        };
 
         // Keep blocks that don't point to .text
         let points_to_text = block_va >= text_start && block_va < text_end;
         if !points_to_text {
-            result.extend_from_slice(&reloc_data[offset..offset + block_size]);
+            result.extend_from_slice(block);
         }
 
-        offset += block_size;
+        offset = block_end;
     }
 
     result

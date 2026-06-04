@@ -217,16 +217,19 @@ fn decompose_standard_instruction(
             dest,
             left,
             right,
+            flags: None,
         }), // add
         0x59 => binary_op(uses, def, |dest, left, right| SsaOp::Sub {
             dest,
             left,
             right,
+            flags: None,
         }), // sub
         0x5A => binary_op(uses, def, |dest, left, right| SsaOp::Mul {
             dest,
             left,
             right,
+            flags: None,
         }), // mul
         0x5B => binary_op(uses, def, |dest, left, right| SsaOp::Div {
             // div
@@ -234,6 +237,7 @@ fn decompose_standard_instruction(
             left,
             right,
             unsigned: false,
+            flags: None,
         }),
         0x5C => binary_op(uses, def, |dest, left, right| SsaOp::Div {
             // div.un
@@ -241,6 +245,7 @@ fn decompose_standard_instruction(
             left,
             right,
             unsigned: true,
+            flags: None,
         }),
         0x5D => binary_op(uses, def, |dest, left, right| SsaOp::Rem {
             // rem
@@ -248,6 +253,7 @@ fn decompose_standard_instruction(
             left,
             right,
             unsigned: false,
+            flags: None,
         }),
         0x5E => binary_op(uses, def, |dest, left, right| SsaOp::Rem {
             // rem.un
@@ -255,10 +261,19 @@ fn decompose_standard_instruction(
             left,
             right,
             unsigned: true,
+            flags: None,
         }),
 
-        0x65 => unary_op(uses, def, |dest, operand| SsaOp::Neg { dest, operand }), // neg
-        0x66 => unary_op(uses, def, |dest, operand| SsaOp::Not { dest, operand }), // not
+        0x65 => unary_op(uses, def, |dest, operand| SsaOp::Neg {
+            dest,
+            operand,
+            flags: None,
+        }), // neg
+        0x66 => unary_op(uses, def, |dest, operand| SsaOp::Not {
+            dest,
+            operand,
+            flags: None,
+        }), // not
 
         // Overflow checking arithmetic
         0xD6 => binary_op(uses, def, |dest, left, right| SsaOp::AddOvf {
@@ -267,6 +282,7 @@ fn decompose_standard_instruction(
             left,
             right,
             unsigned: false,
+            flags: None,
         }),
         0xD7 => binary_op(uses, def, |dest, left, right| SsaOp::AddOvf {
             // add.ovf.un
@@ -274,6 +290,7 @@ fn decompose_standard_instruction(
             left,
             right,
             unsigned: true,
+            flags: None,
         }),
         0xD8 => binary_op(uses, def, |dest, left, right| SsaOp::MulOvf {
             // mul.ovf
@@ -281,6 +298,7 @@ fn decompose_standard_instruction(
             left,
             right,
             unsigned: false,
+            flags: None,
         }),
         0xD9 => binary_op(uses, def, |dest, left, right| SsaOp::MulOvf {
             // mul.ovf.un
@@ -288,6 +306,7 @@ fn decompose_standard_instruction(
             left,
             right,
             unsigned: true,
+            flags: None,
         }),
         0xDA => binary_op(uses, def, |dest, left, right| SsaOp::SubOvf {
             // sub.ovf
@@ -295,6 +314,7 @@ fn decompose_standard_instruction(
             left,
             right,
             unsigned: false,
+            flags: None,
         }),
         0xDB => binary_op(uses, def, |dest, left, right| SsaOp::SubOvf {
             // sub.ovf.un
@@ -302,27 +322,32 @@ fn decompose_standard_instruction(
             left,
             right,
             unsigned: true,
+            flags: None,
         }),
         0x5F => binary_op(uses, def, |dest, left, right| SsaOp::And {
             dest,
             left,
             right,
+            flags: None,
         }), // and
         0x60 => binary_op(uses, def, |dest, left, right| SsaOp::Or {
             dest,
             left,
             right,
+            flags: None,
         }), // or
         0x61 => binary_op(uses, def, |dest, left, right| SsaOp::Xor {
             dest,
             left,
             right,
+            flags: None,
         }), // xor
         0x62 => binary_op(uses, def, |dest, value, amount| SsaOp::Shl {
             // shl
             dest,
             value,
             amount,
+            flags: None,
         }),
         0x63 => binary_op(uses, def, |dest, value, amount| SsaOp::Shr {
             // shr
@@ -330,6 +355,7 @@ fn decompose_standard_instruction(
             value,
             amount,
             unsigned: false,
+            flags: None,
         }),
         0x64 => binary_op(uses, def, |dest, value, amount| SsaOp::Shr {
             // shr.un
@@ -337,6 +363,7 @@ fn decompose_standard_instruction(
             value,
             amount,
             unsigned: true,
+            flags: None,
         }),
         0x67 => unary_op(uses, def, |dest, operand| SsaOp::Conv {
             // conv.i1
@@ -619,34 +646,28 @@ fn decompose_standard_instruction(
             // brfalse.s, brfalse
             // For conditional branches, successors[0] is the branch target, successors[1] is fallthrough
             uses.first().and_then(|&condition| {
-                if successors.len() >= 2 {
-                    // brfalse: jumps to target if false, falls through if true
-                    // successors[0] = branch target (false path), successors[1] = fallthrough (true path)
-                    Some(SsaOp::Branch {
-                        condition,
-                        true_target: successors[1],  // fallthrough
-                        false_target: successors[0], // branch target
-                    })
-                } else {
-                    None
-                }
+                let target = successors.first().copied()?;
+                let fallthrough = successors.get(1).copied()?;
+                // brfalse: jumps to target if false, falls through if true
+                Some(SsaOp::Branch {
+                    condition,
+                    true_target: fallthrough,
+                    false_target: target,
+                })
             })
         }
         0x2D | 0x3A => {
             // brtrue.s, brtrue
             // For conditional branches, successors[0] is the branch target, successors[1] is fallthrough
             uses.first().and_then(|&condition| {
-                if successors.len() >= 2 {
-                    // brtrue: jumps to target if true, falls through if false
-                    // successors[0] = branch target (true path), successors[1] = fallthrough (false path)
-                    Some(SsaOp::Branch {
-                        condition,
-                        true_target: successors[0],  // branch target
-                        false_target: successors[1], // fallthrough
-                    })
-                } else {
-                    None
-                }
+                let target = successors.first().copied()?;
+                let fallthrough = successors.get(1).copied()?;
+                // brtrue: jumps to target if true, falls through if false
+                Some(SsaOp::Branch {
+                    condition,
+                    true_target: target,
+                    false_target: fallthrough,
+                })
             })
         }
 
@@ -698,8 +719,9 @@ fn decompose_standard_instruction(
             uses.first().and_then(|&value| {
                 if successors.len() >= 2 {
                     // Last successor is the default, rest are case targets
-                    let default = *successors.last().unwrap_or(&0);
-                    let targets: Vec<usize> = successors[..successors.len() - 1].to_vec();
+                    let last_idx = successors.len().checked_sub(1)?;
+                    let default = successors.get(last_idx).copied().unwrap_or(0);
+                    let targets: Vec<usize> = successors.get(..last_idx)?.to_vec();
                     Some(SsaOp::Switch {
                         value,
                         targets,
@@ -804,7 +826,11 @@ fn decompose_standard_instruction(
             // calli
             if let Some(signature) = extract_signature_token(&instr.operand) {
                 let (fptr, args) = if let Some(&fptr) = uses.last() {
-                    let args = uses[..uses.len() - 1].to_vec();
+                    let last_idx = uses.len().saturating_sub(1);
+                    let args = uses
+                        .get(..last_idx)
+                        .map(<[SsaVarId]>::to_vec)
+                        .unwrap_or_default();
                     (fptr, args)
                 } else {
                     (SsaVarId::from_index(0), vec![])
@@ -1430,18 +1456,16 @@ fn comparison_branch(
     unsigned: bool,
 ) -> Option<SsaOp> {
     if let (Some(&left), Some(&right)) = (uses.first(), uses.get(1)) {
-        if successors.len() >= 2 {
-            Some(SsaOp::BranchCmp {
-                left,
-                right,
-                cmp,
-                unsigned,
-                true_target: successors[0],
-                false_target: successors[1],
-            })
-        } else {
-            None
-        }
+        let true_target = successors.first().copied()?;
+        let false_target = successors.get(1).copied()?;
+        Some(SsaOp::BranchCmp {
+            left,
+            right,
+            cmp,
+            unsigned,
+            true_target,
+            false_target,
+        })
     } else {
         None
     }
@@ -1692,7 +1716,13 @@ mod tests {
         let op = decompose_instruction(&instr, &uses, def, &[], None);
         assert!(op.is_ok());
 
-        if let Ok(SsaOp::Add { dest, left, right }) = op {
+        if let Ok(SsaOp::Add {
+            dest,
+            left,
+            right,
+            flags: None,
+        }) = op
+        {
             assert_eq!(dest, v2);
             assert_eq!(left, v0);
             assert_eq!(right, v1);
@@ -1939,7 +1969,7 @@ mod tests {
         let def = Some(v1);
 
         let op = decompose_instruction(&instr, &uses, def, &[], None);
-        assert!(matches!(op, Ok(SsaOp::Neg { .. })));
+        assert!(matches!(op, Ok(SsaOp::Neg { flags: None, .. })));
     }
 
     #[test]
@@ -2058,7 +2088,7 @@ mod tests {
         let def = Some(v1);
 
         let op = decompose_instruction(&instr, &uses, def, &[], None);
-        assert!(matches!(op, Ok(SsaOp::Not { .. })));
+        assert!(matches!(op, Ok(SsaOp::Not { flags: None, .. })));
     }
 
     #[test]

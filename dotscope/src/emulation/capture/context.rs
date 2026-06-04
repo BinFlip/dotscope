@@ -369,7 +369,7 @@ impl CaptureContext {
         }
 
         if let Ok(mut stats) = self.stats.write() {
-            stats.assembly_bytes += len;
+            stats.assembly_bytes = stats.assembly_bytes.saturating_add(len);
         }
     }
 
@@ -450,7 +450,7 @@ impl CaptureContext {
         }
 
         if let Ok(mut stats) = self.stats.write() {
-            stats.string_count += 1;
+            stats.string_count = stats.string_count.saturating_add(1);
         }
     }
 
@@ -489,7 +489,7 @@ impl CaptureContext {
         }
 
         if let Ok(mut stats) = self.stats.write() {
-            stats.string_count += 1;
+            stats.string_count = stats.string_count.saturating_add(1);
         }
     }
 
@@ -547,7 +547,7 @@ impl CaptureContext {
         }
 
         if let Ok(mut stats) = self.stats.write() {
-            stats.buffer_bytes += len;
+            stats.buffer_bytes = stats.buffer_bytes.saturating_add(len);
         }
     }
 
@@ -645,7 +645,7 @@ impl CaptureContext {
         }
 
         if let Ok(mut stats) = self.stats.write() {
-            stats.file_op_count += 1;
+            stats.file_op_count = stats.file_op_count.saturating_add(1);
         }
     }
 
@@ -694,7 +694,7 @@ impl CaptureContext {
         }
 
         if let Ok(mut stats) = self.stats.write() {
-            stats.network_op_count += 1;
+            stats.network_op_count = stats.network_op_count.saturating_add(1);
         }
     }
 
@@ -750,7 +750,7 @@ impl CaptureContext {
                 let base = range.start;
                 // Safe: capture memory ranges fit in usize
                 #[allow(clippy::cast_possible_truncation)]
-                let size = (range.end - range.start) as usize;
+                let size = range.end.saturating_sub(range.start) as usize;
                 address_space
                     .read(base, size)
                     .ok()
@@ -778,7 +778,7 @@ impl CaptureContext {
         }
 
         if let Ok(mut stats) = self.stats.write() {
-            stats.snapshot_count += 1;
+            stats.snapshot_count = stats.snapshot_count.saturating_add(1);
         }
     }
 
@@ -812,7 +812,7 @@ impl CaptureContext {
                 let base = range.start;
                 // Safe: capture memory ranges fit in usize
                 #[allow(clippy::cast_possible_truncation)]
-                let size = (range.end - range.start) as usize;
+                let size = range.end.saturating_sub(range.start) as usize;
                 address_space
                     .read(base, size)
                     .ok()
@@ -840,7 +840,7 @@ impl CaptureContext {
         }
 
         if let Ok(mut stats) = self.stats.write() {
-            stats.snapshot_count += 1;
+            stats.snapshot_count = stats.snapshot_count.saturating_add(1);
         }
     }
 

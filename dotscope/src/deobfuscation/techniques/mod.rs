@@ -73,8 +73,9 @@ pub(crate) use bitmono::StringFindings as BitMonoStringFindings;
 use std::sync::Arc;
 
 use crate::{
+    analysis::CilTarget,
     cilassembly::CleanupRequest,
-    compiler::{EventLog, PassPhase, SsaPass},
+    compiler::{CompilerContext, EventLog, PassPhase, SsaPass},
     deobfuscation::{config::EngineConfig, context::AnalysisContext},
     CilObject, Result,
 };
@@ -265,7 +266,7 @@ pub trait Technique: Send + Sync {
         _ctx: &AnalysisContext,
         _detection: &Detection,
         _assembly: &Arc<CilObject>,
-    ) -> Vec<Box<dyn SsaPass>> {
+    ) -> Vec<Box<dyn SsaPass<CilTarget, CompilerContext>>> {
         Vec::new()
     }
 

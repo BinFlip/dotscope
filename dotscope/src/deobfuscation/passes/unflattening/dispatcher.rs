@@ -124,11 +124,7 @@ impl Dispatcher {
         // Cast to usize for indexing - transform result is always non-negative after modulo/and operations
         #[allow(clippy::cast_sign_loss)]
         let index = self.transform.apply(state) as usize;
-        if index < self.cases.len() {
-            self.cases[index]
-        } else {
-            self.default
-        }
+        self.cases.get(index).copied().unwrap_or(self.default)
     }
 
     /// Refreshes variable IDs against the current SSA.
@@ -157,35 +153,12 @@ impl Dispatcher {
             })?;
 
         // Find the state phi: the phi whose result feeds into the switch value
-        // (directly or through a short chain of copies/arithmetic in the block)
-        let state_phi = block
-            .phi_nodes()
-            .iter()
-            .find(|phi| {
-                if phi.result() == switch_var {
-                    return true;
-                }
-                // Trace switch_var backwards through block-local definitions
-                let mut current = switch_var;
-                for _ in 0..5 {
-                    if let Some(def_instr) = block
-                        .instructions()
-                        .iter()
-                        .find(|i| i.op().dest().is_some_and(|d| d == current))
-                    {
-                        if let Some(&src) = def_instr.op().uses().first() {
-                            if src == phi.result() {
-                                return true;
-                            }
-                            current = src;
-                            continue;
-                        }
-                    }
-                    break;
-                }
-                false
-            })
-            .map(|phi| phi.result());
+        // through the dispatcher's state-transform chain. Reuse the IR's
+        // backward tracer (which follows arithmetic/bitwise/unary state
+        // transforms) rather than an ad-hoc, fixed-depth, first-operand walk —
+        // the latter capped at 5 steps and ignored `neg`/`not`, missing the
+        // state phi behind ConfuserEx "expression" wrappers like `-(!!state)`.
+        let state_phi = ssa.trace_to_phi(switch_var, Some(self.block));
 
         let mut refreshed = Self::new(
             self.block,
@@ -272,13 +245,13 @@ impl StateTransform {
             Self::Modulo(n) => {
                 // Use unsigned modulo for consistency with CIL rem.un
                 let u_state = state.cast_unsigned();
-                (u_state % n).cast_signed()
+                u_state.checked_rem(*n).unwrap_or(0).cast_signed()
             }
             Self::XorModulo { xor_key, divisor } => {
                 // ConfuserEx pattern: (state ^ key) % N
                 let xored = state ^ xor_key;
                 let u_xored = xored.cast_unsigned();
-                (u_xored % divisor).cast_signed()
+                u_xored.checked_rem(*divisor).unwrap_or(0).cast_signed()
             }
             Self::And(mask) => state & (*mask).cast_signed(),
             Self::Shr(amount) => {
@@ -432,11 +405,7 @@ impl DispatcherInfo {
                 // Cast to usize for indexing - transform result is always non-negative after modulo/and operations
                 #[allow(clippy::cast_sign_loss)]
                 let index = transform.apply(case_value) as usize;
-                if index < cases.len() {
-                    Some(cases[index])
-                } else {
-                    Some(*default)
-                }
+                Some(cases.get(index).copied().unwrap_or(*default))
             }
             Self::IfElseChain {
                 comparisons,

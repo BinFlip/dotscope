@@ -202,10 +202,10 @@ impl NativeMethodConversionPass {
         for &token in &self.targets {
             match self.convert_method(assembly, file, token, bitness) {
                 Ok(()) => {
-                    stats.converted += 1;
+                    stats.converted = stats.converted.saturating_add(1);
                 }
                 Err(e) => {
-                    stats.failed += 1;
+                    stats.failed = stats.failed.saturating_add(1);
                     stats.failed_tokens.push(token);
                     stats.errors.push(format!("0x{:08x}: {}", token.value(), e));
                 }
@@ -252,14 +252,26 @@ impl NativeMethodConversionPass {
 
         // Step 2: Get x86 bytes from the RVA
         let offset = file.rva_to_offset(method_row.rva as usize)?;
-        let x86_bytes = &file.data()[offset..];
+        let x86_bytes = file.data().get(offset..).ok_or_else(|| {
+            Error::X86Error(format!(
+                "Method 0x{:08x}: file offset {offset} out of bounds",
+                token.value()
+            ))
+        })?;
 
         // Step 3: Detect prologue and adjust bytes if needed
         let (decode_bytes, base_offset) = if self.skip_prologue {
             let prologue = x86_detect_prologue(x86_bytes, bitness);
             if prologue.kind == X86PrologueKind::DynCipher {
                 // Skip the prologue
-                (&x86_bytes[prologue.size..], prologue.size as u64)
+                let rest = x86_bytes.get(prologue.size..).ok_or_else(|| {
+                    Error::X86Error(format!(
+                        "Method 0x{:08x}: prologue size {} exceeds bytes available",
+                        token.value(),
+                        prologue.size
+                    ))
+                })?;
+                (rest, prologue.size as u64)
             } else {
                 // No recognized prologue, decode from start
                 (x86_bytes, 0u64)

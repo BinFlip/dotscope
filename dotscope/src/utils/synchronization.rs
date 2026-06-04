@@ -170,7 +170,10 @@ impl FailFastBarrier {
             }
         }
 
-        let arrived_count = self.arrived.fetch_add(1, Ordering::AcqRel) + 1;
+        let arrived_count = self
+            .arrived
+            .fetch_add(1, Ordering::AcqRel)
+            .saturating_add(1);
 
         if arrived_count == self.count {
             // Last thread to arrive - wake everyone up

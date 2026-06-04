@@ -1,3 +1,12 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    missing_docs
+)]
+
 //! Integration test for method injection roundtrip
 //!
 //! This test verifies that:
@@ -175,14 +184,12 @@ fn verify_injected_method(assembly: &CilObject) -> Result<()> {
             found_injected_method = true;
 
             // Verify it has a method body
-            let body = method
-                .body
-                .get()
-                .ok_or_else(|| dotscope::Error::Malformed {
-                    message: "Injected method should have a body".to_string(),
-                    file: file!(),
-                    line: line!(),
-                })?;
+            let body = method.body.get().ok_or_else(|| {
+                Error::Parse(ParseFailure::Other {
+                    stage: ParseStage::MethodBody,
+                    message: "injected method should have a body".into(),
+                })
+            })?;
 
             // Verify the body has reasonable size (our method should be small)
             assert!(

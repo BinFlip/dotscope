@@ -100,7 +100,7 @@ pub(super) fn resolve_token(assembly: &CilObject, token: Token) -> Option<String
                 .and_then(|us| us.get(token.row() as usize).ok())
                 .map(|s| {
                     let s = s.to_string_lossy();
-                    let mut escaped = String::with_capacity(s.len() + 2);
+                    let mut escaped = String::with_capacity(s.len().saturating_add(2));
                     escaped.push('"');
                     for ch in s.chars() {
                         match ch {
@@ -168,7 +168,7 @@ fn format_memberref(mref: &MemberRef, asm: &CilObject) -> String {
 /// Resolves the underlying method (MethodDef or MemberRef) and appends
 /// the generic type arguments: `instance void Type::Method<int32, string>(params)`
 fn format_methodspec(assembly: &CilObject, token: &Token) -> Option<String> {
-    let spec = assembly.method_spec(token)?;
+    let spec = assembly.method_spec(token).ok()?;
 
     // Format the underlying method reference
     let base_ref = match &spec.method {

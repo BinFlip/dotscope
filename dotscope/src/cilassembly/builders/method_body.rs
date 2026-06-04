@@ -106,8 +106,12 @@ fn resolve_labeled_exception_handler(
         )));
     }
 
-    let try_length = try_end_offset - try_start_offset;
-    let handler_length = handler_end_offset - handler_start_offset;
+    let try_length = try_end_offset
+        .checked_sub(try_start_offset)
+        .ok_or_else(|| Error::ModificationInvalid("try region length underflow".into()))?;
+    let handler_length = handler_end_offset
+        .checked_sub(handler_start_offset)
+        .ok_or_else(|| Error::ModificationInvalid("handler region length underflow".into()))?;
 
     // Resolve filter offset for FILTER handlers
     let filter_offset = if let Some(filter_label) = &labeled_handler.filter_start_label {

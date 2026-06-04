@@ -28,7 +28,7 @@
 //! Decodes instructions sequentially from the start until a `RET` instruction.
 //! Fast and simple, but vulnerable to anti-disassembly tricks.
 //!
-//! ## Traversal-Based Decoding ([`x86_decode_function_traversal`])
+//! ## Traversal-Based Decoding ([`x86_decode_traversal`])
 //!
 //! Follows control flow edges from the entry point, only decoding reachable code.
 //! More robust against:
@@ -63,10 +63,10 @@
 //! # Traversal-Based Example
 //!
 //! ```rust,ignore
-//! use dotscope::analysis::{x86_decode_function_traversal, X86Function};
+//! use dotscope::analysis::{x86_decode_traversal, X86Function};
 //!
 //! // Decode using control-flow following (more robust)
-//! let result = x86_decode_function_traversal(bytes, 32, 0x1000, 0)?;
+//! let result = x86_decode_traversal(bytes, 32, 0x1000, 0)?;
 //! println!("Decoded {} instructions", result.instructions.len());
 //! println!("Has indirect jumps: {}", result.has_indirect_control_flow);
 //!
@@ -299,14 +299,6 @@ mod tests {
             _ => panic!("Expected Mov instruction"),
         }
     }
-
-    // ========================================================================
-    // ConfuserEx x86 native stub tests
-    //
-    // Bytecodes extracted from test samples in tests/samples/packers/confuserex/1.6.0/.
-    // All stubs use DynCipher calling convention: body starts after 20-byte
-    // prologue. These bytes are the body only (without prologue).
-    // ========================================================================
 
     /// Helper: decode body bytes, build CFG, translate to SSA, evaluate with
     /// concrete input, and return the i32 result.

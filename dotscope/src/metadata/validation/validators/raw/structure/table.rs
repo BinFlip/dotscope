@@ -79,6 +79,7 @@ use crate::{
         tables::{AssemblyRaw, FieldRaw, MethodDefRaw, ModuleRaw, TableId, TypeDefRaw},
         validation::{
             context::{RawValidationContext, ValidationContext},
+            shared::err_no_metadata_tables,
             traits::RawValidator,
         },
     },
@@ -144,9 +145,7 @@ impl RawTableValidator {
     /// - Module table is present but contains zero rows (at least one required)
     /// - Assembly table contains more than one row (ECMA-335 limit violation)
     fn validate_required_tables(assembly_view: &CilAssemblyView) -> Result<()> {
-        let tables = assembly_view
-            .tables()
-            .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
+        let tables = assembly_view.tables().ok_or_else(err_no_metadata_tables)?;
 
         let module_table = tables.table::<ModuleRaw>().ok_or_else(|| {
             malformed_error!("Module table is required but not present in assembly")
@@ -192,9 +191,7 @@ impl RawTableValidator {
     /// - RID values within table rows are inconsistent with expected sequential numbering
     /// - Internal table structure inconsistencies are detected during iteration
     fn validate_table_structures(assembly_view: &CilAssemblyView) -> Result<()> {
-        let tables = assembly_view
-            .tables()
-            .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
+        let tables = assembly_view.tables().ok_or_else(err_no_metadata_tables)?;
 
         for table_id in TableId::iter() {
             dispatch_table_type!(table_id, |RawType| {
@@ -238,15 +235,14 @@ impl RawTableValidator {
     /// - TypeDef method list references exceed MethodDef table row count
     /// - List-based cross-table references are out of bounds
     fn validate_table_dependencies(assembly_view: &CilAssemblyView) -> Result<()> {
-        let tables = assembly_view
-            .tables()
-            .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
+        let tables = assembly_view.tables().ok_or_else(err_no_metadata_tables)?;
 
         if let (Some(typedef_table), Some(field_table)) =
             (tables.table::<TypeDefRaw>(), tables.table::<FieldRaw>())
         {
             for typedef_row in typedef_table {
-                if typedef_row.field_list != 0 && typedef_row.field_list > field_table.row_count + 1
+                if typedef_row.field_list != 0
+                    && typedef_row.field_list > field_table.row_count.saturating_add(1)
                 {
                     return Err(malformed_error!(
                         "TypeDef RID {} references field list starting at RID {} but Field table only has {} rows",
@@ -263,7 +259,7 @@ impl RawTableValidator {
         {
             for typedef_row in typedef_table {
                 if typedef_row.method_list != 0
-                    && typedef_row.method_list > method_table.row_count + 1
+                    && typedef_row.method_list > method_table.row_count.saturating_add(1)
                 {
                     return Err(malformed_error!(
                         "TypeDef RID {} references method list starting at RID {} but MethodDef table only has {} rows",
@@ -396,7 +392,7 @@ mod tests {
         validator_test(
             raw_table_validator_file_factory,
             "RawTableValidator",
-            "Malformed",
+            "Parse",
             config,
             |context| validator.validate_raw(context),
         )
@@ -420,7 +416,7 @@ mod tests {
         let result_disabled = validator_test(
             clean_only_factory,
             "RawTableValidator",
-            "Malformed",
+            "Parse",
             ValidationConfig {
                 enable_structural_validation: false,
                 ..Default::default()
@@ -443,7 +439,7 @@ mod tests {
         let result_enabled = validator_test(
             clean_only_factory,
             "RawTableValidator",
-            "Malformed",
+            "Parse",
             ValidationConfig {
                 enable_structural_validation: true,
                 ..Default::default()

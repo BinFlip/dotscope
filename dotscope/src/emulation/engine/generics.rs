@@ -47,7 +47,10 @@ use log::warn;
 
 use crate::{
     emulation::tokens,
-    metadata::{tables::GenericParamAttributes, token::Token},
+    metadata::{
+        tables::{GenericParamAttributes, GenericParamVariance},
+        token::Token,
+    },
 };
 
 /// Tracks generic type and method instantiations during emulation.
@@ -269,39 +272,40 @@ where
             continue;
         };
 
-        let variance = flags.bits() & GenericParamAttributes::VARIANCE_MASK.bits();
-
-        if variance == GenericParamAttributes::COVARIANT.bits() {
-            // Covariant (out): source must be assignable to target (derived → base)
-            if !is_assignable(*src, *tgt) {
+        match flags.variance() {
+            GenericParamVariance::Covariant => {
+                // Covariant (out): source must be assignable to target (derived → base)
+                if !is_assignable(*src, *tgt) {
+                    warn!(
+                        "Generic variance mismatch at position {i}: covariant parameter \
+                         requires 0x{:08X} assignable to 0x{:08X}",
+                        src.value(),
+                        tgt.value()
+                    );
+                    return false;
+                }
+            }
+            GenericParamVariance::Contravariant => {
+                // Contravariant (in): target must be assignable to source (base → derived)
+                if !is_assignable(*tgt, *src) {
+                    warn!(
+                        "Generic variance mismatch at position {i}: contravariant parameter \
+                         requires 0x{:08X} assignable to 0x{:08X}",
+                        tgt.value(),
+                        src.value()
+                    );
+                    return false;
+                }
+            }
+            GenericParamVariance::Invariant => {
                 warn!(
-                    "Generic variance mismatch at position {i}: covariant parameter \
-                     requires 0x{:08X} assignable to 0x{:08X}",
+                    "Generic variance mismatch at position {i}: invariant parameter \
+                     requires exact match but got 0x{:08X} vs 0x{:08X}",
                     src.value(),
                     tgt.value()
                 );
                 return false;
             }
-        } else if variance == GenericParamAttributes::CONTRAVARIANT.bits() {
-            // Contravariant (in): target must be assignable to source (base → derived)
-            if !is_assignable(*tgt, *src) {
-                warn!(
-                    "Generic variance mismatch at position {i}: contravariant parameter \
-                     requires 0x{:08X} assignable to 0x{:08X}",
-                    tgt.value(),
-                    src.value()
-                );
-                return false;
-            }
-        } else {
-            // Invariant: must match exactly
-            warn!(
-                "Generic variance mismatch at position {i}: invariant parameter \
-                 requires exact match but got 0x{:08X} vs 0x{:08X}",
-                src.value(),
-                tgt.value()
-            );
-            return false;
         }
     }
 

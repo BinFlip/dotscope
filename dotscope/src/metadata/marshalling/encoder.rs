@@ -183,7 +183,7 @@ impl MarshallingEncoder {
     /// - The recursion depth exceeds [`MAX_RECURSION_DEPTH`]
     /// - A nested type fails to encode
     pub fn encode_native_type(&mut self, native_type: &NativeType) -> Result<()> {
-        self.depth += 1;
+        self.depth = self.depth.saturating_add(1);
         if self.depth >= MAX_RECURSION_DEPTH {
             return Err(RecursionLimit(MAX_RECURSION_DEPTH));
         }
@@ -324,7 +324,7 @@ impl MarshallingEncoder {
             }
         }
 
-        self.depth -= 1;
+        self.depth = self.depth.saturating_sub(1);
         Ok(())
     }
 

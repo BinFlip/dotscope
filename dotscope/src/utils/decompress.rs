@@ -72,7 +72,9 @@ pub fn is_confuserex_lzma(data: &[u8]) -> bool {
     // LZMA properties byte: encodes lc, lp, pb parameters
     // Valid range: 0-224 (9 * 5 * 5 - 1)
     // ConfuserEx typically uses default settings: lc=3, lp=0, pb=2 -> 0x5D
-    let props_byte = data[0];
+    let Some(&props_byte) = data.first() else {
+        return false;
+    };
     if props_byte > 224 {
         return false;
     }
@@ -83,27 +85,34 @@ pub fn is_confuserex_lzma(data: &[u8]) -> bool {
 
     // Check dictionary size (bytes 1-4 of LZMA properties)
     // ConfuserEx typically uses 1MB dictionary (0x00100000)
-    let dict_size = u32::from_le_bytes([data[1], data[2], data[3], data[4]]);
+    let Some(dict_bytes) = data.get(1..5).and_then(|s| <[u8; 4]>::try_from(s).ok()) else {
+        return false;
+    };
+    let dict_size = u32::from_le_bytes(dict_bytes);
 
     // Dictionary size must be reasonable: 1KB to 16MB
     // Too small or too large suggests this isn't LZMA
-    if !(1024..=16 * 1024 * 1024).contains(&dict_size) {
+    if !(1024u32..=16u32.saturating_mul(1024).saturating_mul(1024)).contains(&dict_size) {
         return false;
     }
 
     // Bytes 5-8: Uncompressed size (little-endian i32)
     // For ConfuserEx, this is typically a small positive number (the decrypted constants)
-    let uncompressed_size = i32::from_le_bytes([data[5], data[6], data[7], data[8]]);
+    let Some(size_bytes) = data.get(5..9).and_then(|s| <[u8; 4]>::try_from(s).ok()) else {
+        return false;
+    };
+    let uncompressed_size = i32::from_le_bytes(size_bytes);
 
     // Uncompressed size should be positive and reasonable (< 10MB)
     // Negative or very large sizes indicate this isn't LZMA data
-    if uncompressed_size <= 0 || uncompressed_size > 10 * 1024 * 1024 {
+    if uncompressed_size <= 0 || uncompressed_size > 10i32.saturating_mul(1024).saturating_mul(1024)
+    {
         return false;
     }
 
     // Additional check: compressed data should be smaller than uncompressed
     // (otherwise why compress it?)
-    let compressed_data_len = data.len() - 9; // minus header
+    let compressed_data_len = data.len().saturating_sub(9); // minus header
     if compressed_data_len > uncompressed_size.cast_unsigned() as usize {
         // Compressed larger than uncompressed - suspicious
         return false;
@@ -135,13 +144,17 @@ pub fn decompress_confuserex_lzma(data: &[u8]) -> DecompressResult<Vec<u8>> {
     }
 
     // Parse header
-    let props = &data[0..5];
-    let uncompressed_size = i32::from_le_bytes([data[5], data[6], data[7], data[8]]);
-    let compressed = &data[9..];
+    let props = data.get(0..5).ok_or(DecompressError::BufferTooSmall)?;
+    let size_bytes = data
+        .get(5..9)
+        .and_then(|s| <[u8; 4]>::try_from(s).ok())
+        .ok_or(DecompressError::BufferTooSmall)?;
+    let uncompressed_size = i32::from_le_bytes(size_bytes);
+    let compressed = data.get(9..).ok_or(DecompressError::BufferTooSmall)?;
 
     // Build LZMA stream header for lzma-rs
     // lzma-rs expects: 5 bytes props + 8 bytes uncompressed size (little-endian u64) + compressed data
-    let mut lzma_stream = Vec::with_capacity(13 + compressed.len());
+    let mut lzma_stream = Vec::with_capacity(compressed.len().saturating_add(13));
     lzma_stream.extend_from_slice(props);
 
     // Convert i32 to u64 for lzma-rs format

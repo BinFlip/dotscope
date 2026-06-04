@@ -173,11 +173,21 @@ use std::{sync::LazyLock, time::Instant};
 ///
 /// These conditions indicate programming errors that should be caught during development.
 static EXECUTION_LEVELS: LazyLock<Vec<Vec<&'static dyn MetadataLoader>>> = LazyLock::new(|| {
-    let graph = build_dependency_graph(&LOADERS)
-        .expect("Static loader dependency graph must be valid - check for missing loaders or circular dependencies");
-    graph.topological_levels().expect(
-        "Static loader dependency graph must be acyclic - check loader dependencies for cycles",
-    )
+    let graph = match build_dependency_graph(&LOADERS) {
+        Ok(g) => g,
+        Err(e) => {
+            log::error!(
+                "Static loader dependency graph is invalid - check for missing loaders or circular dependencies: {e}"
+            );
+            return Vec::new();
+        }
+    };
+    graph.topological_levels().unwrap_or_else(|e| {
+        log::error!(
+            "Static loader dependency graph must be acyclic - check loader dependencies for cycles: {e}"
+        );
+        Vec::new()
+    })
 });
 
 /// Trait for metadata table loaders.

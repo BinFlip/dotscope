@@ -78,7 +78,7 @@ impl ProcessCell {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::LockError`] if the internal `RwLock` is poisoned.
+    /// Returns [`crate::Error::LockError`] if the internal `RwLock` is poisoned.
     pub fn ensure_initialized<F, P>(
         &self,
         init_fn: F,
@@ -122,7 +122,7 @@ impl ProcessCell {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::LockError`] if the internal `RwLock` is poisoned.
+    /// Returns [`crate::Error::LockError`] if the internal `RwLock` is poisoned.
     pub fn take(&self) -> Result<Option<EmulationProcess>> {
         let mut guard = self
             .process
@@ -138,7 +138,7 @@ impl ProcessCell {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::LockError`] if the internal `RwLock` is poisoned.
+    /// Returns [`crate::Error::LockError`] if the internal `RwLock` is poisoned.
     pub fn clear(&self) -> Result<()> {
         let mut guard = self
             .process

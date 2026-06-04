@@ -20,10 +20,16 @@
 //!
 //! # Module Structure
 //!
-//! - [`ops`] - Symbolic operation types ([`SymbolicOp`]: add, xor, comparison, etc.)
-//! - [`expr`] - Symbolic expression tree representation ([`SymbolicExpr`])
-//! - [`solver`] - Z3-based constraint solver ([`Z3Solver`])
-//! - [`evaluator`] - Builds expressions from SSA operations ([`SymbolicEvaluator`])
+//! The target-agnostic IR + evaluator now live in `analyssa::analysis::symbolic`:
+//!
+//! - [`SymbolicOp`] - Symbolic operation kinds (add, xor, comparison, etc.) — `analyssa::analysis::symbolic::ops`
+//! - [`SymbolicExpr`] - Symbolic expression tree — `analyssa::analysis::symbolic::expr`
+//! - [`SymbolicEvaluator`] - Builds expressions from SSA operations — `analyssa::analysis::symbolic::evaluator`
+//!
+//! The Z3 binding stays in dotscope under the `z3` Cargo feature (analyssa
+//! intentionally avoids the Z3 dependency):
+//!
+//! - [`Z3Solver`] - Z3-based constraint solver (this crate, gated on `z3`)
 //!
 //! # Use Cases
 //!
@@ -81,19 +87,13 @@
 //! [`Z3Solver`] and reuse it. The solver uses 32-bit bitvectors (`BV(32)`) for
 //! all computations, matching CIL's `int32` semantics.
 
-mod evaluator;
-mod expr;
-mod ops;
+// `SymbolicEvaluator`, `SymbolicExpr`, `SymbolicOp` live in
+// `analyssa::analysis::symbolic`. The Z3 binding stays here behind the `z3`
+// feature flag — Z3 is a dotscope-side dependency that analyssa intentionally
+// doesn't take.
+pub use analyssa::analysis::symbolic::{SymbolicEvaluator, SymbolicExpr, SymbolicOp};
 
-// The solver module requires the z3 dependency
 #[cfg(feature = "z3")]
 mod solver;
-
-// Re-export public types - SymbolicExpr, SymbolicOp, SymbolicEvaluator are always available
-pub use evaluator::SymbolicEvaluator;
-pub use expr::SymbolicExpr;
-pub use ops::SymbolicOp;
-
-// Z3Solver is only available with the z3 feature
 #[cfg(feature = "z3")]
 pub use solver::Z3Solver;

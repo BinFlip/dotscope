@@ -1,6 +1,6 @@
 //! Mathematical utility functions.
 
-use crate::Result;
+use crate::{ParseFailure, ParseStage, Result};
 
 /// Converts a `usize` to `u32` for PE serialization, returning an error if the value
 /// exceeds `u32::MAX`. All .NET metadata structures are bounded well below this limit.
@@ -9,8 +9,14 @@ use crate::Result;
 ///
 /// Returns an error if `value` exceeds `u32::MAX`.
 pub fn to_u32(value: usize) -> Result<u32> {
-    u32::try_from(value)
-        .map_err(|_| malformed_error!("PE serialization value {value} exceeds u32::MAX"))
+    u32::try_from(value).map_err(|_| {
+        ParseFailure::InvalidField {
+            stage: ParseStage::Generic,
+            field: "u32_value",
+            reason: format!("PE serialization value {value} exceeds u32::MAX"),
+        }
+        .into()
+    })
 }
 
 /// Converts a `usize` to `i32` with saturation at `i32::MAX`.

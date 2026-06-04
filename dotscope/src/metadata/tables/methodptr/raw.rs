@@ -149,6 +149,7 @@ impl TableRow for MethodPtrRaw {
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
             /* method */ sizes.table_index_bytes(TableId::MethodDef)
+
         )
     }
 }

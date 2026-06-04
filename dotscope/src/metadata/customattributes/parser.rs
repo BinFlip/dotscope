@@ -499,29 +499,30 @@ impl<'a> CustomAttributeParser<'a> {
         let fixed_args = self.parse_fixed_arguments(params)?;
 
         // Parse named arguments using explicit type tags
-        let named_args =
-            if self.parser.has_more_data() && self.parser.len() >= self.parser.pos() + 2 {
-                let num_named = self.parser.read_le::<u16>()?;
-                if num_named > MAX_NAMED_ARGS {
-                    return Err(malformed_error!(
-                        "Custom attribute has too many named arguments: {} (max: {})",
-                        num_named,
-                        MAX_NAMED_ARGS
-                    ));
-                }
+        let named_args = if self.parser.has_more_data()
+            && self.parser.len() >= self.parser.pos().saturating_add(2)
+        {
+            let num_named = self.parser.read_le::<u16>()?;
+            if num_named > MAX_NAMED_ARGS {
+                return Err(malformed_error!(
+                    "Custom attribute has too many named arguments: {} (max: {})",
+                    num_named,
+                    MAX_NAMED_ARGS
+                ));
+            }
 
-                let mut args = Vec::with_capacity(num_named as usize);
-                for _ in 0..num_named {
-                    if let Some(arg) = self.parse_named_argument()? {
-                        args.push(arg);
-                    } else {
-                        break;
-                    }
+            let mut args = Vec::with_capacity(num_named as usize);
+            for _ in 0..num_named {
+                if let Some(arg) = self.parse_named_argument()? {
+                    args.push(arg);
+                } else {
+                    break;
                 }
-                args
-            } else {
-                vec![]
-            };
+            }
+            args
+        } else {
+            vec![]
+        };
 
         Ok(CustomAttributeValue {
             fixed_args,
@@ -1083,7 +1084,7 @@ impl<'a> CustomAttributeParser<'a> {
         work_stack.push(WorkItem::ParseTag(type_tag));
 
         while let Some(work) = work_stack.pop() {
-            if work_stack.len() + result_stack.len() > MAX_NESTING_DEPTH {
+            if work_stack.len().saturating_add(result_stack.len()) > MAX_NESTING_DEPTH {
                 return Err(DepthLimitExceeded(MAX_NESTING_DEPTH));
             }
 
@@ -1218,7 +1219,7 @@ impl<'a> CustomAttributeParser<'a> {
                     }
 
                     // Elements are on stack in correct order (last parsed = last in array)
-                    let start_idx = result_stack.len() - count_usize;
+                    let start_idx = result_stack.len().saturating_sub(count_usize);
                     let elements = result_stack.drain(start_idx..).collect();
                     result_stack.push(CustomAttributeArgument::Array(elements));
                 }
@@ -1278,7 +1279,7 @@ impl<'a> CustomAttributeParser<'a> {
                 let length = p.read_compressed_uint()?;
 
                 // Check if we have enough data for the string
-                let remaining_data = p.len() - p.pos();
+                let remaining_data = p.len().saturating_sub(p.pos());
                 if length as usize > remaining_data {
                     return Err(malformed_error!("not enough data"));
                 }
@@ -1297,7 +1298,11 @@ impl<'a> CustomAttributeParser<'a> {
                 }
 
                 // Check if the bytes are valid UTF-8
-                let string_bytes = &p.data()[p.pos()..p.pos() + length as usize];
+                let start = p.pos();
+                let end = start
+                    .checked_add(length as usize)
+                    .ok_or_else(|| malformed_error!("string length overflow"))?;
+                let string_bytes = p.data().get(start..end).ok_or(out_of_bounds_error!())?;
                 let s = std::str::from_utf8(string_bytes)
                     .map_err(|_| malformed_error!("invalid UTF-8"))?;
                 let result = s.to_string();
@@ -1351,7 +1356,7 @@ impl<'a> CustomAttributeParser<'a> {
 
         // Not a null string, parse as normal compressed uint + data
         let length = self.parser.read_compressed_uint()?;
-        let available_data = self.parser.len() - self.parser.pos();
+        let available_data = self.parser.len().saturating_sub(self.parser.pos());
 
         if length == 0 {
             Ok(String::new())
@@ -1363,7 +1368,7 @@ impl<'a> CustomAttributeParser<'a> {
             String::from_utf8(bytes).map_err(|e| {
                 malformed_error!(
                     "Invalid UTF-8 in custom attribute string at position {}: {}",
-                    self.parser.pos() - length as usize,
+                    self.parser.pos().saturating_sub(length as usize),
                     e.utf8_error()
                 )
             })
@@ -1372,7 +1377,7 @@ impl<'a> CustomAttributeParser<'a> {
                 "String length {} exceeds available data {} (blob context: pos={}, len={}, first_byte=0x{:02X})",
                 length,
                 available_data,
-                self.parser.pos() - 1, // subtract 1 because we already read the length
+                self.parser.pos().saturating_sub(1), // subtract 1 because we already read the length
                 self.parser.len(),
                 first_byte
             ))
@@ -1951,13 +1956,15 @@ mod tests {
         let result = parse_custom_attribute_data(blob_data, &method.params);
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
-        // Be more flexible with error message matching - accept "Out of Bound" messages too
+        // Be more flexible with error message matching - accept "Out of Bound"
+        // and "read past end of buffer" (ParseFailure::OutOfBounds Display) too.
         assert!(
             error_msg.contains("data")
                 || error_msg.contains("I4")
                 || error_msg.contains("enough")
                 || error_msg.contains("Out of Bound")
-                || error_msg.contains("bound"),
+                || error_msg.contains("bound")
+                || error_msg.contains("read past end"),
             "Error should mention data, I4, or bound issue: {error_msg}"
         );
 

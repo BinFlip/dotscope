@@ -32,7 +32,7 @@ impl RowReadable for FieldMarshalRaw {
 
         Ok(FieldMarshalRaw {
             rid,
-            token: Token::new(0x0D00_0000 + rid),
+            token: Token::new(0x0D00_0000u32.saturating_add(rid)),
             offset: offset_org,
             parent: CodedIndex::read(data, offset, sizes, CodedIndexType::HasFieldMarshal)?,
             native_type: read_le_at_dyn(data, offset, sizes.is_large_blob())?,

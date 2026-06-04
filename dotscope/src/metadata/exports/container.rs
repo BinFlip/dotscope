@@ -416,7 +416,10 @@ impl UnifiedExportContainer {
     /// println!("Total exports: {}", container.total_count());
     /// ```
     pub fn total_count(&self) -> usize {
-        self.cil.len() + self.native.function_count() + self.native.forwarder_count()
+        self.cil
+            .len()
+            .saturating_add(self.native.function_count())
+            .saturating_add(self.native.forwarder_count())
     }
 
     /// Add a native function export.

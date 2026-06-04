@@ -114,9 +114,12 @@ impl Technique for GenericMetadata {
                 let name_index = row.name as usize;
                 let is_sentinel = KNOWN_SENTINEL_VALUES.contains(&row.name);
                 if name_index >= strings_size || is_sentinel {
-                    findings.invalid_module_rows += 1;
+                    findings.invalid_module_rows = findings.invalid_module_rows.saturating_add(1);
+                    let Some(field_offset) = row.offset.checked_add(2) else {
+                        continue;
+                    };
                     findings.patches.push(MetadataPatch {
-                        offset: row.offset + 2, // name field offset within Module row
+                        offset: field_offset, // name field offset within Module row
                         size: if strings_size > 0xFFFF { 4 } else { 2 },
                         original: row.name,
                         corrected: 0,
@@ -132,7 +135,8 @@ impl Technique for GenericMetadata {
             for row in assembly_table {
                 let is_sentinel = KNOWN_SENTINEL_VALUES.contains(&row.name);
                 if row.name as usize >= strings_size || is_sentinel {
-                    findings.invalid_assembly_rows += 1;
+                    findings.invalid_assembly_rows =
+                        findings.invalid_assembly_rows.saturating_add(1);
                 }
             }
         }
@@ -144,7 +148,8 @@ impl Technique for GenericMetadata {
             for row in declsec_table {
                 let is_sentinel = KNOWN_SENTINEL_VALUES_16.contains(&row.action);
                 if row.action > 0x000E || is_sentinel {
-                    findings.invalid_declsecurity_rows += 1;
+                    findings.invalid_declsecurity_rows =
+                        findings.invalid_declsecurity_rows.saturating_add(1);
                 }
             }
         }
@@ -155,14 +160,16 @@ impl Technique for GenericMetadata {
                 // Resolution scope with tag Module but row 0 is suspicious
                 // (valid Module is row 1)
                 if row.resolution_scope.tag == TableId::Module && row.resolution_scope.row == 0 {
-                    findings.invalid_typeref_scopes += 1;
+                    findings.invalid_typeref_scopes =
+                        findings.invalid_typeref_scopes.saturating_add(1);
                 }
             }
         }
 
-        let total_invalid = findings.invalid_module_rows
-            + findings.invalid_assembly_rows
-            + findings.invalid_declsecurity_rows;
+        let total_invalid = findings
+            .invalid_module_rows
+            .saturating_add(findings.invalid_assembly_rows)
+            .saturating_add(findings.invalid_declsecurity_rows);
 
         if total_invalid > 0 {
             evidence.push(Evidence::MetadataPattern(format!(
@@ -202,13 +209,13 @@ impl Technique for GenericMetadata {
                     if let Err(e) = assembly.write_le::<u16>(patch.offset, patch.corrected as u16) {
                         return Some(Err(e));
                     }
-                    patched += 1;
+                    patched = patched.saturating_add(1);
                 }
                 4 => {
                     if let Err(e) = assembly.write_le::<u32>(patch.offset, patch.corrected) {
                         return Some(Err(e));
                     }
-                    patched += 1;
+                    patched = patched.saturating_add(1);
                 }
                 _ => {}
             }

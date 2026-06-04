@@ -181,11 +181,12 @@ impl TableRow for ModuleRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* generation */    2 +
-            /* name */          sizes.str_bytes() +
-            /* mvid */          sizes.guid_bytes() +
-            /* encid */         sizes.guid_bytes() +
-            /* encbaseid */     sizes.guid_bytes()
+            /* generation */ 2u8
+            /* name */       .saturating_add(sizes.str_bytes())
+            /* mvid */       .saturating_add(sizes.guid_bytes())
+            /* encid */      .saturating_add(sizes.guid_bytes())
+            /* encbaseid */  .saturating_add(sizes.guid_bytes())
+
         )
     }
 }

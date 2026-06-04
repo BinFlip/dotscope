@@ -153,7 +153,7 @@ pub fn renames_apply(cil_assembly: &mut CilAssembly, entries: Vec<RenameEntry>) 
         return Ok(0);
     }
 
-    let mut renamed_count = 0;
+    let mut renamed_count: usize = 0;
 
     // Track which string offsets have already been renamed and to what name
     let mut renamed_offsets: HashMap<u32, String> = HashMap::new();
@@ -162,14 +162,14 @@ pub fn renames_apply(cil_assembly: &mut CilAssembly, entries: Vec<RenameEntry>) 
         if let Some(existing_name) = renamed_offsets.get(&entry.string_index) {
             if *existing_name == entry.new_name {
                 // Same name as first rename — string_update already covers this
-                renamed_count += 1;
+                renamed_count = renamed_count.saturating_add(1);
                 continue;
             }
             // Different name at same offset — allocate new string and update the row
             let change_ref = cil_assembly.string_add(&entry.new_name)?;
             let placeholder = change_ref.placeholder();
             update_row_name_field(cil_assembly, entry.table_id, entry.rid, placeholder)?;
-            renamed_count += 1;
+            renamed_count = renamed_count.saturating_add(1);
         } else {
             // First rename at this offset — modify in place
             if cil_assembly
@@ -177,7 +177,7 @@ pub fn renames_apply(cil_assembly: &mut CilAssembly, entries: Vec<RenameEntry>) 
                 .is_ok()
             {
                 renamed_offsets.insert(entry.string_index, entry.new_name.clone());
-                renamed_count += 1;
+                renamed_count = renamed_count.saturating_add(1);
             }
         }
     }
@@ -396,6 +396,8 @@ fn update_row_name_field(
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    #[cfg(feature = "smart-rename")]
+    use std::path::PathBuf;
 
     use crate::{
         cilassembly::{CilAssembly, GeneratorConfig},
@@ -747,8 +749,6 @@ mod tests {
     #[ignore]
     #[cfg(feature = "smart-rename")]
     fn test_smart_rename_llm() {
-        use std::path::PathBuf;
-
         let model_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../qwen2.5-coder-3b-instruct-q4_k_m.gguf");
         assert!(

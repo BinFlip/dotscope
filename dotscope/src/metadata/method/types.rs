@@ -622,6 +622,115 @@ impl MethodAccessFlags {
             }
         }
     }
+
+    /// Returns the discrete access level as a typed enum.
+    ///
+    /// This is the ergonomic counterpart to matching against the
+    /// `COMPILER_CONTROLLED`/`PRIVATE`/…/`PUBLIC` constants. Downstream code that
+    /// only needs to distinguish access levels (without preserving the raw bit
+    /// pattern) should prefer this accessor — pattern matching on the returned
+    /// [`MethodAccessLevel`] is exhaustive and cannot silently miss a variant.
+    ///
+    /// Unrecognized bit patterns (which should not appear in valid metadata)
+    /// fall back to [`MethodAccessLevel::CompilerControlled`].
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::method::{MethodAccessFlags, MethodAccessLevel};
+    ///
+    /// assert_eq!(
+    ///     MethodAccessFlags::PUBLIC.access_level(),
+    ///     MethodAccessLevel::Public
+    /// );
+    /// assert_eq!(
+    ///     MethodAccessFlags::from_method_flags(0x0091).access_level(),
+    ///     MethodAccessLevel::Private
+    /// );
+    /// ```
+    #[must_use]
+    pub const fn access_level(self) -> MethodAccessLevel {
+        match self.0 {
+            0x0001 => MethodAccessLevel::Private,
+            0x0002 => MethodAccessLevel::FamilyAndAssembly,
+            0x0003 => MethodAccessLevel::Assembly,
+            0x0004 => MethodAccessLevel::Family,
+            0x0005 => MethodAccessLevel::FamilyOrAssembly,
+            0x0006 => MethodAccessLevel::Public,
+            // 0x0000 and any unrecognized value — keep the most restrictive interpretation.
+            _ => MethodAccessLevel::CompilerControlled,
+        }
+    }
+}
+
+/// Discrete method accessibility level per ECMA-335 §II.23.1.10.
+///
+/// Returned by [`MethodAccessFlags::access_level`]. The seven variants are
+/// fixed by the standard and are mutually exclusive — exactly one applies to
+/// any given method.
+///
+/// The hierarchy from most restrictive to least restrictive is:
+/// [`CompilerControlled`](Self::CompilerControlled) → [`Private`](Self::Private)
+/// → [`FamilyAndAssembly`](Self::FamilyAndAssembly) → [`Assembly`](Self::Assembly)
+/// → [`Family`](Self::Family) → [`FamilyOrAssembly`](Self::FamilyOrAssembly)
+/// → [`Public`](Self::Public).
+///
+/// # Stability
+///
+/// The string returned by [`MethodAccessLevel::as_str`] and by the [`Display`]
+/// impl is part of the stable public API. The strings match the existing
+/// [`Display`] impl on [`MethodAccessFlags`] (C# keyword form: `"private"`,
+/// `"public"`, `"internal"`, `"protected"`, `"protected internal"`,
+/// `"private protected"`, `"compilercontrolled"`).
+///
+/// [`Display`]: std::fmt::Display
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum MethodAccessLevel {
+    /// Member is not referenceable by external code (ECMA-335 value `0x0000`).
+    CompilerControlled,
+    /// Accessible only by the parent type (ECMA-335 value `0x0001`).
+    Private,
+    /// Accessible by sub-types only within this assembly — C# `private protected`
+    /// (ECMA-335 value `0x0002`).
+    FamilyAndAssembly,
+    /// Accessible by anyone in the assembly — C# `internal` (ECMA-335 value `0x0003`).
+    Assembly,
+    /// Accessible by type and sub-types — C# `protected` (ECMA-335 value `0x0004`).
+    Family,
+    /// Accessible by sub-types anywhere, plus anyone in the assembly — C# `protected internal`
+    /// (ECMA-335 value `0x0005`).
+    FamilyOrAssembly,
+    /// Accessible by anyone with visibility to the declaring scope — C# `public`
+    /// (ECMA-335 value `0x0006`).
+    Public,
+}
+
+impl MethodAccessLevel {
+    /// Returns a stable `&'static str` identifier for this access level.
+    ///
+    /// Strings match the existing [`Display`] impl on [`MethodAccessFlags`]
+    /// (C# keyword form). They are part of the stable public API and safe
+    /// to persist.
+    ///
+    /// [`Display`]: std::fmt::Display
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            MethodAccessLevel::CompilerControlled => "compilercontrolled",
+            MethodAccessLevel::Private => "private",
+            MethodAccessLevel::FamilyAndAssembly => "private protected",
+            MethodAccessLevel::Assembly => "internal",
+            MethodAccessLevel::Family => "protected",
+            MethodAccessLevel::FamilyOrAssembly => "protected internal",
+            MethodAccessLevel::Public => "public",
+        }
+    }
+}
+
+impl std::fmt::Display for MethodAccessLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 impl PartialOrd for MethodAccessFlags {
@@ -694,6 +803,81 @@ mod tests {
         // Test equality
         assert_eq!(MethodAccessFlags::PUBLIC, MethodAccessFlags::PUBLIC);
         assert!(MethodAccessFlags::PUBLIC >= MethodAccessFlags::PUBLIC);
+    }
+
+    #[test]
+    fn test_method_access_flags_access_level() {
+        assert_eq!(
+            MethodAccessFlags::COMPILER_CONTROLLED.access_level(),
+            MethodAccessLevel::CompilerControlled
+        );
+        assert_eq!(
+            MethodAccessFlags::PRIVATE.access_level(),
+            MethodAccessLevel::Private
+        );
+        assert_eq!(
+            MethodAccessFlags::FAMILY_AND_ASSEMBLY.access_level(),
+            MethodAccessLevel::FamilyAndAssembly
+        );
+        assert_eq!(
+            MethodAccessFlags::ASSEMBLY.access_level(),
+            MethodAccessLevel::Assembly
+        );
+        assert_eq!(
+            MethodAccessFlags::FAMILY.access_level(),
+            MethodAccessLevel::Family
+        );
+        assert_eq!(
+            MethodAccessFlags::FAMILY_OR_ASSEMBLY.access_level(),
+            MethodAccessLevel::FamilyOrAssembly
+        );
+        assert_eq!(
+            MethodAccessFlags::PUBLIC.access_level(),
+            MethodAccessLevel::Public
+        );
+
+        // Accessor must agree with from_method_flags's mask handling.
+        assert_eq!(
+            MethodAccessFlags::from_method_flags(0x0091).access_level(),
+            MethodAccessLevel::Private
+        );
+    }
+
+    #[test]
+    fn test_method_access_level_stable_strings() {
+        // The strings here are part of the stable public API. They must match
+        // the existing Display impl on MethodAccessFlags so consumers can swap
+        // accessors without string drift.
+        assert_eq!(
+            MethodAccessLevel::CompilerControlled.as_str(),
+            "compilercontrolled"
+        );
+        assert_eq!(MethodAccessLevel::Private.as_str(), "private");
+        assert_eq!(
+            MethodAccessLevel::FamilyAndAssembly.as_str(),
+            "private protected"
+        );
+        assert_eq!(MethodAccessLevel::Assembly.as_str(), "internal");
+        assert_eq!(MethodAccessLevel::Family.as_str(), "protected");
+        assert_eq!(
+            MethodAccessLevel::FamilyOrAssembly.as_str(),
+            "protected internal"
+        );
+        assert_eq!(MethodAccessLevel::Public.as_str(), "public");
+
+        // Display delegates to as_str — verify by formatting one variant.
+        assert_eq!(format!("{}", MethodAccessLevel::Public), "public");
+
+        // Strings must match MethodAccessFlags's Display so visus and other
+        // consumers see no string drift between the two.
+        assert_eq!(
+            format!("{}", MethodAccessLevel::Public),
+            format!("{}", MethodAccessFlags::PUBLIC)
+        );
+        assert_eq!(
+            format!("{}", MethodAccessLevel::FamilyAndAssembly),
+            format!("{}", MethodAccessFlags::FAMILY_AND_ASSEMBLY)
+        );
     }
 }
 

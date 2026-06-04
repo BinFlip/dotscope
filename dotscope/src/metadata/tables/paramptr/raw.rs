@@ -148,6 +148,7 @@ impl TableRow for ParamPtrRaw {
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
             /* param */ sizes.table_index_bytes(TableId::Param)
+
         )
     }
 }

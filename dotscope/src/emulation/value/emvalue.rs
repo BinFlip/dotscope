@@ -774,6 +774,7 @@ impl From<&ConstValue> for EmValue {
             ConstValue::Null
             | ConstValue::DecryptedString(_)
             | ConstValue::DecryptedArray { .. }
+            | ConstValue::Vector(_)
             | ConstValue::Type(_)
             | ConstValue::MethodHandle(_)
             | ConstValue::FieldHandle(_) => EmValue::Null,
@@ -1533,10 +1534,16 @@ impl EmValue {
             (EmValue::NativeInt(v), _) => match ptr_size {
                 PointerSize::Bit32 => LeBytes::from_4((*v as i32).to_le_bytes()),
                 PointerSize::Bit64 => LeBytes::from_8(v.to_le_bytes()),
+                PointerSize::Bit8 => LeBytes::from_byte((*v as i8).to_le_bytes()[0]),
+                PointerSize::Bit16 => LeBytes::from_2((*v as i16).to_le_bytes()),
+                PointerSize::Bit128 => LeBytes::zeroed(8),
             },
             (EmValue::NativeUInt(v), _) => match ptr_size {
                 PointerSize::Bit32 => LeBytes::from_4((*v as u32).to_le_bytes()),
                 PointerSize::Bit64 => LeBytes::from_8(v.to_le_bytes()),
+                PointerSize::Bit8 => LeBytes::from_byte((*v as u8).to_le_bytes()[0]),
+                PointerSize::Bit16 => LeBytes::from_2((*v as u16).to_le_bytes()),
+                PointerSize::Bit128 => LeBytes::zeroed(8),
             },
             (EmValue::Bool(v), _) => LeBytes::from_byte(u8::from(*v)),
             (EmValue::Char(v), _) => LeBytes::from_2((*v as u16).to_le_bytes()),
@@ -1575,12 +1582,16 @@ impl EmValue {
                 EmValue::I32(i32::from(bytes.first().copied().unwrap_or(0)))
             }
             CilFlavor::I2 | CilFlavor::U2 | CilFlavor::Char => {
-                let arr: [u8; 2] = bytes[..2.min(bytes.len())].try_into().unwrap_or([0, 0]);
+                let arr: [u8; 2] = bytes
+                    .get(..2.min(bytes.len()))
+                    .and_then(|s| s.try_into().ok())
+                    .unwrap_or([0, 0]);
                 EmValue::I32(i32::from(i16::from_le_bytes(arr)))
             }
             CilFlavor::I4 | CilFlavor::U4 | CilFlavor::R4 => {
-                let arr: [u8; 4] = bytes[..4.min(bytes.len())]
-                    .try_into()
+                let arr: [u8; 4] = bytes
+                    .get(..4.min(bytes.len()))
+                    .and_then(|s| s.try_into().ok())
                     .unwrap_or([0, 0, 0, 0]);
                 if matches!(flavor, CilFlavor::R4) {
                     EmValue::F32(f32::from_le_bytes(arr))
@@ -1589,8 +1600,9 @@ impl EmValue {
                 }
             }
             CilFlavor::I8 | CilFlavor::U8 | CilFlavor::R8 => {
-                let arr: [u8; 8] = bytes[..8.min(bytes.len())]
-                    .try_into()
+                let arr: [u8; 8] = bytes
+                    .get(..8.min(bytes.len()))
+                    .and_then(|s| s.try_into().ok())
                     .unwrap_or([0, 0, 0, 0, 0, 0, 0, 0]);
                 if matches!(flavor, CilFlavor::R8) {
                     EmValue::F64(f64::from_le_bytes(arr))
@@ -1600,8 +1612,9 @@ impl EmValue {
             }
             CilFlavor::I | CilFlavor::U => match ptr_size {
                 PointerSize::Bit32 => {
-                    let arr: [u8; 4] = bytes[..4.min(bytes.len())]
-                        .try_into()
+                    let arr: [u8; 4] = bytes
+                        .get(..4.min(bytes.len()))
+                        .and_then(|s| s.try_into().ok())
                         .unwrap_or([0, 0, 0, 0]);
                     if matches!(flavor, CilFlavor::I) {
                         EmValue::NativeInt(i64::from(i32::from_le_bytes(arr)))
@@ -1610,13 +1623,44 @@ impl EmValue {
                     }
                 }
                 PointerSize::Bit64 => {
-                    let arr: [u8; 8] = bytes[..8.min(bytes.len())]
-                        .try_into()
+                    let arr: [u8; 8] = bytes
+                        .get(..8.min(bytes.len()))
+                        .and_then(|s| s.try_into().ok())
                         .unwrap_or([0, 0, 0, 0, 0, 0, 0, 0]);
                     if matches!(flavor, CilFlavor::I) {
                         EmValue::NativeInt(i64::from_le_bytes(arr))
                     } else {
                         EmValue::NativeUInt(u64::from_le_bytes(arr))
+                    }
+                }
+                PointerSize::Bit8 => {
+                    let byte = bytes.first().copied().unwrap_or(0);
+                    if matches!(flavor, CilFlavor::I) {
+                        EmValue::NativeInt(i64::from(byte as i8))
+                    } else {
+                        EmValue::NativeUInt(u64::from(byte))
+                    }
+                }
+                PointerSize::Bit16 => {
+                    let arr: [u8; 2] = bytes
+                        .get(..2.min(bytes.len()))
+                        .and_then(|s| s.try_into().ok())
+                        .unwrap_or([0, 0]);
+                    if matches!(flavor, CilFlavor::I) {
+                        EmValue::NativeInt(i64::from(i16::from_le_bytes(arr)))
+                    } else {
+                        EmValue::NativeUInt(u64::from(u16::from_le_bytes(arr)))
+                    }
+                }
+                PointerSize::Bit128 => {
+                    let arr: [u8; 16] = bytes
+                        .get(..16.min(bytes.len()))
+                        .and_then(|s| s.try_into().ok())
+                        .unwrap_or([0; 16]);
+                    if matches!(flavor, CilFlavor::I) {
+                        EmValue::NativeInt(i128::from_le_bytes(arr) as i64)
+                    } else {
+                        EmValue::NativeUInt(u128::from_le_bytes(arr) as u64)
                     }
                 }
             },

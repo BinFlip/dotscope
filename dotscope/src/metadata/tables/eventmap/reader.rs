@@ -41,7 +41,7 @@ impl RowReadable for EventMapRaw {
 
         Ok(EventMapRaw {
             rid,
-            token: Token::new(0x1200_0000 + rid),
+            token: Token::new(0x1200_0000u32.saturating_add(rid)),
             offset: offset_org,
             parent,
             event_list,

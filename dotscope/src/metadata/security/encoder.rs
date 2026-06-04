@@ -345,27 +345,27 @@ impl PermissionSetEncoder {
             if !string_table.contains_key(&permission.class_name) {
                 string_table.insert(permission.class_name.clone(), next_index);
                 string_list.push(permission.class_name.clone());
-                next_index += 1;
+                next_index = next_index.saturating_add(1);
             }
 
             if !string_table.contains_key(&permission.assembly_name) {
                 string_table.insert(permission.assembly_name.clone(), next_index);
                 string_list.push(permission.assembly_name.clone());
-                next_index += 1;
+                next_index = next_index.saturating_add(1);
             }
 
             for arg in &permission.named_arguments {
                 if !string_table.contains_key(&arg.name) {
                     string_table.insert(arg.name.clone(), next_index);
                     string_list.push(arg.name.clone());
-                    next_index += 1;
+                    next_index = next_index.saturating_add(1);
                 }
 
                 if let ArgumentValue::String(ref value) = arg.value {
                     if !string_table.contains_key(value) {
                         string_table.insert(value.clone(), next_index);
                         string_list.push(value.clone());
-                        next_index += 1;
+                        next_index = next_index.saturating_add(1);
                     }
                 }
             }
@@ -380,15 +380,21 @@ impl PermissionSetEncoder {
 
         write_compressed_uint(to_u32(permissions.len())?, &mut self.buffer);
         for permission in permissions {
-            let class_name_index = string_table[&permission.class_name];
-            let assembly_name_index = string_table[&permission.assembly_name];
+            let class_name_index = *string_table
+                .get(&permission.class_name)
+                .ok_or_else(|| malformed_error!("Class name not in string table"))?;
+            let assembly_name_index = *string_table
+                .get(&permission.assembly_name)
+                .ok_or_else(|| malformed_error!("Assembly name not in string table"))?;
 
             write_compressed_uint(class_name_index, &mut self.buffer);
             write_compressed_uint(assembly_name_index, &mut self.buffer);
             write_compressed_uint(to_u32(permission.named_arguments.len())?, &mut self.buffer);
 
             for arg in &permission.named_arguments {
-                let name_index = string_table[&arg.name];
+                let name_index = *string_table
+                    .get(&arg.name)
+                    .ok_or_else(|| malformed_error!("Argument name not in string table"))?;
 
                 write_compressed_uint(name_index, &mut self.buffer);
 
@@ -456,7 +462,9 @@ impl PermissionSetEncoder {
                         self.buffer.extend_from_slice(&value.to_le_bytes());
                     }
                     ArgumentValue::String(value) | ArgumentValue::Type(value) => {
-                        let value_index = string_table[value];
+                        let value_index = *string_table
+                            .get(value)
+                            .ok_or_else(|| malformed_error!("String value not in string table"))?;
                         write_compressed_uint(value_index, &mut self.buffer);
                     }
                     _ => {

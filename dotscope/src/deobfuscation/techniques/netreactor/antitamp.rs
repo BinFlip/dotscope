@@ -55,7 +55,8 @@
 use std::{any::Any, sync::Arc};
 
 use crate::{
-    compiler::{PassPhase, SsaPass},
+    analysis::CilTarget,
+    compiler::{CompilerContext, PassPhase, SsaPass},
     deobfuscation::{
         context::AnalysisContext,
         passes::netreactor::TokenResolverPass,
@@ -132,6 +133,7 @@ impl Technique for NetReactorAntiTamp {
         let init_method_token = fan_in.target_token;
         let runtime_type_token = assembly
             .method(&init_method_token)
+            .ok()
             .and_then(|m| m.declaring_type_rc())
             .map(|t| t.token);
 
@@ -233,7 +235,7 @@ impl Technique for NetReactorAntiTamp {
         _ctx: &AnalysisContext,
         detection: &Detection,
         _assembly: &Arc<CilObject>,
-    ) -> Vec<Box<dyn SsaPass>> {
+    ) -> Vec<Box<dyn SsaPass<CilTarget, CompilerContext>>> {
         let Some(findings) = detection.findings::<AntiTampFindings>() else {
             return Vec::new();
         };
@@ -280,11 +282,14 @@ fn collect_runtime_method_tokens(assembly: &CilObject, runtime_type: Option<Toke
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::path::Path;
+
     use crate::metadata::validation::ValidationConfig;
 
     fn try_load_sample(name: &str) -> Option<CilObject> {
         let path = format!("tests/samples/packers/netreactor/7.5.0/{name}");
-        if !std::path::Path::new(&path).exists() {
+        if !Path::new(&path).exists() {
             eprintln!("Skipping test: sample not found at {path}");
             return None;
         }

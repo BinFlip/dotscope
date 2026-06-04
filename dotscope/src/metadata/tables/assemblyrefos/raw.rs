@@ -129,7 +129,7 @@ pub struct AssemblyRefOsRaw {
     ///
     /// Specifies the target operating system family. Common values include:
     /// - 1: Windows 32-bit
-    /// - 2: Windows 64-bit  
+    /// - 2: Windows 64-bit
     /// - Other values for various platform types
     pub os_platform_id: u32,
 
@@ -229,7 +229,7 @@ impl AssemblyRefOsRaw {
     ///
     /// Returns [`crate::Error`] if:
     /// - The referenced `AssemblyRef` entry cannot be found in the provided map
-    /// - The assembly reference token is invalid or malformed  
+    /// - The assembly reference token is invalid or malformed
     /// - The `AssemblyRef` table index is out of bounds
     ///
     /// # Thread Safety
@@ -277,10 +277,11 @@ impl TableRow for AssemblyRefOsRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* os_platform_id */   4 +
-            /* os_major_version */ 4 +
-            /* os_minor_version */ 4 +
-            /* assembly_ref */     sizes.table_index_bytes(TableId::AssemblyRef)
+            /* os_platform_id */   4u8
+            /* os_major_version */ .saturating_add(4)
+            /* os_minor_version */ .saturating_add(4)
+            /* assembly_ref */     .saturating_add(sizes.table_index_bytes(TableId::AssemblyRef))
+
         )
     }
 }

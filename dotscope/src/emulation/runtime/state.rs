@@ -213,13 +213,16 @@ impl RuntimeState {
 
         // Register default BCL hooks based on configuration
         if config.stubs.bcl_stubs {
-            bcl::register(&hooks).expect("BCL hook registration should not fail at startup");
+            if let Err(e) = bcl::register(&hooks) {
+                log::error!("BCL hook registration failed at startup: {e}");
+            }
         }
 
         // Register default native P/Invoke hooks based on configuration
         if config.stubs.pinvoke_stubs {
-            native::register(&hooks, &native_functions)
-                .expect("Native hook registration should not fail at startup");
+            if let Err(e) = native::register(&hooks, &native_functions) {
+                log::error!("Native hook registration failed at startup: {e}");
+            }
         }
 
         Self {

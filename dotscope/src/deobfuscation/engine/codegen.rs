@@ -51,7 +51,7 @@ impl DeobfuscationEngine {
 
         // Generate code for each processed method
         let mut codegen = SsaCodeGenerator::new();
-        let mut methods_updated = 0;
+        let mut methods_updated: usize = 0;
         let mut old_sas_tokens = Vec::new();
 
         for entry in ctx.processed_methods.iter() {
@@ -149,7 +149,7 @@ impl DeobfuscationEngine {
             ctx.events
                 .record(EventKind::CodeRegenerated)
                 .method(method_token);
-            methods_updated += 1;
+            methods_updated = methods_updated.saturating_add(1);
         }
 
         // Finalize array types: creates the parent <PrivateImplementationDetails>

@@ -81,7 +81,7 @@ impl RowReadable for TypeDefRaw {
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(TypeDefRaw {
             rid,
-            token: Token::new(0x0200_0000 + rid),
+            token: Token::new(0x0200_0000u32.saturating_add(rid)),
             offset: *offset,
             flags: read_le_at::<u32>(data, offset)?,
             type_name: read_le_at_dyn(data, offset, sizes.is_large_str())?,

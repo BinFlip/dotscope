@@ -53,11 +53,13 @@
 use std::collections::HashSet;
 
 use crate::{
-    analysis::{PhiTaintMode, SsaFunction, SsaOp, TaintConfig, TokenTaintBuilder},
+    analysis::{
+        CilTarget, MethodRef, PhiTaintMode, SsaFunction, SsaOp, TaintConfig, TokenTaintBuilder,
+    },
     compiler::{CompilerContext, EventKind, ModificationScope, SsaPass},
     deobfuscation::utils::resolve_qualified_method_name,
     metadata::token::Token,
-    CilObject, Result,
+    CilObject,
 };
 
 /// Controls how many sentinel patterns must co-occur in a method for the pass
@@ -153,7 +155,7 @@ impl SentinelTaintRemovalPass {
     }
 }
 
-impl SsaPass for SentinelTaintRemovalPass {
+impl SsaPass<CilTarget, CompilerContext> for SentinelTaintRemovalPass {
     fn name(&self) -> &'static str {
         self.pass_name
     }
@@ -166,20 +168,24 @@ impl SsaPass for SentinelTaintRemovalPass {
         ModificationScope::CfgModifying
     }
 
-    fn should_run(&self, method_token: Token, _ctx: &CompilerContext) -> bool {
-        self.target_methods.is_empty() || self.target_methods.contains(&method_token)
+    fn should_run(&self, method: &MethodRef, _host: &CompilerContext) -> bool {
+        self.target_methods.is_empty() || self.target_methods.contains(&method.0)
     }
 
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
-        method_token: Token,
-        ctx: &CompilerContext,
-        assembly: &CilObject,
-    ) -> Result<bool> {
+        method: &MethodRef,
+        host: &CompilerContext,
+    ) -> analyssa::Result<bool> {
+        let assembly = host
+            .assembly()
+            .ok_or_else(|| analyssa::Error::new("SentinelTaintRemovalPass requires an assembly"))?;
+        let method_token = method.0;
+        let ctx = host;
         // Step 1: Find sentinel tokens and check co-occurrence condition.
         let (sentinel_tokens, distinct_count) =
-            find_sentinel_tokens(ssa, assembly, &self.sentinel_patterns);
+            find_sentinel_tokens(ssa, &assembly, &self.sentinel_patterns);
         if !self
             .condition
             .is_satisfied(distinct_count, self.sentinel_patterns.len())
@@ -262,11 +268,11 @@ impl SsaPass for SentinelTaintRemovalPass {
                             .find(|&&(bi, ii, _)| bi == block_idx && ii == instr_idx)
                         {
                             instr.set_op(SsaOp::Jump { target });
-                            neutralized += 1;
+                            neutralized = neutralized.saturating_add(1);
                         }
                     } else {
                         instr.set_op(SsaOp::Nop);
-                        neutralized += 1;
+                        neutralized = neutralized.saturating_add(1);
                     }
                 }
             }
@@ -279,7 +285,7 @@ impl SsaPass for SentinelTaintRemovalPass {
             if let Some(block) = ssa.block_mut(block_idx) {
                 if phi_idx < block.phi_nodes().len() {
                     block.phi_nodes_mut().remove(phi_idx);
-                    neutralized += 1;
+                    neutralized = neutralized.saturating_add(1);
                 }
             }
         }

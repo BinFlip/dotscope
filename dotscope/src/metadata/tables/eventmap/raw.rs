@@ -133,10 +133,13 @@ impl EventMapRaw {
             return Ok(Arc::new(boxcar::Vec::new()));
         }
 
-        let next_row_id = self.rid + 1;
+        let next_row_id = self
+            .rid
+            .checked_add(1)
+            .ok_or_else(|| malformed_error!("EventMap rid overflow: {}", self.rid))?;
         let start = self.event_list as usize;
         let end = if next_row_id > map.row_count {
-            events.len() + 1
+            events.len().saturating_add(1)
         } else {
             match map.get(next_row_id) {
                 Some(next_row) => next_row.event_list as usize,
@@ -149,11 +152,11 @@ impl EventMapRaw {
             }
         };
 
-        if start > events.len() || end > (events.len() + 1) || end < start {
+        if start > events.len() || end > events.len().saturating_add(1) || end < start {
             return Ok(Arc::new(boxcar::Vec::new()));
         }
 
-        let event_list = Arc::new(boxcar::Vec::with_capacity(end - start));
+        let event_list = Arc::new(boxcar::Vec::with_capacity(end.saturating_sub(start)));
         for counter in start..end {
             let actual_event_token = if event_ptr.is_empty() {
                 let token_value = counter | 0x1400_0000;
@@ -326,8 +329,9 @@ impl TableRow for EventMapRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* parent */     sizes.table_index_bytes(TableId::TypeDef) +
-            /* event_list */ sizes.table_index_bytes(TableId::Event)
+            /* parent */     sizes.table_index_bytes(TableId::TypeDef)
+            /* event_list */ .saturating_add(sizes.table_index_bytes(TableId::Event))
+
         )
     }
 }

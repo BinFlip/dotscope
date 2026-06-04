@@ -300,6 +300,87 @@ impl ExceptionHandlerFlags {
     /// - Less common than finally handlers in typical .NET code
     /// - The `class_token`/`filter_offset` field is unused for fault handlers
     pub const FAULT: Self = Self(0x0004);
+
+    /// Returns the discrete handler kind for this flag value.
+    ///
+    /// Performs the bitwise classification described by ECMA-335 §II.25.4.6 and
+    /// returns a typed enum, removing the need for callers to match against the
+    /// individual `EXCEPTION`/`FILTER`/`FINALLY`/`FAULT` constants. Unrecognized
+    /// flag values fall back to [`ExceptionHandlerKind::Catch`] because
+    /// `EXCEPTION` is the zero pattern.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::method::{ExceptionHandlerFlags, ExceptionHandlerKind};
+    ///
+    /// assert_eq!(ExceptionHandlerFlags::EXCEPTION.kind(), ExceptionHandlerKind::Catch);
+    /// assert_eq!(ExceptionHandlerFlags::FILTER.kind(),    ExceptionHandlerKind::Filter);
+    /// assert_eq!(ExceptionHandlerFlags::FINALLY.kind(),   ExceptionHandlerKind::Finally);
+    /// assert_eq!(ExceptionHandlerFlags::FAULT.kind(),     ExceptionHandlerKind::Fault);
+    /// ```
+    #[must_use]
+    pub const fn kind(&self) -> ExceptionHandlerKind {
+        // ECMA-335 §II.25.4.6: handler-kind bits are mutually exclusive.
+        // FILTER/FINALLY/FAULT are 0x0001/0x0002/0x0004; EXCEPTION (catch) is 0x0000.
+        if self.0 & ExceptionHandlerFlags::FILTER.0 != 0 {
+            ExceptionHandlerKind::Filter
+        } else if self.0 & ExceptionHandlerFlags::FINALLY.0 != 0 {
+            ExceptionHandlerKind::Finally
+        } else if self.0 & ExceptionHandlerFlags::FAULT.0 != 0 {
+            ExceptionHandlerKind::Fault
+        } else {
+            ExceptionHandlerKind::Catch
+        }
+    }
+}
+
+/// Discrete classification of an exception handler clause.
+///
+/// Returned by [`ExceptionHandlerFlags::kind`]. Each variant corresponds to one
+/// of the four handler kinds defined by ECMA-335 §II.25.4.6.
+///
+/// # Stability
+///
+/// The string returned by [`ExceptionHandlerKind::as_str`] and by the [`Display`]
+/// impl is part of the stable public API. It is safe to persist (file, database,
+/// log line) and to parse.
+///
+/// [`Display`]: std::fmt::Display
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ExceptionHandlerKind {
+    /// Typed exception clause — the protected region's exceptions are matched
+    /// against the type referenced by the handler's class token.
+    Catch,
+    /// Filtered exception clause — IL at `filter_offset` decides whether the
+    /// handler runs.
+    Filter,
+    /// Finally clause — runs unconditionally on protected-region exit.
+    Finally,
+    /// Fault clause — runs only when the protected region exits via exception.
+    Fault,
+}
+
+impl ExceptionHandlerKind {
+    /// Returns a stable `&'static str` identifier for this kind.
+    ///
+    /// Identifiers are lowercase (`"catch"`, `"filter"`, `"finally"`, `"fault"`).
+    /// They are part of the stable public API and safe to persist.
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            ExceptionHandlerKind::Catch => "catch",
+            ExceptionHandlerKind::Filter => "filter",
+            ExceptionHandlerKind::Finally => "finally",
+            ExceptionHandlerKind::Fault => "fault",
+        }
+    }
+}
+
+impl std::fmt::Display for ExceptionHandlerKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 /// Represents a single exception handler within a .NET method body.
@@ -735,7 +816,7 @@ pub fn encode_exception_handlers(handlers: &[ExceptionHandler]) -> Result<Vec<u8
 
     if needs_fat_format {
         // Fat format: 4-byte header + 24 bytes per handler
-        let section_size = 4 + (handlers.len() * 24);
+        let section_size = 4usize.saturating_add(handlers.len().saturating_mul(24));
 
         // Section header (fat format)
         section.extend_from_slice(&[
@@ -780,7 +861,7 @@ pub fn encode_exception_handlers(handlers: &[ExceptionHandler]) -> Result<Vec<u8
         }
     } else {
         // Small format: 4-byte header + 12 bytes per handler
-        let section_size = 4 + (handlers.len() * 12);
+        let section_size = 4usize.saturating_add(handlers.len().saturating_mul(12));
 
         // Section header (small format)
         let section_size_u8 = u8::try_from(section_size).map_err(|_| {
@@ -1057,5 +1138,40 @@ mod tests {
         assert!(!filter_handler.is_finally());
         assert!(!filter_handler.is_fault());
         assert!(filter_handler.is_filter());
+    }
+
+    #[test]
+    fn test_exception_handler_flags_kind() {
+        assert_eq!(
+            ExceptionHandlerFlags::EXCEPTION.kind(),
+            ExceptionHandlerKind::Catch
+        );
+        assert_eq!(
+            ExceptionHandlerFlags::FILTER.kind(),
+            ExceptionHandlerKind::Filter
+        );
+        assert_eq!(
+            ExceptionHandlerFlags::FINALLY.kind(),
+            ExceptionHandlerKind::Finally
+        );
+        assert_eq!(
+            ExceptionHandlerFlags::FAULT.kind(),
+            ExceptionHandlerKind::Fault
+        );
+    }
+
+    #[test]
+    fn test_exception_handler_kind_stable_strings() {
+        // The strings here are part of the stable public API. Changing them is
+        // a breaking change for downstream consumers that persist these values.
+        assert_eq!(ExceptionHandlerKind::Catch.as_str(), "catch");
+        assert_eq!(ExceptionHandlerKind::Filter.as_str(), "filter");
+        assert_eq!(ExceptionHandlerKind::Finally.as_str(), "finally");
+        assert_eq!(ExceptionHandlerKind::Fault.as_str(), "fault");
+
+        assert_eq!(format!("{}", ExceptionHandlerKind::Catch), "catch");
+        assert_eq!(format!("{}", ExceptionHandlerKind::Filter), "filter");
+        assert_eq!(format!("{}", ExceptionHandlerKind::Finally), "finally");
+        assert_eq!(format!("{}", ExceptionHandlerKind::Fault), "fault");
     }
 }

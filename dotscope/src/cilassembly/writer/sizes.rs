@@ -48,21 +48,35 @@ pub fn calculate_table_stream_expansion(assembly: &CilAssembly) -> Result<u64> {
                             "Table {table_id:?} insert count {insert_count_raw} exceeds u32::MAX"
                         ))
                     })?;
-                    let new_count = original_count + insert_count;
+                    let new_count = original_count.checked_add(insert_count).ok_or_else(|| {
+                        Error::LayoutFailed(format!(
+                            "Table {table_id:?} new row count overflows u32"
+                        ))
+                    })?;
                     (new_count, insert_count)
                 }
             };
 
-            let expansion_bytes = u64::from(additional_rows) * u64::from(row_size);
-            total_expansion += expansion_bytes;
+            let expansion_bytes = u64::from(additional_rows)
+                .checked_mul(u64::from(row_size))
+                .ok_or_else(|| {
+                    Error::LayoutFailed(format!("Table {table_id:?} expansion bytes overflow u64"))
+                })?;
+            total_expansion = total_expansion
+                .checked_add(expansion_bytes)
+                .ok_or_else(|| {
+                    Error::LayoutFailed("total table expansion overflows u64".to_string())
+                })?;
 
             if original_count == 0 && new_count > 0 {
-                header_expansion += 4;
+                header_expansion = header_expansion.saturating_add(4u64);
             }
         }
     }
 
-    Ok(total_expansion + header_expansion)
+    total_expansion
+        .checked_add(header_expansion)
+        .ok_or_else(|| Error::LayoutFailed("table expansion total overflows u64".to_string()))
 }
 
 #[cfg(test)]

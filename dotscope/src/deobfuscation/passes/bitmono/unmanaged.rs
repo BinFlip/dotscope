@@ -31,10 +31,9 @@
 use std::collections::HashMap;
 
 use crate::{
-    analysis::{ConstValue, SsaFunction, SsaOp, SsaVarId},
+    analysis::{CilTarget, ConstValue, MethodRef, SsaFunction, SsaOp, SsaVarId},
     compiler::{CompilerContext, EventKind, ModificationScope, SsaPass},
     metadata::token::Token,
-    CilObject, Result,
 };
 
 /// SSA pass that replaces UnmanagedString call+newobj patterns with string constants.
@@ -57,7 +56,7 @@ pub struct UnmanagedStringReversalPass {
     pub(crate) native_string_map: HashMap<Token, String>,
 }
 
-impl SsaPass for UnmanagedStringReversalPass {
+impl SsaPass<CilTarget, CompilerContext> for UnmanagedStringReversalPass {
     fn name(&self) -> &'static str {
         "BitMonoUnmanagedString"
     }
@@ -73,10 +72,9 @@ impl SsaPass for UnmanagedStringReversalPass {
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
-        _method_token: Token,
+        _method: &MethodRef,
         ctx: &CompilerContext,
-        _assembly: &CilObject,
-    ) -> Result<bool> {
+    ) -> analyssa::Result<bool> {
         let mut changed = false;
 
         for block_idx in 0..ssa.blocks().len() {
@@ -96,7 +94,7 @@ impl SsaPass for UnmanagedStringReversalPass {
                 if let Some(instr) = block.instruction_mut(site.newobj_idx) {
                     instr.set_op(SsaOp::Const {
                         dest: site.newobj_dest,
-                        value: ConstValue::DecryptedString(site.decrypted.clone()),
+                        value: ConstValue::DecryptedString(site.decrypted.clone().into()),
                     });
                 }
 
@@ -184,15 +182,14 @@ fn find_unmanaged_string_sites(
         // traces) should not prevent finding the actual string constructor.
         // Limit search distance to avoid O(n²) behaviour across many call sites.
         const MAX_SEARCH_DISTANCE: usize = 20;
-        let search_end = (i + 1 + MAX_SEARCH_DISTANCE).min(instructions.len());
-        for (j, next) in instructions
-            .iter()
-            .enumerate()
-            .skip(i + 1)
-            .take(search_end - (i + 1))
-        {
+        let start = i.saturating_add(1);
+        let search_end = start
+            .saturating_add(MAX_SEARCH_DISTANCE)
+            .min(instructions.len());
+        let take = search_end.saturating_sub(start);
+        for (j, next) in instructions.iter().enumerate().skip(start).take(take) {
             if let SsaOp::NewObj { dest, args, .. } = next.op() {
-                if args.len() == 1 && args[0] == call_dest {
+                if args.len() == 1 && args.first() == Some(&call_dest) {
                     sites.push(UnmanagedStringSite {
                         call_idx: i,
                         newobj_idx: j,

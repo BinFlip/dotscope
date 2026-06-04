@@ -26,7 +26,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{
-    compiler::{PassPhase, SsaPass},
+    analysis::CilTarget,
+    compiler::{CompilerContext, PassPhase, SsaPass},
     deobfuscation::{
         context::AnalysisContext,
         passes::{CffDetector, CffReconstructionPass, Dispatcher, UnflattenConfig},
@@ -110,7 +111,7 @@ impl Technique for GenericFlattening {
                 .collect();
 
             if !method_dispatchers.is_empty() {
-                total_dispatchers += method_dispatchers.len();
+                total_dispatchers = total_dispatchers.saturating_add(method_dispatchers.len());
                 dispatchers_by_method.insert(method_token, method_dispatchers);
             }
         }
@@ -141,7 +142,7 @@ impl Technique for GenericFlattening {
         ctx: &AnalysisContext,
         detection: &Detection,
         _assembly: &Arc<CilObject>,
-    ) -> Vec<Box<dyn SsaPass>> {
+    ) -> Vec<Box<dyn SsaPass<CilTarget, CompilerContext>>> {
         let cff_config = UnflattenConfig {
             max_states: ctx.config.unflattening.max_states_per_case,
             max_tree_depth: ctx.config.unflattening.max_trace_iterations,

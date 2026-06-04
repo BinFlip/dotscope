@@ -207,9 +207,10 @@ pub(crate) fn resolve_crypto_key_iv(
 pub(crate) fn extract_xml_element(xml: &str, tag: &str) -> Option<String> {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
-    let start = xml.find(&open)? + open.len();
-    let end = xml[start..].find(&close)? + start;
-    Some(xml[start..end].trim().to_string())
+    let start = xml.find(&open)?.saturating_add(open.len());
+    let tail = xml.get(start..)?;
+    let end = tail.find(&close)?.saturating_add(start);
+    Some(xml.get(start..end)?.trim().to_string())
 }
 
 #[cfg(test)]

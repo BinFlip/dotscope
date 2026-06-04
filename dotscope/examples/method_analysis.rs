@@ -74,8 +74,9 @@ fn format_impl_options(options: &MethodImplOptions) -> String {
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: {} <path-to-dotnet-assembly>", args[0]);
+    let prog = args.first().map_or("method_analysis", String::as_str);
+    let Some(path_arg) = args.get(1) else {
+        eprintln!("Usage: {prog} <path-to-dotnet-assembly>");
         eprintln!();
         eprintln!("This example performs exhaustive analysis of a selected method:");
         eprintln!("  • Complete method metadata examination");
@@ -85,9 +86,9 @@ fn main() -> Result<()> {
         eprintln!();
         eprintln!("The example will automatically select a suitable method with IL code.");
         return Ok(());
-    }
+    };
 
-    let path = Path::new(&args[1]);
+    let path = Path::new(path_arg);
     println!("🔍 Comprehensive Method Analysis of: {}", path.display());
 
     let assembly = CilObject::from_path(path)?;
@@ -339,11 +340,8 @@ fn print_method_parameters(method: &Method) {
                     vararg.modifiers.count()
                 );
                 for (j, modifier) in vararg.modifiers.iter() {
-                    println!(
-                        "       [{}]: Token 0x{:08X}",
-                        j,
-                        modifier.token().unwrap().value()
-                    );
+                    let token_value = modifier.token().map_or(0, |t| t.value());
+                    println!("       [{j}]: Token 0x{token_value:08X}");
                 }
             }
         }
@@ -545,7 +543,7 @@ fn print_basic_block_analysis(method: &Method) {
     }
 
     if block_count > 10 {
-        println!("     ... ({} more blocks)", block_count - 10);
+        println!("     ... ({} more blocks)", block_count.saturating_sub(10));
     }
 }
 
@@ -565,17 +563,20 @@ fn print_instruction_stream_analysis(method: &Method) -> Result<()> {
 
     for (i, instruction) in method.instructions().enumerate() {
         // Count by mnemonic
-        *instruction_stats
+        let entry = instruction_stats
             .entry(instruction.mnemonic.to_string())
-            .or_insert(0) += 1;
+            .or_insert(0u64);
+        *entry = entry.saturating_add(1);
 
         // Count by category
         let category_name = format!("{:?}", instruction.category);
-        *category_stats.entry(category_name).or_insert(0) += 1;
+        let entry = category_stats.entry(category_name).or_insert(0u64);
+        *entry = entry.saturating_add(1);
 
         // Count by flow type
         let flow_name = format!("{:?}", instruction.flow_type);
-        *flow_type_stats.entry(flow_name).or_insert(0) += 1;
+        let entry = flow_type_stats.entry(flow_name).or_insert(0u64);
+        *entry = entry.saturating_add(1);
 
         // Collect stack effects
         stack_effects.push(instruction.stack_behavior.net_effect);
@@ -604,7 +605,10 @@ fn print_instruction_stream_analysis(method: &Method) -> Result<()> {
                 operand_display
             );
         } else if i == 15 {
-            println!("     ... ({} more instructions)", total_instructions - 15);
+            println!(
+                "     ... ({} more instructions)",
+                total_instructions.saturating_sub(15)
+            );
         }
     }
 
@@ -655,7 +659,10 @@ fn print_instruction_stream_analysis(method: &Method) -> Result<()> {
         if sorted_targets.len() <= 5 {
             println!("       Targets: {sorted_targets:?}");
         } else {
-            println!("       First 5 targets: {:?}...", &sorted_targets[0..5]);
+            println!(
+                "       First 5 targets: {:?}...",
+                sorted_targets.get(0..5).unwrap_or(&[])
+            );
         }
     }
 
@@ -672,17 +679,17 @@ fn print_control_flow_analysis(method: &Method) {
         return;
     }
 
-    let mut entry_blocks = 0;
-    let mut exit_blocks = 0;
-    let mut branch_blocks = 0;
-    let mut simple_blocks = 0;
+    let mut entry_blocks: u64 = 0;
+    let mut exit_blocks: u64 = 0;
+    let mut branch_blocks: u64 = 0;
+    let mut simple_blocks: u64 = 0;
 
     for (_, block) in method.blocks() {
         match (block.predecessors.len(), block.successors.len()) {
-            (0, _) => entry_blocks += 1,
-            (_, 0) => exit_blocks += 1,
-            (_, n) if n > 1 => branch_blocks += 1,
-            _ => simple_blocks += 1,
+            (0, _) => entry_blocks = entry_blocks.saturating_add(1u64),
+            (_, 0) => exit_blocks = exit_blocks.saturating_add(1u64),
+            (_, n) if n > 1 => branch_blocks = branch_blocks.saturating_add(1u64),
+            _ => simple_blocks = simple_blocks.saturating_add(1u64),
         }
     }
 
@@ -697,7 +704,7 @@ fn print_control_flow_analysis(method: &Method) {
         .blocks()
         .map(|(_, block)| block.successors.len().saturating_sub(1))
         .sum::<usize>()
-        + 1;
+        .saturating_add(1);
 
     println!("\n   Complexity Metrics:");
     println!("     Cyclomatic Complexity: {cyclomatic_complexity}");

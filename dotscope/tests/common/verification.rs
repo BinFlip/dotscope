@@ -1,3 +1,12 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    missing_docs
+)]
+
 //! Shared integration test verification framework.
 //!
 //! Provides SSA-based semantic verification for comparing original vs deobfuscated
@@ -286,7 +295,7 @@ impl MethodSemantics {
                 }
             }
             ConstValue::DecryptedString(content) => {
-                semantics.strings.insert(content.clone());
+                semantics.strings.insert(content.to_string());
             }
             ConstValue::I8(v) => {
                 semantics.integer_constants.insert(i64::from(*v));
@@ -980,7 +989,7 @@ pub fn resolve_method_name(assembly: &CilObject, token: Token) -> Option<String>
 
     match table_id {
         0x06 => {
-            let method = assembly.method(&token)?;
+            let method = assembly.method(&token).ok()?;
 
             for entry in assembly.types().iter() {
                 let cil_type = entry.value();

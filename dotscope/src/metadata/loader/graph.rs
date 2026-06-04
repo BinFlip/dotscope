@@ -21,12 +21,15 @@
 //! - Construction: Single-threaded only
 //! - Generated plans: Thread-safe for parallel execution
 //!
-use std::collections::{HashMap, HashSet};
-use std::fmt::Write;
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Write,
+};
+
+use analyssa::graph::IndexedGraph;
 
 use crate::{
     metadata::{loader::MetadataLoader, tables::TableId},
-    utils::graph::IndexedGraph,
     Error::GraphError,
     Result,
 };
@@ -107,7 +110,7 @@ impl<'a> LoaderGraph<'a> {
             let key = LoaderKey::Special {
                 sequence: self.special_counter,
             };
-            self.special_counter += 1;
+            self.special_counter = self.special_counter.saturating_add(1);
             key
         };
 
@@ -134,12 +137,8 @@ impl<'a> LoaderGraph<'a> {
     /// Returns `GraphError` if a loader depends on a table without a registered loader,
     /// or if circular dependencies are detected (debug builds).
     pub fn build_relationships(&mut self) -> Result<()> {
-        self.dependencies
-            .values_mut()
-            .for_each(std::collections::HashSet::clear);
-        self.dependents
-            .values_mut()
-            .for_each(std::collections::HashSet::clear);
+        self.dependencies.values_mut().for_each(HashSet::clear);
+        self.dependents.values_mut().for_each(HashSet::clear);
 
         for (loader_key, loader) in &self.loaders {
             for dep_table_id in loader.dependencies() {
@@ -377,12 +376,15 @@ impl<'a> LoaderGraph<'a> {
             let _ = writeln!(result, "Level {level_idx}: [");
             for loader in level {
                 // Find the LoaderKey for this loader
-                let loader_key = self
+                let Some(loader_key) = self
                     .loaders
                     .iter()
                     .find(|(_, &l)| std::ptr::eq(*loader, l))
                     .map(|(key, _)| key)
-                    .expect("Loader not found in graph");
+                else {
+                    let _ = writeln!(result, "  <unknown loader> (depends on: ?)");
+                    continue;
+                };
 
                 let deps = self.dependencies.get(loader_key).map_or_else(
                     || "None".to_string(),

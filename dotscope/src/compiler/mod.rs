@@ -50,17 +50,31 @@
 
 mod codegen;
 mod context;
-mod events;
+mod host;
 mod pass;
 mod passes;
 mod scheduler;
 mod state;
 mod summary;
 
+use crate::analysis::CilTarget;
+
+pub use analyssa::events::{DerivedStats, EventKind, EventListener, NullListener};
 pub use codegen::{CompilationResult, SsaCodeGenerator};
 pub use context::CompilerContext;
-pub use events::{DerivedStats, Event, EventKind, EventLog};
-pub use pass::{ModificationScope, PassCapability, PassPhase, SsaPass};
+
+/// CIL-defaulted alias of [`analyssa::events::Event`].
+pub type Event = analyssa::events::Event<CilTarget>;
+/// CIL-defaulted alias of [`analyssa::events::EventLog`].
+pub type EventLog = analyssa::events::EventLog<CilTarget>;
+/// CIL-defaulted alias of [`analyssa::events::EventBuilder`].
+pub type EventBuilder<'a, L = EventLog> = analyssa::events::EventBuilder<'a, CilTarget, L>;
+
+pub use host::CilHost;
+pub use pass::{
+    CilCapability, DeobfuscationCapability, ModificationScope, PassCapability, PassPhase, SsaPass,
+    SsaPassHost,
+};
 pub use passes::{
     AlgebraicSimplificationPass, BlockMergingPass, ConstantPropagationPass,
     ControlFlowSimplificationPass, CopyPropagationPass, DeadCodeEliminationPass,

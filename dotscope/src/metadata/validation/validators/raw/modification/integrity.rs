@@ -181,8 +181,8 @@ impl RawChangeIntegrityValidator {
 
                     if let Some(&max_rid) = final_rids.iter().max() {
                         let expected_min_count =
-                            u32::try_from(final_rids.len() * 7 / 10).unwrap_or(0);
-                        if max_rid > expected_min_count.max(1) * 2 {
+                            u32::try_from(final_rids.len().saturating_mul(7) / 10).unwrap_or(0);
+                        if max_rid > expected_min_count.max(1).saturating_mul(2) {
                             return Err(malformed_error!(
                                 "Table {:?} integrity violation: RID sequence too sparse - max RID {} with only {} rows (>70% gaps)",
                                 table_id,
@@ -410,8 +410,20 @@ impl RawChangeIntegrityValidator {
         for (table_id, modifications) in table_changes {
             if let TableModifications::Sparse { operations, .. } = modifications {
                 for window in operations.windows(2) {
-                    let curr_time = window[0].timestamp;
-                    let next_time = window[1].timestamp;
+                    let curr = window.first().ok_or_else(|| {
+                        malformed_error!(
+                            "Operation window missing first element for table {:?}",
+                            table_id
+                        )
+                    })?;
+                    let next = window.get(1).ok_or_else(|| {
+                        malformed_error!(
+                            "Operation window missing second element for table {:?}",
+                            table_id
+                        )
+                    })?;
+                    let curr_time = curr.timestamp;
+                    let next_time = next.timestamp;
 
                     if curr_time > next_time {
                         return Err(malformed_error!(
@@ -503,7 +515,11 @@ impl RawChangeIntegrityValidator {
             TableModifications::Replaced(rows) => {
                 // For replaced tables, we have all TypeDef data
                 for (i, row_data) in rows.iter().enumerate() {
-                    let rid = u32::try_from(i + 1).map_err(|_| Error::ValidationRawFailed {
+                    let rid_usize = i.checked_add(1).ok_or_else(|| Error::ValidationRawFailed {
+                        validator: "integrity".to_string(),
+                        message: "Table row index overflow when computing RID".to_string(),
+                    })?;
+                    let rid = u32::try_from(rid_usize).map_err(|_| Error::ValidationRawFailed {
                         validator: "integrity".to_string(),
                         message: "Table row index exceeds u32 range".to_string(),
                     })?;
@@ -521,14 +537,35 @@ impl RawChangeIntegrityValidator {
 
         // Validate each TypeDef's field range
         for i in 0..typedef_field_lists.len() {
-            let (typedef_rid, field_list_start) = typedef_field_lists[i];
+            let (typedef_rid, field_list_start) = *typedef_field_lists.get(i).ok_or_else(|| {
+                malformed_error!(
+                    "TypeDef field-list index {} out of bounds (len {})",
+                    i,
+                    typedef_field_lists.len()
+                )
+            })?;
 
             // Determine the end of this type's field range
-            let field_list_end = if i + 1 < typedef_field_lists.len() {
-                typedef_field_lists[i + 1].1 // Next type's field_list
+            let next_index = i
+                .checked_add(1)
+                .ok_or_else(|| malformed_error!("TypeDef field-list index overflow at {}", i))?;
+            let field_list_end = if next_index < typedef_field_lists.len() {
+                typedef_field_lists
+                    .get(next_index)
+                    .ok_or_else(|| {
+                        malformed_error!(
+                            "TypeDef field-list next index {} out of bounds (len {})",
+                            next_index,
+                            typedef_field_lists.len()
+                        )
+                    })?
+                    .1 // Next type's field_list
             } else {
                 // For the last type, use the maximum field RID + 1
-                field_rids.iter().max().map_or(1, |max| max + 1)
+                field_rids
+                    .iter()
+                    .max()
+                    .map_or(1, |max| max.saturating_add(1))
             };
 
             // Validate that all fields in this range exist
@@ -1032,7 +1069,7 @@ mod tests {
         validator_test(
             raw_change_integrity_validator_file_factory,
             "RawChangeIntegrityValidator",
-            "Malformed",
+            "Parse",
             config,
             |context| validator.validate_raw(context),
         )

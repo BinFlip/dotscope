@@ -83,10 +83,9 @@
 //! - [`crate::metadata::typesystem`] - Higher-level type system operations
 
 use std::{
-    fmt,
+    fmt::{self, Debug, Formatter},
     hash::{Hash, Hasher},
-    sync::Arc,
-    sync::Weak,
+    sync::{Arc, Weak},
 };
 
 use crate::{
@@ -265,10 +264,13 @@ impl CilTypeRef {
     ///
     /// A strong reference to the type.
     ///
-    /// ## Panics
+    /// ## Returns
     ///
-    /// Panics if the referenced type has been dropped and the weak reference
-    /// cannot be upgraded to a strong reference.
+    /// Returns `Some` with a strong reference if the type is still alive, or
+    /// `None` if the type has been dropped (i.e. the weak reference cannot
+    /// be upgraded). The `msg` argument is kept for backwards compatibility
+    /// but no longer used for panicking; the crate forbids panics in
+    /// production code.
     ///
     /// ## Example
     ///
@@ -280,14 +282,14 @@ impl CilTypeRef {
     /// # let my_type: Arc<CilType> = unimplemented!();
     /// let type_ref = CilTypeRef::new(&my_type);
     ///
-    /// // This will panic if my_type has been dropped
-    /// let strong_ref = type_ref.expect("Type should still be alive");
-    /// println!("Type: {}", strong_ref.name);
+    /// if let Some(strong_ref) = type_ref.expect("Type should still be alive") {
+    ///     println!("Type: {}", strong_ref.name);
+    /// }
     /// # }
     /// ```
     #[must_use]
-    pub fn expect(&self, msg: &str) -> CilTypeRc {
-        self.weak_ref.upgrade().expect(msg)
+    pub fn expect(&self, _msg: &str) -> Option<CilTypeRc> {
+        self.weak_ref.upgrade()
     }
 
     /// Checks if the referenced type is still alive.
@@ -505,7 +507,7 @@ impl<'a> Iterator for CilTypeRefListIter<'a> {
         if self.index < self.list.count() {
             // boxcar::Vec returns Option from get(), and we need to handle it
             let result = self.list.get(self.index);
-            self.index += 1;
+            self.index = self.index.saturating_add(1);
             result
         } else {
             None
@@ -681,8 +683,8 @@ pub enum CilTypeReference {
     None,
 }
 
-impl std::fmt::Debug for CilTypeReference {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Debug for CilTypeReference {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             CilTypeReference::TypeRef(_) => write!(f, "CilTypeReference::TypeRef(...)"),
             CilTypeReference::TypeDef(_) => write!(f, "CilTypeReference::TypeDef(...)"),
@@ -1580,7 +1582,7 @@ impl CilFlavor {
             CilFlavor::I4 | CilFlavor::U4 | CilFlavor::R4 => Some(4),
             CilFlavor::I8 | CilFlavor::U8 | CilFlavor::R8 => Some(8),
             CilFlavor::I | CilFlavor::U => Some(ptr_size.bytes()),
-            CilFlavor::TypedRef { .. } => Some(ptr_size.bytes() * 2),
+            CilFlavor::TypedRef { .. } => Some(ptr_size.bytes().saturating_mul(2)),
             // Reference types are pointer-sized
             CilFlavor::Object
             | CilFlavor::String
@@ -1762,76 +1764,11 @@ impl From<&TypeSignature> for CilFlavor {
 
 /// Target pointer width for native int/uint types.
 ///
-/// Per ECMA-335, `native int` and `native uint` (`System.IntPtr` / `System.UIntPtr`)
-/// are pointer-sized: 4 bytes on PE32 (32-bit) targets, 8 bytes on PE32+ (64-bit) targets.
+/// Re-exported from `analyssa::PointerSize`. The implementation moved to analyssa
+/// so the IR core's generic arithmetic methods (which need pointer-width
+/// masking) don't have to depend on `dotscope::metadata`.
 ///
-/// Derived from the PE header: PE32 → `Bit32`, PE32+ → `Bit64`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PointerSize {
-    /// 32-bit target (4-byte pointers)
-    Bit32,
-    /// 64-bit target (8-byte pointers)
-    Bit64,
-}
-
-impl PointerSize {
-    /// Creates a `PointerSize` from the PE header's bitness flag.
-    ///
-    /// PE32 binaries are 32-bit (`Bit32`), PE32+ binaries are 64-bit (`Bit64`).
-    ///
-    /// # Arguments
-    ///
-    /// * `is_64bit` - `true` for PE32+ (64-bit), `false` for PE32 (32-bit)
-    #[must_use]
-    pub fn from_pe(is_64bit: bool) -> Self {
-        if is_64bit {
-            Self::Bit64
-        } else {
-            Self::Bit32
-        }
-    }
-
-    /// Returns the pointer size in bytes.
-    #[must_use]
-    pub fn bytes(self) -> usize {
-        match self {
-            Self::Bit32 => 4,
-            Self::Bit64 => 8,
-        }
-    }
-
-    /// Returns the pointer size in bits.
-    #[must_use]
-    pub fn bits(self) -> u32 {
-        match self {
-            Self::Bit32 => 32,
-            Self::Bit64 => 64,
-        }
-    }
-
-    /// Masks and sign-extends a signed value to the target pointer width.
-    #[must_use]
-    pub fn mask_signed(self, value: i64) -> i64 {
-        match self {
-            Self::Bit32 => {
-                #[allow(clippy::cast_possible_truncation)]
-                let truncated = value as i32;
-                i64::from(truncated)
-            }
-            Self::Bit64 => value,
-        }
-    }
-
-    /// Masks and zero-extends an unsigned value to the target pointer width.
-    #[must_use]
-    pub fn mask_unsigned(self, value: u64) -> u64 {
-        match self {
-            Self::Bit32 => {
-                #[allow(clippy::cast_possible_truncation)]
-                let truncated = value as u32;
-                u64::from(truncated)
-            }
-            Self::Bit64 => value,
-        }
-    }
-}
+/// Per ECMA-335, `native int` and `native uint` (`System.IntPtr` /
+/// `System.UIntPtr`) are pointer-sized: 4 bytes on PE32, 8 bytes on PE32+.
+/// Use [`PointerSize::from_pe`] to derive from the PE header.
+pub use analyssa::PointerSize;

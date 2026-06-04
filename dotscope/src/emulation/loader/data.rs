@@ -50,7 +50,7 @@
 
 use crate::{
     emulation::memory::{AddressSpace, MemoryProtection, MemoryRegion},
-    Result,
+    Error, Result,
 };
 
 /// Information about a mapped data region in the emulation address space.
@@ -378,8 +378,8 @@ impl DataLoader {
         address: u64,
         protection: MemoryProtection,
     ) -> Result<MappedRegionInfo> {
-        let data = std::fs::read(path)
-            .map_err(|e| crate::Error::Other(format!("Failed to read file: {e}")))?;
+        let data =
+            std::fs::read(path).map_err(|e| Error::Other(format!("Failed to read file: {e}")))?;
 
         let label = path
             .file_name()

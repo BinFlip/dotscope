@@ -28,8 +28,17 @@ use crate::{
     },
     metadata::streams::{Blob, Guid, Strings, UserStrings},
     utils::{compressed_uint_size, hash_blob, hash_string, to_u32, write_compressed_uint},
-    Error, Result,
+    Error, ParseFailure, ParseStage, Result,
 };
+
+#[inline]
+fn writer_overflow(field: &'static str) -> Error {
+    Error::Parse(ParseFailure::InvalidField {
+        stage: ParseStage::AssemblyWriter,
+        field,
+        reason: "arithmetic overflow".into(),
+    })
+}
 
 /// Result of streaming a heap to output.
 #[derive(Debug)]
@@ -153,13 +162,16 @@ fn emit_orphaned_substrings(
                 continue;
             }
 
-            let delta = (ref_offset - old_offset_u32) as usize;
+            let delta = ref_offset
+                .checked_sub(old_offset_u32)
+                .ok_or_else(|| writer_overflow("substring_delta"))?
+                as usize;
             if delta >= original_bytes.len() {
                 continue;
             }
 
             // Extract the null-terminated substring from the original string bytes
-            let sub_bytes = &original_bytes[delta..];
+            let sub_bytes = original_bytes.get(delta..).ok_or(out_of_bounds_error!())?;
             let sub_str = std::str::from_utf8(sub_bytes).unwrap_or("");
             if sub_str.is_empty() {
                 result.remapping.insert(ref_offset, 0);
@@ -176,12 +188,21 @@ fn emit_orphaned_substrings(
                 Error::LayoutFailed(format!("Heap position {} exceeds u32 range", *pos))
             })?;
 
+            let sub_pos = start_offset
+                .checked_add(*pos)
+                .ok_or_else(|| writer_overflow("heap_write_offset"))?;
+            let sub_end = sub_pos
+                .checked_add(sub_bytes.len() as u64)
+                .ok_or_else(|| writer_overflow("heap_write_offset"))?;
             if let Some(out) = output.as_mut() {
-                out.write_at(start_offset + *pos, sub_bytes)?;
-                out.write_at(start_offset + *pos + sub_bytes.len() as u64, &[0u8])?;
+                out.write_at(sub_pos, sub_bytes)?;
+                out.write_at(sub_end, &[0u8])?;
             }
 
-            *pos += sub_bytes.len() as u64 + 1;
+            *pos = pos
+                .checked_add(sub_bytes.len() as u64)
+                .and_then(|p| p.checked_add(1))
+                .ok_or_else(|| writer_overflow("heap_position"))?;
             dedup_map.insert(sub_hash, new_sub_offset);
             result.remapping.insert(ref_offset, new_sub_offset);
         }
@@ -241,7 +262,10 @@ fn process_strings_heap(
             // This must use the ORIGINAL length, not the modified length, because
             // other tables may reference substring offsets within the original range.
             let original_bytes = original_str.as_bytes();
-            let original_end = old_offset_u32 + to_u32(original_bytes.len())? + 1; // +1 for null
+            let original_end = old_offset_u32
+                .checked_add(to_u32(original_bytes.len())?)
+                .and_then(|v| v.checked_add(1))
+                .ok_or_else(|| writer_overflow("string_range"))?; // +1 for null
 
             if changes.is_removed(old_offset_u32) {
                 // Even though this entry is removed, emit any referenced substrings
@@ -289,15 +313,25 @@ fn process_strings_heap(
                 Error::LayoutFailed(format!("Heap position {pos} exceeds u32 range"))
             })?;
             let str_bytes = final_str.as_bytes();
-            let entry_size = str_bytes.len() as u64 + 1; // +1 for null terminator
+            let entry_size = (str_bytes.len() as u64)
+                .checked_add(1)
+                .ok_or_else(|| writer_overflow("heap_entry_size"))?; // +1 for null terminator
 
             // Write if in write mode
+            let write_pos = start_offset
+                .checked_add(pos)
+                .ok_or_else(|| writer_overflow("heap_write_offset"))?;
+            let null_pos = write_pos
+                .checked_add(str_bytes.len() as u64)
+                .ok_or_else(|| writer_overflow("heap_write_offset"))?;
             if let Some(out) = output.as_mut() {
-                out.write_at(start_offset + pos, str_bytes)?;
-                out.write_at(start_offset + pos + str_bytes.len() as u64, &[0u8])?;
+                out.write_at(write_pos, str_bytes)?;
+                out.write_at(null_pos, &[0u8])?;
             }
 
-            pos += entry_size;
+            pos = pos
+                .checked_add(entry_size)
+                .ok_or_else(|| writer_overflow("heap_position"))?;
             dedup_map.insert(content_hash, new_offset);
 
             // Add primary offset remapping if changed
@@ -324,8 +358,12 @@ fn process_strings_heap(
                 // Unmodified: substrings are at the same delta in the new entry
                 for &ref_offset in referenced_offsets {
                     if ref_offset > old_offset_u32 && ref_offset < original_end {
-                        let substring_delta = ref_offset - old_offset_u32;
-                        let new_substring_offset = new_offset + substring_delta;
+                        let substring_delta = ref_offset
+                            .checked_sub(old_offset_u32)
+                            .ok_or_else(|| writer_overflow("substring_delta"))?;
+                        let new_substring_offset = new_offset
+                            .checked_add(substring_delta)
+                            .ok_or_else(|| writer_overflow("substring_offset"))?;
                         result.remapping.insert(ref_offset, new_substring_offset);
                     }
                 }
@@ -358,20 +396,32 @@ fn process_strings_heap(
         // PE and metadata heap sizes are limited to 4GB, so this cast is safe
         #[allow(clippy::cast_possible_truncation)]
         while result.remapping.contains_key(&(pos as u32)) {
-            pos += 1;
+            pos = pos
+                .checked_add(1)
+                .ok_or_else(|| writer_overflow("heap_position"))?;
         }
 
         let new_offset = u32::try_from(pos)
             .map_err(|_| Error::LayoutFailed(format!("Heap position {pos} exceeds u32 range")))?;
         let str_bytes = final_str.as_bytes();
-        let entry_size = str_bytes.len() as u64 + 1;
+        let entry_size = (str_bytes.len() as u64)
+            .checked_add(1)
+            .ok_or_else(|| writer_overflow("heap_entry_size"))?;
 
+        let write_pos = start_offset
+            .checked_add(pos)
+            .ok_or_else(|| writer_overflow("heap_write_offset"))?;
+        let null_pos = write_pos
+            .checked_add(str_bytes.len() as u64)
+            .ok_or_else(|| writer_overflow("heap_write_offset"))?;
         if let Some(out) = output.as_mut() {
-            out.write_at(start_offset + pos, str_bytes)?;
-            out.write_at(start_offset + pos + str_bytes.len() as u64, &[0u8])?;
+            out.write_at(write_pos, str_bytes)?;
+            out.write_at(null_pos, &[0u8])?;
         }
 
-        pos += entry_size;
+        pos = pos
+            .checked_add(entry_size)
+            .ok_or_else(|| writer_overflow("heap_position"))?;
         dedup_map.insert(content_hash, new_offset);
         change_ref.resolve_to_offset(new_offset);
     }
@@ -515,11 +565,16 @@ fn process_blob_heap(
                         Error::LayoutFailed(format!("Heap position {pos} exceeds u32 range"))
                     })?;
 
+                    let write_pos = start_offset
+                        .checked_add(pos)
+                        .ok_or_else(|| writer_overflow("heap_write_offset"))?;
                     if let Some(out) = output.as_mut() {
                         // Write compressed length of 0
-                        out.write_at(start_offset + pos, &[0u8])?;
+                        out.write_at(write_pos, &[0u8])?;
                     }
-                    pos += 1; // Empty blob is just 1 byte (length 0)
+                    pos = pos
+                        .checked_add(1)
+                        .ok_or_else(|| writer_overflow("heap_position"))?; // Empty blob is just 1 byte (length 0)
 
                     // Only add to remapping if the offset actually changed
                     if old_offset_u32 != new_offset {
@@ -539,8 +594,13 @@ fn process_blob_heap(
                 Error::LayoutFailed(format!("Heap position {pos} exceeds u32 range"))
             })?;
             let len_size = compressed_uint_size(final_blob.len());
-            let entry_size = len_size + final_blob.len() as u64;
+            let entry_size = len_size
+                .checked_add(final_blob.len() as u64)
+                .ok_or_else(|| writer_overflow("blob_entry_size"))?;
 
+            let write_pos = start_offset
+                .checked_add(pos)
+                .ok_or_else(|| writer_overflow("heap_write_offset"))?;
             if let Some(out) = output.as_mut() {
                 let blob_len_u32 = u32::try_from(final_blob.len()).map_err(|_| {
                     Error::LayoutFailed(format!(
@@ -550,12 +610,16 @@ fn process_blob_heap(
                 })?;
                 let mut len_bytes = Vec::with_capacity(4);
                 write_compressed_uint(blob_len_u32, &mut len_bytes);
-                let write_pos = start_offset + pos;
+                let data_pos = write_pos
+                    .checked_add(len_bytes.len() as u64)
+                    .ok_or_else(|| writer_overflow("heap_write_offset"))?;
                 out.write_at(write_pos, &len_bytes)?;
-                out.write_at(write_pos + len_bytes.len() as u64, final_blob)?;
+                out.write_at(data_pos, final_blob)?;
             }
 
-            pos += entry_size;
+            pos = pos
+                .checked_add(entry_size)
+                .ok_or_else(|| writer_overflow("heap_position"))?;
             dedup_map.insert(content_hash, new_offset);
             // Only add to remapping if the offset actually changed
             if old_offset_u32 != new_offset {
@@ -606,14 +670,21 @@ fn process_blob_heap(
         // PE and metadata heap sizes are limited to 4GB, so this cast is safe
         #[allow(clippy::cast_possible_truncation)]
         while result.remapping.contains_key(&(pos as u32)) {
-            pos += 1;
+            pos = pos
+                .checked_add(1)
+                .ok_or_else(|| writer_overflow("heap_position"))?;
         }
 
         let new_offset = u32::try_from(pos)
             .map_err(|_| Error::LayoutFailed(format!("Heap position {pos} exceeds u32 range")))?;
         let len_size = compressed_uint_size(final_blob.len());
-        let entry_size = len_size + final_blob.len() as u64;
+        let entry_size = len_size
+            .checked_add(final_blob.len() as u64)
+            .ok_or_else(|| writer_overflow("blob_entry_size"))?;
 
+        let write_pos = start_offset
+            .checked_add(pos)
+            .ok_or_else(|| writer_overflow("heap_write_offset"))?;
         if let Some(out) = output.as_mut() {
             let blob_len_u32 = u32::try_from(final_blob.len()).map_err(|_| {
                 Error::LayoutFailed(format!(
@@ -623,11 +694,16 @@ fn process_blob_heap(
             })?;
             let mut len_bytes = Vec::with_capacity(4);
             write_compressed_uint(blob_len_u32, &mut len_bytes);
-            out.write_at(start_offset + pos, &len_bytes)?;
-            out.write_at(start_offset + pos + len_bytes.len() as u64, final_blob)?;
+            let data_pos = write_pos
+                .checked_add(len_bytes.len() as u64)
+                .ok_or_else(|| writer_overflow("heap_write_offset"))?;
+            out.write_at(write_pos, &len_bytes)?;
+            out.write_at(data_pos, final_blob)?;
         }
 
-        pos += entry_size;
+        pos = pos
+            .checked_add(entry_size)
+            .ok_or_else(|| writer_overflow("heap_position"))?;
         dedup_map.insert(content_hash, new_offset);
         change_ref.resolve_to_offset(new_offset);
     }
@@ -726,7 +802,10 @@ fn process_guid_heap(
             })?;
 
             // For GUIDs, changes use byte offset = (index - 1) * 16
-            let byte_offset = (old_index_u32.saturating_sub(1)) * 16;
+            let byte_offset = old_index_u32
+                .saturating_sub(1)
+                .checked_mul(16)
+                .ok_or_else(|| writer_overflow("guid_byte_offset"))?;
 
             // Check if deleted
             if changes.is_removed(byte_offset) {
@@ -749,17 +828,24 @@ fn process_guid_heap(
             }
 
             // Write if in write mode
+            let write_pos = start_offset
+                .checked_add(pos)
+                .ok_or_else(|| writer_overflow("guid_heap_write_offset"))?;
             if let Some(out) = output.as_mut() {
-                out.write_at(start_offset + pos, &final_guid)?;
+                out.write_at(write_pos, &final_guid)?;
             }
-            pos += 16;
+            pos = pos
+                .checked_add(16)
+                .ok_or_else(|| writer_overflow("guid_heap_position"))?;
 
             dedup_map.insert(final_guid, current_index);
             // Only add to remapping if the index actually changed
             if old_index_u32 != current_index {
                 result.remapping.insert(old_index_u32, current_index);
             }
-            current_index += 1;
+            current_index = current_index
+                .checked_add(1)
+                .ok_or_else(|| writer_overflow("guid_index"))?;
         }
     }
 
@@ -778,14 +864,21 @@ fn process_guid_heap(
             continue;
         }
 
+        let write_pos = start_offset
+            .checked_add(pos)
+            .ok_or_else(|| writer_overflow("guid_heap_write_offset"))?;
         if let Some(out) = output.as_mut() {
-            out.write_at(start_offset + pos, final_guid)?;
+            out.write_at(write_pos, final_guid)?;
         }
-        pos += 16;
+        pos = pos
+            .checked_add(16)
+            .ok_or_else(|| writer_overflow("guid_heap_position"))?;
 
         dedup_map.insert(*final_guid, current_index);
         change_ref.resolve_to_offset(current_index);
-        current_index += 1;
+        current_index = current_index
+            .checked_add(1)
+            .ok_or_else(|| writer_overflow("guid_index"))?;
     }
 
     result.bytes_written = pos;
@@ -910,14 +1003,19 @@ fn process_userstring_heap(
             let new_offset = u32::try_from(pos).map_err(|_| {
                 Error::LayoutFailed(format!("Heap position {pos} exceeds u32 range"))
             })?;
-            let entry_size = userstring_entry_size(final_str);
+            let entry_size = userstring_entry_size(final_str)?;
 
             // Write if in write mode
+            let write_pos = start_offset
+                .checked_add(pos)
+                .ok_or_else(|| writer_overflow("userstring_write_offset"))?;
             if let Some(out) = output.as_mut() {
-                write_userstring_entry(out, start_offset + pos, final_str)?;
+                write_userstring_entry(out, write_pos, final_str)?;
             }
 
-            pos += entry_size;
+            pos = pos
+                .checked_add(entry_size)
+                .ok_or_else(|| writer_overflow("userstring_heap_position"))?;
             dedup_map.insert(content_hash, new_offset);
             // Only add to remapping if the offset actually changed
             if old_offset_u32 != new_offset {
@@ -945,13 +1043,18 @@ fn process_userstring_heap(
 
         let new_offset = u32::try_from(pos)
             .map_err(|_| Error::LayoutFailed(format!("Heap position {pos} exceeds u32 range")))?;
-        let entry_size = userstring_entry_size(final_str);
+        let entry_size = userstring_entry_size(final_str)?;
 
+        let write_pos = start_offset
+            .checked_add(pos)
+            .ok_or_else(|| writer_overflow("userstring_write_offset"))?;
         if let Some(out) = output.as_mut() {
-            write_userstring_entry(out, start_offset + pos, final_str)?;
+            write_userstring_entry(out, write_pos, final_str)?;
         }
 
-        pos += entry_size;
+        pos = pos
+            .checked_add(entry_size)
+            .ok_or_else(|| writer_overflow("userstring_heap_position"))?;
         dedup_map.insert(content_hash, new_offset);
         change_ref.resolve_to_offset(new_offset);
     }
@@ -961,10 +1064,18 @@ fn process_userstring_heap(
 }
 
 /// Calculates the size of a userstring entry without writing.
-fn userstring_entry_size(s: &str) -> u64 {
-    let utf16_len = s.encode_utf16().count() * 2;
-    let total_len = utf16_len + 1; // +1 for terminal byte
-    compressed_uint_size(total_len) + total_len as u64
+fn userstring_entry_size(s: &str) -> Result<u64> {
+    let utf16_len = s
+        .encode_utf16()
+        .count()
+        .checked_mul(2)
+        .ok_or_else(|| writer_overflow("userstring_utf16_length"))?;
+    let total_len = utf16_len
+        .checked_add(1)
+        .ok_or_else(|| writer_overflow("userstring_total_length"))?; // +1 for terminal byte
+    compressed_uint_size(total_len)
+        .checked_add(total_len as u64)
+        .ok_or_else(|| writer_overflow("userstring_entry_size"))
 }
 
 /// Writes a single user string entry to output.
@@ -972,7 +1083,10 @@ fn userstring_entry_size(s: &str) -> u64 {
 /// Format: compressed_length + UTF-16LE bytes + terminal byte
 fn write_userstring_entry(output: &mut Output, pos: u64, s: &str) -> Result<()> {
     let utf16_bytes: Vec<u8> = s.encode_utf16().flat_map(u16::to_le_bytes).collect();
-    let total_len = utf16_bytes.len() + 1;
+    let total_len = utf16_bytes
+        .len()
+        .checked_add(1)
+        .ok_or_else(|| writer_overflow("userstring_total_length"))?;
 
     // Write compressed length
     let total_len_u32 = u32::try_from(total_len).map_err(|_| {
@@ -983,14 +1097,17 @@ fn write_userstring_entry(output: &mut Output, pos: u64, s: &str) -> Result<()> 
     output.write_at(pos, &len_bytes)?;
 
     // Write UTF-16LE bytes
-    output.write_at(pos + len_bytes.len() as u64, &utf16_bytes)?;
+    let utf16_pos = pos
+        .checked_add(len_bytes.len() as u64)
+        .ok_or_else(|| writer_overflow("userstring_write_offset"))?;
+    output.write_at(utf16_pos, &utf16_bytes)?;
 
     // Write terminal byte (0x01 if any byte has high bit set, 0x00 otherwise)
     let terminal = u8::from(utf16_bytes.iter().any(|&b| b & 0x80 != 0));
-    output.write_at(
-        pos + len_bytes.len() as u64 + utf16_bytes.len() as u64,
-        &[terminal],
-    )?;
+    let terminal_pos = utf16_pos
+        .checked_add(utf16_bytes.len() as u64)
+        .ok_or_else(|| writer_overflow("userstring_write_offset"))?;
+    output.write_at(terminal_pos, &[terminal])?;
 
     Ok(())
 }

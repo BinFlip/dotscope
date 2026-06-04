@@ -230,42 +230,42 @@ impl MethodSummary {
 
         // Return type is string
         if self.returns_string() {
-            score += 30;
+            score = score.saturating_add(30);
         }
 
         // Has int or byte[] parameter
         if self.has_integer_parameter() {
-            score += 15;
+            score = score.saturating_add(15);
         }
         if self.has_byte_array_parameter() {
-            score += 15;
+            score = score.saturating_add(15);
         }
 
         // Contains XOR operations
         if self.has_xor_operations {
-            score += 15;
+            score = score.saturating_add(15);
         }
 
         // Contains array access
         if self.has_array_access {
-            score += 10;
+            score = score.saturating_add(10);
         }
 
         // Contains encoding calls
         if self.has_encoding_calls {
-            score += 20;
+            score = score.saturating_add(20);
         }
 
         // Called with many distinct constant values
         if self.distinct_arg_values >= 5 {
-            score += 15;
+            score = score.saturating_add(15);
         } else if self.distinct_arg_values >= 2 {
-            score += 5;
+            score = score.saturating_add(5);
         }
 
         // Small method (decryptors tend to be compact)
         if self.instruction_count > 0 && self.instruction_count <= 100 {
-            score += 5;
+            score = score.saturating_add(5);
         }
 
         score.min(100)
@@ -420,6 +420,7 @@ impl CallSiteInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::CilTarget;
 
     #[test]
     fn test_method_summary_default() {
@@ -433,13 +434,13 @@ mod tests {
 
     #[test]
     fn test_return_info() {
-        assert!(ReturnInfo::Void.is_known());
-        assert!(ReturnInfo::Constant(ConstValue::I32(42)).is_known());
-        assert!(!ReturnInfo::Dynamic.is_known());
+        assert!(ReturnInfo::<CilTarget>::Void.is_known());
+        assert!(ReturnInfo::<CilTarget>::Constant(ConstValue::I32(42)).is_known());
+        assert!(!ReturnInfo::<CilTarget>::Dynamic.is_known());
 
-        assert!(ReturnInfo::PassThrough(0).is_potentially_foldable());
-        assert!(ReturnInfo::PureComputation.is_potentially_foldable());
-        assert!(!ReturnInfo::Dynamic.is_potentially_foldable());
+        assert!(ReturnInfo::<CilTarget>::PassThrough(0).is_potentially_foldable());
+        assert!(ReturnInfo::<CilTarget>::PureComputation.is_potentially_foldable());
+        assert!(!ReturnInfo::<CilTarget>::Dynamic.is_potentially_foldable());
     }
 
     #[test]

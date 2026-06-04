@@ -121,8 +121,9 @@ impl TableRow for ImportScopeRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* parent */  sizes.table_index_bytes(TableId::ImportScope) +
-            /* imports */ sizes.blob_bytes()
+            /* parent */  sizes.table_index_bytes(TableId::ImportScope)
+            /* imports */ .saturating_add(sizes.blob_bytes())
+
         )
     }
 }

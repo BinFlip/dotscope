@@ -34,10 +34,9 @@ use std::collections::HashMap;
 use log::info;
 
 use crate::{
-    analysis::{MethodRef, SsaFunction, SsaOp},
+    analysis::{CilTarget, MethodRef, SsaFunction, SsaOp},
     compiler::{CompilerContext, EventKind, ModificationScope, SsaPass},
     metadata::token::Token,
-    CilObject, Result,
 };
 
 /// Target information for a resource interception method.
@@ -77,7 +76,7 @@ impl ResourceRestorationPass {
     }
 }
 
-impl SsaPass for ResourceRestorationPass {
+impl SsaPass<CilTarget, CompilerContext> for ResourceRestorationPass {
     fn name(&self) -> &'static str {
         "jiejie-resource-restoration"
     }
@@ -93,10 +92,9 @@ impl SsaPass for ResourceRestorationPass {
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
-        _method_token: Token,
+        _method: &MethodRef,
         ctx: &CompilerContext,
-        _assembly: &CilObject,
-    ) -> Result<bool> {
+    ) -> analyssa::Result<bool> {
         if self.redirects.is_empty() {
             return Ok(false);
         }

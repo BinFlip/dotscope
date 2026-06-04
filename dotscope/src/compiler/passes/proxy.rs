@@ -44,12 +44,12 @@
 
 use crate::{
     analysis::{
-        ConstValue, DefSite, MethodRef, ReturnInfo, SsaFunction, SsaInstruction, SsaOp, SsaVarId,
-        VariableOrigin,
+        CilTarget, ConstValue, ConstValueCilExt, DefSite, MethodRef, ReturnInfo, SsaFunction,
+        SsaInstruction, SsaOp, SsaVarId, VariableOrigin,
     },
     compiler::{CompilerContext, EventKind, EventLog, ModificationScope, PassCapability, SsaPass},
     metadata::{tables::MemberRefSignature, token::Token, typesystem::CilTypeReference},
-    CilObject, Result,
+    CilObject,
 };
 
 /// How the proxy method forwards to its target.
@@ -166,20 +166,20 @@ impl ProxyDevirtualizationPass {
 
         // Find the call instruction (Call, CallVirt, or NewObj)
         let mut call_info: Option<(&MethodRef, &[SsaVarId], Option<SsaVarId>, ForwardKind)> = None;
-        let mut call_count = 0;
+        let mut call_count: usize = 0;
 
         for instr in instructions {
             match instr.op() {
                 SsaOp::Call { method, args, dest } => {
-                    call_count += 1;
+                    call_count = call_count.saturating_add(1);
                     call_info = Some((method, args, *dest, ForwardKind::Call));
                 }
                 SsaOp::CallVirt { method, args, dest } => {
-                    call_count += 1;
+                    call_count = call_count.saturating_add(1);
                     call_info = Some((method, args, *dest, ForwardKind::CallVirt));
                 }
                 SsaOp::NewObj { ctor, args, dest } => {
-                    call_count += 1;
+                    call_count = call_count.saturating_add(1);
                     call_info = Some((ctor, args, Some(*dest), ForwardKind::NewObj));
                 }
                 // These are allowed in proxy methods
@@ -648,10 +648,19 @@ impl ProxyDevirtualizationPass {
             // Insert const instructions before the call site
             let instrs = block.instructions_mut();
             for (i, const_op) in const_ops.into_iter().enumerate() {
-                instrs.insert(call_instr_idx + i, SsaInstruction::synthetic(const_op));
+                let Some(insert_idx) = call_instr_idx.checked_add(i) else {
+                    return false;
+                };
+                instrs.insert(insert_idx, SsaInstruction::synthetic(const_op));
             }
             // The call instruction shifted by the number of inserted consts
-            instrs[call_instr_idx + num_consts].set_op(new_op);
+            let Some(call_idx) = call_instr_idx.checked_add(num_consts) else {
+                return false;
+            };
+            let Some(call_instr) = instrs.get_mut(call_idx) else {
+                return false;
+            };
+            call_instr.set_op(new_op);
             changes
                 .record(EventKind::MethodInlined)
                 .at(caller_token, call_instr_idx)
@@ -756,7 +765,7 @@ impl ProxyDevirtualizationPass {
     }
 }
 
-impl SsaPass for ProxyDevirtualizationPass {
+impl SsaPass<CilTarget, CompilerContext> for ProxyDevirtualizationPass {
     fn name(&self) -> &'static str {
         "proxy-devirtualization"
     }
@@ -780,11 +789,14 @@ impl SsaPass for ProxyDevirtualizationPass {
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
-        method_token: Token,
-        ctx: &CompilerContext,
-        assembly: &CilObject,
-    ) -> Result<bool> {
-        let candidates = Self::find_candidates(ssa, method_token, ctx, assembly);
+        method: &MethodRef,
+        host: &CompilerContext,
+    ) -> analyssa::Result<bool> {
+        let assembly = host.assembly().ok_or_else(|| {
+            analyssa::Error::new("ProxyDevirtualizationPass requires an assembly")
+        })?;
+        let method_token = method.0;
+        let candidates = Self::find_candidates(ssa, method_token, host, &assembly);
         if candidates.is_empty() {
             return Ok(false);
         }
@@ -793,12 +805,12 @@ impl SsaPass for ProxyDevirtualizationPass {
 
         // Process candidates in reverse order to maintain valid indices
         for candidate in candidates.into_iter().rev() {
-            Self::process_candidate(ssa, &candidate, method_token, ctx, &mut changes);
+            Self::process_candidate(ssa, &candidate, method_token, host, &mut changes);
         }
 
         let changed = !changes.is_empty();
         if changed {
-            ctx.events.merge(&changes);
+            host.events.merge(&changes);
         }
         Ok(changed)
     }
@@ -816,15 +828,12 @@ mod tests {
         },
         metadata::token::Token,
         test::helpers::test_assembly_arc,
-        CilObject,
     };
 
     fn test_context() -> CompilerContext {
-        CompilerContext::new(Arc::new(CallGraph::new()))
-    }
-
-    fn test_assembly() -> Arc<CilObject> {
-        test_assembly_arc()
+        let ctx = CompilerContext::new(Arc::new(CallGraph::new()));
+        ctx.set_assembly(test_assembly_arc());
+        ctx
     }
 
     #[test]
@@ -976,9 +985,8 @@ mod tests {
         ctx.set_ssa(proxy_token, proxy_ssa);
 
         let pass = ProxyDevirtualizationPass::new();
-        let assembly = test_assembly();
         let changed = pass
-            .run_on_method(&mut caller_ssa, caller_token, &ctx, &assembly)
+            .run_on_method(&mut caller_ssa, &MethodRef::from(caller_token), &ctx)
             .unwrap();
 
         assert!(changed, "Should have made changes");
@@ -1025,9 +1033,8 @@ mod tests {
         ctx.set_ssa(noop_token, noop_ssa);
 
         let pass = ProxyDevirtualizationPass::new();
-        let assembly = test_assembly();
         let changed = pass
-            .run_on_method(&mut caller_ssa, caller_token, &ctx, &assembly)
+            .run_on_method(&mut caller_ssa, &MethodRef::from(caller_token), &ctx)
             .unwrap();
 
         assert!(changed, "Should have made changes");
@@ -1071,9 +1078,8 @@ mod tests {
         ctx.set_ssa(const_token, const_ssa);
 
         let pass = ProxyDevirtualizationPass::new();
-        let assembly = test_assembly();
         let changed = pass
-            .run_on_method(&mut caller_ssa, caller_token, &ctx, &assembly)
+            .run_on_method(&mut caller_ssa, &MethodRef::from(caller_token), &ctx)
             .unwrap();
 
         assert!(changed, "Should have made changes");
@@ -1110,9 +1116,8 @@ mod tests {
         ctx.set_ssa(self_token, self_ssa);
 
         let pass = ProxyDevirtualizationPass::new();
-        let assembly = test_assembly();
         let changed = pass
-            .run_on_method(&mut caller_ssa, self_token, &ctx, &assembly)
+            .run_on_method(&mut caller_ssa, &MethodRef::from(self_token), &ctx)
             .unwrap();
 
         assert!(!changed, "Should not devirtualize self-recursive calls");

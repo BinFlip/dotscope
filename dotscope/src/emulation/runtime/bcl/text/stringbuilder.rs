@@ -295,7 +295,7 @@ fn stringbuilder_remove_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread)
                     .map_or(buffer.len(), |(p, _)| p);
                 let byte_end = buffer
                     .char_indices()
-                    .nth(start_idx + len)
+                    .nth(start_idx.saturating_add(len))
                     .map_or(buffer.len(), |(p, _)| p);
                 buffer.drain(byte_start..byte_end);
             }
@@ -399,7 +399,7 @@ fn stringbuilder_set_length_pre(
                     buffer.chars().take(target).collect()
                 } else {
                     let mut s = buffer;
-                    for _ in 0..(target - current) {
+                    for _ in 0..target.saturating_sub(current) {
                         s.push('\0');
                     }
                     s
@@ -441,8 +441,8 @@ fn stringbuilder_set_chars_pre(
             {
                 let idx = (*index).max(0) as usize;
                 let mut chars: Vec<char> = buffer.chars().collect();
-                if idx < chars.len() {
-                    chars[idx] = *ch;
+                if let Some(slot) = chars.get_mut(idx) {
+                    *slot = *ch;
                     let new_buffer: String = chars.into_iter().collect();
                     try_hook!(write_sb(thread, *sb_ref, new_buffer, capacity));
                 }

@@ -353,7 +353,9 @@ impl UnifiedImportContainer {
     /// println!("Total imports: {}", container.total_count());
     /// ```
     pub fn total_count(&self) -> usize {
-        self.cil.len() + self.native.total_function_count()
+        self.cil
+            .len()
+            .saturating_add(self.native.total_function_count())
     }
 
     /// Add a native function import.

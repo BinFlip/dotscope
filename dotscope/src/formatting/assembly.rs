@@ -325,7 +325,8 @@ pub(super) fn format_data_directives(w: &mut dyn Write, asm: &CilObject) -> io::
             // Uninitialized (BSS) data lives beyond the section's raw data but
             // within its virtual size.
             let is_initialized = find_section_for_rva(sections, rva).is_none_or(|s| {
-                (rva as u64) < u64::from(s.virtual_address) + u64::from(s.size_of_raw_data)
+                (rva as u64)
+                    < u64::from(s.virtual_address).saturating_add(u64::from(s.size_of_raw_data))
             });
 
             if is_initialized {

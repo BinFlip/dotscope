@@ -186,6 +186,13 @@
 /// Provides detailed error context for debugging and user-friendly error messages.
 pub use crate::Error;
 
+/// Structured parse-pipeline failure carried inside [`Error::Parse`].
+///
+/// Lets consumers categorize parse failures (truncated headers, bad magic,
+/// unsupported schemas, heap corruption, invalid fields) without parsing
+/// string messages.
+pub use crate::{HeapKind, ParseFailure, ParseStage, StreamKind};
+
 /// The result type used throughout dotscope APIs.
 ///
 /// Standard `Result<T, Error>` type alias for consistent error handling across the library.

@@ -31,7 +31,7 @@ use std::collections::VecDeque;
 ///
 /// # Errors
 ///
-/// Returns [`Error::X86Error`] if:
+/// Returns [`crate::Error::X86Error`] if:
 /// - `bytes` is empty
 /// - `bitness` is not 32 or 64
 /// - An invalid instruction is encountered
@@ -55,7 +55,10 @@ pub fn x86_decode_all(
     let mut instructions = Vec::new();
 
     for instr in &mut decoder {
-        let offset = instr.ip() - base_address;
+        let offset = instr
+            .ip()
+            .checked_sub(base_address)
+            .ok_or_else(|| Error::X86Error("Instruction IP below base address".into()))?;
         let length = instr.len();
 
         // Check for invalid instruction
@@ -84,7 +87,7 @@ pub fn x86_decode_all(
 
 /// Result of traversal-based decoding.
 ///
-/// This struct is returned by [`x86_decode_function_traversal`] and contains
+/// This struct is returned by [`x86_decode_traversal`] and contains
 /// all instructions discovered by following control flow from the entry point.
 ///
 /// # Completeness
@@ -150,7 +153,7 @@ pub struct X86TraversalDecodeResult {
 ///
 /// # Errors
 ///
-/// Returns [`Error::X86Error`] if:
+/// Returns [`crate::Error::X86Error`] if:
 /// - `bytes` is empty
 /// - `bitness` is not 32 or 64
 ///
@@ -172,7 +175,9 @@ pub fn x86_decode_traversal(
     }
 
     let code_start = base_address;
-    let code_end = base_address + bytes.len() as u64;
+    let code_end = base_address
+        .checked_add(bytes.len() as u64)
+        .ok_or_else(|| Error::X86Error("Code region end address overflow".into()))?;
 
     // Worklist of offsets to decode (relative to base_address)
     let mut worklist: VecDeque<u64> = VecDeque::new();
@@ -185,8 +190,11 @@ pub fn x86_decode_traversal(
     let mut has_indirect = false;
 
     // Start from entry point
-    worklist.push_back(base_address + entry_offset);
-    visited.insert(base_address + entry_offset);
+    let entry_addr = base_address
+        .checked_add(entry_offset)
+        .ok_or_else(|| Error::X86Error("Entry address overflow".into()))?;
+    worklist.push_back(entry_addr);
+    visited.insert(entry_addr);
 
     while let Some(addr) = worklist.pop_front() {
         // Check if address is within bounds
@@ -195,8 +203,10 @@ pub fn x86_decode_traversal(
         }
 
         #[allow(clippy::cast_possible_truncation)]
-        let offset_in_bytes = (addr - base_address) as usize;
-        let remaining_bytes = &bytes[offset_in_bytes..];
+        let offset_in_bytes = addr.saturating_sub(base_address) as usize;
+        let Some(remaining_bytes) = bytes.get(offset_in_bytes..) else {
+            continue;
+        };
 
         if remaining_bytes.is_empty() {
             continue;
@@ -211,16 +221,16 @@ pub fn x86_decode_traversal(
                 continue;
             }
 
-            let offset = addr - base_address;
+            let offset = addr.saturating_sub(base_address);
             let length = instr.len();
 
             // Check if we've already decoded an instruction that overlaps
             // (this can happen with certain obfuscation tricks)
             let overlaps = instructions.iter().any(|existing| {
                 let existing_start = existing.offset;
-                let existing_end = existing.offset + existing.length as u64;
+                let existing_end = existing.offset.saturating_add(existing.length as u64);
                 let new_start = offset;
-                let new_end = offset + length as u64;
+                let new_end = offset.saturating_add(length as u64);
                 // Check for overlap
                 new_start < existing_end && new_end > existing_start
             });
@@ -239,7 +249,7 @@ pub fn x86_decode_traversal(
             };
 
             // Determine successors based on instruction type
-            let next_addr = addr + length as u64;
+            let next_addr = addr.saturating_add(length as u64);
 
             match &converted {
                 X86Instruction::Ret => {
@@ -319,7 +329,7 @@ pub fn x86_decode_traversal(
 
 /// Determines the byte size of a native x86/x64 function body.
 ///
-/// Uses traversal-based decoding ([`x86_decode_function_traversal`]) to follow
+/// Uses traversal-based decoding ([`x86_decode_traversal`]) to follow
 /// control-flow edges from the entry point, making it robust against
 /// anti-disassembly tricks (junk bytes, embedded data, overlapping
 /// instructions) because only code reachable through actual control flow is
@@ -355,7 +365,7 @@ pub fn x86_native_body_size(bytes: &[u8], is_64bit: bool) -> usize {
         Ok(result) => result
             .instructions
             .iter()
-            .map(|instr| instr.offset as usize + instr.length)
+            .map(|instr| (instr.offset as usize).saturating_add(instr.length))
             .max()
             .unwrap_or(0),
         Err(_) => 0,
@@ -380,7 +390,7 @@ pub fn x86_native_body_size(bytes: &[u8], is_64bit: bool) -> usize {
 ///
 /// # Errors
 ///
-/// Returns [`Error::X86Error`] if:
+/// Returns [`crate::Error::X86Error`] if:
 /// - `bytes` is empty
 /// - `bitness` is not 32 or 64
 /// - `offset` is beyond the end of `bytes`
@@ -408,13 +418,13 @@ pub fn x86_decode_single(
         )));
     }
 
-    let remaining = &bytes[offset_in_bytes..];
-    let mut decoder = Decoder::with_ip(
-        bitness,
-        remaining,
-        base_address + offset,
-        DecoderOptions::NONE,
-    );
+    let remaining = bytes
+        .get(offset_in_bytes..)
+        .ok_or_else(|| Error::X86Error(format!("Invalid instruction at offset 0x{offset:x}")))?;
+    let ip = base_address
+        .checked_add(offset)
+        .ok_or_else(|| Error::X86Error("Instruction IP overflow".into()))?;
+    let mut decoder = Decoder::with_ip(bitness, remaining, ip, DecoderOptions::NONE);
 
     if let Some(instr) = decoder.iter().next() {
         if instr.is_invalid() {
@@ -439,7 +449,10 @@ pub fn x86_decode_single(
 
 /// Convert an iced-x86 instruction to our simplified representation.
 fn convert_instruction(instr: &Instruction, base_address: u64) -> Result<X86Instruction> {
-    let offset = instr.ip() - base_address;
+    let offset = instr
+        .ip()
+        .checked_sub(base_address)
+        .ok_or_else(|| Error::X86Error("Instruction IP below base address".into()))?;
 
     match instr.mnemonic() {
         // Data movement
@@ -1081,7 +1094,7 @@ pub fn x86_detect_prologue(bytes: &[u8], bitness: u32) -> X86PrologueInfo {
         };
     }
 
-    if bytes.len() >= 20 && bytes[..20] == DYNCIPHER_PROLOGUE {
+    if bytes.get(..20) == Some(&DYNCIPHER_PROLOGUE[..]) {
         return X86PrologueInfo {
             kind: X86PrologueKind::DynCipher,
             size: 20,
@@ -1089,9 +1102,11 @@ pub fn x86_detect_prologue(bytes: &[u8], bitness: u32) -> X86PrologueInfo {
         };
     }
 
+    let starts_with =
+        |pat: &[u8]| -> bool { bytes.get(..pat.len()).is_some_and(|prefix| prefix == pat) };
+
     // Standard 32-bit prologue: push ebp; mov ebp, esp (MSVC)
-    if bitness == 32 && bytes.len() >= 3 && bytes[0] == 0x55 && bytes[1] == 0x8B && bytes[2] == 0xEC
-    {
+    if bitness == 32 && starts_with(&[0x55, 0x8B, 0xEC]) {
         return X86PrologueInfo {
             kind: X86PrologueKind::Standard32,
             size: 3,
@@ -1100,8 +1115,7 @@ pub fn x86_detect_prologue(bytes: &[u8], bitness: u32) -> X86PrologueInfo {
     }
 
     // Standard 32-bit prologue: push ebp; mov ebp, esp (GCC)
-    if bitness == 32 && bytes.len() >= 3 && bytes[0] == 0x55 && bytes[1] == 0x89 && bytes[2] == 0xE5
-    {
+    if bitness == 32 && starts_with(&[0x55, 0x89, 0xE5]) {
         return X86PrologueInfo {
             kind: X86PrologueKind::Standard32,
             size: 3,
@@ -1110,13 +1124,7 @@ pub fn x86_detect_prologue(bytes: &[u8], bitness: u32) -> X86PrologueInfo {
     }
 
     // Standard 64-bit prologue: push rbp; mov rbp, rsp
-    if bitness == 64
-        && bytes.len() >= 4
-        && bytes[0] == 0x55
-        && bytes[1] == 0x48
-        && bytes[2] == 0x89
-        && bytes[3] == 0xE5
-    {
+    if bitness == 64 && starts_with(&[0x55, 0x48, 0x89, 0xE5]) {
         return X86PrologueInfo {
             kind: X86PrologueKind::Standard64,
             size: 4,
@@ -1132,7 +1140,7 @@ pub fn x86_detect_prologue(bytes: &[u8], bitness: u32) -> X86PrologueInfo {
     };
 
     for pattern in patterns {
-        if bytes.len() >= pattern.len() && bytes[..pattern.len()] == **pattern {
+        if starts_with(pattern) {
             return X86PrologueInfo {
                 kind: X86PrologueKind::StackFrame {
                     is_64bit: bitness == 64,
@@ -1168,31 +1176,35 @@ pub fn x86_detect_epilogue(instructions: &[X86DecodedInstruction]) -> Option<X86
 
     // Check if the last 4 instructions match the pattern
     let len = instructions.len();
+    let i_esi = len.checked_sub(4)?;
+    let i_edi = len.checked_sub(3)?;
+    let i_ebx = len.checked_sub(2)?;
+    let i_ret = len.checked_sub(1)?;
 
     // Check for pop esi
     let pop_esi = matches!(
-        &instructions[len - 4].instruction,
+        &instructions.get(i_esi)?.instruction,
         X86Instruction::Pop { dst } if *dst == X86Register::Esi
     );
 
     // Check for pop edi
     let pop_edi = matches!(
-        &instructions[len - 3].instruction,
+        &instructions.get(i_edi)?.instruction,
         X86Instruction::Pop { dst } if *dst == X86Register::Edi
     );
 
     // Check for pop ebx
     let pop_ebx = matches!(
-        &instructions[len - 2].instruction,
+        &instructions.get(i_ebx)?.instruction,
         X86Instruction::Pop { dst } if *dst == X86Register::Ebx
     );
 
     // Check for ret
-    let ret = matches!(instructions[len - 1].instruction, X86Instruction::Ret);
+    let ret = matches!(instructions.get(i_ret)?.instruction, X86Instruction::Ret);
 
     if pop_esi && pop_edi && pop_ebx && ret {
         Some(X86EpilogueInfo {
-            offset: instructions[len - 4].offset,
+            offset: instructions.get(i_esi)?.offset,
             size: 4, // 4 bytes: pop esi (1) + pop edi (1) + pop ebx (1) + ret (1)
         })
     } else {

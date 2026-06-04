@@ -123,6 +123,7 @@ impl TableRow for PropertyPtrRaw {
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
             /* property */ sizes.table_index_bytes(TableId::Property)
+
         )
     }
 }

@@ -12,8 +12,9 @@
 
 use std::collections::BTreeMap;
 
+use analyssa::BitSet;
+
 use crate::analysis::{SsaInstruction, SsaVarId};
-use crate::utils::BitSet;
 
 /// Information about the dispatcher found during tracing.
 #[derive(Debug, Clone)]

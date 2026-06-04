@@ -451,7 +451,11 @@ impl CodedIndex {
     pub fn null(ci_type: CodedIndexType) -> CodedIndex {
         // The first table in the coded index type's table list has tag 0,
         // so (row=0, tag=0) encodes to 0 in the binary format
-        let first_table = ci_type.tables()[0];
+        let first_table = ci_type
+            .tables()
+            .first()
+            .copied()
+            .unwrap_or(TableId::TypeDef);
         CodedIndex::new(first_table, 0, ci_type)
     }
 

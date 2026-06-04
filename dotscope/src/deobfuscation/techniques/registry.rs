@@ -203,7 +203,11 @@ impl TechniqueRegistry {
         // Check cache: if the detection generation hasn't changed, reuse indices.
         if let Ok(cache) = self.sorted_cache.lock() {
             if cache.0 == gen {
-                return cache.1.iter().map(|&i| &*self.techniques[i]).collect();
+                return cache
+                    .1
+                    .iter()
+                    .filter_map(|&i| self.techniques.get(i).map(|t| &**t))
+                    .collect();
             }
         }
 
@@ -211,7 +215,7 @@ impl TechniqueRegistry {
         let sorted_indices = self.compute_sorted_indices(detections);
         let result: Vec<&dyn Technique> = sorted_indices
             .iter()
-            .map(|&i| &*self.techniques[i])
+            .filter_map(|&i| self.techniques.get(i).map(|t| &**t))
             .collect();
 
         if let Ok(mut cache) = self.sorted_cache.lock() {
@@ -261,8 +265,12 @@ impl TechniqueRegistry {
             for &req_id in tech.requires() {
                 if let Some(&req_idx) = id_to_idx.get(req_id) {
                     // req_idx -> idx (req must come before this technique)
-                    dependents[req_idx].push(idx);
-                    in_degree[idx] += 1;
+                    if let Some(deps) = dependents.get_mut(req_idx) {
+                        deps.push(idx);
+                    }
+                    if let Some(d) = in_degree.get_mut(idx) {
+                        *d = d.saturating_add(1);
+                    }
                 }
                 // Missing dependency -> treat as satisfied (may be from a different phase)
             }
@@ -278,11 +286,16 @@ impl TechniqueRegistry {
 
         let mut sorted: Vec<usize> = Vec::with_capacity(n);
         while let Some(idx) = queue.pop_front() {
-            sorted.push(eligible[idx].0);
-            for &dep_idx in &dependents[idx] {
-                in_degree[dep_idx] -= 1;
-                if in_degree[dep_idx] == 0 {
-                    queue.push_back(dep_idx);
+            if let Some((orig_idx, _)) = eligible.get(idx) {
+                sorted.push(*orig_idx);
+            }
+            let deps_for_idx: Vec<usize> = dependents.get(idx).cloned().unwrap_or_default();
+            for dep_idx in deps_for_idx {
+                if let Some(d) = in_degree.get_mut(dep_idx) {
+                    *d = d.saturating_sub(1);
+                    if *d == 0 {
+                        queue.push_back(dep_idx);
+                    }
                 }
             }
         }
@@ -291,7 +304,7 @@ impl TechniqueRegistry {
         if sorted.len() < n {
             log::warn!(
                 "Technique dependency cycle detected: {} techniques could not be topologically sorted",
-                n - sorted.len()
+                n.saturating_sub(sorted.len())
             );
             let sorted_set: HashSet<usize> = sorted.iter().copied().collect();
             for &(orig_idx, _) in &eligible {

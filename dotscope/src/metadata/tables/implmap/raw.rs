@@ -245,10 +245,11 @@ impl TableRow for ImplMapRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* mapping_flags */    2 +
-            /* member_forwarded */ sizes.coded_index_bytes(CodedIndexType::MemberForwarded) +
-            /* import_name */      sizes.str_bytes() +
-            /* import_scope */     sizes.table_index_bytes(TableId::ModuleRef)
+            /* mapping_flags */    2u8
+            /* member_forwarded */ .saturating_add(sizes.coded_index_bytes(CodedIndexType::MemberForwarded))
+            /* import_name */      .saturating_add(sizes.str_bytes())
+            /* import_scope */     .saturating_add(sizes.table_index_bytes(TableId::ModuleRef))
+
         )
     }
 }

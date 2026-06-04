@@ -416,7 +416,9 @@ impl MethodBody {
                         return Ok(false);
                     }
                 } else {
-                    *filtered_count += 1;
+                    *filtered_count = filtered_count
+                        .checked_add(1)
+                        .ok_or_else(|| malformed_error!("filtered_count overflow"))?;
                 }
             }
             EhValidationMode::Raw => {
@@ -440,7 +442,10 @@ impl MethodBody {
         match MethodBodyFlags::new(u16::from(first_byte & 0b_00000011_u8)) {
             MethodBodyFlags::TINY_FORMAT => {
                 let size_code = (first_byte >> 2) as usize;
-                if size_code + 1 > data.len() {
+                let needed = size_code
+                    .checked_add(1)
+                    .ok_or_else(|| malformed_error!("tiny method body size overflow"))?;
+                if needed > data.len() {
                     return Err(out_of_bounds_error!());
                 }
 
@@ -465,15 +470,20 @@ impl MethodBody {
 
                 let first_duo = read_le::<u16>(data)?;
 
-                let size_header = (first_duo >> 12) * 4;
-                let size_code = read_le::<u32>(&data[4..])?;
-                if data.len() < (size_code as usize + size_header as usize) {
+                let size_header = (first_duo >> 12).wrapping_mul(4);
+                let size_code = read_le::<u32>(data.get(4..).ok_or(out_of_bounds_error!())?)?;
+                let total = (size_code as usize)
+                    .checked_add(size_header as usize)
+                    .ok_or_else(|| malformed_error!("fat method body total size overflow"))?;
+                if data.len() < total {
                     return Err(out_of_bounds_error!());
                 }
 
-                let local_var_sig_token = read_le::<u32>(&data[8..])?;
+                let local_var_sig_token =
+                    read_le::<u32>(data.get(8..).ok_or(out_of_bounds_error!())?)?;
                 let flags_header = MethodBodyFlags::new(first_duo & 0b_0000111111111111_u16);
-                let max_stack = read_le::<u16>(&data[2..])? as usize;
+                let max_stack =
+                    read_le::<u16>(data.get(2..).ok_or(out_of_bounds_error!())?)? as usize;
 
                 let is_init_local = flags_header.contains(MethodBodyFlags::INIT_LOCALS);
 
@@ -483,34 +493,58 @@ impl MethodBody {
                 let mut filtered_count: usize = 0;
                 if flags_header.contains(MethodBodyFlags::MORE_SECTS) {
                     // Set cursor to the end of the header + body, to process exception tables
-                    let mut cursor = size_header as usize + size_code as usize;
-                    cursor = (cursor + 3) & !3;
+                    let mut cursor = (size_header as usize)
+                        .checked_add(size_code as usize)
+                        .ok_or_else(|| malformed_error!("EH cursor overflow"))?;
+                    cursor = cursor
+                        .checked_add(3)
+                        .ok_or_else(|| malformed_error!("EH alignment overflow"))?
+                        & !3usize;
 
-                    while data.len() > (cursor + 4) {
-                        let method_data_section_flags =
-                            SectionFlags::new(read_le::<u8>(&data[cursor..])?);
+                    loop {
+                        let cursor_plus_4 = cursor
+                            .checked_add(4)
+                            .ok_or_else(|| malformed_error!("EH cursor+4 overflow"))?;
+                        if data.len() <= cursor_plus_4 {
+                            break;
+                        }
+                        let method_data_section_flags = SectionFlags::new(read_le::<u8>(
+                            data.get(cursor..).ok_or(out_of_bounds_error!())?,
+                        )?);
                         if !method_data_section_flags.contains(SectionFlags::EHTABLE) {
                             break;
                         }
 
                         if method_data_section_flags.contains(SectionFlags::FAT_FORMAT) {
-                            let method_data_section_size =
-                                read_le::<u32>(&data[cursor + 1..])? & 0x00FF_FFFF;
+                            let cursor_plus_1 = cursor
+                                .checked_add(1)
+                                .ok_or_else(|| malformed_error!("EH cursor+1 overflow"))?;
+                            let method_data_section_size = read_le::<u32>(
+                                data.get(cursor_plus_1..).ok_or(out_of_bounds_error!())?,
+                            )? & 0x00FF_FFFF;
 
                             // ECMA-335 says DataSize includes the 4-byte section header,
                             // but some tools emit DataSize without the header. Using
                             // DataSize/24 handles both cases via integer division
                             // (matches Mono runtime behavior in metadata.c:parse_section_data).
                             let handler_count = method_data_section_size / 24;
-                            let needed = 4 + handler_count as usize * 24;
-                            if handler_count == 0 || data.len() < cursor + needed {
+                            let needed = (handler_count as usize)
+                                .checked_mul(24)
+                                .and_then(|v| v.checked_add(4))
+                                .ok_or_else(|| malformed_error!("EH FAT section size overflow"))?;
+                            let cursor_end = cursor
+                                .checked_add(needed)
+                                .ok_or_else(|| malformed_error!("EH FAT cursor+needed overflow"))?;
+                            if handler_count == 0 || data.len() < cursor_end {
                                 break;
                             }
                             if !Self::check_handler_count(handler_count, eh_mode)? {
                                 break;
                             }
 
-                            cursor += 4;
+                            cursor = cursor.checked_add(4).ok_or_else(|| {
+                                malformed_error!("EH FAT cursor advance overflow")
+                            })?;
 
                             for handler_idx in 0..handler_count {
                                 let flags_u32 = read_le_at::<u32>(data, &mut cursor)?;
@@ -549,8 +583,12 @@ impl MethodBody {
                                 }
                             }
                         } else {
-                            let method_data_section_size =
-                                u32::from(read_le::<u8>(&data[cursor + 1..])?);
+                            let cursor_plus_1 = cursor
+                                .checked_add(1)
+                                .ok_or_else(|| malformed_error!("EH small cursor+1 overflow"))?;
+                            let method_data_section_size = u32::from(read_le::<u8>(
+                                data.get(cursor_plus_1..).ok_or(out_of_bounds_error!())?,
+                            )?);
 
                             // ECMA-335 says DataSize includes the 4-byte section header,
                             // but some tools (e.g. AsmResolver used by BitMono) emit
@@ -558,15 +596,25 @@ impl MethodBody {
                             // cases via integer division (matches Mono runtime behavior
                             // in metadata.c:parse_section_data).
                             let handler_count = method_data_section_size / 12;
-                            let needed = 4 + handler_count as usize * 12;
-                            if handler_count == 0 || data.len() < cursor + needed {
+                            let needed = (handler_count as usize)
+                                .checked_mul(12)
+                                .and_then(|v| v.checked_add(4))
+                                .ok_or_else(|| {
+                                    malformed_error!("EH small section size overflow")
+                                })?;
+                            let cursor_end = cursor.checked_add(needed).ok_or_else(|| {
+                                malformed_error!("EH small cursor+needed overflow")
+                            })?;
+                            if handler_count == 0 || data.len() < cursor_end {
                                 break;
                             }
                             if !Self::check_handler_count(handler_count, eh_mode)? {
                                 break;
                             }
 
-                            cursor += 4;
+                            cursor = cursor.checked_add(4).ok_or_else(|| {
+                                malformed_error!("EH small cursor advance overflow")
+                            })?;
                             for handler_idx in 0..handler_count {
                                 let handler = ExceptionHandler {
                                     flags: ExceptionHandlerFlags::new(read_le_at::<u16>(
@@ -638,14 +686,14 @@ impl MethodBody {
     /// The total serialized size in bytes.
     #[must_use]
     pub fn size(&self) -> usize {
-        let base_size = self.size_header + self.size_code;
+        let base_size = self.size_header.saturating_add(self.size_code);
 
         if self.exception_handlers.is_empty() {
             return base_size;
         }
 
         // Exception handlers require 4-byte alignment after the code
-        let aligned_base = (base_size + 3) & !3;
+        let aligned_base = base_size.saturating_add(3) & !3usize;
 
         // Determine if we need fat or small exception handler format
         let needs_fat_format = self.exception_handlers.iter().any(|h| {
@@ -655,15 +703,14 @@ impl MethodBody {
                 || h.handler_length > 0xFF
         });
 
-        let section_size = if needs_fat_format {
-            // Fat format: 4-byte header + 24 bytes per handler
-            4 + (self.exception_handlers.len() * 24)
-        } else {
-            // Small format: 4-byte header + 12 bytes per handler
-            4 + (self.exception_handlers.len() * 12)
-        };
+        let per_handler = if needs_fat_format { 24 } else { 12 };
+        let section_size = self
+            .exception_handlers
+            .len()
+            .saturating_mul(per_handler)
+            .saturating_add(4);
 
-        aligned_base + section_size
+        aligned_base.saturating_add(section_size)
     }
 
     /// Writes the method body to a writer.
@@ -738,7 +785,9 @@ impl MethodBody {
             })?;
             let header_byte = (code_size_u8 << 2) | 0x02;
             writer.write_all(&[header_byte])?;
-            bytes_written += 1;
+            bytes_written = bytes_written
+                .checked_add(1)
+                .ok_or_else(|| malformed_error!("method body byte count overflow"))?;
         } else {
             // Fat format: 12-byte header
             let code_size_u32 = u32::try_from(code_size)
@@ -764,26 +813,35 @@ impl MethodBody {
             writer.write_all(&max_stack_u16.to_le_bytes())?;
             writer.write_all(&code_size_u32.to_le_bytes())?;
             writer.write_all(&self.local_var_sig_token.to_le_bytes())?;
-            bytes_written += 12;
+            bytes_written = bytes_written
+                .checked_add(12)
+                .ok_or_else(|| malformed_error!("method body byte count overflow"))?;
         }
 
         // Write IL code
         writer.write_all(il_code)?;
-        bytes_written += code_size as u64;
+        bytes_written = bytes_written
+            .checked_add(code_size as u64)
+            .ok_or_else(|| malformed_error!("method body byte count overflow"))?;
 
         // Write exception handlers if present
         if has_exceptions {
             // Align to 4-byte boundary
-            let padding = (4 - (bytes_written % 4)) % 4;
+            let rem = bytes_written.checked_rem(4).unwrap_or(0);
+            let padding = 4u64.wrapping_sub(rem).checked_rem(4).unwrap_or(0);
             if padding > 0 {
                 writer.write_all(&vec![0u8; padding as usize])?;
-                bytes_written += padding;
+                bytes_written = bytes_written
+                    .checked_add(padding)
+                    .ok_or_else(|| malformed_error!("method body byte count overflow"))?;
             }
 
             // Use the shared exception handler encoding
             let exception_bytes = encode_exception_handlers(&self.exception_handlers)?;
             writer.write_all(&exception_bytes)?;
-            bytes_written += exception_bytes.len() as u64;
+            bytes_written = bytes_written
+                .checked_add(exception_bytes.len() as u64)
+                .ok_or_else(|| malformed_error!("method body byte count overflow"))?;
         }
 
         Ok(bytes_written)

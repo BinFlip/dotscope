@@ -66,7 +66,7 @@ pub(crate) use loader::*;
 pub use owned::*;
 pub use raw::*;
 
-/// Thread-safe map holding the mapping of [`crate::metadata::token::Token`] to parsed [`MethodSemantics`] entries.
+/// Thread-safe map holding the mapping of [`Token`] to parsed [`MethodSemantics`] entries.
 ///
 /// This concurrent skip list provides efficient O(log n) access to method semantics entries
 /// by their metadata token, supporting multiple concurrent readers and writers.

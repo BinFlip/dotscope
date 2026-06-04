@@ -116,13 +116,16 @@ pub fn repair_pe(bytes: &mut [u8]) -> RepairResult {
     let mut result = RepairResult::default();
 
     // Bail fast: not a PE file or too small for a DOS header
-    if bytes.len() < 64 || bytes[0] != b'M' || bytes[1] != b'Z' {
+    if bytes.len() < 64 || bytes.first() != Some(&b'M') || bytes.get(1) != Some(&b'Z') {
         return result;
     }
     let Some(pe_off) = read_u32(bytes, 0x3C).map(|v| v as usize) else {
         return result;
     };
-    if pe_off + 4 > bytes.len() {
+    let Some(end) = pe_off.checked_add(4) else {
+        return result;
+    };
+    if end > bytes.len() {
         return result;
     }
 
@@ -148,13 +151,16 @@ pub fn repair_pe_cow(cowfile: &CowFile) -> RepairResult {
         return result;
     }
     let base = cowfile.data();
-    if base[0] != b'M' || base[1] != b'Z' {
+    if base.first() != Some(&b'M') || base.get(1) != Some(&b'Z') {
         return result;
     }
     let Some(pe_off) = cowfile.read_le::<u32>(0x3C).ok().map(|v| v as usize) else {
         return result;
     };
-    if pe_off + 4 > base.len() {
+    let Some(end) = pe_off.checked_add(4) else {
+        return result;
+    };
+    if end > base.len() {
         return result;
     }
 
@@ -184,14 +190,19 @@ fn repair_pe_signature_cow(cowfile: &CowFile, pe_off: usize, result: &mut Repair
 }
 
 fn repair_pe_optional_header_cow(cowfile: &CowFile, pe_off: usize, result: &mut RepairResult) {
-    let optional_header_offset = pe_off + 24;
+    let Some(optional_header_offset) = pe_off.checked_add(24) else {
+        return;
+    };
     let Some(magic) = cowfile.read_le::<u16>(optional_header_offset).ok() else {
         return;
     };
     let num_rva_sizes_offset = match magic {
-        PE32_MAGIC => optional_header_offset + 0x5C,
-        PE32PLUS_MAGIC => optional_header_offset + 0x6C,
+        PE32_MAGIC => optional_header_offset.checked_add(0x5C),
+        PE32PLUS_MAGIC => optional_header_offset.checked_add(0x6C),
         _ => return,
+    };
+    let Some(num_rva_sizes_offset) = num_rva_sizes_offset else {
+        return;
     };
 
     if let Ok(num_rva_sizes) = cowfile.read_le::<u32>(num_rva_sizes_offset) {
@@ -208,17 +219,26 @@ fn repair_pe_optional_header_cow(cowfile: &CowFile, pe_off: usize, result: &mut 
         }
     }
 
-    let data_dir_start = num_rva_sizes_offset + 4;
-    let clr_dir_offset = data_dir_start + CLR_DIRECTORY_INDEX * 8;
+    let Some(data_dir_start) = num_rva_sizes_offset.checked_add(4) else {
+        return;
+    };
+    let Some(clr_offset_in_table) = CLR_DIRECTORY_INDEX.checked_mul(8) else {
+        return;
+    };
+    let Some(clr_dir_offset) = data_dir_start.checked_add(clr_offset_in_table) else {
+        return;
+    };
+    let Some(clr_size_offset) = clr_dir_offset.checked_add(4) else {
+        return;
+    };
     let clr_rva = cowfile.read_le::<u32>(clr_dir_offset).ok();
-    let clr_size = cowfile.read_le::<u32>(clr_dir_offset + 4).ok();
-    if clr_rva.is_some_and(|r| r != 0) && clr_size == Some(0) {
-        let rva = clr_rva.unwrap();
+    let clr_size = cowfile.read_le::<u32>(clr_size_offset).ok();
+    if let (Some(rva), Some(0)) = (clr_rva.filter(|&r| r != 0), clr_size) {
         debug!(
             ".NET directory size repair: 0 → {} (RVA=0x{:X})",
             COR20_HEADER_SIZE, rva
         );
-        let _ = cowfile.write_le::<u32>(clr_dir_offset + 4, COR20_HEADER_SIZE);
+        let _ = cowfile.write_le::<u32>(clr_size_offset, COR20_HEADER_SIZE);
         result.repairs.push(RepairAction::DotNetDirectorySize {
             original: 0,
             restored: COR20_HEADER_SIZE,
@@ -227,17 +247,29 @@ fn repair_pe_optional_header_cow(cowfile: &CowFile, pe_off: usize, result: &mut 
 }
 
 fn repair_clr_header_cow(cowfile: &CowFile, pe_off: usize, result: &mut RepairResult) {
-    let optional_header_offset = pe_off + 24;
+    let Some(optional_header_offset) = pe_off.checked_add(24) else {
+        return;
+    };
     let Some(magic) = cowfile.read_le::<u16>(optional_header_offset).ok() else {
         return;
     };
     let num_rva_sizes_offset = match magic {
-        PE32_MAGIC => optional_header_offset + 0x5C,
-        PE32PLUS_MAGIC => optional_header_offset + 0x6C,
+        PE32_MAGIC => optional_header_offset.checked_add(0x5C),
+        PE32PLUS_MAGIC => optional_header_offset.checked_add(0x6C),
         _ => return,
     };
-    let data_dir_start = num_rva_sizes_offset + 4;
-    let clr_dir_offset = data_dir_start + CLR_DIRECTORY_INDEX * 8;
+    let Some(num_rva_sizes_offset) = num_rva_sizes_offset else {
+        return;
+    };
+    let Some(data_dir_start) = num_rva_sizes_offset.checked_add(4) else {
+        return;
+    };
+    let Some(clr_offset_in_table) = CLR_DIRECTORY_INDEX.checked_mul(8) else {
+        return;
+    };
+    let Some(clr_dir_offset) = data_dir_start.checked_add(clr_offset_in_table) else {
+        return;
+    };
     let Some(clr_rva) = cowfile.read_le::<u32>(clr_dir_offset).ok() else {
         return;
     };
@@ -250,6 +282,15 @@ fn repair_clr_header_cow(cowfile: &CowFile, pe_off: usize, result: &mut RepairRe
         return;
     };
     let clr_offset = clr_file_offset as usize;
+    let Some(version_offset) = clr_offset.checked_add(4) else {
+        return;
+    };
+    let Some(metadata_rva_offset) = clr_offset.checked_add(8) else {
+        return;
+    };
+    let Some(metadata_size_offset) = clr_offset.checked_add(12) else {
+        return;
+    };
 
     if let Ok(0) = cowfile.read_le::<u32>(clr_offset) {
         debug!("CLR header size repair: 0 → {}", COR20_HEADER_SIZE);
@@ -260,20 +301,20 @@ fn repair_clr_header_cow(cowfile: &CowFile, pe_off: usize, result: &mut RepairRe
         });
     }
 
-    if let Ok(0) = cowfile.read_le::<u16>(clr_offset + 4) {
+    if let Ok(0) = cowfile.read_le::<u16>(version_offset) {
         debug!(
             "CLR runtime version repair: 0 → {}",
             CLR_MAJOR_RUNTIME_VERSION
         );
-        let _ = cowfile.write_le::<u16>(clr_offset + 4, CLR_MAJOR_RUNTIME_VERSION);
+        let _ = cowfile.write_le::<u16>(version_offset, CLR_MAJOR_RUNTIME_VERSION);
         result.repairs.push(RepairAction::ClrHeaderVersion {
             original_major: 0,
             restored_major: CLR_MAJOR_RUNTIME_VERSION,
         });
     }
 
-    let metadata_rva = cowfile.read_le::<u32>(clr_offset + 8).ok();
-    let metadata_size = cowfile.read_le::<u32>(clr_offset + 12).ok();
+    let metadata_rva = cowfile.read_le::<u32>(metadata_rva_offset).ok();
+    let metadata_size = cowfile.read_le::<u32>(metadata_size_offset).ok();
 
     if metadata_rva == Some(0) || metadata_size == Some(0) {
         if let Some((found_rva, found_size)) = find_metadata_by_bsjb_scan(base, pe_off) {
@@ -281,8 +322,8 @@ fn repair_clr_header_cow(cowfile: &CowFile, pe_off: usize, result: &mut RepairRe
                 "CLR metadata repair via BSJB scan: RVA=0x{:X}, size=0x{:X}",
                 found_rva, found_size
             );
-            let _ = cowfile.write_le::<u32>(clr_offset + 8, found_rva);
-            let _ = cowfile.write_le::<u32>(clr_offset + 12, found_size);
+            let _ = cowfile.write_le::<u32>(metadata_rva_offset, found_rva);
+            let _ = cowfile.write_le::<u32>(metadata_size_offset, found_size);
             result.repairs.push(RepairAction::ClrMetadataRva {
                 restored_rva: found_rva,
                 restored_size: found_size,
@@ -323,14 +364,19 @@ fn repair_pe_signature(bytes: &mut [u8], pe_off: usize, result: &mut RepairResul
 }
 
 fn repair_pe_optional_header(bytes: &mut [u8], pe_off: usize, result: &mut RepairResult) {
-    let optional_header_offset = pe_off + 24;
+    let Some(optional_header_offset) = pe_off.checked_add(24) else {
+        return;
+    };
     let Some(magic) = read_u16(bytes, optional_header_offset) else {
         return;
     };
     let num_rva_sizes_offset = match magic {
-        PE32_MAGIC => optional_header_offset + 0x5C,
-        PE32PLUS_MAGIC => optional_header_offset + 0x6C,
+        PE32_MAGIC => optional_header_offset.checked_add(0x5C),
+        PE32PLUS_MAGIC => optional_header_offset.checked_add(0x6C),
         _ => return,
+    };
+    let Some(num_rva_sizes_offset) = num_rva_sizes_offset else {
+        return;
     };
 
     if let Some(num_rva_sizes) = read_u32(bytes, num_rva_sizes_offset) {
@@ -348,17 +394,26 @@ fn repair_pe_optional_header(bytes: &mut [u8], pe_off: usize, result: &mut Repai
         }
     }
 
-    let data_dir_start = num_rva_sizes_offset + 4;
-    let clr_dir_offset = data_dir_start + CLR_DIRECTORY_INDEX * 8;
+    let Some(data_dir_start) = num_rva_sizes_offset.checked_add(4) else {
+        return;
+    };
+    let Some(clr_offset_in_table) = CLR_DIRECTORY_INDEX.checked_mul(8) else {
+        return;
+    };
+    let Some(clr_dir_offset) = data_dir_start.checked_add(clr_offset_in_table) else {
+        return;
+    };
+    let Some(clr_size_offset) = clr_dir_offset.checked_add(4) else {
+        return;
+    };
     let clr_rva = read_u32(bytes, clr_dir_offset);
-    let clr_size = read_u32(bytes, clr_dir_offset + 4);
-    if clr_rva.is_some_and(|r| r != 0) && clr_size == Some(0) {
-        let rva = clr_rva.unwrap();
+    let clr_size = read_u32(bytes, clr_size_offset);
+    if let (Some(rva), Some(0)) = (clr_rva.filter(|&r| r != 0), clr_size) {
         debug!(
             ".NET directory size repair: 0 → {} (RVA=0x{:X})",
             COR20_HEADER_SIZE, rva
         );
-        let mut off = clr_dir_offset + 4;
+        let mut off = clr_size_offset;
         let _ = write_le_at(bytes, &mut off, COR20_HEADER_SIZE);
         result.repairs.push(RepairAction::DotNetDirectorySize {
             original: 0,
@@ -368,17 +423,29 @@ fn repair_pe_optional_header(bytes: &mut [u8], pe_off: usize, result: &mut Repai
 }
 
 fn repair_clr_header(bytes: &mut [u8], pe_off: usize, result: &mut RepairResult) {
-    let optional_header_offset = pe_off + 24;
+    let Some(optional_header_offset) = pe_off.checked_add(24) else {
+        return;
+    };
     let Some(magic) = read_u16(bytes, optional_header_offset) else {
         return;
     };
     let num_rva_sizes_offset = match magic {
-        PE32_MAGIC => optional_header_offset + 0x5C,
-        PE32PLUS_MAGIC => optional_header_offset + 0x6C,
+        PE32_MAGIC => optional_header_offset.checked_add(0x5C),
+        PE32PLUS_MAGIC => optional_header_offset.checked_add(0x6C),
         _ => return,
     };
-    let data_dir_start = num_rva_sizes_offset + 4;
-    let clr_dir_offset = data_dir_start + CLR_DIRECTORY_INDEX * 8;
+    let Some(num_rva_sizes_offset) = num_rva_sizes_offset else {
+        return;
+    };
+    let Some(data_dir_start) = num_rva_sizes_offset.checked_add(4) else {
+        return;
+    };
+    let Some(clr_offset_in_table) = CLR_DIRECTORY_INDEX.checked_mul(8) else {
+        return;
+    };
+    let Some(clr_dir_offset) = data_dir_start.checked_add(clr_offset_in_table) else {
+        return;
+    };
     let Some(clr_rva) = read_u32(bytes, clr_dir_offset) else {
         return;
     };
@@ -390,6 +457,15 @@ fn repair_clr_header(bytes: &mut [u8], pe_off: usize, result: &mut RepairResult)
         return;
     };
     let clr_offset = clr_file_offset as usize;
+    let Some(version_offset) = clr_offset.checked_add(4) else {
+        return;
+    };
+    let Some(metadata_rva_offset) = clr_offset.checked_add(8) else {
+        return;
+    };
+    let Some(metadata_size_offset) = clr_offset.checked_add(12) else {
+        return;
+    };
 
     if let Some(0) = read_u32(bytes, clr_offset) {
         debug!("CLR header size repair: 0 → {}", COR20_HEADER_SIZE);
@@ -401,12 +477,12 @@ fn repair_clr_header(bytes: &mut [u8], pe_off: usize, result: &mut RepairResult)
         });
     }
 
-    if let Some(0) = read_u16(bytes, clr_offset + 4) {
+    if let Some(0) = read_u16(bytes, version_offset) {
         debug!(
             "CLR runtime version repair: 0 → {}",
             CLR_MAJOR_RUNTIME_VERSION
         );
-        let mut off = clr_offset + 4;
+        let mut off = version_offset;
         let _ = write_le_at(bytes, &mut off, CLR_MAJOR_RUNTIME_VERSION);
         result.repairs.push(RepairAction::ClrHeaderVersion {
             original_major: 0,
@@ -414,8 +490,8 @@ fn repair_clr_header(bytes: &mut [u8], pe_off: usize, result: &mut RepairResult)
         });
     }
 
-    let metadata_rva = read_u32(bytes, clr_offset + 8);
-    let metadata_size = read_u32(bytes, clr_offset + 12);
+    let metadata_rva = read_u32(bytes, metadata_rva_offset);
+    let metadata_size = read_u32(bytes, metadata_size_offset);
 
     if metadata_rva == Some(0) || metadata_size == Some(0) {
         if let Some((found_rva, found_size)) = find_metadata_by_bsjb_scan(bytes, pe_off) {
@@ -423,9 +499,9 @@ fn repair_clr_header(bytes: &mut [u8], pe_off: usize, result: &mut RepairResult)
                 "CLR metadata repair via BSJB scan: RVA=0x{:X}, size=0x{:X}",
                 found_rva, found_size
             );
-            let mut off = clr_offset + 8;
+            let mut off = metadata_rva_offset;
             let _ = write_le_at(bytes, &mut off, found_rva);
-            let mut off = clr_offset + 12;
+            let mut off = metadata_size_offset;
             let _ = write_le_at(bytes, &mut off, found_size);
             result.repairs.push(RepairAction::ClrMetadataRva {
                 restored_rva: found_rva,
@@ -442,8 +518,10 @@ fn rva_to_file_offset(bytes: &[u8], pe_off: usize, rva: u32) -> Option<u32> {
     for section in &sections {
         let section_end = section.virtual_address.checked_add(section.virtual_size)?;
         if rva >= section.virtual_address && rva < section_end {
-            let offset_within_section = rva - section.virtual_address;
-            return Some(section.pointer_to_raw_data + offset_within_section);
+            let offset_within_section = rva.checked_sub(section.virtual_address)?;
+            return section
+                .pointer_to_raw_data
+                .checked_add(offset_within_section);
         }
     }
 
@@ -459,8 +537,8 @@ fn file_offset_to_rva(bytes: &[u8], pe_off: usize, offset: u32) -> Option<u32> {
             .pointer_to_raw_data
             .checked_add(section.size_of_raw_data)?;
         if offset >= section.pointer_to_raw_data && offset < section_end {
-            let offset_within_section = offset - section.pointer_to_raw_data;
-            return Some(section.virtual_address + offset_within_section);
+            let offset_within_section = offset.checked_sub(section.pointer_to_raw_data)?;
+            return section.virtual_address.checked_add(offset_within_section);
         }
     }
 
@@ -470,41 +548,48 @@ fn file_offset_to_rva(bytes: &[u8], pe_off: usize, offset: u32) -> Option<u32> {
 /// Parses the section table from raw PE bytes into [`SectionTable`] entries.
 fn parse_section_table(bytes: &[u8], pe_off: usize) -> Option<Vec<SectionTable>> {
     // COFF header starts at pe_off + 4
-    let coff_offset = pe_off + 4;
+    let coff_offset = pe_off.checked_add(4)?;
 
     // Number of sections at COFF offset + 2
-    let num_sections = read_u16(bytes, coff_offset + 2)? as usize;
+    let num_sections = read_u16(bytes, coff_offset.checked_add(2)?)? as usize;
 
     // Size of optional header at COFF offset + 16
-    let opt_header_size = read_u16(bytes, coff_offset + 16)? as usize;
+    let opt_header_size = read_u16(bytes, coff_offset.checked_add(16)?)? as usize;
 
     // Section table starts after PE sig (4) + COFF header (20) + optional header
-    let section_table_offset = pe_off + 4 + 20 + opt_header_size;
+    let section_table_offset = pe_off
+        .checked_add(4)?
+        .checked_add(20)?
+        .checked_add(opt_header_size)?;
 
     let mut sections = Vec::with_capacity(num_sections);
 
     for i in 0..num_sections {
         // Each section header is 40 bytes (SectionTable::SIZE)
-        let entry_offset = section_table_offset + i * SectionTable::SIZE;
+        let entry_offset = section_table_offset.checked_add(i.checked_mul(SectionTable::SIZE)?)?;
+
+        let read_field_u32 = |delta: usize| read_u32(bytes, entry_offset.checked_add(delta)?);
+        let read_field_u16 = |delta: usize| read_u16(bytes, entry_offset.checked_add(delta)?);
 
         // Name at offset 0 (8 bytes)
+        let name_end = entry_offset.checked_add(8)?;
         let name = bytes
-            .get(entry_offset..entry_offset + 8)
+            .get(entry_offset..name_end)
             .and_then(|b| std::str::from_utf8(b).ok())
             .map(|s| s.trim_end_matches('\0').to_string())
             .unwrap_or_default();
 
         sections.push(SectionTable {
             name,
-            virtual_size: read_u32(bytes, entry_offset + 8)?,
-            virtual_address: read_u32(bytes, entry_offset + 12)?,
-            size_of_raw_data: read_u32(bytes, entry_offset + 16)?,
-            pointer_to_raw_data: read_u32(bytes, entry_offset + 20)?,
-            pointer_to_relocations: read_u32(bytes, entry_offset + 24)?,
-            pointer_to_line_numbers: read_u32(bytes, entry_offset + 28)?,
-            number_of_relocations: read_u16(bytes, entry_offset + 32)?,
-            number_of_line_numbers: read_u16(bytes, entry_offset + 34)?,
-            characteristics: read_u32(bytes, entry_offset + 36)?,
+            virtual_size: read_field_u32(8)?,
+            virtual_address: read_field_u32(12)?,
+            size_of_raw_data: read_field_u32(16)?,
+            pointer_to_raw_data: read_field_u32(20)?,
+            pointer_to_relocations: read_field_u32(24)?,
+            pointer_to_line_numbers: read_field_u32(28)?,
+            number_of_relocations: read_field_u16(32)?,
+            number_of_line_numbers: read_field_u16(34)?,
+            characteristics: read_field_u32(36)?,
         });
     }
 
@@ -520,8 +605,12 @@ fn find_metadata_by_bsjb_scan(bytes: &[u8], pe_off: usize) -> Option<(u32, u32)>
         return None;
     }
 
-    for i in 0..len - 3 {
-        if bytes[i..i + 4] == bsjb_bytes {
+    for i in 0..len.saturating_sub(3) {
+        let end = i.checked_add(4)?;
+        let Some(window) = bytes.get(i..end) else {
+            break;
+        };
+        if window == bsjb_bytes {
             let file_offset = i as u32;
 
             // Convert file offset to RVA
@@ -552,32 +641,50 @@ fn find_metadata_by_bsjb_scan(bytes: &[u8], pe_off: usize) -> Option<(u32, u32)>
 ///
 /// Parses the stream headers to find the maximum extent of metadata.
 fn estimate_metadata_size(bytes: &[u8], bsjb_offset: usize) -> u32 {
+    const FALLBACK: u32 = 0x1000;
     // Minimum: at least the fixed header fields
     let base = bsjb_offset;
 
     // Read version length at offset 12
-    let Some(version_length) = read_u32(bytes, base + 12) else {
-        return 0x1000; // Fallback estimate
+    let Some(version_offset) = base.checked_add(12) else {
+        return FALLBACK;
+    };
+    let Some(version_length) = read_u32(bytes, version_offset) else {
+        return FALLBACK;
     };
 
     // Version string follows (padded to 4-byte boundary)
-    let padded_version_len = ((version_length + 3) & !3) as usize;
-    let streams_header_offset = base + 16 + padded_version_len;
+    let padded_version_len = (version_length.saturating_add(3) & !3) as usize;
+    let Some(streams_header_offset) = base
+        .checked_add(16)
+        .and_then(|v| v.checked_add(padded_version_len))
+    else {
+        return FALLBACK;
+    };
 
     // Read number of streams
-    let Some(num_streams) = read_u16(bytes, streams_header_offset + 2) else {
-        return 0x1000;
+    let Some(num_streams_offset) = streams_header_offset.checked_add(2) else {
+        return FALLBACK;
+    };
+    let Some(num_streams) = read_u16(bytes, num_streams_offset) else {
+        return FALLBACK;
     };
 
     // Parse stream headers to find maximum extent
     let mut max_extent: u32 = 0;
-    let mut cursor = streams_header_offset + 4; // Skip flags (2) + num_streams (2)
+    // Skip flags (2) + num_streams (2)
+    let Some(mut cursor) = streams_header_offset.checked_add(4) else {
+        return FALLBACK;
+    };
 
     for _ in 0..num_streams {
         let Some(stream_offset) = read_u32(bytes, cursor) else {
             break;
         };
-        let Some(stream_size) = read_u32(bytes, cursor + 4) else {
+        let Some(size_cursor) = cursor.checked_add(4) else {
+            break;
+        };
+        let Some(stream_size) = read_u32(bytes, size_cursor) else {
             break;
         };
 
@@ -587,21 +694,36 @@ fn estimate_metadata_size(bytes: &[u8], bsjb_offset: usize) -> u32 {
         }
 
         // Skip past offset (4) + size (4) + name (null-terminated, padded to 4)
-        cursor += 8;
+        let Some(after_size) = cursor.checked_add(8) else {
+            break;
+        };
+        cursor = after_size;
         // Read stream name (scan for null terminator)
-        while cursor < bytes.len() && bytes[cursor] != 0 {
-            cursor += 1;
+        while let Some(&b) = bytes.get(cursor) {
+            if b == 0 {
+                break;
+            }
+            let Some(next) = cursor.checked_add(1) else {
+                return if max_extent > 0 { max_extent } else { FALLBACK };
+            };
+            cursor = next;
         }
         // Skip null terminator
-        cursor += 1;
+        let Some(after_null) = cursor.checked_add(1) else {
+            break;
+        };
+        cursor = after_null;
         // Align to 4-byte boundary
-        cursor = (cursor + 3) & !3;
+        let Some(aligned) = cursor.checked_add(3) else {
+            break;
+        };
+        cursor = aligned & !3;
     }
 
     if max_extent > 0 {
         max_extent
     } else {
-        0x1000 // Fallback
+        FALLBACK
     }
 }
 

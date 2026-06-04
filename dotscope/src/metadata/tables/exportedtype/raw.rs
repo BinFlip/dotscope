@@ -269,11 +269,12 @@ impl TableRow for ExportedTypeRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* flags */          4 +
-            /* type_def_id */    4 +
-            /* type_name */      sizes.str_bytes() +
-            /* type_namespace */ sizes.str_bytes() +
-            /* implementation */ sizes.coded_index_bytes(CodedIndexType::Implementation)
+            /* flags */          4u8
+            /* type_def_id */    .saturating_add(4)
+            /* type_name */      .saturating_add(sizes.str_bytes())
+            /* type_namespace */ .saturating_add(sizes.str_bytes())
+            /* implementation */ .saturating_add(sizes.coded_index_bytes(CodedIndexType::Implementation))
+
         )
     }
 }

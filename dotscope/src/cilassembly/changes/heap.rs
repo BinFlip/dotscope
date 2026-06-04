@@ -245,10 +245,6 @@ impl<T> HeapChanges<T> {
     }
 }
 
-// =============================================================================
-// String heap specialization
-// =============================================================================
-
 impl HeapChanges<String> {
     /// Creates a new string heap changes tracker.
     pub fn new_strings() -> Self {
@@ -275,7 +271,10 @@ impl HeapChanges<String> {
     ///
     /// Each string contributes: UTF-8 byte length + 1 null terminator
     pub fn binary_string_heap_size(&self) -> usize {
-        self.appended.iter().map(|(s, _)| s.len() + 1).sum()
+        self.appended
+            .iter()
+            .map(|(s, _)| s.len().saturating_add(1))
+            .sum()
     }
 
     /// Calculates the binary size for #US heap additions.
@@ -285,20 +284,16 @@ impl HeapChanges<String> {
         self.appended
             .iter()
             .map(|(s, _)| {
-                let utf16_bytes = s.encode_utf16().count() * 2;
-                let total_length = utf16_bytes + 1;
+                let utf16_bytes = s.encode_utf16().count().saturating_mul(2);
+                let total_length = utf16_bytes.saturating_add(1);
                 // compressed_uint_size returns at most 4, so cast is always safe
                 #[allow(clippy::cast_possible_truncation)]
                 let compressed_length_size = compressed_uint_size(total_length) as usize;
-                compressed_length_size + total_length
+                compressed_length_size.saturating_add(total_length)
             })
             .sum()
     }
 }
-
-// =============================================================================
-// Blob heap specialization
-// =============================================================================
 
 impl HeapChanges<Vec<u8>> {
     /// Creates a new blob heap changes tracker.
@@ -325,15 +320,11 @@ impl HeapChanges<Vec<u8>> {
                 // compressed_uint_size returns at most 4, so cast is always safe
                 #[allow(clippy::cast_possible_truncation)]
                 let compressed_length_size = compressed_uint_size(length) as usize;
-                compressed_length_size + length
+                compressed_length_size.saturating_add(length)
             })
             .sum()
     }
 }
-
-// =============================================================================
-// GUID heap specialization
-// =============================================================================
 
 impl HeapChanges<[u8; 16]> {
     /// Creates a new GUID heap changes tracker.
@@ -353,7 +344,7 @@ impl HeapChanges<[u8; 16]> {
     ///
     /// Each GUID contributes exactly 16 bytes.
     pub fn binary_guid_heap_size(&self) -> usize {
-        self.appended.len() * 16
+        self.appended.len().saturating_mul(16)
     }
 }
 

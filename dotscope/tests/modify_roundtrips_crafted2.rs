@@ -1,3 +1,12 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    missing_docs
+)]
+
 //! Consolidated integration tests for dotscope assembly modification round-trip operations.
 //!
 //! These tests validate the complete public API by simulating real user implementations.

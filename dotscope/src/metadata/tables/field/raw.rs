@@ -72,7 +72,7 @@ pub struct FieldRaw {
     /// Common values:
     /// - `0x0001`: `CompilerControlled`
     /// - `0x0002`: Private
-    /// - `0x0007`: Public  
+    /// - `0x0007`: Public
     /// - `0x0010`: Static
     /// - `0x0020`: Literal
     /// - `0x0080`: `HasFieldRVA`
@@ -165,9 +165,10 @@ impl TableRow for FieldRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* flags */     2 +
-            /* name */      sizes.str_bytes() +
-            /* signature */ sizes.blob_bytes()
+            /* flags */     2u8
+            /* name */      .saturating_add(sizes.str_bytes())
+            /* signature */ .saturating_add(sizes.blob_bytes())
+
         )
     }
 }

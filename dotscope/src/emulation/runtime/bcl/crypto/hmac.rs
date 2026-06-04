@@ -149,7 +149,10 @@ fn hmac_compute_hash_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) ->
         return PreHookResult::Bypass(Some(EmValue::Null));
     }
 
-    match &ctx.args[0] {
+    let Some(arg0) = ctx.args.first() else {
+        return PreHookResult::Bypass(Some(EmValue::Null));
+    };
+    match arg0 {
         EmValue::ObjectRef(handle) => {
             if let Some(bytes) = try_hook!(thread.heap().get_byte_array(*handle)) {
                 let key = hmac_key.as_deref().unwrap_or(&[]);

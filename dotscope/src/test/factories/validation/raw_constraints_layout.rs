@@ -59,7 +59,7 @@ pub fn raw_layout_constraint_validator_file_factory() -> Result<Vec<TestAssembly
 ///
 /// Originally from: `src/metadata/validation/validators/raw/constraints/layout.rs`
 pub fn create_assembly_with_overlapping_fields() -> Result<TestAssembly> {
-    create_test_assembly_with_error(get_testfile_wb, "Malformed", |assembly| {
+    create_test_assembly_with_error(get_testfile_wb, "Parse", |assembly| {
         // Create a basic type first
         let _typedef_token = TypeDefBuilder::new()
             .name("OverlappingFieldsType")
@@ -103,7 +103,7 @@ pub fn create_assembly_with_overlapping_fields() -> Result<TestAssembly> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/constraints/layout.rs`
 pub fn create_assembly_with_invalid_packing_size() -> Result<TestAssembly> {
-    create_test_assembly_with_error(get_testfile_wb, "Malformed", |assembly| {
+    create_test_assembly_with_error(get_testfile_wb, "Parse", |assembly| {
         let typedef_token = TypeDefBuilder::new()
             .name("InvalidPackingType")
             .namespace("Test")
@@ -134,7 +134,7 @@ pub fn create_assembly_with_invalid_packing_size() -> Result<TestAssembly> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/constraints/layout.rs`
 pub fn create_assembly_with_excessive_class_size() -> Result<TestAssembly> {
-    create_test_assembly_with_error(get_testfile_wb, "Malformed", |assembly| {
+    create_test_assembly_with_error(get_testfile_wb, "Parse", |assembly| {
         let typedef_token = TypeDefBuilder::new()
             .name("ExcessiveSizeType")
             .namespace("Test")
@@ -165,7 +165,7 @@ pub fn create_assembly_with_excessive_class_size() -> Result<TestAssembly> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/constraints/layout.rs`
 pub fn create_assembly_with_invalid_field_offset() -> Result<TestAssembly> {
-    create_test_assembly_with_error(get_testfile_wb, "Malformed", |assembly| {
+    create_test_assembly_with_error(get_testfile_wb, "Parse", |assembly| {
         let _typedef_token = TypeDefBuilder::new()
             .name("InvalidOffsetType")
             .namespace("Test")
@@ -205,7 +205,7 @@ pub fn create_assembly_with_invalid_field_offset() -> Result<TestAssembly> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/constraints/layout.rs`
 pub fn create_assembly_with_null_field_reference() -> Result<TestAssembly> {
-    create_test_assembly_with_error(get_testfile_wb, "Malformed", |assembly| {
+    create_test_assembly_with_error(get_testfile_wb, "Parse", |assembly| {
         let _typedef_token = TypeDefBuilder::new()
             .name("NullFieldRefType")
             .namespace("Test")
@@ -239,7 +239,7 @@ pub fn create_assembly_with_null_field_reference() -> Result<TestAssembly> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/constraints/layout.rs`
 pub fn create_assembly_with_boundary_field_offset() -> Result<TestAssembly> {
-    create_test_assembly_with_error(get_testfile_wb, "Malformed", |assembly| {
+    create_test_assembly_with_error(get_testfile_wb, "Parse", |assembly| {
         let _typedef_token = TypeDefBuilder::new()
             .name("BoundaryOffsetType")
             .namespace("Test")

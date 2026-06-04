@@ -36,12 +36,12 @@ use log::debug;
 
 use crate::{
     analysis::{
-        resolve_corelib_valuetype, ConstValue, DefSite, MethodRef, SsaFunction, SsaInstruction,
-        SsaOp, SsaVarId, TypeRef, VariableOrigin,
+        resolve_corelib_valuetype, CilTarget, ConstValue, DefSite, MethodRef, SsaFunction,
+        SsaInstruction, SsaOp, SsaVarId, TypeRef, VariableOrigin,
     },
     compiler::{CompilerContext, EventKind, ModificationScope, SsaPass},
     metadata::token::Token,
-    CilObject, Result,
+    CilObject, Error,
 };
 
 /// SSA pass that replaces JIEJIE.NET typeof container calls with
@@ -81,7 +81,7 @@ impl TypeOfRestorationPass {
     }
 }
 
-impl SsaPass for TypeOfRestorationPass {
+impl SsaPass<CilTarget, CompilerContext> for TypeOfRestorationPass {
     fn name(&self) -> &'static str {
         "jiejie-typeof-restore"
     }
@@ -97,10 +97,14 @@ impl SsaPass for TypeOfRestorationPass {
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
-        _method_token: Token,
-        ctx: &CompilerContext,
-        assembly: &CilObject,
-    ) -> Result<bool> {
+        _method: &MethodRef,
+        host: &CompilerContext,
+    ) -> analyssa::Result<bool> {
+        let assembly_arc = host
+            .assembly()
+            .ok_or_else(|| analyssa::Error::new("TypeOfRestorationPass requires an assembly"))?;
+        let assembly: &CilObject = &assembly_arc;
+        let ctx = host;
         if self.type_tokens.is_empty() {
             return Ok(false);
         }
@@ -124,22 +128,23 @@ impl SsaPass for TypeOfRestorationPass {
                     }
 
                     // Resolve the index argument to a constant
-                    let Some(ConstValue::I32(index)) = constants.get(&args[0]) else {
+                    let Some(arg0) = args.first() else { continue };
+                    let Some(ConstValue::I32(index)) = constants.get(arg0) else {
                         continue;
                     };
 
                     let index = *index as usize;
-                    if index >= self.type_tokens.len() {
+                    let Some(&type_token) = self.type_tokens.get(index) else {
                         debug!(
                             "jiejie-typeof: index {} out of bounds (max {}), skipping",
                             index,
                             self.type_tokens.len()
                         );
                         continue;
-                    }
+                    };
 
                     if let Some(dest) = dest {
-                        replacements.push((block_idx, instr_idx, self.type_tokens[index], *dest));
+                        replacements.push((block_idx, instr_idx, type_token, *dest));
                     }
                 }
             }
@@ -186,9 +191,15 @@ impl SsaPass for TypeOfRestorationPass {
                 args: vec![handle_var],
             });
 
-            ssa.blocks_mut()[*block_idx]
+            let block = ssa.blocks_mut().get_mut(*block_idx).ok_or_else(|| {
+                Error::Deobfuscation(format!(
+                    "jiejie-typeof: block index {} out of bounds",
+                    *block_idx
+                ))
+            })?;
+            block
                 .instructions_mut()
-                .insert(instr_idx + 1, call_instr);
+                .insert(instr_idx.saturating_add(1), call_instr);
 
             ctx.events.record(EventKind::ValueResolved);
         }

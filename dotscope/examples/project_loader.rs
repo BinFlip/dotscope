@@ -30,11 +30,11 @@ use std::env;
 
 fn main() -> dotscope::Result<()> {
     let args: Vec<String> = env::args().collect();
+    let prog = args.first().map_or("project_loader", String::as_str);
 
-    if args.len() < 2 {
+    let Some(assembly_path) = args.get(1) else {
         eprintln!(
-            "Usage: {} <assembly-path> [--search-path <path>] [--search-path <path2>] ...",
-            args[0]
+            "Usage: {prog} <assembly-path> [--search-path <path>] [--search-path <path2>] ..."
         );
         eprintln!();
         eprintln!("Options:");
@@ -42,26 +42,20 @@ fn main() -> dotscope::Result<()> {
         eprintln!("                        (can be specified multiple times)");
         eprintln!();
         eprintln!("Examples:");
-        eprintln!("  {} MyApp.exe", args[0]);
-        eprintln!("  {} MyApp.exe --search-path /usr/lib/mono/4.5", args[0]);
-        eprintln!(
-            "  {} tests/samples/crafted_2.exe --search-path tests/samples/mono_4.8",
-            args[0]
-        );
+        eprintln!("  {prog} MyApp.exe");
+        eprintln!("  {prog} MyApp.exe --search-path /usr/lib/mono/4.5");
+        eprintln!("  {prog} tests/samples/crafted_2.exe --search-path tests/samples/mono_4.8");
         std::process::exit(1);
-    }
-
-    let assembly_path = &args[1];
+    };
 
     // Parse --search-path arguments
     let mut search_paths: Vec<String> = Vec::new();
-    let mut i = 2;
-    while i < args.len() {
-        if args[i] == "--search-path" && i + 1 < args.len() {
-            search_paths.push(args[i + 1].clone());
-            i += 2;
-        } else {
-            i += 1;
+    let mut iter = args.iter().skip(2);
+    while let Some(arg) = iter.next() {
+        if arg == "--search-path" {
+            if let Some(path) = iter.next() {
+                search_paths.push(path.clone());
+            }
         }
     }
 
@@ -171,7 +165,7 @@ fn main() -> dotscope::Result<()> {
                 println!("    - {} ({:?})", ciltype.fullname(), ciltype.flavor());
             }
             if types.len() > 10 {
-                println!("    ... and {} more", types.len() - 10);
+                println!("    ... and {} more", types.len().saturating_sub(10));
             }
         }
     }
@@ -215,7 +209,7 @@ fn main() -> dotscope::Result<()> {
             println!("  - {} in {}", ciltype.fullname(), identity.name);
         }
         if definitions.len() > 5 {
-            println!("  ... and {} more", definitions.len() - 5);
+            println!("  ... and {} more", definitions.len().saturating_sub(5));
         }
     }
 

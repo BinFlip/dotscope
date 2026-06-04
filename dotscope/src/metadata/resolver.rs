@@ -1,7 +1,8 @@
 //! Cross-table token resolver for .NET metadata.
 //!
-//! Provides [`TokenResolver`], a lightweight borrowing wrapper over [`CilObject`] that
-//! normalizes token references across metadata tables. This includes:
+//! Provides [`TokenResolver`](crate::metadata::resolver::TokenResolver), a lightweight
+//! borrowing wrapper over [`CilObject`](crate::CilObject) that normalizes token references
+//! across metadata tables. This includes:
 //!
 //! - **TypeRef → TypeDef**: Resolves external type references to their local definitions
 //! - **MemberRef → MethodDef**: Resolves member references to locally defined methods
@@ -17,7 +18,7 @@
 //!
 //! # Usage
 //!
-//! Obtained via [`CilObject::resolver()`]:
+//! Obtained via [`CilObject::resolver()`](crate::CilObject::resolver):
 //!
 //! ```rust,no_run
 //! use dotscope::CilObject;
@@ -210,7 +211,7 @@ impl<'a> TokenResolver<'a> {
                 })
             }
             0x2B => {
-                let method_spec = self.assembly.method_spec(&token)?;
+                let method_spec = self.assembly.method_spec(&token).ok()?;
                 let underlying = Self::extract_methodspec_token(&method_spec.method)?;
                 self.resolve_method(underlying)
             }
@@ -473,7 +474,7 @@ impl<'a> TokenResolver<'a> {
                 None
             }
             0x2B => {
-                let method_spec = self.assembly.method_spec(&method_token)?;
+                let method_spec = self.assembly.method_spec(&method_token).ok()?;
                 let underlying = Self::extract_methodspec_token(&method_spec.method)?;
                 self.declaring_type(underlying)
             }

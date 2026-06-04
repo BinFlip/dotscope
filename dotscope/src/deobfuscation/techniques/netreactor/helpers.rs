@@ -65,7 +65,7 @@ pub fn scan_stub_methods(assembly: &CilObject) -> StubScanResult {
             continue;
         }
 
-        total_il_methods += 1;
+        total_il_methods = total_il_methods.saturating_add(1);
 
         // Skip the entry point — it's never encrypted
         if entry_point_token.is_some_and(|ep| ep == method.token) {
@@ -79,12 +79,16 @@ pub fn scan_stub_methods(assembly: &CilObject) -> StubScanResult {
         }
 
         // Check the exact 4-instruction stub pattern
-        if instrs[0].mnemonic != "nop" || instrs[1].mnemonic != "nop" || instrs[3].mnemonic != "ret"
-        {
+        let (Some(i0), Some(i1), Some(i2), Some(i3)) =
+            (instrs.first(), instrs.get(1), instrs.get(2), instrs.get(3))
+        else {
+            continue;
+        };
+        if i0.mnemonic != "nop" || i1.mnemonic != "nop" || i3.mnemonic != "ret" {
             continue;
         }
 
-        let kind = match instrs[2].mnemonic {
+        let kind = match i2.mnemonic {
             "nop" => StubKind::Void,
             "ldc.i4.0" => StubKind::Value,
             "ldnull" => StubKind::Reference,
@@ -132,7 +136,7 @@ pub fn find_cctor_fan_in_target(assembly: &CilObject) -> Option<CctorFanInResult
             continue;
         };
 
-        let Some(cctor_method) = assembly.method(&cctor_token) else {
+        let Ok(cctor_method) = assembly.method(&cctor_token) else {
             continue;
         };
 
@@ -166,6 +170,7 @@ pub fn find_cctor_fan_in_target(assembly: &CilObject) -> Option<CctorFanInResult
     // Extract structural properties of the target method
     let (target_local_count, target_instruction_count) = assembly
         .method(&target_token)
+        .ok()
         .map(|m| (m.local_vars.count(), m.instruction_count()))
         .unwrap_or((0, 0));
 
@@ -204,7 +209,7 @@ pub fn find_trial_checks(assembly: &CilObject) -> Vec<TrialCheckResult> {
             continue;
         }
 
-        let Some(method) = assembly.method(method_token) else {
+        let Ok(method) = assembly.method(method_token) else {
             continue;
         };
 
@@ -325,7 +330,12 @@ fn is_nr_private_impl_name(name: &str) -> bool {
     if !name.starts_with(PREFIX) || !name.ends_with('}') {
         return false;
     }
-    let body = &name[PREFIX.len()..name.len() - 1];
+    let Some(end) = name.len().checked_sub(1) else {
+        return false;
+    };
+    let Some(body) = name.get(PREFIX.len()..end) else {
+        return false;
+    };
 
     // Canonical GUID layout: 8-4-4-4-12 hex chars separated by '-'
     let segments: Vec<&str> = body.split('-').collect();
@@ -356,7 +366,12 @@ fn is_nr_guid_module_name(name: &str) -> bool {
     if !name.starts_with(PREFIX) || !name.ends_with('}') {
         return false;
     }
-    let body = &name[PREFIX.len()..name.len() - 1];
+    let Some(end) = name.len().checked_sub(1) else {
+        return false;
+    };
+    let Some(body) = name.get(PREFIX.len()..end) else {
+        return false;
+    };
 
     let segments: Vec<&str> = body.split('-').collect();
     if segments.len() != 5 {
@@ -454,7 +469,7 @@ pub fn find_nr_private_impl_containers(assembly: &CilObject) -> Vec<PrivateImplC
 /// an `<Module>`-trial NR-context gate it is highly specific to NR's
 /// license-verification stub.
 pub fn has_single_shot_bool_guard(assembly: &CilObject, method_token: Token) -> bool {
-    let Some(method) = assembly.method(&method_token) else {
+    let Ok(method) = assembly.method(&method_token) else {
         return false;
     };
 
@@ -548,8 +563,11 @@ pub fn find_nr_token_resolver(assembly: &CilObject) -> Option<TokenResolverInfo>
             if method.signature.params.len() != 1 {
                 continue;
             }
+            let Some(first_param) = method.signature.params.first() else {
+                continue;
+            };
             if !matches!(
-                method.signature.params[0].base,
+                first_param.base,
                 crate::metadata::signatures::TypeSignature::I4
             ) {
                 continue;
@@ -597,20 +615,24 @@ enum AccessorKind {
 /// Body shape (4 instructions):
 /// `ldsflda <static_field>` → `ldarg.0` → `call instance ModuleHandle::Get*FromMetadataToken` → `ret`.
 fn classify_token_accessor_body(assembly: &CilObject, method_token: Token) -> Option<AccessorKind> {
-    let method = assembly.method(&method_token)?;
+    let method = assembly.method(&method_token).ok()?;
     let instrs: Vec<_> = method.instructions().collect();
     if instrs.len() != 4 {
         return None;
     }
-    if instrs[0].mnemonic != "ldsflda"
-        || instrs[1].mnemonic != "ldarg.0"
-        || instrs[2].mnemonic != "call"
-        || instrs[3].mnemonic != "ret"
+    let i0 = instrs.first()?;
+    let i1 = instrs.get(1)?;
+    let i2 = instrs.get(2)?;
+    let i3 = instrs.get(3)?;
+    if i0.mnemonic != "ldsflda"
+        || i1.mnemonic != "ldarg.0"
+        || i2.mnemonic != "call"
+        || i3.mnemonic != "ret"
     {
         return None;
     }
 
-    let call_token = instrs[2].get_token_operand()?;
+    let call_token = i2.get_token_operand()?;
     let name = crate::deobfuscation::utils::resolve_qualified_method_name(assembly, call_token)?;
     if !name.contains("ModuleHandle") {
         return None;
@@ -654,7 +676,7 @@ pub fn find_resources_referenced_by_methods(
     let mut results = Vec::new();
 
     for &method_token in method_tokens {
-        let Some(method) = assembly.method(&method_token) else {
+        let Ok(method) = assembly.method(&method_token) else {
             continue;
         };
         for instr in method.instructions() {
@@ -706,7 +728,7 @@ pub fn classify_injected_cctors(
     let mut modified = Vec::new();
 
     for &cctor_token in calling_cctors {
-        let Some(method) = assembly.method(&cctor_token) else {
+        let Ok(method) = assembly.method(&cctor_token) else {
             continue;
         };
 

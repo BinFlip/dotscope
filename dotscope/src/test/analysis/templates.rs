@@ -563,7 +563,7 @@ public class Program
 
 /// All defined test cases with their expected properties.
 pub static ANALYSIS_TEST_CASES: &[AnalysisTestCase] = &[
-    // ========== CFG TESTS: SEQUENTIAL ==========
+    // CFG tests: sequential.
     AnalysisTestCase {
         name: "cfg_sequential_add",
         method_name: "Add",
@@ -630,7 +630,7 @@ pub static ANALYSIS_TEST_CASES: &[AnalysisTestCase] = &[
         callgraph: None,
         dataflow: None,
     },
-    // ========== CFG TESTS: CONDITIONAL ==========
+    // CFG tests: conditional.
     AnalysisTestCase {
         name: "cfg_if_then",
         method_name: "IfThen",
@@ -741,7 +741,7 @@ pub static ANALYSIS_TEST_CASES: &[AnalysisTestCase] = &[
         callgraph: None,
         dataflow: None,
     },
-    // ========== CFG TESTS: LOOPS ==========
+    // CFG tests: loops.
     AnalysisTestCase {
         name: "cfg_while_loop",
         method_name: "WhileLoop",
@@ -874,7 +874,7 @@ pub static ANALYSIS_TEST_CASES: &[AnalysisTestCase] = &[
         callgraph: None,
         dataflow: None,
     },
-    // ========== CFG TESTS: SWITCH ==========
+    // CFG tests: switch.
     AnalysisTestCase {
         name: "cfg_simple_switch",
         method_name: "SimpleSwitch",
@@ -919,7 +919,7 @@ pub static ANALYSIS_TEST_CASES: &[AnalysisTestCase] = &[
         callgraph: None,
         dataflow: None,
     },
-    // ========== SSA TESTS ==========
+    // SSA tests.
     AnalysisTestCase {
         name: "ssa_phi_required",
         method_name: "PhiRequired",
@@ -1052,7 +1052,7 @@ pub static ANALYSIS_TEST_CASES: &[AnalysisTestCase] = &[
         callgraph: None,
         dataflow: None,
     },
-    // ========== CALL GRAPH TESTS ==========
+    // Call graph tests.
     AnalysisTestCase {
         name: "callgraph_leaf",
         method_name: "LeafMethod",
@@ -1215,7 +1215,7 @@ pub static ANALYSIS_TEST_CASES: &[AnalysisTestCase] = &[
         }),
         dataflow: None,
     },
-    // ========== DATA FLOW TESTS ==========
+    // Data flow tests.
     AnalysisTestCase {
         name: "dataflow_constant_prop",
         method_name: "ConstantProp",

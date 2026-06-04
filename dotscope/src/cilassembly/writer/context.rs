@@ -523,7 +523,7 @@ impl<'a> WriteContext<'a> {
     ///
     /// * `amount` - The number of bytes to advance
     pub fn advance(&mut self, amount: u64) {
-        self.position += amount;
+        self.position = self.position.saturating_add(amount);
         if self.position > self.bytes_written {
             self.bytes_written = self.position;
         }
@@ -538,9 +538,12 @@ impl<'a> WriteContext<'a> {
     ///
     /// * `alignment` - The alignment boundary (must be a power of 2)
     pub fn align_to(&mut self, alignment: u64) {
-        let remainder = self.position % alignment;
+        let Some(remainder) = self.position.checked_rem(alignment) else {
+            return;
+        };
         if remainder != 0 {
-            self.position += alignment - remainder;
+            let padding = alignment.saturating_sub(remainder);
+            self.position = self.position.saturating_add(padding);
         }
     }
 
@@ -575,9 +578,13 @@ impl<'a> WriteContext<'a> {
     ///
     /// Returns an error if writing the padding bytes fails.
     pub fn align_to_with_padding(&mut self, alignment: u64) -> Result<()> {
-        let remainder = self.position % alignment;
+        let Some(remainder) = self.position.checked_rem(alignment) else {
+            return Ok(());
+        };
         if remainder != 0 {
-            let padding = alignment - remainder;
+            let padding = alignment.checked_sub(remainder).ok_or_else(|| {
+                Error::LayoutFailed("Alignment underflow computing padding".to_string())
+            })?;
             // Safety: padding is always < alignment, and alignment is typically 4, 8, or 512
             // so this will never exceed usize range
             let padding_usize = usize::try_from(padding).map_err(|_| {
@@ -637,8 +644,11 @@ impl<'a> WriteContext<'a> {
     /// Returns an error if writing fails.
     pub fn write_at(&mut self, offset: u64, data: &[u8]) -> Result<()> {
         self.output.write_at(offset, data)?;
-        if offset + data.len() as u64 > self.bytes_written {
-            self.bytes_written = offset + data.len() as u64;
+        let end = offset
+            .checked_add(data.len() as u64)
+            .ok_or_else(|| Error::LayoutFailed("write_at end offset overflow".to_string()))?;
+        if end > self.bytes_written {
+            self.bytes_written = end;
         }
         Ok(())
     }
@@ -710,7 +720,7 @@ impl<'a> WriteContext<'a> {
         if offset >= self.text_section_offset {
             // In practice, PE files have sections well under 4GB, so this conversion is safe.
             // If the offset difference somehow exceeds u32, we saturate to avoid panic.
-            let diff = offset - self.text_section_offset;
+            let diff = offset.saturating_sub(self.text_section_offset);
             let diff_u32 = u32::try_from(diff).unwrap_or(u32::MAX);
             self.text_section_rva.saturating_add(diff_u32)
         } else {

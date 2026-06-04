@@ -34,14 +34,15 @@ use std::collections::BTreeMap;
 
 use crate::{
     analysis::{
-        DefSite, ReturnInfo, SsaFunction, SsaInstruction, SsaOp, SsaType, SsaVarId, VariableOrigin,
+        CilTarget, DefSite, MethodRef, ReturnInfo, SsaFunction, SsaInstruction, SsaOp, SsaType,
+        SsaVarId, VariableOrigin,
     },
     compiler::{
         pass::{PassCapability, SsaPass},
         CompilerContext, EventKind, EventLog,
     },
     metadata::{tables::MemberRefSignature, token::Token, typesystem::CilTypeReference},
-    CilObject, Result,
+    CilObject,
 };
 
 /// A candidate call site for inlining.
@@ -405,27 +406,29 @@ impl<'a> InliningContext<'a> {
             ReturnInfo::Constant(value) => {
                 if let Some(dest_var) = dest {
                     if let Some(block) = self.caller_ssa.block_mut(call_block_idx) {
-                        let instr = &mut block.instructions_mut()[call_instr_idx];
-                        instr.set_op(SsaOp::Const {
-                            dest: dest_var,
-                            value: value.clone(),
-                        });
-                        self.changes
-                            .record(EventKind::MethodInlined)
-                            .at(self.caller_token, call_instr_idx)
-                            .message(format!("inlined constant {callee_token:?}"));
-                        return true;
+                        if let Some(instr) = block.instructions_mut().get_mut(call_instr_idx) {
+                            instr.set_op(SsaOp::Const {
+                                dest: dest_var,
+                                value: value.clone(),
+                            });
+                            self.changes
+                                .record(EventKind::MethodInlined)
+                                .at(self.caller_token, call_instr_idx)
+                                .message(format!("inlined constant {callee_token:?}"));
+                            return true;
+                        }
                     }
                 } else {
                     // Void destination but constant return - just remove the call
                     if let Some(block) = self.caller_ssa.block_mut(call_block_idx) {
-                        let instr = &mut block.instructions_mut()[call_instr_idx];
-                        instr.set_op(SsaOp::Nop);
-                        self.changes
-                            .record(EventKind::MethodInlined)
-                            .at(self.caller_token, call_instr_idx)
-                            .message(format!("eliminated pure call {callee_token:?}"));
-                        return true;
+                        if let Some(instr) = block.instructions_mut().get_mut(call_instr_idx) {
+                            instr.set_op(SsaOp::Nop);
+                            self.changes
+                                .record(EventKind::MethodInlined)
+                                .at(self.caller_token, call_instr_idx)
+                                .message(format!("eliminated pure call {callee_token:?}"));
+                            return true;
+                        }
                     }
                 }
             }
@@ -433,29 +436,31 @@ impl<'a> InliningContext<'a> {
                 if let Some(dest_var) = dest {
                     if let Some(&src_var) = args.get(param_idx) {
                         if let Some(block) = self.caller_ssa.block_mut(call_block_idx) {
-                            let instr = &mut block.instructions_mut()[call_instr_idx];
-                            instr.set_op(SsaOp::Copy {
-                                dest: dest_var,
-                                src: src_var,
-                            });
-                            self.changes
-                                .record(EventKind::MethodInlined)
-                                .at(self.caller_token, call_instr_idx)
-                                .message(format!("inlined passthrough {callee_token:?}"));
-                            return true;
+                            if let Some(instr) = block.instructions_mut().get_mut(call_instr_idx) {
+                                instr.set_op(SsaOp::Copy {
+                                    dest: dest_var,
+                                    src: src_var,
+                                });
+                                self.changes
+                                    .record(EventKind::MethodInlined)
+                                    .at(self.caller_token, call_instr_idx)
+                                    .message(format!("inlined passthrough {callee_token:?}"));
+                                return true;
+                            }
                         }
                     }
                 }
             }
             ReturnInfo::Void => {
                 if let Some(block) = self.caller_ssa.block_mut(call_block_idx) {
-                    let instr = &mut block.instructions_mut()[call_instr_idx];
-                    instr.set_op(SsaOp::Nop);
-                    self.changes
-                        .record(EventKind::MethodInlined)
-                        .at(self.caller_token, call_instr_idx)
-                        .message(format!("eliminated void call {callee_token:?}"));
-                    return true;
+                    if let Some(instr) = block.instructions_mut().get_mut(call_instr_idx) {
+                        instr.set_op(SsaOp::Nop);
+                        self.changes
+                            .record(EventKind::MethodInlined)
+                            .at(self.caller_token, call_instr_idx)
+                            .message(format!("eliminated void call {callee_token:?}"));
+                        return true;
+                    }
                 }
             }
             ReturnInfo::PureComputation | ReturnInfo::Dynamic | ReturnInfo::Unknown => {
@@ -549,16 +554,22 @@ impl<'a> InliningContext<'a> {
         };
 
         // Replace call instruction with first inlined op (or Nop if empty)
-        if let Some(first_op) = inlined_ops.first().cloned() {
-            block.instructions_mut()[call_instr_idx].set_op(first_op);
+        let first_op = inlined_ops.first().cloned();
+        if let Some(instr) = block.instructions_mut().get_mut(call_instr_idx) {
+            if let Some(op) = first_op {
+                instr.set_op(op);
+            } else {
+                instr.set_op(SsaOp::Nop);
+            }
         } else {
-            block.instructions_mut()[call_instr_idx].set_op(SsaOp::Nop);
+            return false;
         }
 
         // Insert remaining inlined ops
         let instructions = block.instructions_mut();
+        let base = call_instr_idx.saturating_add(1);
         for (i, op) in inlined_ops.into_iter().skip(1).enumerate() {
-            instructions.insert(call_instr_idx + 1 + i, SsaInstruction::synthetic(op));
+            instructions.insert(base.saturating_add(i), SsaInstruction::synthetic(op));
         }
 
         // Handle return value
@@ -569,7 +580,7 @@ impl<'a> InliningContext<'a> {
                 let Some(block) = self.caller_ssa.block_mut(call_block_idx) else {
                     return false;
                 };
-                let insert_pos = call_instr_idx + 1;
+                let insert_pos = call_instr_idx.saturating_add(1);
                 block.instructions_mut().insert(
                     insert_pos,
                     SsaInstruction::synthetic(SsaOp::Copy {
@@ -695,7 +706,7 @@ impl InliningPass {
     }
 }
 
-impl SsaPass for InliningPass {
+impl SsaPass<CilTarget, CompilerContext> for InliningPass {
     fn name(&self) -> &'static str {
         "InliningPass"
     }
@@ -719,12 +730,15 @@ impl SsaPass for InliningPass {
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
-        method_token: Token,
-        ctx: &CompilerContext,
-        assembly: &CilObject,
-    ) -> Result<bool> {
+        method: &MethodRef,
+        host: &CompilerContext,
+    ) -> analyssa::Result<bool> {
+        let assembly = host
+            .assembly()
+            .ok_or_else(|| analyssa::Error::new("InliningPass requires an assembly"))?;
+
         // Create method-specific inlining context
-        let mut inline_ctx = InliningContext::new(self, ssa, method_token, ctx, assembly);
+        let mut inline_ctx = InliningContext::new(self, ssa, method.0, host, &assembly);
 
         // Find all candidates
         let candidates = inline_ctx.find_candidates();
@@ -740,7 +754,7 @@ impl SsaPass for InliningPass {
         // Merge changes back to the analysis context
         let changed = inline_ctx.has_changes();
         if changed {
-            ctx.events.merge(&inline_ctx.into_changes());
+            host.events.merge(&inline_ctx.into_changes());
         }
         Ok(changed)
     }

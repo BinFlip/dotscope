@@ -273,7 +273,7 @@ fn resolve_constructor_type(
         }
         TableId::MethodDef => {
             // Look up the method and get its declaring type
-            if let Some(method) = assembly.method(&constructor.token) {
+            if let Ok(method) = assembly.method(&constructor.token) {
                 if let Some(name) = method.declaring_type_fullname() {
                     return name;
                 }

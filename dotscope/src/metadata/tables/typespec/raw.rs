@@ -194,6 +194,7 @@ impl TableRow for TypeSpecRaw {
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
             /* signature */ sizes.blob_bytes()
+
         )
     }
 }

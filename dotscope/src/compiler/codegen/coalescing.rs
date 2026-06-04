@@ -33,12 +33,13 @@ use std::{
 
 use rayon::prelude::*;
 
+use analyssa::BitSet;
+
 use crate::{
     analysis::{
         AnalysisResults, DataFlowSolver, LiveVariables, LivenessResult, SsaCfg, SsaFunction, SsaOp,
         SsaType, SsaVarId, VariableOrigin,
     },
-    utils::BitSet,
     Error, Result,
 };
 
@@ -122,7 +123,7 @@ impl LiveInterval {
     fn new(pos: usize) -> Self {
         Self {
             start: pos,
-            end: pos + 1,
+            end: pos.saturating_add(1),
         }
     }
 
@@ -206,8 +207,10 @@ impl LocalCoalescer {
                 if let Some(live_out) = results.out_state(block_id) {
                     let live_vars: Vec<SsaVarId> = live_out.variables().collect();
                     for (i, &var1) in live_vars.iter().enumerate() {
-                        for &var2 in &live_vars[i + 1..] {
-                            edges.push((var1, var2));
+                        if let Some(rest) = live_vars.get(i.saturating_add(1)..) {
+                            for &var2 in rest {
+                                edges.push((var1, var2));
+                            }
                         }
                     }
                 }
@@ -216,8 +219,10 @@ impl LocalCoalescer {
                 if let Some(live_in) = results.in_state(block_id) {
                     let live_vars: Vec<SsaVarId> = live_in.variables().collect();
                     for (i, &var1) in live_vars.iter().enumerate() {
-                        for &var2 in &live_vars[i + 1..] {
-                            edges.push((var1, var2));
+                        if let Some(rest) = live_vars.get(i.saturating_add(1)..) {
+                            for &var2 in rest {
+                                edges.push((var1, var2));
+                            }
                         }
                     }
                 }
@@ -255,8 +260,10 @@ impl LocalCoalescer {
                 // All operands from the same predecessor interfere with each other
                 for (_, operands) in operands_by_pred {
                     for (i, &var1) in operands.iter().enumerate() {
-                        for &var2 in &operands[i + 1..] {
-                            edges.push((var1, var2));
+                        if let Some(rest) = operands.get(i.saturating_add(1)..) {
+                            for &var2 in rest {
+                                edges.push((var1, var2));
+                            }
                         }
                     }
                 }
@@ -397,11 +404,13 @@ impl LocalCoalescer {
 
             // Expire old intervals - return their slots to free pool
             // BUT don't return reserved Local-origin slots to the pool
-            while let Some(Reverse((end, _slot))) = active.peek() {
-                if *end > interval.start {
+            while let Some(&Reverse((end, _))) = active.peek() {
+                if end > interval.start {
                     break;
                 }
-                let Reverse((_, slot)) = active.pop().unwrap();
+                let Some(Reverse((_, slot))) = active.pop() else {
+                    break;
+                };
                 // Only add to free pool if not a reserved slot
                 if !reserved_slots.contains(slot as usize) {
                     let ty = slot_type.get(&slot).cloned().unwrap_or(SsaType::Unknown);
@@ -424,7 +433,7 @@ impl LocalCoalescer {
 
             let slot = slot.unwrap_or_else(|| {
                 let s = next_local;
-                next_local += 1;
+                next_local = next_local.saturating_add(1);
                 s
             });
 
@@ -464,7 +473,7 @@ impl LocalCoalescer {
             let mut idx = 0usize;
             for block_id in 0..ssa.block_count() {
                 if let Some(block) = ssa.block(block_id) {
-                    idx += block.instructions().len();
+                    idx = idx.saturating_add(block.instructions().len());
                 }
                 block_end_idx.push(idx);
             }
@@ -493,13 +502,12 @@ impl LocalCoalescer {
                 // position would leave a gap where the local slot can be reused.
                 for operand in phi.operands() {
                     let pred = operand.predecessor();
-                    let pred_end = if pred < block_end_idx.len() {
-                        block_end_idx[pred]
-                    } else {
-                        instr_idx + 1
-                    };
+                    let pred_end = block_end_idx
+                        .get(pred)
+                        .copied()
+                        .unwrap_or_else(|| instr_idx.saturating_add(1));
                     // Use the later of: PHI position or predecessor end
-                    let use_point = pred_end.max(instr_idx + 1);
+                    let use_point = pred_end.max(instr_idx.saturating_add(1));
                     intervals
                         .entry(operand.value())
                         .or_insert_with(|| LiveInterval::new(instr_idx))
@@ -514,7 +522,7 @@ impl LocalCoalescer {
                     intervals
                         .entry(use_var)
                         .or_insert_with(|| LiveInterval::new(instr_idx))
-                        .extend_end(instr_idx + 1);
+                        .extend_end(instr_idx.saturating_add(1));
                 }
 
                 // Definitions start the interval
@@ -525,7 +533,7 @@ impl LocalCoalescer {
                         .extend_start(instr_idx);
                 }
 
-                instr_idx += 1;
+                instr_idx = instr_idx.saturating_add(1);
             }
         }
 
@@ -674,15 +682,21 @@ impl LocalCoalescer {
         for (subtree_id, &root_idx) in roots.iter().enumerate() {
             let mut stack = vec![root_idx];
             while let Some(idx) = stack.pop() {
-                if instr_to_subtree[idx].is_some() {
+                let Some(slot) = instr_to_subtree.get_mut(idx) else {
+                    continue;
+                };
+                if slot.is_some() {
                     continue;
                 }
-                instr_to_subtree[idx] = Some(subtree_id);
+                *slot = Some(subtree_id);
 
                 // Follow dependency edges: operands defined in this block
-                for use_var in instructions[idx].uses() {
+                let Some(instr) = instructions.get(idx) else {
+                    continue;
+                };
+                for use_var in instr.uses() {
                     if let Some(&dep_idx) = def_map.get(&use_var) {
-                        if instr_to_subtree[dep_idx].is_none() {
+                        if matches!(instr_to_subtree.get(dep_idx), Some(None)) {
                             stack.push(dep_idx);
                         }
                     }
@@ -694,17 +708,27 @@ impl LocalCoalescer {
         let num_subtrees = roots.len();
         let mut subtree_vars: Vec<Vec<SsaVarId>> = vec![Vec::new(); num_subtrees];
         for (idx, instr) in instructions.iter().enumerate() {
-            if let (Some(dest), Some(subtree_id)) = (instr.def(), instr_to_subtree[idx]) {
-                subtree_vars[subtree_id].push(dest);
+            if let (Some(dest), Some(Some(subtree_id))) =
+                (instr.def(), instr_to_subtree.get(idx).copied())
+            {
+                if let Some(bucket) = subtree_vars.get_mut(subtree_id) {
+                    bucket.push(dest);
+                }
             }
         }
 
         // Add interference edges between all variable pairs from different subtrees
         let mut edges = Vec::new();
         for i in 0..num_subtrees {
-            for j in (i + 1)..num_subtrees {
-                for &var_a in &subtree_vars[i] {
-                    for &var_b in &subtree_vars[j] {
+            let Some(vars_i) = subtree_vars.get(i) else {
+                continue;
+            };
+            for j in i.saturating_add(1)..num_subtrees {
+                let Some(vars_j) = subtree_vars.get(j) else {
+                    continue;
+                };
+                for &var_a in vars_i {
+                    for &var_b in vars_j {
                         edges.push((var_a, var_b));
                     }
                 }
@@ -739,7 +763,9 @@ impl LocalCoalescer {
 
         // First, collect which Local-origin variables are actually USED.
         // Phi-origin variables go through graph coloring allocation separately.
-        let slot_capacity = var_count.max(self.coalescable_vars.len() + 1).max(64);
+        let slot_capacity = var_count
+            .max(self.coalescable_vars.len().saturating_add(1))
+            .max(64);
         let mut used_local_var_ids = BitSet::new(slot_capacity);
         for block in ssa.blocks() {
             for phi in block.phi_nodes() {
@@ -857,7 +883,7 @@ impl LocalCoalescer {
                 .ok_or_else(|| Error::CodegenFailed("Should always find a valid slot".into()))?;
 
             var_to_local.insert(var, slot);
-            next_local = next_local.max(slot + 1);
+            next_local = next_local.max(slot.saturating_add(1));
         }
 
         Ok(LocalAllocation {
@@ -905,7 +931,7 @@ fn pre_assign_locals(ssa: &SsaFunction, used_local_vars: &[(SsaVarId, u16)]) -> 
     for &(var_id, original_idx) in used_local_vars {
         let new_slot = *original_to_new.entry(original_idx).or_insert_with(|| {
             let slot = next_local;
-            next_local += 1;
+            next_local = next_local.saturating_add(1);
             slot
         });
         var_to_local.insert(var_id, new_slot);
@@ -931,7 +957,7 @@ fn pre_assign_locals(ssa: &SsaFunction, used_local_vars: &[(SsaVarId, u16)]) -> 
     for original_idx in sorted_load_refs {
         original_to_new.entry(original_idx).or_insert_with(|| {
             let slot = next_local;
-            next_local += 1;
+            next_local = next_local.saturating_add(1);
             reserved_slots.insert(slot as usize);
             slot
         });

@@ -195,7 +195,7 @@ impl Technique for ConfuserExAntiTamper {
 
             if let Some(text) = text_section {
                 let text_rva_start = text.virtual_address as usize;
-                let text_rva_end = text_rva_start + text.virtual_size as usize;
+                let text_rva_end = text_rva_start.saturating_add(text.virtual_size as usize);
 
                 for row in method_table {
                     if row.rva == 0 {
@@ -213,12 +213,12 @@ impl Technique for ConfuserExAntiTamper {
 
                     // Method body outside .text section suggests encryption
                     if method_rva < text_rva_start || method_rva >= text_rva_end {
-                        encrypted_count += 1;
+                        encrypted_count = encrypted_count.saturating_add(1);
 
                         // Identify which section this RVA falls into
                         for section in sections {
                             let sec_start = section.virtual_address as usize;
-                            let sec_end = sec_start + section.virtual_size as usize;
+                            let sec_end = sec_start.saturating_add(section.virtual_size as usize);
                             if method_rva >= sec_start && method_rva < sec_end {
                                 encrypted_section_names.insert(section.name.clone());
                                 break;
@@ -560,16 +560,16 @@ fn extract_decrypted_bodies(
     methods: &[Token],
 ) -> (Vec<(Token, Vec<u8>)>, usize) {
     let mut bodies = Vec::new();
-    let mut failed_count = 0;
+    let mut failed_count: usize = 0;
 
     for &token in methods {
         let Some(rva) = helpers::get_method_rva(assembly, token) else {
-            failed_count += 1;
+            failed_count = failed_count.saturating_add(1);
             continue;
         };
 
         if rva == 0 || rva as usize >= virtual_image.len() {
-            failed_count += 1;
+            failed_count = failed_count.saturating_add(1);
             continue;
         }
 
@@ -578,7 +578,7 @@ fn extract_decrypted_bodies(
                 bodies.push((token, body_bytes));
             }
             None => {
-                failed_count += 1;
+                failed_count = failed_count.saturating_add(1);
             }
         }
     }

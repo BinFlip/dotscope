@@ -30,9 +30,9 @@ use crate::{
         types::{HandlerTrace, TraceNode, TraceStats, TraceTerminator},
     },
     metadata::{token::Token, typesystem::PointerSize},
-    utils::BitSet,
     CilObject,
 };
+use analyssa::BitSet;
 
 /// Traces exception handler entry blocks that were not visited by the main trace.
 ///
@@ -59,7 +59,8 @@ pub fn trace_exception_handlers(ctx: &mut TreeTraceContext<'_>) -> Vec<HandlerTr
         .par_iter()
         .enumerate()
         .filter_map(|(i, &handler_start)| {
-            let mut handler_ctx = ctx.fork_for_handler(id_base + i * id_stride);
+            let offset = i.saturating_mul(id_stride);
+            let mut handler_ctx = ctx.fork_for_handler(id_base.saturating_add(offset));
             let root = trace_from_block(&mut handler_ctx, handler_start, 0);
             Some(HandlerTrace {
                 handler_start_block: handler_start,
@@ -69,7 +70,8 @@ pub fn trace_exception_handlers(ctx: &mut TreeTraceContext<'_>) -> Vec<HandlerTr
         .collect();
 
     // Advance the parent's node ID counter past all handler IDs
-    ctx.advance_node_id(id_base + handler_blocks.len() * id_stride);
+    let total_offset = handler_blocks.len().saturating_mul(id_stride);
+    ctx.advance_node_id(id_base.saturating_add(total_offset));
 
     handler_traces
 }
@@ -159,7 +161,7 @@ pub fn resolve_call_result(
     pointer_size: PointerSize,
 ) -> Option<ConstValue> {
     // Look up the method
-    let method = assembly.method(&method_token)?;
+    let method = assembly.method(&method_token).ok()?;
 
     // Build SSA for the callee
     let callee_ssa = method.ssa(assembly).ok()?;
@@ -281,32 +283,33 @@ pub fn const_producer_target(block: &SsaBlock) -> Option<usize> {
 
 /// Computes statistics for a trace tree.
 pub fn compute_tree_stats(node: &TraceNode, stats: &mut TraceStats, depth: usize) {
-    stats.node_count += 1;
+    stats.node_count = stats.node_count.saturating_add(1);
     stats.max_depth = stats.max_depth.max(depth);
 
+    let next_depth = depth.saturating_add(1);
     match &node.terminator {
         TraceTerminator::Exit { .. } => {
-            stats.exit_count += 1;
+            stats.exit_count = stats.exit_count.saturating_add(1);
         }
         TraceTerminator::StateTransition { continues, .. } => {
-            stats.state_transition_count += 1;
-            compute_tree_stats(continues, stats, depth + 1);
+            stats.state_transition_count = stats.state_transition_count.saturating_add(1);
+            compute_tree_stats(continues, stats, next_depth);
         }
         TraceTerminator::UserBranch {
             true_branch,
             false_branch,
             ..
         } => {
-            stats.user_branch_count += 1;
-            compute_tree_stats(true_branch, stats, depth + 1);
-            compute_tree_stats(false_branch, stats, depth + 1);
+            stats.user_branch_count = stats.user_branch_count.saturating_add(1);
+            compute_tree_stats(true_branch, stats, next_depth);
+            compute_tree_stats(false_branch, stats, next_depth);
         }
         TraceTerminator::UserSwitch { cases, default, .. } => {
-            stats.user_branch_count += 1;
+            stats.user_branch_count = stats.user_branch_count.saturating_add(1);
             for (_, case_node) in cases {
-                compute_tree_stats(case_node, stats, depth + 1);
+                compute_tree_stats(case_node, stats, next_depth);
             }
-            compute_tree_stats(default, stats, depth + 1);
+            compute_tree_stats(default, stats, next_depth);
         }
         TraceTerminator::Stopped { .. } | TraceTerminator::LoopBack { .. } => {}
         TraceTerminator::PendingStateTransition { .. } => {

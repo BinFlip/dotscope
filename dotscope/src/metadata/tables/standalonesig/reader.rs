@@ -81,7 +81,7 @@ impl RowReadable for StandAloneSigRaw {
 
         Ok(StandAloneSigRaw {
             rid,
-            token: Token::new(0x1100_0000 + rid),
+            token: Token::new(0x1100_0000u32.saturating_add(rid)),
             offset: offset_org,
             signature,
         })

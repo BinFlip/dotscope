@@ -34,8 +34,9 @@ use std::{env, path::Path};
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
-    if args.len() != 3 {
-        eprintln!("Usage: {} <input-assembly> <output-assembly>", args[0]);
+    let prog = args.first().map_or("injectcode", String::as_str);
+    let (Some(input_arg), Some(output_arg)) = (args.get(1), args.get(2)) else {
+        eprintln!("Usage: {prog} <input-assembly> <output-assembly>");
         eprintln!();
         eprintln!("This example demonstrates .NET assembly code injection:");
         eprintln!("  - Finding or creating external assembly references");
@@ -46,7 +47,7 @@ fn main() -> Result<()> {
         eprintln!("  - Complete workflow with validation and PE generation");
         eprintln!();
         eprintln!("Example:");
-        eprintln!("  {} input.dll injected.dll", args[0]);
+        eprintln!("  {prog} input.dll injected.dll");
         eprintln!();
         eprintln!("The injected method will be:");
         eprintln!("  public static void PrintHelloWorld()");
@@ -54,10 +55,10 @@ fn main() -> Result<()> {
         eprintln!("      System.Console.WriteLine(\"Hello World from dotscope!\");");
         eprintln!("  }}");
         return Ok(());
-    }
+    };
 
-    let input_path = Path::new(&args[1]);
-    let output_path = Path::new(&args[2]);
+    let input_path = Path::new(input_arg);
+    let output_path = Path::new(output_arg);
 
     println!(".NET Assembly Code Injection Tool");
     println!("Input:  {}", input_path.display());
@@ -136,9 +137,9 @@ fn main() -> Result<()> {
         .build(&mut assembly)?;
 
     // Get placeholder token for use in IL instructions
-    let console_writeline_token = console_writeline_ref
-        .placeholder_token()
-        .expect("Console.WriteLine ChangeRef should be a table row");
+    let console_writeline_token = console_writeline_ref.placeholder_token().ok_or_else(|| {
+        dotscope::Error::Other("Console.WriteLine ChangeRef should be a table row".to_string())
+    })?;
     println!("  Created mscorlib reference");
     println!("  Created Console.WriteLine reference");
     println!();

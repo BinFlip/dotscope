@@ -31,7 +31,8 @@
 use std::{any::Any, sync::Arc};
 
 use crate::{
-    compiler::{PassPhase, SsaPass},
+    analysis::CilTarget,
+    compiler::{CompilerContext, PassPhase, SsaPass},
     deobfuscation::{
         context::AnalysisContext,
         passes::{StaticFieldResolutionPass, StringExtractor},
@@ -39,6 +40,7 @@ use crate::{
     },
     metadata::{
         signatures::TypeSignature,
+        tables::TypeAttributes,
         token::Token,
         typesystem::{wellknown, CilType},
     },
@@ -118,10 +120,18 @@ impl Technique for JiejieNetStrings {
                 let sig = &method.signature;
 
                 // Check for dcsoft signature: string(byte[], int64)
+                let p0_is_szarray = sig
+                    .params
+                    .first()
+                    .is_some_and(|p| matches!(p.base, TypeSignature::SzArray(_)));
+                let p1_is_i8 = sig
+                    .params
+                    .get(1)
+                    .is_some_and(|p| matches!(p.base, TypeSignature::I8));
                 if matches!(sig.return_type.base, TypeSignature::String)
                     && sig.params.len() == 2
-                    && matches!(sig.params[0].base, TypeSignature::SzArray(_))
-                    && matches!(sig.params[1].base, TypeSignature::I8)
+                    && p0_is_szarray
+                    && p1_is_i8
                     && method.is_static()
                 {
                     dcsoft_token = Some(method.token);
@@ -292,7 +302,7 @@ impl Technique for JiejieNetStrings {
         ctx: &AnalysisContext,
         detection: &Detection,
         _assembly: &Arc<CilObject>,
-    ) -> Vec<Box<dyn SsaPass>> {
+    ) -> Vec<Box<dyn SsaPass<CilTarget, CompilerContext>>> {
         let Some(findings) = detection.findings::<StringFindings>() else {
             return Vec::new();
         };
@@ -357,11 +367,11 @@ fn is_byte_array_data_container(cil_type: &CilType) -> bool {
     }
 
     // Check nested types for ExplicitLayout (RVA-backed data storage)
-    let mut explicit_layout_count = 0;
+    let mut explicit_layout_count: usize = 0;
     for (_, nested_ref) in cil_type.nested_types.iter() {
         if let Some(nested) = nested_ref.upgrade() {
-            if nested.flags.layout() == crate::metadata::tables::TypeAttributes::EXPLICIT_LAYOUT {
-                explicit_layout_count += 1;
+            if nested.flags.layout() == TypeAttributes::EXPLICIT_LAYOUT {
+                explicit_layout_count = explicit_layout_count.saturating_add(1);
             }
         }
     }
@@ -371,15 +381,15 @@ fn is_byte_array_data_container(cil_type: &CilType) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+
     use crate::{
-        deobfuscation::techniques::{
-            jiejienet::strings::{JiejieNetStrings, StringFindings},
-            Technique,
-        },
-        emulation::{EmValue, EmulationOutcome},
+        deobfuscation::techniques::Technique,
+        emulation::{EmValue, EmulationOutcome, ProcessBuilder},
         test::helpers::load_sample,
     };
-    use std::sync::Arc;
 
     #[test]
     fn test_detect_positive_strings_only() {
@@ -454,8 +464,6 @@ mod tests {
     /// first (dependency), then the string class .cctor, and checks the results.
     #[test]
     fn test_emulate_string_cctor() {
-        use crate::emulation::ProcessBuilder;
-
         let asm = load_sample("tests/samples/packers/jiejie/source/jiejie_strings_only.exe");
         let technique = JiejieNetStrings;
         let detection = technique.detect(&asm);

@@ -37,7 +37,7 @@ impl RowReadable for ExportedTypeRaw {
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(ExportedTypeRaw {
             rid,
-            token: Token::new(0x2700_0000 + rid),
+            token: Token::new(0x2700_0000u32.saturating_add(rid)),
             offset: *offset,
             flags: read_le_at::<u32>(data, offset)?,
             type_def_id: read_le_at::<u32>(data, offset)?,

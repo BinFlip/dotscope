@@ -253,56 +253,47 @@ impl<'a> Decoder<'a> {
         // Create blocks for exception handler entry points
         // These must be created explicitly as they may not be reachable via normal control flow
         if let Some(exceptions) = self.exceptions {
+            // Collect entry-point candidates first (handler/filter/try) to avoid
+            // borrow conflicts between iterating `self.exceptions` and mutating self.
+            let rva_base = self.rva_start as u64;
+            let mut candidates: Vec<(u64, u32)> =
+                Vec::with_capacity(exceptions.len().saturating_mul(3));
             for handler in exceptions {
-                // Handler entry block (catch/finally/fault)
-                let handler_rva = self.rva_start as u64 + u64::from(handler.handler_offset);
-                if !entry_points.contains(&handler_rva) {
-                    let handler_offset = self.offset_start + handler.handler_offset as usize;
-                    if handler_offset < self.parser.len() && !self.visited.get(handler_offset) {
-                        self.blocks.push(BasicBlock::new(
-                            self.blocks.len(),
-                            handler_rva,
-                            handler_offset,
-                        ));
-                        entry_points.insert(handler_rva);
-                    }
-                }
-
-                // Filter entry block (for filter handlers)
+                let handler_rva = rva_base
+                    .checked_add(u64::from(handler.handler_offset))
+                    .ok_or(out_of_bounds_error!())?;
+                candidates.push((handler_rva, handler.handler_offset));
                 if handler.filter_offset > 0 {
-                    let filter_rva = self.rva_start as u64 + u64::from(handler.filter_offset);
-                    if !entry_points.contains(&filter_rva) {
-                        let filter_offset = self.offset_start + handler.filter_offset as usize;
-                        if filter_offset < self.parser.len() && !self.visited.get(filter_offset) {
-                            self.blocks.push(BasicBlock::new(
-                                self.blocks.len(),
-                                filter_rva,
-                                filter_offset,
-                            ));
-                            entry_points.insert(filter_rva);
-                        }
-                    }
+                    let filter_rva = rva_base
+                        .checked_add(u64::from(handler.filter_offset))
+                        .ok_or(out_of_bounds_error!())?;
+                    candidates.push((filter_rva, handler.filter_offset));
                 }
+                let try_rva = rva_base
+                    .checked_add(u64::from(handler.try_offset))
+                    .ok_or(out_of_bounds_error!())?;
+                candidates.push((try_rva, handler.try_offset));
+            }
 
-                // Try region entry block
-                // This must be created explicitly when try_offset > 0, otherwise the
-                // block starting at method entry will stop at this entry point but there
-                // will be no block to continue decoding the try region content.
-                let try_rva = self.rva_start as u64 + u64::from(handler.try_offset);
-                if !entry_points.contains(&try_rva) {
-                    let try_offset = self.offset_start + handler.try_offset as usize;
-                    if try_offset < self.parser.len() && !self.visited.get(try_offset) {
-                        self.blocks
-                            .push(BasicBlock::new(self.blocks.len(), try_rva, try_offset));
-                        entry_points.insert(try_rva);
-                    }
+            for (entry_rva, entry_offset_u32) in candidates {
+                if entry_points.contains(&entry_rva) {
+                    continue;
+                }
+                let entry_offset = self
+                    .offset_start
+                    .checked_add(entry_offset_u32 as usize)
+                    .ok_or(out_of_bounds_error!())?;
+                if entry_offset < self.parser.len() && !self.visited.get(entry_offset) {
+                    self.blocks
+                        .push(BasicBlock::new(self.blocks.len(), entry_rva, entry_offset));
+                    entry_points.insert(entry_rva);
                 }
             }
         }
 
         while self.block_id < self.blocks.len() {
             self.decode_single_block(&mut entry_points)?;
-            self.block_id += 1;
+            self.block_id = self.block_id.checked_add(1).ok_or(out_of_bounds_error!())?;
         }
 
         self.blocks.retain(|b| !b.instructions.is_empty());
@@ -312,9 +303,9 @@ impl<'a> Decoder<'a> {
             block.id = idx;
         }
 
-        self.process_exception_handlers();
+        self.process_exception_handlers()?;
         self.wire_control_flow_edges();
-        self.wire_exception_edges();
+        self.wire_exception_edges()?;
 
         Ok(())
     }
@@ -354,25 +345,30 @@ impl<'a> Decoder<'a> {
     fn decode_single_block(&mut self, entry_points: &mut HashSet<u64>) -> Result<()> {
         let block_id = self.block_id;
 
-        if self.blocks[block_id].offset > self.parser.len() {
+        let (block_offset, block_rva) = {
+            let block = self.blocks.get(block_id).ok_or(out_of_bounds_error!())?;
+            (block.offset, block.rva)
+        };
+
+        if block_offset > self.parser.len() {
             return Err(out_of_bounds_error!());
         }
 
-        if self.visited.get(self.blocks[block_id].offset) {
+        if self.visited.get(block_offset) {
             return Ok(());
         }
 
-        self.parser.seek(self.blocks[block_id].offset)?;
+        self.parser.seek(block_offset)?;
 
-        let mut current_offset = self.blocks[block_id].offset;
-        let mut current_rva = self.blocks[block_id].rva;
+        let mut current_offset = block_offset;
+        let mut current_rva = block_rva;
 
         loop {
             if current_offset >= self.parser.len() {
                 break;
             }
 
-            if current_rva != self.blocks[block_id].rva && entry_points.contains(&current_rva) {
+            if current_rva != block_rva && entry_points.contains(&current_rva) {
                 // We've reached the start of another block - stop here
                 break;
             }
@@ -387,8 +383,17 @@ impl<'a> Decoder<'a> {
 
             self.visited.set_range(current_offset, true, instr_size);
 
-            self.blocks[block_id].size += instr_size;
-            self.blocks[block_id].instructions.push(instruction.clone());
+            {
+                let block = self
+                    .blocks
+                    .get_mut(block_id)
+                    .ok_or(out_of_bounds_error!())?;
+                block.size = block
+                    .size
+                    .checked_add(instr_size)
+                    .ok_or_else(|| malformed_error!("block size overflow"))?;
+                block.instructions.push(instruction.clone());
+            }
 
             match instruction.flow_type {
                 FlowType::ConditionalBranch => {
@@ -396,7 +401,9 @@ impl<'a> Decoder<'a> {
                         self.add_entry_point(target_rva, entry_points);
                     }
 
-                    let fall_through_rva = current_rva + instruction.size;
+                    let fall_through_rva = current_rva
+                        .checked_add(instruction.size)
+                        .ok_or_else(|| malformed_error!("fall-through RVA overflow"))?;
                     self.add_entry_point(fall_through_rva, entry_points);
 
                     break;
@@ -413,7 +420,9 @@ impl<'a> Decoder<'a> {
                         self.add_entry_point(target_rva, entry_points);
                     }
                     // Add fall-through as entry point for the default case
-                    let fall_through_rva = current_rva + instruction.size;
+                    let fall_through_rva = current_rva
+                        .checked_add(instruction.size)
+                        .ok_or_else(|| malformed_error!("fall-through RVA overflow"))?;
                     self.add_entry_point(fall_through_rva, entry_points);
                     break;
                 }
@@ -425,8 +434,12 @@ impl<'a> Decoder<'a> {
                 }
             }
 
-            current_offset += instr_size;
-            current_rva += instruction.size;
+            current_offset = current_offset
+                .checked_add(instr_size)
+                .ok_or_else(|| malformed_error!("instruction offset overflow"))?;
+            current_rva = current_rva
+                .checked_add(instruction.size)
+                .ok_or_else(|| malformed_error!("instruction RVA overflow"))?;
         }
 
         Ok(())
@@ -467,10 +480,15 @@ impl<'a> Decoder<'a> {
             return;
         }
 
-        let Ok(relative_offset) = usize::try_from(rva - self.rva_start as u64) else {
+        let Some(delta) = rva.checked_sub(self.rva_start as u64) else {
+            return;
+        };
+        let Ok(relative_offset) = usize::try_from(delta) else {
             return; // RVA delta too large for this platform
         };
-        let offset = self.offset_start + relative_offset;
+        let Some(offset) = self.offset_start.checked_add(relative_offset) else {
+            return;
+        };
         if offset >= self.parser.len() {
             return;
         }
@@ -508,7 +526,7 @@ impl<'a> Decoder<'a> {
                 return None;
             }
 
-            let block_end_rva = block.rva + block.size as u64;
+            let block_end_rva = block.rva.checked_add(block.size as u64)?;
             if rva > block.rva && rva < block_end_rva {
                 for (instr_idx, instr) in block.instructions.iter().enumerate() {
                     if instr.rva == rva {
@@ -557,18 +575,22 @@ impl<'a> Decoder<'a> {
 
         // Create new block with instructions from split point onwards
         let mut new_block = BasicBlock::new(self.blocks.len(), rva, offset);
-        new_block.instructions = self.blocks[block_idx].instructions[split_instr_idx..].to_vec();
+        let Some(orig) = self.blocks.get(block_idx) else {
+            return;
+        };
+        let Some(tail) = orig.instructions.get(split_instr_idx..) else {
+            return;
+        };
+        new_block.instructions = tail.to_vec();
         new_block.size = Self::compute_instructions_size(&new_block.instructions);
-        new_block
-            .exceptions
-            .clone_from(&self.blocks[block_idx].exceptions);
+        new_block.exceptions.clone_from(&orig.exceptions);
 
         // Truncate the original block
-        self.blocks[block_idx]
-            .instructions
-            .truncate(split_instr_idx);
-        self.blocks[block_idx].size =
-            Self::compute_instructions_size(&self.blocks[block_idx].instructions);
+        let Some(orig_mut) = self.blocks.get_mut(block_idx) else {
+            return;
+        };
+        orig_mut.instructions.truncate(split_instr_idx);
+        orig_mut.size = Self::compute_instructions_size(&orig_mut.instructions);
 
         self.blocks.push(new_block);
     }
@@ -618,9 +640,9 @@ impl<'a> Decoder<'a> {
     /// This method should be called after all blocks have been decoded and before
     /// control flow edges are wired, as the exception associations may affect
     /// control flow analysis.
-    fn process_exception_handlers(&mut self) {
+    fn process_exception_handlers(&mut self) -> Result<()> {
         let Some(exceptions) = self.exceptions else {
-            return;
+            return Ok(());
         };
 
         // Build a map from RVA to block index for handler entry detection
@@ -636,8 +658,12 @@ impl<'a> Decoder<'a> {
         let base_rva = self.rva_start as u64;
 
         for (handler_idx, handler) in exceptions.iter().enumerate() {
-            let try_start = base_rva + u64::from(handler.try_offset);
-            let try_end = try_start + u64::from(handler.try_length);
+            let try_start = base_rva
+                .checked_add(u64::from(handler.try_offset))
+                .ok_or_else(|| malformed_error!("try_offset RVA overflow"))?;
+            let try_end = try_start
+                .checked_add(u64::from(handler.try_length))
+                .ok_or_else(|| malformed_error!("try region end RVA overflow"))?;
 
             // Mark blocks in the try region
             for block in &mut self.blocks {
@@ -647,24 +673,31 @@ impl<'a> Decoder<'a> {
             }
 
             // Mark handler entry block
-            let handler_rva = base_rva + u64::from(handler.handler_offset);
+            let handler_rva = base_rva
+                .checked_add(u64::from(handler.handler_offset))
+                .ok_or_else(|| malformed_error!("handler_offset RVA overflow"))?;
             if let Some(&handler_block_idx) = rva_to_block.get(&handler_rva) {
-                self.blocks[handler_block_idx].handler_entry =
-                    Some(HandlerEntryInfo::new(handler_idx, handler.flags));
+                if let Some(b) = self.blocks.get_mut(handler_block_idx) {
+                    b.handler_entry = Some(HandlerEntryInfo::new(handler_idx, handler.flags));
+                }
             }
 
             // Mark filter entry block (for filter handlers)
             if handler.flags == ExceptionHandlerFlags::FILTER && handler.filter_offset > 0 {
-                let filter_rva = base_rva + u64::from(handler.filter_offset);
+                let filter_rva = base_rva
+                    .checked_add(u64::from(handler.filter_offset))
+                    .ok_or_else(|| malformed_error!("filter_offset RVA overflow"))?;
                 if let Some(&filter_block_idx) = rva_to_block.get(&filter_rva) {
-                    // Filter blocks also receive the exception object
-                    self.blocks[filter_block_idx].handler_entry = Some(HandlerEntryInfo::new(
-                        handler_idx,
-                        ExceptionHandlerFlags::FILTER,
-                    ));
+                    if let Some(b) = self.blocks.get_mut(filter_block_idx) {
+                        b.handler_entry = Some(HandlerEntryInfo::new(
+                            handler_idx,
+                            ExceptionHandlerFlags::FILTER,
+                        ));
+                    }
                 }
             }
         }
+        Ok(())
     }
 
     /// Wire exception edges from protected blocks to their handler blocks.
@@ -679,9 +712,9 @@ impl<'a> Decoder<'a> {
     /// instruction in a protected region can potentially transfer control to
     /// the handler. For analysis purposes, we model this as an edge from the
     /// block to the handler entry block.
-    fn wire_exception_edges(&mut self) {
+    fn wire_exception_edges(&mut self) -> Result<()> {
         let Some(exceptions) = self.exceptions else {
-            return;
+            return Ok(());
         };
 
         // Build a map from RVA to block index
@@ -698,13 +731,19 @@ impl<'a> Decoder<'a> {
 
         // For each handler, wire edges from protected blocks to handler blocks
         for handler in exceptions {
-            let handler_rva = base_rva + u64::from(handler.handler_offset);
+            let handler_rva = base_rva
+                .checked_add(u64::from(handler.handler_offset))
+                .ok_or_else(|| malformed_error!("handler_offset RVA overflow"))?;
             let Some(&handler_block_idx) = rva_to_block.get(&handler_rva) else {
                 continue;
             };
 
-            let try_start = base_rva + u64::from(handler.try_offset);
-            let try_end = try_start + u64::from(handler.try_length);
+            let try_start = base_rva
+                .checked_add(u64::from(handler.try_offset))
+                .ok_or_else(|| malformed_error!("try_offset RVA overflow"))?;
+            let try_end = try_start
+                .checked_add(u64::from(handler.try_length))
+                .ok_or_else(|| malformed_error!("try region end RVA overflow"))?;
 
             for block in &mut self.blocks {
                 if block.rva >= try_start && block.rva < try_end {
@@ -715,6 +754,7 @@ impl<'a> Decoder<'a> {
                 }
             }
         }
+        Ok(())
     }
 
     /// Wire up control flow edges (successors/predecessors) between blocks.
@@ -749,11 +789,13 @@ impl<'a> Decoder<'a> {
         for block_idx in 0..self.blocks.len() {
             let successors = self.compute_block_successors(block_idx, &rva_to_block);
 
-            self.blocks[block_idx].successors.clone_from(&successors);
+            if let Some(b) = self.blocks.get_mut(block_idx) {
+                b.successors.clone_from(&successors);
+            }
 
             for &succ_idx in &successors {
-                if succ_idx < self.blocks.len() {
-                    self.blocks[succ_idx].predecessors.push(block_idx);
+                if let Some(b) = self.blocks.get_mut(succ_idx) {
+                    b.predecessors.push(block_idx);
                 }
             }
         }
@@ -791,10 +833,13 @@ impl<'a> Decoder<'a> {
         block_idx: usize,
         rva_to_block: &HashMap<u64, usize>,
     ) -> Vec<usize> {
-        let block = &self.blocks[block_idx];
+        let Some(block) = self.blocks.get(block_idx) else {
+            return vec![];
+        };
         let Some(last_instr) = block.instructions.last() else {
             return vec![];
         };
+        let fall_through_rva = block.rva.checked_add(block.size as u64);
 
         match last_instr.flow_type {
             FlowType::Return | FlowType::Throw => {
@@ -821,9 +866,10 @@ impl<'a> Decoder<'a> {
                 }
 
                 // Add fall-through target (instruction immediately after this block)
-                let fall_through_rva = block.rva + block.size as u64;
-                if let Some(&fall_through_idx) = rva_to_block.get(&fall_through_rva) {
-                    successors.push(fall_through_idx);
+                if let Some(rva) = fall_through_rva {
+                    if let Some(&fall_through_idx) = rva_to_block.get(&rva) {
+                        successors.push(fall_through_idx);
+                    }
                 }
 
                 successors
@@ -837,9 +883,10 @@ impl<'a> Decoder<'a> {
                     .collect();
 
                 // Add fall-through as the default (last successor)
-                let fall_through_rva = block.rva + block.size as u64;
-                if let Some(&fall_through_idx) = rva_to_block.get(&fall_through_rva) {
-                    successors.push(fall_through_idx);
+                if let Some(rva) = fall_through_rva {
+                    if let Some(&fall_through_idx) = rva_to_block.get(&rva) {
+                        successors.push(fall_through_idx);
+                    }
                 }
 
                 successors
@@ -858,10 +905,9 @@ impl<'a> Decoder<'a> {
             }
             FlowType::Sequential | FlowType::Call => {
                 // Fall through to next block
-                let fall_through_rva = block.rva + block.size as u64;
-                rva_to_block
-                    .get(&fall_through_rva)
-                    .map(|&idx| vec![idx])
+                fall_through_rva
+                    .and_then(|rva| rva_to_block.get(&rva).copied())
+                    .map(|idx| vec![idx])
                     .unwrap_or_default()
             }
         }
@@ -949,10 +995,13 @@ pub(crate) fn decode_method(
         }
 
         let mut parser = Parser::new(file.data());
+        let rva_start = rva
+            .checked_add(body.size_header)
+            .ok_or_else(|| malformed_error!("rva + size_header overflow"))?;
         let mut decoder = Decoder::new(
             &mut parser,
             code_start,
-            rva + body.size_header,
+            rva_start,
             Some(&body.exception_handlers),
             shared_visited,
         )?;
@@ -1036,9 +1085,9 @@ pub fn decode_blocks(
 
     let effective_data = if let Some(size) = max_size {
         let end_offset = offset.saturating_add(size).min(data.len());
-        &data[offset..end_offset]
+        data.get(offset..end_offset).ok_or(out_of_bounds_error!())?
     } else {
-        &data[offset..]
+        data.get(offset..).ok_or(out_of_bounds_error!())?
     };
 
     let mut parser = Parser::new(effective_data);
@@ -1123,7 +1172,14 @@ pub fn decode_stream(parser: &mut Parser, rva: u64) -> Result<Vec<Instruction>> 
 
         instructions.push(instruction);
 
-        current_rva += (parser.pos() - current_offset) as u64;
+        let consumed = parser
+            .pos()
+            .checked_sub(current_offset)
+            .ok_or_else(|| malformed_error!("parser position regressed during decode"))?
+            as u64;
+        current_rva = current_rva
+            .checked_add(consumed)
+            .ok_or_else(|| malformed_error!("instruction stream RVA overflow"))?;
     }
 
     Ok(instructions)
@@ -1251,7 +1307,9 @@ pub fn decode_instruction(parser: &mut Parser, rva: u64) -> Result<Instruction> 
             Operand::Switch(targets)
         }
     };
-    let size = parser.pos() as u64 - offset;
+    let size = (parser.pos() as u64)
+        .checked_sub(offset)
+        .ok_or_else(|| malformed_error!("instruction size underflow"))?;
 
     let mut instruction = Instruction {
         rva,
@@ -1265,9 +1323,11 @@ pub fn decode_instruction(parser: &mut Parser, rva: u64) -> Result<Instruction> 
         stack_behavior: StackBehavior {
             pops: cil_instruction.stack_pops,
             pushes: cil_instruction.stack_pushes,
-            // Allow wrapping cast - stack effects can legitimately be negative
+            // Stack effects are bounded: per ECMA-335 individual instructions push/pop
+            // a small number of stack slots, so this fits in i8 with `wrapping_sub`.
             #[allow(clippy::cast_possible_wrap)]
-            net_effect: cil_instruction.stack_pushes as i8 - cil_instruction.stack_pops as i8,
+            net_effect: (cil_instruction.stack_pushes as i8)
+                .wrapping_sub(cil_instruction.stack_pops as i8),
         },
         branch_targets: Vec::new(),
         operand,
@@ -1278,7 +1338,9 @@ pub fn decode_instruction(parser: &mut Parser, rva: u64) -> Result<Instruction> 
             // All branch-type instructions have their target computed from an immediate offset
             // This includes leave/leave.s which exit protected regions to a specific target
             if let Operand::Immediate(value) = instruction.operand {
-                let next_instruction_rva = rva + instruction.size;
+                let next_instruction_rva = rva
+                    .checked_add(instruction.size)
+                    .ok_or_else(|| malformed_error!("branch instruction RVA overflow"))?;
                 let branch_offset = <Immediate as Into<u64>>::into(value);
                 instruction
                     .branch_targets
@@ -1287,7 +1349,9 @@ pub fn decode_instruction(parser: &mut Parser, rva: u64) -> Result<Instruction> 
         }
         FlowType::Switch => {
             if let Operand::Switch(targets) = &instruction.operand {
-                let next_instruction_rva = rva + instruction.size;
+                let next_instruction_rva = rva
+                    .checked_add(instruction.size)
+                    .ok_or_else(|| malformed_error!("switch instruction RVA overflow"))?;
                 for &target in targets {
                     // Sign-extend i32 offset to i64 for proper signed arithmetic
                     let offset = i64::from(target);

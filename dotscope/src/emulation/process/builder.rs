@@ -100,7 +100,7 @@ use crate::{
         token::Token,
         typesystem::PointerSize,
     },
-    CilObject, Result,
+    CilObject, Error, Result,
 };
 
 /// Pre-populates static fields with data from the FieldRVA table.
@@ -136,7 +136,7 @@ fn populate_fieldrva_statics(assembly: &CilObject, address_space: &AddressSpace)
     let types = assembly.types();
     let file = assembly.file();
     let pe_data = file.data();
-    let ptr_size = PointerSize::from_pe(file.pe().is_64bit);
+    let ptr_size = PointerSize::from_is_64bit(file.pe().is_64bit);
 
     for row in fieldrva_table {
         if row.rva == 0 {
@@ -156,28 +156,35 @@ fn populate_fieldrva_statics(assembly: &CilObject, address_space: &AddressSpace)
             continue;
         };
 
-        if file_offset + field_type_size > pe_data.len() {
+        let Some(end) = file_offset.checked_add(field_type_size) else {
             continue;
-        }
-
-        // Read the bytes from the PE file
-        let data = &pe_data[file_offset..file_offset + field_type_size];
+        };
+        let Some(data) = pe_data.get(file_offset..end) else {
+            continue;
+        };
 
         // Convert to EmValue based on size
         let value = match field_type_size {
-            1 => EmValue::I32(i32::from(data[0].cast_signed())),
+            1 => {
+                let Some(b) = data.first() else { continue };
+                EmValue::I32(i32::from(b.cast_signed()))
+            }
             2 => {
-                let bytes = [data[0], data[1]];
+                let Ok(bytes) = <[u8; 2]>::try_from(data) else {
+                    continue;
+                };
                 EmValue::I32(i32::from(i16::from_le_bytes(bytes)))
             }
             4 => {
-                let bytes = [data[0], data[1], data[2], data[3]];
+                let Ok(bytes) = <[u8; 4]>::try_from(data) else {
+                    continue;
+                };
                 EmValue::I32(i32::from_le_bytes(bytes))
             }
             8 => {
-                let bytes = [
-                    data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-                ];
+                let Ok(bytes) = <[u8; 8]>::try_from(data) else {
+                    continue;
+                };
                 EmValue::I64(i64::from_le_bytes(bytes))
             }
             _ => continue,
@@ -1232,7 +1239,7 @@ impl ProcessBuilder {
             let mut writer = if let Some(ref path) = config_arc.tracing.output_path {
                 // File-based tracing - propagate errors to caller
                 TraceWriter::new_file(path, context).map_err(|e| {
-                    crate::Error::TracingError(format!(
+                    Error::TracingError(format!(
                         "Failed to create trace file {}: {e}",
                         path.display()
                     ))

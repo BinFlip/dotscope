@@ -43,13 +43,11 @@
 
 mod alignment;
 mod base64;
-mod bitset;
 mod compression;
 mod crypto;
 mod decompress;
 mod dot;
 mod enums;
-pub(crate) mod graph;
 mod hash;
 mod heap_calc;
 mod io;
@@ -61,7 +59,6 @@ mod visitedmap;
 pub use alignment::align_to;
 #[cfg(feature = "emulation")]
 pub use base64::{base64_decode, base64_encode};
-pub use bitset::BitSet;
 pub use compression::compressed_uint_size;
 pub use dot::escape_dot;
 pub use enums::EnumUtils;
@@ -78,8 +75,6 @@ pub use io::{
 };
 #[cfg(feature = "emulation")]
 pub use lebytes::LeBytes;
-#[cfg(feature = "compiler")]
-pub use math::is_power_of_two;
 #[cfg(feature = "emulation")]
 pub use math::to_i32_saturating;
 pub use math::to_u32;

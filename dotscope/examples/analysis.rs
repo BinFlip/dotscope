@@ -209,22 +209,22 @@ fn display_diagnostics(diagnostics: &Arc<Diagnostics>) {
     }
 
     eprintln!("\n=== Loading Diagnostics ===");
-    let mut error_count = 0;
-    let mut warning_count = 0;
-    let mut info_count = 0;
+    let mut error_count: u64 = 0;
+    let mut warning_count: u64 = 0;
+    let mut info_count: u64 = 0;
 
     for entry in diagnostics.iter() {
         let prefix = match entry.severity {
             DiagnosticSeverity::Error => {
-                error_count += 1;
+                error_count = error_count.saturating_add(1);
                 "ERROR"
             }
             DiagnosticSeverity::Warning => {
-                warning_count += 1;
+                warning_count = warning_count.saturating_add(1);
                 "WARNING"
             }
             DiagnosticSeverity::Info => {
-                info_count += 1;
+                info_count = info_count.saturating_add(1);
                 "INFO"
             }
         };
@@ -261,7 +261,7 @@ fn list_methods(assembly: &CilObject) -> Result<(), Box<dyn std::error::Error>> 
     println!("\n=== Methods in Assembly ===\n");
 
     let methods = assembly.methods();
-    let mut count = 0;
+    let mut count: u64 = 0;
 
     for entry in methods {
         let method = entry.value();
@@ -269,7 +269,7 @@ fn list_methods(assembly: &CilObject) -> Result<(), Box<dyn std::error::Error>> 
             if rva > 0 {
                 let type_name = get_method_type_name(assembly, method.token);
                 println!("  0x{:08X}  {}::{}", rva, type_name, method.name);
-                count += 1;
+                count = count.saturating_add(1);
             }
         }
     }
@@ -327,13 +327,16 @@ fn find_method_by_name(
 
     match matches.len() {
         0 => Err(format!("No method found matching '{}'", name).into()),
-        1 => Ok(matches.into_iter().next().unwrap().1),
+        1 => match matches.into_iter().next() {
+            Some((_, method)) => Ok(method),
+            None => Err("Internal error: no matches after len() == 1".into()),
+        },
         _ => {
             eprintln!("Multiple methods match '{}':", name);
             for (i, (full_name, method)) in matches.iter().enumerate() {
                 eprintln!(
                     "  {}. {} (RVA: 0x{:08X})",
-                    i + 1,
+                    i.saturating_add(1),
                     full_name,
                     method.rva.unwrap_or(0)
                 );
@@ -362,7 +365,8 @@ fn display_disasm(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let type_name = get_method_type_name(assembly, method.token);
     let rva = method.rva.unwrap_or(0);
-    let num_args = method.signature.param_count as usize + usize::from(method.signature.has_this);
+    let num_args = (method.signature.param_count as usize)
+        .saturating_add(usize::from(method.signature.has_this));
     let num_locals = method.local_vars.count();
 
     println!("\n{}", "=".repeat(80));
@@ -402,7 +406,8 @@ fn display_ssa_method(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let type_name = get_method_type_name(assembly, method.token);
     let rva = method.rva.unwrap_or(0);
-    let num_args = method.signature.param_count as usize + usize::from(method.signature.has_this);
+    let num_args = (method.signature.param_count as usize)
+        .saturating_add(usize::from(method.signature.has_this));
     let num_locals = method.local_vars.count();
 
     println!("\n{}", "=".repeat(80));
@@ -441,7 +446,8 @@ fn display_ssa_deobfuscated(
     };
     let type_name = get_method_type_name(&assembly, method.token);
     let rva = method.rva.unwrap_or(0);
-    let num_args = method.signature.param_count as usize + usize::from(method.signature.has_this);
+    let num_args = (method.signature.param_count as usize)
+        .saturating_add(usize::from(method.signature.has_this));
     let num_locals = method.local_vars.count();
 
     println!("\n{}", "=".repeat(80));

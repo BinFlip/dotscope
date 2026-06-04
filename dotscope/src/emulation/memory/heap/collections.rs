@@ -404,8 +404,8 @@ impl ManagedHeap {
                 description: "managed heap",
             })?;
         if let Some(HeapObject::List { elements }) = state.objects.get_mut(&heap_ref.id()) {
-            if index < elements.len() {
-                elements[index] = value;
+            if let Some(slot) = elements.get_mut(index) {
+                *slot = value;
             }
         }
         Ok(())

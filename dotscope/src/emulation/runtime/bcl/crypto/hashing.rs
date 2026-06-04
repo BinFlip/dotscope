@@ -189,7 +189,7 @@ fn md5_compute_hash_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> 
         return PreHookResult::Bypass(Some(EmValue::Null));
     }
 
-    if let EmValue::ObjectRef(handle) = &ctx.args[0] {
+    if let Some(EmValue::ObjectRef(handle)) = ctx.args.first() {
         if let Some(bytes) = try_hook!(thread.heap().get_byte_array(*handle)) {
             let hash = compute_md5(&bytes);
             match thread.heap().alloc_byte_array(&hash) {
@@ -236,11 +236,11 @@ fn hash_algorithm_compute_hash_pre(
         (default_algo.into(), None)
     };
 
-    if ctx.args.is_empty() {
+    let Some(first_arg) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::Null));
-    }
+    };
 
-    match &ctx.args[0] {
+    match first_arg {
         EmValue::ObjectRef(handle) => {
             if let Some(bytes) = try_hook!(thread.heap().get_byte_array(*handle)) {
                 let hash = match &*hash_type {
@@ -333,11 +333,11 @@ fn sha256_create_pre(_ctx: &HookContext<'_>, thread: &mut EmulationThread) -> Pr
 /// - `inputStream`: Stream to read and hash (overload 3)
 #[cfg(feature = "legacy-crypto")]
 fn sha1_compute_hash_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(first_arg) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::Null));
-    }
+    };
 
-    match &ctx.args[0] {
+    match first_arg {
         EmValue::ObjectRef(handle) => {
             if let Some(bytes) = try_hook!(thread.heap().get_byte_array(*handle)) {
                 let hash = compute_sha1(&bytes);
@@ -370,11 +370,11 @@ fn sha1_compute_hash_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) ->
 /// - `count`: Number of bytes to hash (overload 2)
 /// - `inputStream`: Stream to read and hash (overload 3)
 fn sha256_compute_hash_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(first_arg) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::Null));
-    }
+    };
 
-    match &ctx.args[0] {
+    match first_arg {
         EmValue::ObjectRef(handle) => {
             if let Some(bytes) = try_hook!(thread.heap().get_byte_array(*handle)) {
                 let hash = compute_sha256(&bytes);
@@ -427,9 +427,9 @@ fn hash_algorithm_transform_block_pre(
         _ => input_bytes.len(),
     };
 
-    let end = (offset + count).min(input_bytes.len());
-    let slice = if offset < input_bytes.len() {
-        &input_bytes[offset..end]
+    let end = offset.saturating_add(count).min(input_bytes.len());
+    let slice: &[u8] = if offset < input_bytes.len() {
+        input_bytes.get(offset..end).unwrap_or(&[])
     } else {
         &[]
     };
@@ -446,7 +446,7 @@ fn hash_algorithm_transform_block_pre(
         for (i, &byte) in slice.iter().enumerate() {
             try_hook!(thread.heap_mut().set_array_element(
                 *output_handle,
-                output_offset + i,
+                output_offset.saturating_add(i),
                 EmValue::I32(i32::from(byte)),
             ));
         }
@@ -503,9 +503,11 @@ fn hash_algorithm_transform_final_block_pre(
         _ => input_bytes.len(),
     };
 
-    let end = (offset + count).min(input_bytes.len());
+    let end = offset.saturating_add(count).min(input_bytes.len());
     let slice = if offset < input_bytes.len() {
-        input_bytes[offset..end].to_vec()
+        input_bytes
+            .get(offset..end)
+            .map_or_else(Vec::new, <[u8]>::to_vec)
     } else {
         Vec::new()
     };

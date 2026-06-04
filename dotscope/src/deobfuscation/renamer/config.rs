@@ -8,8 +8,9 @@ use std::path::PathBuf;
 /// Configuration for the smart renaming pipeline.
 ///
 /// Controls the local inference backend (mistral.rs) and the cascade
-/// renaming pipeline parameters. When `None` in [`CleanupConfig`], the
-/// simple sequential renamer is used instead.
+/// renaming pipeline parameters. When `None` in
+/// [`CleanupConfig`](crate::deobfuscation::CleanupConfig), the simple
+/// sequential renamer is used instead.
 ///
 /// # Feature Gate
 ///

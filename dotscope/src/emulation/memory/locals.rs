@@ -115,14 +115,10 @@ impl LocalVariables {
     ///
     /// Returns [`EmulationError::LocalIndexOutOfBounds`] if index is invalid.
     pub fn get(&self, index: usize) -> Result<&EmValue> {
-        if index >= self.values.len() {
-            return Err(EmulationError::LocalIndexOutOfBounds {
-                index,
-                count: self.values.len(),
-            }
-            .into());
-        }
-        Ok(&self.values[index])
+        let count = self.values.len();
+        self.values
+            .get(index)
+            .ok_or_else(|| EmulationError::LocalIndexOutOfBounds { index, count }.into())
     }
 
     /// Gets a mutable reference to a local variable.
@@ -135,14 +131,10 @@ impl LocalVariables {
     ///
     /// Returns [`EmulationError::LocalIndexOutOfBounds`] if index is invalid.
     pub fn get_mut(&mut self, index: usize) -> Result<&mut EmValue> {
-        if index >= self.values.len() {
-            return Err(EmulationError::LocalIndexOutOfBounds {
-                index,
-                count: self.values.len(),
-            }
-            .into());
-        }
-        Ok(&mut self.values[index])
+        let count = self.values.len();
+        self.values
+            .get_mut(index)
+            .ok_or_else(|| EmulationError::LocalIndexOutOfBounds { index, count }.into())
     }
 
     /// Sets the value of a local variable.
@@ -167,13 +159,10 @@ impl LocalVariables {
     /// When a type mismatch is detected, the local's declared type is updated to
     /// match the stored value, ensuring subsequent loads work correctly.
     pub fn set(&mut self, index: usize, value: EmValue) -> Result<()> {
-        if index >= self.values.len() {
-            return Err(EmulationError::LocalIndexOutOfBounds {
-                index,
-                count: self.values.len(),
-            }
-            .into());
-        }
+        let count = self.values.len();
+        let slot = self.values.get_mut(index).ok_or_else(|| -> crate::Error {
+            EmulationError::LocalIndexOutOfBounds { index, count }.into()
+        })?;
 
         // Match .NET runtime behavior: accept all types for local stores.
         // If the stored value's type differs from the declared type, update the
@@ -181,12 +170,15 @@ impl LocalVariables {
         // CFF obfuscation where different code paths store different types.
         if !value.is_symbolic() {
             let found = value.cil_flavor();
-            if !self.types[index].is_stack_assignable_from(&found) {
-                self.types[index] = found;
+            let type_slot = self.types.get_mut(index).ok_or_else(|| -> crate::Error {
+                EmulationError::LocalIndexOutOfBounds { index, count }.into()
+            })?;
+            if !type_slot.is_stack_assignable_from(&found) {
+                *type_slot = found;
             }
         }
 
-        self.values[index] = value;
+        *slot = value;
         Ok(())
     }
 
@@ -200,14 +192,10 @@ impl LocalVariables {
     ///
     /// Returns error if index is invalid.
     pub fn get_type(&self, index: usize) -> Result<&CilFlavor> {
-        if index >= self.types.len() {
-            return Err(EmulationError::LocalIndexOutOfBounds {
-                index,
-                count: self.types.len(),
-            }
-            .into());
-        }
-        Ok(&self.types[index])
+        let count = self.types.len();
+        self.types
+            .get(index)
+            .ok_or_else(|| EmulationError::LocalIndexOutOfBounds { index, count }.into())
     }
 
     /// Returns the number of local variables.

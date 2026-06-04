@@ -50,9 +50,9 @@ use crate::{
         typesystem::CilType,
     },
     prelude::FlowType,
-    utils::graph::NodeId,
     CilObject,
 };
+use analyssa::graph::NodeId;
 
 /// Information about a call site to a decryptor method.
 pub struct DetectedCallSite {
@@ -153,7 +153,9 @@ impl StateMachineProvider for ConfuserExStateMachine {
                     SsaOp::Call { method, args, .. }
                         if method.token() == init_method_token && args.len() >= 2 =>
                     {
-                        let seed_var = args[1];
+                        let Some(&seed_var) = args.get(1) else {
+                            continue;
+                        };
                         if let Some(ConstValue::I32(seed)) =
                             self.trace_to_constant(seed_var, ssa, ctx, method_token)
                         {
@@ -165,8 +167,11 @@ impl StateMachineProvider for ConfuserExStateMachine {
                     SsaOp::NewObj { ctor, args, .. }
                         if ctor.token() == init_method_token && args.len() == 1 =>
                     {
+                        let Some(&first_arg) = args.first() else {
+                            continue;
+                        };
                         if let Some(ConstValue::I32(seed)) =
-                            self.trace_to_constant(args[0], ssa, ctx, method_token)
+                            self.trace_to_constant(first_arg, ssa, ctx, method_token)
                         {
                             #[allow(clippy::cast_sign_loss)]
                             seeds.push((block_idx, instr_idx, seed as u32));
@@ -194,16 +199,16 @@ impl StateMachineProvider for ConfuserExStateMachine {
                 {
                     if method.token() == update_method_token {
                         // CFGCtx.Next takes 3 args: &this, flag (byte), increment (uint)
-                        if args.len() >= 3 {
-                            if let Some(dest) = dest {
-                                updates.push(StateUpdateCall {
-                                    block_idx,
-                                    instr_idx,
-                                    dest: *dest,
-                                    flag_var: args[1],
-                                    increment_var: args[2],
-                                });
-                            }
+                        if let (Some(&flag_var), Some(&increment_var), Some(dest)) =
+                            (args.get(1), args.get(2), dest.as_ref())
+                        {
+                            updates.push(StateUpdateCall {
+                                block_idx,
+                                instr_idx,
+                                dest: *dest,
+                                flag_var,
+                                increment_var,
+                            });
                         }
                     }
                 }
@@ -256,7 +261,10 @@ impl StateMachineProvider for ConfuserExStateMachine {
 
                 // Check if argument comes from XOR, possibly through a
                 // conversion (conv.i4, conv.u4) that the SSA builder may insert.
-                let arg_def = ssa.get_definition(args[0]);
+                let Some(&first_arg) = args.first() else {
+                    continue;
+                };
+                let arg_def = ssa.get_definition(first_arg);
                 let xor_def = match arg_def {
                     Some(SsaOp::Xor { .. }) => arg_def,
                     Some(SsaOp::Conv { operand, .. }) => ssa.get_definition(*operand),
@@ -299,7 +307,9 @@ impl StateMachineProvider for ConfuserExStateMachine {
         cfg_info: &CfgInfo<'_>,
         seed_block: Option<usize>,
     ) -> Vec<usize> {
-        let feeding_update = &all_updates[call_site.feeding_update_idx];
+        let Some(feeding_update) = all_updates.get(call_site.feeding_update_idx) else {
+            return Vec::new();
+        };
 
         let target_block = feeding_update.block_idx;
         if target_block >= cfg_info.node_count {
@@ -315,7 +325,12 @@ impl StateMachineProvider for ConfuserExStateMachine {
                 .push(idx);
         }
         for indices in updates_by_block.values_mut() {
-            indices.sort_by_key(|&idx| all_updates[idx].instr_idx);
+            indices.sort_by_key(|&idx| {
+                all_updates
+                    .get(idx)
+                    .map(|u| u.instr_idx)
+                    .unwrap_or(usize::MAX)
+            });
         }
 
         // Find a path from entry to the feeding update's block.
@@ -356,8 +371,10 @@ impl StateMachineProvider for ConfuserExStateMachine {
             if block_idx == target_block {
                 // Same block: only updates BEFORE the feeding update
                 for &idx in update_indices {
-                    if all_updates[idx].instr_idx < feeding_update.instr_idx {
-                        relevant_updates.push(idx);
+                    if let Some(update) = all_updates.get(idx) {
+                        if update.instr_idx < feeding_update.instr_idx {
+                            relevant_updates.push(idx);
+                        }
                     }
                 }
             } else {
@@ -367,7 +384,9 @@ impl StateMachineProvider for ConfuserExStateMachine {
 
         // Sort by path position (entry first), then instruction index
         relevant_updates.sort_by_key(|&idx| {
-            let update = &all_updates[idx];
+            let Some(update) = all_updates.get(idx) else {
+                return (usize::MAX, usize::MAX);
+            };
             let pos = block_position
                 .get(&update.block_idx)
                 .copied()
@@ -405,10 +424,10 @@ fn find_path_to_block(cfg_info: &CfgInfo<'_>, target: usize) -> Vec<usize> {
             found = true;
             break;
         }
-        if block >= cfg_info.predecessors.len() {
+        let Some(preds) = cfg_info.predecessors.get(block) else {
             continue;
-        }
-        for &pred in &cfg_info.predecessors[block] {
+        };
+        for &pred in preds {
             if let Entry::Vacant(e) = parent.entry(pred) {
                 e.insert(block);
                 queue.push_back(pred);
@@ -643,7 +662,7 @@ fn extract_slot_operations(
     next_method: Token,
     field_tokens: &[Token],
 ) -> Option<Vec<StateSlotOperation>> {
-    let method = assembly.method(&next_method)?;
+    let method = assembly.method(&next_method).ok()?;
 
     // Build SSA for the method - this gives us proper data flow analysis
     let ssa = method.ssa(assembly).ok()?;
@@ -754,7 +773,7 @@ pub fn find_constants_initializer(assembly: &CilObject) -> Option<Token> {
 
     // Get .cctor to find what methods it calls first
     let cctor_token = assembly.types().module_cctor()?;
-    let cctor = assembly.method(&cctor_token)?;
+    let cctor = assembly.method(&cctor_token).ok()?;
 
     // Look at ALL call instructions in .cctor
     // ConfuserEx injects multiple calls: anti-tamper, constants, anti-debug, etc.
@@ -773,7 +792,7 @@ pub fn find_constants_initializer(assembly: &CilObject) -> Option<Token> {
 
     // Now check each candidate to see if it matches Initialize() pattern
     for candidate in init_candidates {
-        let Some(method) = assembly.method(&candidate) else {
+        let Ok(method) = assembly.method(&candidate) else {
             continue;
         };
 
@@ -839,7 +858,7 @@ pub fn find_constants_initializer(assembly: &CilObject) -> Option<Token> {
             if instr.flow_type == FlowType::Call {
                 if let Operand::Token(call_target) = &instr.operand {
                     // Check if calling a method with "Decompress" in name
-                    if let Some(callee) = assembly.method(call_target) {
+                    if let Ok(callee) = assembly.method(call_target) {
                         if callee.name.contains("Decompress") || callee.name.contains("LZMA") {
                             return Some(method.token);
                         }
@@ -905,11 +924,9 @@ pub fn find_call_sites(assembly: &CilObject, decryptor_tokens: &[Token]) -> Vec<
                 }
 
                 // Decryptors take a single int32 argument
-                if args.is_empty() {
+                let Some(&arg_var) = args.first() else {
                     continue;
-                }
-
-                let arg_var = args[0];
+                };
 
                 // Use backward taint analysis to trace the argument's data flow
                 match analyze_argument_dataflow(&ssa, arg_var) {
@@ -950,7 +967,7 @@ fn resolve_method_spec_to_def(assembly: &CilObject, token: Token) -> Option<Toke
         return None; // Not a MethodSpec
     }
 
-    let method_spec = assembly.method_spec(&token)?;
+    let method_spec = assembly.method_spec(&token).ok()?;
     let method_token = method_spec.method.token()?;
 
     // Only return if it's a MethodDef (0x06), not a MemberRef

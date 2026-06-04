@@ -72,11 +72,11 @@ impl<T: RowReadable> Iterator for TableIterator<'_, T> {
         match T::row_read(
             self.table.data,
             &mut self.current_offset,
-            self.current_row + 1,
+            self.current_row.saturating_add(1),
             &self.table.sizes,
         ) {
             Ok(row) => {
-                self.current_row += 1;
+                self.current_row = self.current_row.saturating_add(1);
                 Some(row)
             }
             Err(_) => None,
@@ -245,7 +245,7 @@ impl<'a, T: RowReadable + Send + Sync> rayon::iter::plumbing::Producer for Table
     fn split_at(self, index: usize) -> (Self, Self) {
         // Index represents table row positions which are expected to fit in u32
         #[allow(clippy::cast_possible_truncation)]
-        let mid = self.range.start + index as u32;
+        let mid = self.range.start.saturating_add(index as u32);
         let left = TableProducer {
             table: self.table,
             range: self.range.start..mid,
@@ -292,11 +292,11 @@ impl<T: RowReadable + Send + Sync> Iterator for TableProducerIterator<'_, T> {
         }
 
         let row_index = self.range.start;
-        self.range.start += 1;
+        self.range.start = self.range.start.saturating_add(1);
 
         // Get the row directly from the table
         // +1 because row indices start at 1
-        self.table.get(row_index + 1)
+        self.table.get(row_index.saturating_add(1))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -314,10 +314,10 @@ impl<T: RowReadable + Send + Sync> DoubleEndedIterator for TableProducerIterator
             return None;
         }
 
-        self.range.end -= 1;
+        self.range.end = self.range.end.saturating_sub(1);
 
         // Get the row directly from the table
         // +1 because row indices start at 1
-        self.table.get(self.range.end + 1)
+        self.table.get(self.range.end.saturating_add(1))
     }
 }

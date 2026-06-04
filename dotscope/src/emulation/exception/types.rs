@@ -184,7 +184,7 @@ impl ExceptionClause {
     /// The ending IL offset of the protected region.
     #[must_use]
     pub fn try_end(&self) -> u32 {
-        self.try_offset() + self.try_length()
+        self.try_offset().saturating_add(self.try_length())
     }
 
     /// Gets the IL offset where the handler block begins.
@@ -226,7 +226,7 @@ impl ExceptionClause {
     /// The ending IL offset of the handler code.
     #[must_use]
     pub fn handler_end(&self) -> u32 {
-        self.handler_offset() + self.handler_length()
+        self.handler_offset().saturating_add(self.handler_length())
     }
 
     /// Checks if an IL offset is within the try block.
