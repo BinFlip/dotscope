@@ -67,7 +67,7 @@ boxcar = "0.2.14"
 quick-xml = "0.40.1"
 hex = "0.4.3"
 num-bigint = { version = "0.4.6", optional = true }
-log = "0.4.31"
+log = "0.4.32"
 flate2 = "1.1.9"
 analyssa = "0.2.0"
 lzma-rs = "0.3.0"
