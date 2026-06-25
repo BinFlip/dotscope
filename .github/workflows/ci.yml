@@ -54,7 +54,9 @@ jobs:
 
     - name: Install Mono and Z3 (macOS)
       if: runner.os == 'macOS'
-      run: brew install mono z3
+      run: |
+        brew install mono z3
+        echo "LIBRARY_PATH=$(brew --prefix z3)/lib" >> "$GITHUB_ENV"
 
     - name: Install Z3 and dotnet-ildasm tool (Windows)
       if: runner.os == 'Windows'
