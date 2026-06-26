@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-06-24
+
+### Fixed
+
+- **Exception handler encoding — fat-format promotion for many clauses**: `encode_exception_handlers` only switched to the fat exception-handling section format based on per-clause offset/length sizes, ignoring the 1-byte `DataSize` field. With more than 20 clauses (4-byte header + 12 bytes/clause > 255) the small-format `DataSize` byte overflowed, producing a corrupt section. The encoder now also forces fat format when `handlers.len()` exceeds the small-format clause limit (ECMA-335 §II.25.4.5/.6)
+
+### Changed
+
+- **Dependencies**: bumped `log` (0.4.31 → 0.4.33) and `z3` (0.20.0 → 0.20.1)
+
 ## [0.8.0] - 2026-06-03
 
 ### Changed

@@ -803,14 +803,20 @@ pub fn encode_exception_handlers(handlers: &[ExceptionHandler]) -> Result<Vec<u8
     }
 
     // Determine if we need fat or small format.
-    // Small format limits: try_offset/handler_offset fit in u16 (0xFFFF),
-    // try_length/handler_length fit in u8 (0xFF).
-    let needs_fat_format = handlers.iter().any(|eh| {
-        eh.try_offset > 0xFFFF
-            || eh.try_length > 0xFF
-            || eh.handler_offset > 0xFFFF
-            || eh.handler_length > 0xFF
-    });
+    // Small format limits (ECMA-335 §II.25.4.5/.6):
+    // - try_offset/handler_offset fit in u16 (0xFFFF)
+    // - try_length/handler_length fit in u8 (0xFF)
+    // - the whole section must fit the 1-byte DataSize field: 4-byte header +
+    //   12 bytes per clause <= 255, i.e. at most 20 clauses. Beyond that the
+    //   fat format is mandatory; otherwise the DataSize byte would overflow.
+    const SMALL_FORMAT_MAX_CLAUSES: usize = (0xFF - 4) / 12; // = 20
+    let needs_fat_format = handlers.len() > SMALL_FORMAT_MAX_CLAUSES
+        || handlers.iter().any(|eh| {
+            eh.try_offset > 0xFFFF
+                || eh.try_length > 0xFF
+                || eh.handler_offset > 0xFFFF
+                || eh.handler_length > 0xFF
+        });
 
     let mut section = Vec::new();
 

@@ -3496,81 +3496,10 @@ impl SsaCodeGenerator {
             | SsaOp::Unreachable => {
                 // Phi nodes are eliminated during code generation - no instruction emitted
             }
-            // Rotate and bit manipulation operations - not emitted as CIL primitives
-            SsaOp::Rol { .. }
-            | SsaOp::Ror { .. }
-            | SsaOp::Rcl { .. }
-            | SsaOp::Rcr { .. }
-            | SsaOp::BSwap { .. }
-            | SsaOp::BRev { .. }
-            | SsaOp::BitScanForward { .. }
-            | SsaOp::BitScanReverse { .. }
-            | SsaOp::Popcount { .. }
-            | SsaOp::Parity { .. }
-            | SsaOp::Select { .. }
-            | SsaOp::ReadFlags { .. }
-            | SsaOp::CmpXchg { .. }
-            | SsaOp::AtomicRmw { .. }
-            // Native SSA substrate operations (wide arithmetic, native
-            // boolean/float-flag ops, SIMD/vector, native atomics, bitcast,
-            // opaque, indirect branch). These never appear in CIL-lifted SSA
-            // and have no direct CIL encoding; enumerated explicitly (no
-            // wildcard) so future substrate additions still trip this
-            // exhaustiveness check.
-            | SsaOp::WideMul { .. }
-            | SsaOp::WideDiv { .. }
-            | SsaOp::FloatCompareFlags { .. }
-            | SsaOp::BoolAnd { .. }
-            | SsaOp::BoolOr { .. }
-            | SsaOp::BoolXor { .. }
-            | SsaOp::BoolNot { .. }
-            | SsaOp::Bitcast { .. }
-            | SsaOp::IndirectBranch { .. }
-            | SsaOp::NativeOpaque(_)
-            | SsaOp::VectorUnary { .. }
-            | SsaOp::VectorBinary { .. }
-            | SsaOp::VectorTernary { .. }
-            | SsaOp::VectorPredicatedUnary { .. }
-            | SsaOp::VectorPredicatedBinary { .. }
-            | SsaOp::VectorPredicatedTernary { .. }
-            | SsaOp::VectorCompare { .. }
-            | SsaOp::VectorLoad { .. }
-            | SsaOp::VectorStore { .. }
-            | SsaOp::VectorMaskedLoad { .. }
-            | SsaOp::VectorMaskedStore { .. }
-            | SsaOp::VectorBroadcastLoad { .. }
-            | SsaOp::VectorGather { .. }
-            | SsaOp::VectorFaultingLoad { .. }
-            | SsaOp::VectorSegmentLoad { .. }
-            | SsaOp::VectorScatter { .. }
-            | SsaOp::VectorSegmentStore { .. }
-            | SsaOp::VectorExtract { .. }
-            | SsaOp::VectorInsert { .. }
-            | SsaOp::VectorSplat { .. }
-            | SsaOp::VectorShuffle { .. }
-            | SsaOp::VectorCast { .. }
-            | SsaOp::VectorReinterpret { .. }
-            | SsaOp::VectorPack { .. }
-            | SsaOp::VectorPackLoad { .. }
-            | SsaOp::VectorPackStore { .. }
-            | SsaOp::VectorZeroUpper { .. }
-            | SsaOp::VectorMaskUnary { .. }
-            | SsaOp::VectorMaskBinary { .. }
-            | SsaOp::VectorReduce { .. }
-            | SsaOp::VectorBitmask { .. }
-            | SsaOp::AtomicLoad { .. }
-            | SsaOp::AtomicStore { .. }
-            | SsaOp::AtomicStoreConditional { .. }
-            | SsaOp::AtomicPairLoad { .. }
-            | SsaOp::AtomicPairStoreConditional { .. }
-            | SsaOp::AtomicExchange { .. }
-            | SsaOp::AtomicLockRmw { .. }
-            | SsaOp::AtomicCmpXchg { .. }
-            | SsaOp::AtomicPairCmpXchg { .. } => {
-                // These operations may appear in the shared SSA but are not
-                // directly expressible in CIL; they should have been lowered
-                // before code generation.
-            }
+            // Native architecture ops (x86/arm/riscv intrinsics, system, vector
+            // crypto/SVE/SME, BCD, …) are never produced by dotscope's CIL
+            // lifter and are not expressible in CIL; nothing to emit.
+            _ => {}
         }
         Ok(())
     }

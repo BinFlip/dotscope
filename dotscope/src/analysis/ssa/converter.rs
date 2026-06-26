@@ -525,59 +525,11 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             | SsaOp::Fence { .. }
             | SsaOp::InterruptReturn
             | SsaOp::Unreachable
-            | SsaOp::Readonly
-            // Native SSA substrate operations (wide arithmetic, SIMD/vector,
-            // native atomics, bitcast, opaque, indirect branch). These never
-            // appear in CIL-lifted SSA — CIL type inference does not model
-            // them — so they resolve to Unknown. Enumerated explicitly (no
-            // wildcard) so future substrate additions still trip this
-            // exhaustiveness check.
-            | SsaOp::WideMul { .. }
-            | SsaOp::WideDiv { .. }
-            | SsaOp::FloatCompareFlags { .. }
-            | SsaOp::Bitcast { .. }
-            | SsaOp::IndirectBranch { .. }
-            | SsaOp::NativeOpaque(_)
-            | SsaOp::VectorUnary { .. }
-            | SsaOp::VectorBinary { .. }
-            | SsaOp::VectorTernary { .. }
-            | SsaOp::VectorPredicatedUnary { .. }
-            | SsaOp::VectorPredicatedBinary { .. }
-            | SsaOp::VectorPredicatedTernary { .. }
-            | SsaOp::VectorCompare { .. }
-            | SsaOp::VectorLoad { .. }
-            | SsaOp::VectorStore { .. }
-            | SsaOp::VectorMaskedLoad { .. }
-            | SsaOp::VectorMaskedStore { .. }
-            | SsaOp::VectorBroadcastLoad { .. }
-            | SsaOp::VectorGather { .. }
-            | SsaOp::VectorFaultingLoad { .. }
-            | SsaOp::VectorSegmentLoad { .. }
-            | SsaOp::VectorScatter { .. }
-            | SsaOp::VectorSegmentStore { .. }
-            | SsaOp::VectorExtract { .. }
-            | SsaOp::VectorInsert { .. }
-            | SsaOp::VectorSplat { .. }
-            | SsaOp::VectorShuffle { .. }
-            | SsaOp::VectorCast { .. }
-            | SsaOp::VectorReinterpret { .. }
-            | SsaOp::VectorPack { .. }
-            | SsaOp::VectorPackLoad { .. }
-            | SsaOp::VectorPackStore { .. }
-            | SsaOp::VectorZeroUpper { .. }
-            | SsaOp::VectorMaskUnary { .. }
-            | SsaOp::VectorMaskBinary { .. }
-            | SsaOp::VectorReduce { .. }
-            | SsaOp::VectorBitmask { .. }
-            | SsaOp::AtomicLoad { .. }
-            | SsaOp::AtomicStore { .. }
-            | SsaOp::AtomicStoreConditional { .. }
-            | SsaOp::AtomicPairLoad { .. }
-            | SsaOp::AtomicPairStoreConditional { .. }
-            | SsaOp::AtomicExchange { .. }
-            | SsaOp::AtomicLockRmw { .. }
-            | SsaOp::AtomicCmpXchg { .. }
-            | SsaOp::AtomicPairCmpXchg { .. } => SsaType::Unknown,
+            | SsaOp::Readonly => SsaType::Unknown,
+            // Native architecture ops (x86/arm/riscv intrinsics, system, vector
+            // crypto/SVE/SME, BCD, …) are never produced by dotscope's CIL
+            // lifter, so their result type is left unresolved.
+            _ => SsaType::Unknown,
         }
     }
 
