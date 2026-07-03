@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] - 2026-07-02
+
+### Fixed
+
+- **Fat exception-section header size** (#218): `encode_exception_handlers` emitted the fat exception-handling section header as 6 bytes (`Kind` + 2 reserved bytes + `DataSize`) instead of the 4 bytes mandated by ECMA-335 §II.25.4.5 (`Kind` (1 byte) + `DataSize` (3 bytes)). The two extra bytes shifted the `DataSize` field, so a method written back to disk reported a garbage handler count (e.g. `0x1C0000 / 24 = 76458`) and downstream runtimes (Mono/IKVM) crashed resolving a bogus catch-type token. The header is now exactly 4 bytes and survives a write/parse round-trip
+
+### Changed
+
+- **Dependencies**: bumped `num-bigint` (0.4.6 → 0.5.0), `z3` (0.20.1 → 0.20.2), `quick-xml` (0.40.1 → 0.41.0), `memmap2` (0.9.10 → 0.9.11), `rustc-hash` (2.1.2 → 2.1.3), and `env_logger` (0.11.10 → 0.11.11)
+- **CI/CD**: fixed z3 link errors in the CI workflow and corrected the docs.rs / release workflow configuration
+
 ## [0.8.1] - 2026-06-24
 
 ### Fixed
