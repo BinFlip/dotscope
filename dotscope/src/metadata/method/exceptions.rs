@@ -803,14 +803,20 @@ pub fn encode_exception_handlers(handlers: &[ExceptionHandler]) -> Result<Vec<u8
     }
 
     // Determine if we need fat or small format.
-    // Small format limits: try_offset/handler_offset fit in u16 (0xFFFF),
-    // try_length/handler_length fit in u8 (0xFF).
-    let needs_fat_format = handlers.iter().any(|eh| {
-        eh.try_offset > 0xFFFF
-            || eh.try_length > 0xFF
-            || eh.handler_offset > 0xFFFF
-            || eh.handler_length > 0xFF
-    });
+    // Small format limits (ECMA-335 §II.25.4.5/.6):
+    // - try_offset/handler_offset fit in u16 (0xFFFF)
+    // - try_length/handler_length fit in u8 (0xFF)
+    // - the whole section must fit the 1-byte DataSize field: 4-byte header +
+    //   12 bytes per clause <= 255, i.e. at most 20 clauses. Beyond that the
+    //   fat format is mandatory; otherwise the DataSize byte would overflow.
+    const SMALL_FORMAT_MAX_CLAUSES: usize = (0xFF - 4) / 12; // = 20
+    let needs_fat_format = handlers.len() > SMALL_FORMAT_MAX_CLAUSES
+        || handlers.iter().any(|eh| {
+            eh.try_offset > 0xFFFF
+                || eh.try_length > 0xFF
+                || eh.handler_offset > 0xFFFF
+                || eh.handler_length > 0xFF
+        });
 
     let mut section = Vec::new();
 
@@ -818,11 +824,10 @@ pub fn encode_exception_handlers(handlers: &[ExceptionHandler]) -> Result<Vec<u8
         // Fat format: 4-byte header + 24 bytes per handler
         let section_size = 4usize.saturating_add(handlers.len().saturating_mul(24));
 
-        // Section header (fat format)
-        section.extend_from_slice(&[
-            0x41, // Kind = EHTable | FatFormat
-            0x00, 0x00, // Reserved
-        ]);
+        // Section header (fat format, ECMA-335 §II.25.4.5): exactly 4 bytes.
+        //   Kind     (1 byte)  = EHTable | FatFormat (0x41)
+        //   DataSize (3 bytes) little-endian, includes the 4-byte header
+        section.push(0x41); // Kind = EHTable | FatFormat
         let section_size_u32 = u32::try_from(section_size)
             .map_err(|_| malformed_error!("Exception section size exceeds u32 range"))?;
         section.extend_from_slice(&section_size_u32.to_le_bytes()[..3]); // DataSize (3 bytes)
@@ -976,11 +981,16 @@ mod tests {
         let result = encode_exception_handlers(&handlers).unwrap();
 
         // Should use fat format: 4-byte header + 24 bytes per handler = 28 bytes,
-        // but aligned to 4-byte boundary = 32 bytes
-        assert_eq!(result.len(), 32);
+        // already 4-byte aligned.
+        assert_eq!(result.len(), 28);
 
         // First byte should be 0x41 (EHTable | FatFormat)
         assert_eq!(result[0], 0x41);
+
+        // DataSize (bytes 1..4, little-endian) must equal the section size (28),
+        // and must be readable directly after the single Kind byte.
+        let data_size = u32::from_le_bytes([result[1], result[2], result[3], 0]);
+        assert_eq!(data_size, 28);
     }
 
     #[test]

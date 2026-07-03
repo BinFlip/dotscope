@@ -259,6 +259,6 @@ jobs:
 
     - name: Build documentation for docs.rs
       run: |
-        cargo doc --no-deps --document-private-items
+        cargo doc -p dotscope --no-deps --document-private-items
         echo "Documentation builds successfully"
         echo "Documentation will be automatically available at https://docs.rs/dotscope after publishing"
