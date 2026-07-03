@@ -45,7 +45,7 @@ uguid = "2.2.1"
 widestring = "1.2.1"
 strum = { version = "0.28.0", features = ["derive"]}
 cowfile = "0.2.2"
-memmap2 = "0.9.10"
+memmap2 = "0.9.11"
 tempfile = "3.27.0"
 goblin = { version = "0.10.7", default-features = false, features = ["pe32", "pe64", "std"] }
 ouroboros = "0.18.5"
@@ -62,16 +62,16 @@ ecb = "0.2.0"
 dashmap = "6.2.1"
 crossbeam-skiplist = "0.1.3"
 rayon = "1.12.0"
-rustc-hash = "2.1.2"
+rustc-hash = "2.1.3"
 boxcar = "0.2.14"
-quick-xml = "0.40.1"
+quick-xml = "0.41.0"
 hex = "0.4.3"
-num-bigint = { version = "0.4.6", optional = true }
+num-bigint = { version = "0.5.0", optional = true }
 log = "0.4.33"
 flate2 = "1.1.9"
 analyssa = "0.2.0"
 lzma-rs = "0.3.0"
-z3 = { version = "0.20.1", optional = true }
+z3 = { version = "0.20.2", optional = true }
 iced-x86 = { version = "1.21.0", default-features = false, features = ["std", "decoder", "instr_info"], optional = true }
 tokio = { version = "1.52.3", optional = true, features = ["rt-multi-thread"] }
 
@@ -85,7 +85,7 @@ mistralrs = { version = "0.8.1", optional = true }
 
 [dev-dependencies]
 criterion = "0.8.2"
-env_logger = "0.11.10"
+env_logger = "0.11.11"
 clap = { version = "4.6.1", features = ["derive"] }
 ctrlc = "3.5.2"
 
