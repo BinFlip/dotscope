@@ -1048,6 +1048,47 @@ mod tests {
     }
 
     #[test]
+    fn fat_exception_section_write_roundtrips() {
+        // Regression for GH #218: the fat exception-section header must be exactly
+        // 4 bytes (Kind + 3-byte DataSize), not 6. A 6-byte header shifted DataSize
+        // by two bytes, so re-parsing a written-back method read a bogus handler
+        // count (e.g. 0x1C0000/24 = 76458) and Mono/IKVM crashed resolving a garbage
+        // catch-type token. This method requires the fat section (try_length > 0xFF).
+        let data = include_bytes!("../../../tests/samples/WB_METHOD_FAT_EXCEPTION_N2_06000421.bin");
+        let original = MethodBody::from(data).unwrap();
+        assert_eq!(original.exception_handlers.len(), 2);
+
+        // Extract the IL and re-serialize via the writer path.
+        let il = &data[original.size_header..original.size_header + original.size_code];
+        let mut written = Vec::new();
+        original.write_to(&mut written, il).unwrap();
+
+        // The written bytes must parse back to the exact same handlers.
+        let reparsed = MethodBody::from(&written).unwrap();
+        assert!(reparsed.is_fat);
+        assert!(reparsed.is_exception_data);
+        assert_eq!(reparsed.size_code, original.size_code);
+        assert_eq!(reparsed.local_var_sig_token, original.local_var_sig_token);
+        assert_eq!(
+            reparsed.exception_handlers.len(),
+            original.exception_handlers.len(),
+            "handler count must survive a write/parse round-trip"
+        );
+        for (a, b) in original
+            .exception_handlers
+            .iter()
+            .zip(reparsed.exception_handlers.iter())
+        {
+            assert_eq!(a.flags.bits(), b.flags.bits());
+            assert_eq!(a.try_offset, b.try_offset);
+            assert_eq!(a.try_length, b.try_length);
+            assert_eq!(a.handler_offset, b.handler_offset);
+            assert_eq!(a.handler_length, b.handler_length);
+            assert_eq!(a.filter_offset, b.filter_offset);
+        }
+    }
+
+    #[test]
     fn fat_exceptions_multiple() {
         /*
         WindowsBase.dll
