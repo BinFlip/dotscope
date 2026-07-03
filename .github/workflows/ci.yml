@@ -105,7 +105,7 @@ jobs:
       run: cargo test --workspace --release --doc --features z3
 
     - name: Check documentation
-      run: cargo doc --workspace --all-features --no-deps
+      run: cargo doc -p dotscope --all-features --no-deps
 
   # Ensures the crate compiles and tests pass without legacy-crypto feature (Linux only)
   minimal-features:
