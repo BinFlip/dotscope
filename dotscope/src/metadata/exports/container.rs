@@ -801,7 +801,7 @@ mod tests {
         assert_eq!(results.len(), 1);
 
         let ExportEntry::Native(native_ref) = &results[0] else {
-            panic!("Expected Native export entry, got {:?}", &results[0]);
+            panic!("Expected Native export entry, got {:?}", results[0]);
         };
         assert_eq!(native_ref.ordinal, 1);
         assert_eq!(native_ref.name, Some("MyExport".to_string()));

@@ -559,7 +559,7 @@ pub(crate) fn execute_loaders_in_parallel(
                         {
                             return Err(Error::TypeError(format!(
                                 "Failed to redirect TypeRef {}",
-                                &type_rc.fullname()
+                                type_rc.fullname()
                             )));
                         }
                     }

@@ -294,7 +294,7 @@ fn verify_injected_method_instructions(
     } else {
         panic!(
             "ldstr operand should be a token, found: {:?}",
-            &instructions[0].operand
+            instructions[0].operand
         );
     }
 
@@ -309,7 +309,7 @@ fn verify_injected_method_instructions(
     } else {
         panic!(
             "call operand should be a token, found: {:?}",
-            &instructions[1].operand
+            instructions[1].operand
         );
     }
 
@@ -319,7 +319,7 @@ fn verify_injected_method_instructions(
     } else {
         panic!(
             "ret instruction should have no operand, found: {:?}",
-            &instructions[2].operand
+            instructions[2].operand
         );
     }
 
