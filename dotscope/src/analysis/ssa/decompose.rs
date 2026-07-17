@@ -28,6 +28,7 @@
 
 use crate::{
     analysis::ssa::{
+        conv_op_for_target,
         ops::{CmpKind, SsaOp},
         types::{FieldRef, MethodRef, SigRef, SsaType, TypeRef},
         value::ConstValue,
@@ -365,271 +366,139 @@ fn decompose_standard_instruction(
             unsigned: true,
             flags: None,
         }),
-        0x67 => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0x67 => unary_op(uses, def, |dest, operand| {
             // conv.i1
-            dest,
-            operand,
-            target: SsaType::I8,
-            overflow_check: false,
-            unsigned: false,
+            conv_op_for_target(dest, operand, SsaType::I8, false, false)
         }),
-        0x68 => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0x68 => unary_op(uses, def, |dest, operand| {
             // conv.i2
-            dest,
-            operand,
-            target: SsaType::I16,
-            overflow_check: false,
-            unsigned: false,
+            conv_op_for_target(dest, operand, SsaType::I16, false, false)
         }),
-        0x69 => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0x69 => unary_op(uses, def, |dest, operand| {
             // conv.i4
-            dest,
-            operand,
-            target: SsaType::I32,
-            overflow_check: false,
-            unsigned: false,
+            conv_op_for_target(dest, operand, SsaType::I32, false, false)
         }),
-        0x6A => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0x6A => unary_op(uses, def, |dest, operand| {
             // conv.i8
-            dest,
-            operand,
-            target: SsaType::I64,
-            overflow_check: false,
-            unsigned: false,
+            conv_op_for_target(dest, operand, SsaType::I64, false, false)
         }),
-        0x6B => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0x6B => unary_op(uses, def, |dest, operand| {
             // conv.r4
-            dest,
-            operand,
-            target: SsaType::F32,
-            overflow_check: false,
-            unsigned: false,
+            conv_op_for_target(dest, operand, SsaType::F32, false, false)
         }),
-        0x6C => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0x6C => unary_op(uses, def, |dest, operand| {
             // conv.r8
-            dest,
-            operand,
-            target: SsaType::F64,
-            overflow_check: false,
-            unsigned: false,
+            conv_op_for_target(dest, operand, SsaType::F64, false, false)
         }),
-        0xD1 => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0xD1 => unary_op(uses, def, |dest, operand| {
             // conv.u2
-            dest,
-            operand,
-            target: SsaType::U16,
-            overflow_check: false,
-            unsigned: true,
+            conv_op_for_target(dest, operand, SsaType::U16, true, false)
         }),
-        0xD2 => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0xD2 => unary_op(uses, def, |dest, operand| {
             // conv.u1
-            dest,
-            operand,
-            target: SsaType::U8,
-            overflow_check: false,
-            unsigned: true,
+            conv_op_for_target(dest, operand, SsaType::U8, true, false)
         }),
-        0x6D => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0x6D => unary_op(uses, def, |dest, operand| {
             // conv.u4
-            dest,
-            operand,
-            target: SsaType::U32,
-            overflow_check: false,
-            unsigned: true,
+            conv_op_for_target(dest, operand, SsaType::U32, true, false)
         }),
-        0x6E => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0x6E => unary_op(uses, def, |dest, operand| {
             // conv.u8
-            dest,
-            operand,
-            target: SsaType::U64,
-            overflow_check: false,
-            unsigned: true,
+            conv_op_for_target(dest, operand, SsaType::U64, true, false)
         }),
-        0xD3 => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0xD3 => unary_op(uses, def, |dest, operand| {
             // conv.i
-            dest,
-            operand,
-            target: SsaType::NativeInt,
-            overflow_check: false,
-            unsigned: false,
+            conv_op_for_target(dest, operand, SsaType::NativeInt, false, false)
         }),
-        0xE0 => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0xE0 => unary_op(uses, def, |dest, operand| {
             // conv.u
-            dest,
-            operand,
-            target: SsaType::NativeUInt,
-            overflow_check: false,
-            unsigned: true,
+            conv_op_for_target(dest, operand, SsaType::NativeUInt, true, false)
         }),
-        0x76 => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0x76 => unary_op(uses, def, |dest, operand| {
             // conv.r.un
-            dest,
-            operand,
-            target: SsaType::F64,
-            overflow_check: false,
-            unsigned: true,
+            conv_op_for_target(dest, operand, SsaType::F64, true, false)
         }),
 
         // Overflow-checking conversions
-        0xB3 => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0xB3 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.i1
-            dest,
-            operand,
-            target: SsaType::I8,
-            overflow_check: true,
-            unsigned: false,
+            conv_op_for_target(dest, operand, SsaType::I8, false, true)
         }),
-        0x82 => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0x82 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.i1.un
-            dest,
-            operand,
-            target: SsaType::I8,
-            overflow_check: true,
-            unsigned: true,
+            conv_op_for_target(dest, operand, SsaType::I8, true, true)
         }),
-        0xB5 => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0xB5 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.i2
-            dest,
-            operand,
-            target: SsaType::I16,
-            overflow_check: true,
-            unsigned: false,
+            conv_op_for_target(dest, operand, SsaType::I16, false, true)
         }),
-        0x83 => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0x83 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.i2.un
-            dest,
-            operand,
-            target: SsaType::I16,
-            overflow_check: true,
-            unsigned: true,
+            conv_op_for_target(dest, operand, SsaType::I16, true, true)
         }),
-        0xB7 => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0xB7 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.i4
-            dest,
-            operand,
-            target: SsaType::I32,
-            overflow_check: true,
-            unsigned: false,
+            conv_op_for_target(dest, operand, SsaType::I32, false, true)
         }),
-        0x84 => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0x84 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.i4.un
-            dest,
-            operand,
-            target: SsaType::I32,
-            overflow_check: true,
-            unsigned: true,
+            conv_op_for_target(dest, operand, SsaType::I32, true, true)
         }),
-        0xB9 => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0xB9 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.i8
-            dest,
-            operand,
-            target: SsaType::I64,
-            overflow_check: true,
-            unsigned: false,
+            conv_op_for_target(dest, operand, SsaType::I64, false, true)
         }),
-        0x85 => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0x85 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.i8.un
-            dest,
-            operand,
-            target: SsaType::I64,
-            overflow_check: true,
-            unsigned: true,
+            conv_op_for_target(dest, operand, SsaType::I64, true, true)
         }),
-        0xD4 => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0xD4 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.i
-            dest,
-            operand,
-            target: SsaType::NativeInt,
-            overflow_check: true,
-            unsigned: false,
+            conv_op_for_target(dest, operand, SsaType::NativeInt, false, true)
         }),
-        0x8A => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0x8A => unary_op(uses, def, |dest, operand| {
             // conv.ovf.i.un
-            dest,
-            operand,
-            target: SsaType::NativeInt,
-            overflow_check: true,
-            unsigned: true,
+            conv_op_for_target(dest, operand, SsaType::NativeInt, true, true)
         }),
-        0xB4 => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0xB4 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.u1
-            dest,
-            operand,
-            target: SsaType::U8,
-            overflow_check: true,
-            unsigned: false,
+            conv_op_for_target(dest, operand, SsaType::U8, false, true)
         }),
-        0x86 => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0x86 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.u1.un
-            dest,
-            operand,
-            target: SsaType::U8,
-            overflow_check: true,
-            unsigned: true,
+            conv_op_for_target(dest, operand, SsaType::U8, true, true)
         }),
-        0xB6 => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0xB6 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.u2
-            dest,
-            operand,
-            target: SsaType::U16,
-            overflow_check: true,
-            unsigned: false,
+            conv_op_for_target(dest, operand, SsaType::U16, false, true)
         }),
-        0x87 => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0x87 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.u2.un
-            dest,
-            operand,
-            target: SsaType::U16,
-            overflow_check: true,
-            unsigned: true,
+            conv_op_for_target(dest, operand, SsaType::U16, true, true)
         }),
-        0xB8 => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0xB8 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.u4
-            dest,
-            operand,
-            target: SsaType::U32,
-            overflow_check: true,
-            unsigned: false,
+            conv_op_for_target(dest, operand, SsaType::U32, false, true)
         }),
-        0x88 => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0x88 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.u4.un
-            dest,
-            operand,
-            target: SsaType::U32,
-            overflow_check: true,
-            unsigned: true,
+            conv_op_for_target(dest, operand, SsaType::U32, true, true)
         }),
-        0xBA => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0xBA => unary_op(uses, def, |dest, operand| {
             // conv.ovf.u8
-            dest,
-            operand,
-            target: SsaType::U64,
-            overflow_check: true,
-            unsigned: false,
+            conv_op_for_target(dest, operand, SsaType::U64, false, true)
         }),
-        0x89 => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0x89 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.u8.un
-            dest,
-            operand,
-            target: SsaType::U64,
-            overflow_check: true,
-            unsigned: true,
+            conv_op_for_target(dest, operand, SsaType::U64, true, true)
         }),
-        0xD5 => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0xD5 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.u
-            dest,
-            operand,
-            target: SsaType::NativeUInt,
-            overflow_check: true,
-            unsigned: false,
+            conv_op_for_target(dest, operand, SsaType::NativeUInt, false, true)
         }),
-        0x8B => unary_op(uses, def, |dest, operand| SsaOp::Conv {
+        0x8B => unary_op(uses, def, |dest, operand| {
             // conv.ovf.u.un
-            dest,
-            operand,
-            target: SsaType::NativeUInt,
-            overflow_check: true,
-            unsigned: true,
+            conv_op_for_target(dest, operand, SsaType::NativeUInt, true, true)
         }),
         0x2A => Some(SsaOp::Return {
             // ret
@@ -1848,7 +1717,7 @@ mod tests {
 
         let op = decompose_instruction(&instr, &uses, def, &[], None).unwrap();
 
-        if let SsaOp::Conv {
+        if let SsaOp::IntConv {
             dest,
             operand,
             target,
@@ -1862,7 +1731,7 @@ mod tests {
             assert!(!overflow_check);
             assert!(!unsigned);
         } else {
-            panic!("Expected SsaOp::Conv");
+            panic!("Expected SsaOp::IntConv");
         }
     }
 
@@ -2483,28 +2352,32 @@ mod tests {
             let v1 = SsaVarId::from_index(1);
             let op = decompose_instruction(&instr, &[v0], Some(v1), &[], None);
 
-            if let Ok(SsaOp::Conv {
-                target,
-                overflow_check,
-                unsigned,
-                ..
-            }) = op
-            {
-                assert_eq!(
-                    target, expected_type,
-                    "Type mismatch for opcode {opcode:#x}"
-                );
-                assert_eq!(
-                    overflow_check, expected_ovf,
-                    "Overflow mismatch for opcode {opcode:#x}"
-                );
-                assert_eq!(
-                    unsigned, expected_unsigned,
-                    "Unsigned mismatch for opcode {opcode:#x}"
-                );
-            } else {
-                panic!("Expected SsaOp::Conv for opcode {opcode:#x}");
-            }
+            // conv.i*/u* lower to `IntConv`, conv.r* to `IntToFloat` (which
+            // carries no overflow-check); extract the shared fields from either.
+            let (target, overflow_check, unsigned) = match op {
+                Ok(SsaOp::IntConv {
+                    target,
+                    overflow_check,
+                    unsigned,
+                    ..
+                }) => (target, overflow_check, unsigned),
+                Ok(SsaOp::IntToFloat {
+                    target, unsigned, ..
+                }) => (target, false, unsigned),
+                other => panic!("Expected a conversion op for opcode {opcode:#x}, got {other:?}"),
+            };
+            assert_eq!(
+                target, expected_type,
+                "Type mismatch for opcode {opcode:#x}"
+            );
+            assert_eq!(
+                overflow_check, expected_ovf,
+                "Overflow mismatch for opcode {opcode:#x}"
+            );
+            assert_eq!(
+                unsigned, expected_unsigned,
+                "Unsigned mismatch for opcode {opcode:#x}"
+            );
         }
     }
 
@@ -2529,7 +2402,8 @@ mod tests {
             let v1 = SsaVarId::from_index(1);
             let op = decompose_instruction(&instr, &[v0], Some(v1), &[], None);
 
-            if let Ok(SsaOp::Conv {
+            // All conv.ovf.* opcodes target an integer, so they lower to `IntConv`.
+            if let Ok(SsaOp::IntConv {
                 target,
                 overflow_check,
                 unsigned,
@@ -2549,7 +2423,7 @@ mod tests {
                     "Unsigned mismatch for opcode {opcode:#x}"
                 );
             } else {
-                panic!("Expected SsaOp::Conv for opcode {opcode:#x}");
+                panic!("Expected SsaOp::IntConv for opcode {opcode:#x}");
             }
         }
     }

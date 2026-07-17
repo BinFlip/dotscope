@@ -272,7 +272,14 @@ pub fn const_producer_target(block: &SsaBlock) -> Option<usize> {
     if !non_term.iter().all(|i| {
         matches!(
             i.op(),
-            SsaOp::Const { .. } | SsaOp::Copy { .. } | SsaOp::Conv { .. }
+            SsaOp::Const { .. }
+                | SsaOp::Copy { .. }
+                | SsaOp::IntConv { .. }
+                | SsaOp::IntToPtr { .. }
+                | SsaOp::PtrToInt { .. }
+                | SsaOp::IntToFloat { .. }
+                | SsaOp::FloatToInt { .. }
+                | SsaOp::FloatConv { .. }
         )
     }) {
         return None;

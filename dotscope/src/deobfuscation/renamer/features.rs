@@ -211,7 +211,12 @@ pub fn build_opcode_profile(ssa: &SsaFunction) -> OpcodeProfile {
             }
 
             // Conversion
-            SsaOp::Conv { .. } => {
+            SsaOp::IntConv { .. }
+            | SsaOp::IntToPtr { .. }
+            | SsaOp::PtrToInt { .. }
+            | SsaOp::IntToFloat { .. }
+            | SsaOp::FloatToInt { .. }
+            | SsaOp::FloatConv { .. } => {
                 profile.conversion = profile.conversion.saturating_add(1);
             }
 

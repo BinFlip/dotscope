@@ -590,14 +590,17 @@ fn test_ssa_conversion_operations() -> Result<()> {
 
     assert_eq!(ssa.block_count(), 1);
 
-    // Check for Conv operations
+    // `conv.i8`/`conv.i4` are integer→integer conversions, which lower to
+    // `IntConv`: analyssa 0.3 split the old `Conv` into a domain-typed family
+    // (see `conv_op_for_target`), so only a float or pointer target produces
+    // `IntToFloat`/`IntToPtr`.
     let block = ssa.block(0).unwrap();
     let conv_count = block
         .instructions()
         .iter()
-        .filter(|instr| matches!(instr.op(), SsaOp::Conv { .. }))
+        .filter(|instr| matches!(instr.op(), SsaOp::IntConv { .. }))
         .count();
-    assert!(conv_count >= 2, "Expected at least 2 Conv operations");
+    assert!(conv_count >= 2, "Expected at least 2 IntConv operations");
 
     Ok(())
 }
@@ -1852,13 +1855,14 @@ fn test_ssa_conv_unsigned() -> Result<()> {
 
     let ssa = ssa_from_asm(asm, 1, 0)?;
 
-    // Check for unsigned Conv operation
+    // `conv.u4` targets uint32 — an integer→integer conversion, so it lowers to
+    // `IntConv`, which retains the opcode's `unsigned` flag.
     let block = ssa.block(0).unwrap();
     let has_conv_u = block
         .instructions()
         .iter()
-        .any(|instr| matches!(instr.op(), SsaOp::Conv { unsigned: true, .. }));
-    assert!(has_conv_u, "Expected unsigned Conv operation");
+        .any(|instr| matches!(instr.op(), SsaOp::IntConv { unsigned: true, .. }));
+    assert!(has_conv_u, "Expected unsigned IntConv operation");
 
     Ok(())
 }

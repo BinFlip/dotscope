@@ -100,6 +100,7 @@ pub type DefUseIndex<T = ssa::CilTarget> = analyssa::analysis::defuse::DefUseInd
 /// CIL-defaulted alias of [`analyssa::analysis::range::ValueRange`].
 pub type ValueRange = analyssa::analysis::range::ValueRange;
 pub use analyssa::graph::NodeId;
+pub(crate) use ssa::conv_op_for_target;
 #[cfg(feature = "z3")]
 pub use ssa::Z3Solver;
 pub use ssa::{

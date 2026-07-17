@@ -39,9 +39,9 @@ use analyssa::BitSet;
 
 use crate::{
     analysis::{
-        simplify_op, CilTarget, CmpKind, ConstValue, ConstValueCilExt, ConstantPropagation,
-        MethodRef, SccpResult, SimplifyResult, SsaCfg, SsaEvaluator, SsaFunction, SsaOp, SsaType,
-        SsaVarId,
+        conv_op_for_target, simplify_op, CilTarget, CmpKind, ConstValue, ConstValueCilExt,
+        ConstantPropagation, MethodRef, SccpResult, SimplifyResult, SsaCfg, SsaEvaluator,
+        SsaFunction, SsaOp, SsaType, SsaVarId,
     },
     compiler::{
         pass::{ModificationScope, SsaPass},
@@ -391,12 +391,13 @@ impl ConstantPropagationPass {
 
         for (block_idx, block) in ssa.iter_blocks() {
             for (instr_idx, instr) in block.instructions().iter().enumerate() {
-                if let SsaOp::Conv {
+                if let SsaOp::IntConv {
                     dest,
                     operand,
                     target,
                     overflow_check,
                     unsigned,
+                    ..
                 } = instr.op()
                 {
                     if let Some(operand_val) = constants.get(operand) {
@@ -471,12 +472,13 @@ impl ConstantPropagationPass {
         // First pass: collect all Conv definitions and variable types
         for (block_idx, block) in ssa.iter_blocks() {
             for (instr_idx, instr) in block.instructions().iter().enumerate() {
-                if let SsaOp::Conv {
+                if let SsaOp::IntConv {
                     dest,
                     operand,
                     target,
                     overflow_check,
                     unsigned,
+                    ..
                 } = instr.op()
                 {
                     definitions.insert(
@@ -499,12 +501,13 @@ impl ConstantPropagationPass {
 
         for (block_idx, block) in ssa.iter_blocks() {
             for (instr_idx, instr) in block.instructions().iter().enumerate() {
-                if let SsaOp::Conv {
+                if let SsaOp::IntConv {
                     dest,
                     operand,
                     target,
                     overflow_check,
                     unsigned,
+                    ..
                 } = instr.op()
                 {
                     // Skip overflow-checked conversions - these have different semantics
@@ -599,13 +602,13 @@ impl ConstantPropagationPass {
                         if let Some(instr) = block.instructions_mut().get_mut(instr_idx) {
                             let old_op_str = format!("{}", instr.op());
 
-                            instr.set_op(SsaOp::Conv {
+                            instr.set_op(conv_op_for_target(
                                 dest,
-                                operand: new_operand,
-                                target: target.clone(),
-                                overflow_check: false,
+                                new_operand,
+                                target.clone(),
                                 unsigned,
-                            });
+                                false,
+                            ));
 
                             changes
                                 .record(EventKind::ConstantFolded)

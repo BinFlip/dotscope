@@ -267,7 +267,14 @@ impl StateMachineProvider for ConfuserExStateMachine {
                 let arg_def = ssa.get_definition(first_arg);
                 let xor_def = match arg_def {
                     Some(SsaOp::Xor { .. }) => arg_def,
-                    Some(SsaOp::Conv { operand, .. }) => ssa.get_definition(*operand),
+                    Some(
+                        SsaOp::IntConv { operand, .. }
+                        | SsaOp::IntToPtr { operand, .. }
+                        | SsaOp::PtrToInt { operand, .. }
+                        | SsaOp::IntToFloat { operand, .. }
+                        | SsaOp::FloatToInt { operand, .. }
+                        | SsaOp::FloatConv { operand, .. },
+                    ) => ssa.get_definition(*operand),
                     _ => None,
                 };
                 let Some(SsaOp::Xor { left, right, .. }) = xor_def else {
@@ -734,7 +741,12 @@ fn trace_to_arithmetic_op(ssa: &SsaFunction, start_var: SsaVarId) -> Option<Stat
             SsaOp::Or { .. } => return Some(StateSlotOperation::or()),
 
             // Conversion - add operand to worklist to trace through
-            SsaOp::Conv { operand, .. } => {
+            SsaOp::IntConv { operand, .. }
+            | SsaOp::IntToPtr { operand, .. }
+            | SsaOp::PtrToInt { operand, .. }
+            | SsaOp::IntToFloat { operand, .. }
+            | SsaOp::FloatToInt { operand, .. }
+            | SsaOp::FloatConv { operand, .. } => {
                 worklist.push(*operand);
             }
 
