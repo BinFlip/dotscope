@@ -697,10 +697,8 @@ impl PermissionSet {
                         in_permission_set = true;
                     }
                     b"IPermission" if in_permission_set => {
-                        match Self::parse_permission_from_xml_attributes(e.attributes()) {
-                            Ok(permission) => permissions.push(permission),
-                            Err(e) => return Err(e),
-                        }
+                        permissions
+                            .push(Self::parse_permission_from_xml_attributes(e.attributes())?);
                     }
                     _ => {}
                 },
@@ -708,10 +706,7 @@ impl PermissionSet {
                 Ok(Event::Empty(ref e))
                     if e.name().as_ref() == b"IPermission" && in_permission_set =>
                 {
-                    match Self::parse_permission_from_xml_attributes(e.attributes()) {
-                        Ok(permission) => permissions.push(permission),
-                        Err(e) => return Err(e),
-                    }
+                    permissions.push(Self::parse_permission_from_xml_attributes(e.attributes())?);
                 }
                 Ok(Event::End(ref e)) if e.name().as_ref() == b"PermissionSet" => {
                     in_permission_set = false;

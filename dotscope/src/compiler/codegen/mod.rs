@@ -2516,7 +2516,12 @@ impl SsaCodeGenerator {
             // Unary ops consume their operand
             SsaOp::Neg { operand, .. }
             | SsaOp::Not { operand, .. }
-            | SsaOp::Conv { operand, .. }
+            | SsaOp::IntConv { operand, .. }
+            | SsaOp::IntToPtr { operand, .. }
+            | SsaOp::PtrToInt { operand, .. }
+            | SsaOp::IntToFloat { operand, .. }
+            | SsaOp::FloatToInt { operand, .. }
+            | SsaOp::FloatConv { operand, .. }
             | SsaOp::Ckfinite { operand, .. }
                 if *operand == var =>
             {
@@ -3382,7 +3387,13 @@ impl SsaCodeGenerator {
             | SsaOp::Not { .. } => Self::generate_arithmetic_op(encoder, op)?,
 
             // Conversion operations
-            SsaOp::Conv { .. } | SsaOp::Ckfinite { .. } => {
+            SsaOp::IntConv { .. }
+            | SsaOp::IntToPtr { .. }
+            | SsaOp::PtrToInt { .. }
+            | SsaOp::IntToFloat { .. }
+            | SsaOp::FloatToInt { .. }
+            | SsaOp::FloatConv { .. }
+            | SsaOp::Ckfinite { .. } => {
                 Self::generate_conversion_op(encoder, op)?;
             }
 
@@ -3655,15 +3666,39 @@ impl SsaCodeGenerator {
     /// Operand is already on the evaluation stack.
     fn generate_conversion_op(encoder: &mut InstructionEncoder, op: &SsaOp) -> Result<()> {
         match op {
-            SsaOp::Conv {
+            // Integer and float→integer conversions carry both an overflow-check
+            // and a signedness; integer→float carries only signedness; the
+            // pointer and float-width conversions carry neither.
+            SsaOp::IntConv {
+                dest,
+                target,
+                overflow_check,
+                unsigned,
+                ..
+            }
+            | SsaOp::FloatToInt {
                 dest,
                 target,
                 overflow_check,
                 unsigned,
                 ..
             } => {
-                // Operand already on stack
                 emitter::emit_conv(encoder, target, *overflow_check, *unsigned)?;
+                let _ = dest;
+            }
+            SsaOp::IntToFloat {
+                dest,
+                target,
+                unsigned,
+                ..
+            } => {
+                emitter::emit_conv(encoder, target, false, *unsigned)?;
+                let _ = dest;
+            }
+            SsaOp::IntToPtr { dest, target, .. }
+            | SsaOp::PtrToInt { dest, target, .. }
+            | SsaOp::FloatConv { dest, target, .. } => {
+                emitter::emit_conv(encoder, target, false, false)?;
                 let _ = dest;
             }
 
@@ -4179,7 +4214,12 @@ impl SsaCodeGenerator {
             // Unary operations: single operand
             SsaOp::Neg { operand, .. }
             | SsaOp::Not { operand, .. }
-            | SsaOp::Conv { operand, .. }
+            | SsaOp::IntConv { operand, .. }
+            | SsaOp::IntToPtr { operand, .. }
+            | SsaOp::PtrToInt { operand, .. }
+            | SsaOp::IntToFloat { operand, .. }
+            | SsaOp::FloatToInt { operand, .. }
+            | SsaOp::FloatConv { operand, .. }
             | SsaOp::Ckfinite { operand, .. } => vec![*operand],
 
             // Return with value

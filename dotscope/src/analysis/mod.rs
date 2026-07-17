@@ -121,6 +121,8 @@ pub use taint::{
 #[cfg(feature = "compiler")]
 #[allow(unused_imports)]
 pub(crate) use cfg::SsaLoopAnalysis;
+#[cfg(feature = "compiler")]
+pub(crate) use ssa::conv_op_for_target;
 
 #[cfg(feature = "x86")]
 pub use x86::{

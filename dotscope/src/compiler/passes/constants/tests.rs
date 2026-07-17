@@ -1027,7 +1027,13 @@ fn test_duplicate_conversion_elimination() {
     // v2 should now be conv.i4(v0), not conv.i4(v1)
     let block = ssa.block(0).unwrap();
     let instr = &block.instructions()[2];
-    if let SsaOp::Conv { operand, .. } = instr.op() {
+    if let SsaOp::IntConv { operand, .. }
+    | SsaOp::IntToPtr { operand, .. }
+    | SsaOp::PtrToInt { operand, .. }
+    | SsaOp::IntToFloat { operand, .. }
+    | SsaOp::FloatToInt { operand, .. }
+    | SsaOp::FloatConv { operand, .. } = instr.op()
+    {
         assert_eq!(
             *operand, v0,
             "Duplicate conversion should use original operand"
@@ -1067,14 +1073,14 @@ fn test_widening_chain_elimination() {
     // v2 should now be conv.u8(v0), not conv.u8(v1)
     let block = ssa.block(0).unwrap();
     let instr = &block.instructions()[2];
-    if let SsaOp::Conv {
+    if let SsaOp::IntConv {
         operand, target, ..
     } = instr.op()
     {
         assert_eq!(*operand, v0, "Widening chain should use original operand");
         assert_eq!(*target, SsaType::U64);
     } else {
-        panic!("Expected Conv instruction");
+        panic!("Expected IntConv instruction");
     }
 }
 
@@ -1107,7 +1113,7 @@ fn test_overflow_checked_conversion_not_eliminated() {
     // v2 should still be conv.ovf.i4(v1), not modified
     let block = ssa.block(0).unwrap();
     let instr = &block.instructions()[2];
-    if let SsaOp::Conv {
+    if let SsaOp::IntConv {
         operand,
         overflow_check,
         ..
@@ -1152,7 +1158,13 @@ fn test_float_widening_not_eliminated() {
     // v2 should still use v1, not v0
     let block = ssa.block(0).unwrap();
     let instr = &block.instructions()[2];
-    if let SsaOp::Conv { operand, .. } = instr.op() {
+    if let SsaOp::IntConv { operand, .. }
+    | SsaOp::IntToPtr { operand, .. }
+    | SsaOp::PtrToInt { operand, .. }
+    | SsaOp::IntToFloat { operand, .. }
+    | SsaOp::FloatToInt { operand, .. }
+    | SsaOp::FloatConv { operand, .. } = instr.op()
+    {
         assert_eq!(
             *operand, v1,
             "Float conversion chain should not be simplified"

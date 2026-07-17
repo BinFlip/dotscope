@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.3] - 2026-07-16
+
+### Changed
+
+- **Dependencies**: bumped `analyssa` (0.2.0 → 0.3.0), `num-bigint` (0.5.0 → 0.5.1), `tokio` (1.52.3 → 1.52.4), `clap` (4.6.1 → 4.6.2), `anyhow` (1.0.102 → 1.0.103), and `env_logger` in `dotscope-cli` (0.11.10 → 0.11.11, aligning it with the version `dotscope` already used)
+
+This is a patch release: dotscope's own public API is unchanged. `SsaOp` is not re-exported, `conv_op_for_target` is crate-internal, and the analyssa types dotscope *does* re-export (`BinaryOpKind`, `CmpKind`, `UnaryOpKind`, `PhiNode`, `PhiOperand`, `Target`, `PointerSize`, and the loop/symbolic/dataflow types) are all unchanged in analyssa 0.3.0.
+
+Most of analyssa 0.3.0's correctness fixes target native lifters and do not apply to the CIL frontend: the `ld2r`/`setffr`/`dmb` effect corrections concern AArch64/x86 ops dotscope never emits, and the GVN `ComputeFlags`/`CallClobber` fixes concern native flag and call-clobber markers with no CIL equivalent. Likewise the pointer-conversion signedness fix has no observable effect here — dotscope never emits `PtrToInt`, and `CilTarget::convert_const` declines pointer targets, so `IntToPtr` does not constant-fold. What dotscope does inherit is analyssa's structural GVN value key (replacing a per-candidate `Debug`-string key) and the `SsaEditor::nop_instruction` fix that no longer leaves a dead `result_type` on a removed instruction.
+
 ## [0.8.2] - 2026-07-02
 
 ### Fixed

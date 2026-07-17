@@ -317,11 +317,38 @@ pub fn build_call_site_skeleton(ssa: &SsaFunction, assembly: &CilObject) -> Opti
             }
 
             // Conversion
-            SsaOp::Conv {
+            SsaOp::IntConv {
                 dest,
                 operand,
                 target,
                 ..
+            }
+            | SsaOp::IntToPtr {
+                dest,
+                operand,
+                target,
+            }
+            | SsaOp::PtrToInt {
+                dest,
+                operand,
+                target,
+            }
+            | SsaOp::IntToFloat {
+                dest,
+                operand,
+                target,
+                ..
+            }
+            | SsaOp::FloatToInt {
+                dest,
+                operand,
+                target,
+                ..
+            }
+            | SsaOp::FloatConv {
+                dest,
+                operand,
+                target,
             } => {
                 lines.push(format!(
                     "    var_{} = ({target})var_{};",
@@ -753,7 +780,12 @@ fn classify_op_into_profile(op: &SsaOp, profile: &mut OpcodeProfile) {
         | SsaOp::BranchCmp { .. } => {
             profile.comparison = profile.comparison.saturating_add(1);
         }
-        SsaOp::Conv { .. } => {
+        SsaOp::IntConv { .. }
+        | SsaOp::IntToPtr { .. }
+        | SsaOp::PtrToInt { .. }
+        | SsaOp::IntToFloat { .. }
+        | SsaOp::FloatToInt { .. }
+        | SsaOp::FloatConv { .. } => {
             profile.conversion = profile.conversion.saturating_add(1);
         }
         _ => {}

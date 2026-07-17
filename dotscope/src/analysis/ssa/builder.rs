@@ -37,6 +37,43 @@ use crate::analysis::ssa::{
     SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaType, SsaVarId, VariableOrigin,
 };
 
+/// Builds the conversion op that produces `target` from `operand`.
+///
+/// A CIL conversion opcode fixes the destination type but not the source (the
+/// evaluation-stack value is untyped at decompose time), so the source domain
+/// defaults to integer: a float target is an integer→float conversion, a
+/// pointer target an integer→pointer conversion, and every other target an
+/// integer→integer conversion. `unsigned` carries the opcode's signedness
+/// (`conv.u*` vs `conv.i*`); `overflow_check` the checked `conv.ovf.*` form.
+pub(crate) fn conv_op_for_target(
+    dest: SsaVarId,
+    operand: SsaVarId,
+    target: SsaType,
+    unsigned: bool,
+    overflow_check: bool,
+) -> SsaOp {
+    match target {
+        SsaType::F32 | SsaType::F64 => SsaOp::IntToFloat {
+            dest,
+            operand,
+            target,
+            unsigned,
+        },
+        SsaType::Pointer(_) | SsaType::ByRef(_) => SsaOp::IntToPtr {
+            dest,
+            operand,
+            target,
+        },
+        _ => SsaOp::IntConv {
+            dest,
+            operand,
+            target,
+            overflow_check,
+            unsigned,
+        },
+    }
+}
+
 /// Builder for constructing SSA functions programmatically.
 ///
 /// Provides a closure-based API for building SSA functions where all
@@ -689,13 +726,7 @@ impl SsaBlockBuilder<'_> {
     #[must_use]
     pub fn conv(&mut self, operand: SsaVarId, target: SsaType) -> SsaVarId {
         let dest = self.builder.alloc_stack_var_typed(target.clone());
-        let op = SsaOp::Conv {
-            dest,
-            operand,
-            target,
-            overflow_check: false,
-            unsigned: false,
-        };
+        let op = conv_op_for_target(dest, operand, target, false, false);
         self.block.add_instruction(SsaInstruction::synthetic(op));
         dest
     }
@@ -704,13 +735,7 @@ impl SsaBlockBuilder<'_> {
     #[must_use]
     pub fn conv_un(&mut self, operand: SsaVarId, target: SsaType) -> SsaVarId {
         let dest = self.builder.alloc_stack_var_typed(target.clone());
-        let op = SsaOp::Conv {
-            dest,
-            operand,
-            target,
-            overflow_check: false,
-            unsigned: true,
-        };
+        let op = conv_op_for_target(dest, operand, target, true, false);
         self.block.add_instruction(SsaInstruction::synthetic(op));
         dest
     }
@@ -719,13 +744,7 @@ impl SsaBlockBuilder<'_> {
     #[must_use]
     pub fn conv_ovf(&mut self, operand: SsaVarId, target: SsaType) -> SsaVarId {
         let dest = self.builder.alloc_stack_var_typed(target.clone());
-        let op = SsaOp::Conv {
-            dest,
-            operand,
-            target,
-            overflow_check: true,
-            unsigned: false,
-        };
+        let op = conv_op_for_target(dest, operand, target, false, true);
         self.block.add_instruction(SsaInstruction::synthetic(op));
         dest
     }
@@ -734,13 +753,7 @@ impl SsaBlockBuilder<'_> {
     #[must_use]
     pub fn conv_ovf_un(&mut self, operand: SsaVarId, target: SsaType) -> SsaVarId {
         let dest = self.builder.alloc_stack_var_typed(target.clone());
-        let op = SsaOp::Conv {
-            dest,
-            operand,
-            target,
-            overflow_check: true,
-            unsigned: true,
-        };
+        let op = conv_op_for_target(dest, operand, target, true, true);
         self.block.add_instruction(SsaInstruction::synthetic(op));
         dest
     }

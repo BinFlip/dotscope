@@ -93,6 +93,7 @@ mod value;
 // shims that used to mediate via `mod cfg/consts/phi/...` collapsed into
 // the `pub use` block below.
 
+pub(crate) use builder::conv_op_for_target;
 pub use builder::SsaFunctionBuilder;
 pub use converter::SsaConverter;
 pub use exception::{SsaExceptionHandler, SsaExceptionHandlerCilExt};

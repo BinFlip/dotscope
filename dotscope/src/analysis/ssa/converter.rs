@@ -335,7 +335,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             | SsaOp::BoolNot { .. } => SsaType::Bool,
 
             // Conversion - use the target type
-            SsaOp::Conv { target, .. } => target.clone(),
+            SsaOp::IntConv { target, .. } | SsaOp::IntToPtr { target, .. } | SsaOp::PtrToInt { target, .. } | SsaOp::IntToFloat { target, .. } | SsaOp::FloatToInt { target, .. } | SsaOp::FloatConv { target, .. } => target.clone(),
 
             // Arithmetic operations - typically I32 for stack operations
             SsaOp::Add { .. }
