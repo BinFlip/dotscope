@@ -838,6 +838,7 @@ fn extract_member_custom_attrs(
 
 #[cfg(test)]
 mod tests {
+    use super::field_get_value_pre;
     use crate::{
         emulation::{
             runtime::hook::{HookContext, PreHookResult},
@@ -846,8 +847,6 @@ mod tests {
         metadata::{token::Token, typesystem::PointerSize},
         test::emulation::create_test_thread,
     };
-
-    use super::field_get_value_pre;
 
     #[test]
     fn test_field_get_value_hook() {

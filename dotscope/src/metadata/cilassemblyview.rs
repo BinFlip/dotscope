@@ -107,9 +107,10 @@
 //! - [`crate::metadata::cor20header`] - Provides CLR header information
 //! - File I/O abstraction for memory-mapped or in-memory access
 
+use std::{path::Path, sync::Arc};
+
 use log::{debug, warn};
 use ouroboros::self_referencing;
-use std::{path::Path, sync::Arc};
 
 use crate::{
     cilassembly::CilAssembly,
@@ -1274,9 +1275,10 @@ impl CilAssemblyView {
 
 #[cfg(test)]
 mod tests {
+    use std::{fs, path::PathBuf};
+
     use super::*;
     use crate::test::factories::metadata::cilassemblyview::verify_assembly_view_complete;
-    use std::{fs, path::PathBuf};
 
     #[test]
     fn from_file() {

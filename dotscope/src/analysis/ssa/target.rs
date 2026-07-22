@@ -9,6 +9,10 @@
 //! delegate without forming an `impl ConstValue<CilTarget>` ↔ `impl Target for
 //! CilTarget` cycle.
 
+// Re-export so existing `crate::analysis::ssa::target::Target` import paths
+// in the rest of dotscope continue to resolve. The trait itself lives in
+// `analyssa::target`.
+pub use analyssa::target::Target;
 use analyssa::{ir::value::ConstValue, PointerSize};
 
 #[cfg(feature = "compiler")]
@@ -18,11 +22,6 @@ use crate::{
     assembly::{FlowType, Instruction, InstructionCategory, Operand, StackBehavior},
     metadata::{method::ExceptionHandlerFlags, signatures::SignatureLocalVariable},
 };
-
-// Re-export so existing `crate::analysis::ssa::target::Target` import paths
-// in the rest of dotscope continue to resolve. The trait itself lives in
-// `analyssa::target`.
-pub use analyssa::target::Target;
 
 /// `Target` impl for .NET CIL.
 ///
@@ -432,10 +431,9 @@ fn cil_evaluator_apply_conversion(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use analyssa::{MockTarget, MockType};
 
+    use super::*;
     use crate::analysis::ssa::{
         value::ConstValue, DefSite, SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaVarId,
         VariableOrigin,

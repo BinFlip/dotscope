@@ -5,6 +5,8 @@
 //! the metadata tables stream. This is the low-level representation used during
 //! the initial parsing phase, containing unresolved heap indices.
 
+use std::sync::Arc;
+
 use crate::{
     metadata::{
         importscope::{parse_imports_blob, ImportsInfo},
@@ -14,7 +16,6 @@ use crate::{
     },
     Result,
 };
-use std::sync::Arc;
 
 /// Raw binary representation of an `ImportScope` table entry
 ///

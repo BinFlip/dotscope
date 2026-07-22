@@ -2,9 +2,10 @@
 
 extern crate dotscope;
 
+use std::{fs, hint::black_box, path::PathBuf};
+
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use dotscope::metadata::resources::{parse_dotnet_resource, parse_dotnet_resource_ref};
-use std::{fs, hint::black_box, path::PathBuf};
 
 /// Benchmark parsing from standalone .resources file (WindowsBase resources)
 ///

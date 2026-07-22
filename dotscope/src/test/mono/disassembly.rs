@@ -3,12 +3,12 @@
 //! This module handles disassembly of .NET assemblies using the detected
 //! disassembler from TestCapabilities.
 
+use std::{path::Path, process::Command};
+
 use crate::{
     prelude::*,
     test::mono::capabilities::{Disassembler, TestCapabilities},
 };
-use std::path::Path;
-use std::process::Command;
 
 /// Result of a disassembly operation
 #[derive(Debug, Clone)]
@@ -275,9 +275,10 @@ pub fn verify(
 
 #[cfg(test)]
 mod tests {
+    use tempfile::TempDir;
+
     use super::*;
     use crate::test::mono::compilation::{compile, templates};
-    use tempfile::TempDir;
 
     #[test]
     fn test_disassembly_result() {

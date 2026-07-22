@@ -595,9 +595,13 @@ impl TableModifications {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cilassembly::{Operation, TableOperation};
-    use crate::metadata::tables::{ModuleRaw, TableDataOwned};
-    use crate::metadata::token::Token;
+    use crate::{
+        cilassembly::{Operation, TableOperation},
+        metadata::{
+            tables::{ModuleRaw, TableDataOwned},
+            token::Token,
+        },
+    };
 
     /// Helper to create a simple ModuleRaw for testing
     fn make_test_row(name_idx: u32) -> TableDataOwned {

@@ -83,8 +83,10 @@ impl Technique for BitMonoRenamer {
 
 #[cfg(test)]
 mod tests {
-    use crate::deobfuscation::techniques::{bitmono::BitMonoRenamer, Technique};
-    use crate::test::helpers::load_sample;
+    use crate::{
+        deobfuscation::techniques::{bitmono::BitMonoRenamer, Technique},
+        test::helpers::load_sample,
+    };
 
     #[test]
     fn test_detect_positive() {

@@ -6,8 +6,9 @@
 
 use std::collections::HashMap;
 
-use crate::{analysis::ssa::CilTarget, metadata::typesystem::PointerSize};
 use analyssa::analysis::symbolic::{expr::SymbolicExpr as GenericSymbolicExpr, ops::SymbolicOp};
+
+use crate::{analysis::ssa::CilTarget, metadata::typesystem::PointerSize};
 
 type SymbolicExpr = GenericSymbolicExpr<CilTarget>;
 
@@ -533,8 +534,9 @@ impl Z3Solver {
 
 #[cfg(test)]
 mod tests {
-    use crate::{analysis::ssa::symbolic::Z3Solver, metadata::typesystem::PointerSize};
     use analyssa::analysis::symbolic::{expr::SymbolicExpr, ops::SymbolicOp};
+
+    use crate::{analysis::ssa::symbolic::Z3Solver, metadata::typesystem::PointerSize};
 
     #[test]
     fn test_z3_simple_solve() {

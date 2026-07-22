@@ -71,6 +71,8 @@
 //! - [ECMA-335 II.22](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Metadata tables specification
 //! - [ECMA-335 II.24.2.6](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Coded index encoding
 
+use strum::IntoEnumIterator;
+
 use crate::{
     dispatch_table_type,
     metadata::{
@@ -88,7 +90,6 @@ use crate::{
     },
     Error, Result,
 };
-use strum::IntoEnumIterator;
 
 /// Foundation validator for token format, RID bounds, and coded index validation.
 ///

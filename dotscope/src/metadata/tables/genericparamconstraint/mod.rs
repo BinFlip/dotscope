@@ -64,8 +64,9 @@
 //! # ECMA-335 Reference
 //! See ECMA-335, Partition II, §22.21 for the complete `GenericParamConstraint` table specification.
 
-use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
+
+use crossbeam_skiplist::SkipMap;
 
 use crate::metadata::token::Token;
 

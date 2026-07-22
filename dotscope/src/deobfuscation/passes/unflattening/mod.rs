@@ -41,16 +41,13 @@ mod reconstruction;
 mod statevar;
 mod tracer;
 
-pub use detection::CffDetector;
-pub use dispatcher::Dispatcher;
-pub use reconstruction::{apply_patch_plan, extract_patch_plan, merge_patch_plans};
-
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use dashmap::DashSet;
+pub use detection::CffDetector;
+pub use dispatcher::Dispatcher;
 use rayon::prelude::*;
-
-use std::collections::HashMap;
+pub use reconstruction::{apply_patch_plan, extract_patch_plan, merge_patch_plans};
 
 use crate::{
     analysis::{CilTarget, MethodRef, SsaFunction},
@@ -482,8 +479,10 @@ mod tests {
             SsaInstruction, SsaOp, SsaVarId, VariableOrigin,
         },
         assembly::{decode_blocks, InstructionAssembler},
-        deobfuscation::passes::unflattening::{detection::CffDetector, dispatcher::Dispatcher},
-        deobfuscation::{DeobfuscationEngine, EngineConfig},
+        deobfuscation::{
+            passes::unflattening::{detection::CffDetector, dispatcher::Dispatcher},
+            DeobfuscationEngine, EngineConfig,
+        },
         metadata::token::Token,
         test::TestTypeProvider,
         CilObject,

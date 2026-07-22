@@ -321,13 +321,13 @@ impl RenameProvider for LocalProvider {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use crate::deobfuscation::renamer::{
         context::{IdentifierKind, RenameContext},
         providers::local::LocalProvider,
         RenameProvider, SmartRenameConfig,
     };
-
-    use std::path::PathBuf;
 
     #[test]
     fn test_local_provider_config() {

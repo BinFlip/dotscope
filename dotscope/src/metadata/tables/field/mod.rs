@@ -48,9 +48,11 @@
 //! - [ECMA-335 II.22.15](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `Field` table specification
 //! - [ECMA-335 II.23.1.5](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `FieldAttributes` specification
 
-use crate::metadata::token::Token;
-use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
+
+use crossbeam_skiplist::SkipMap;
+
+use crate::metadata::token::Token;
 
 mod builder;
 mod loader;

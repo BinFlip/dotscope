@@ -1589,9 +1589,10 @@ impl TryFrom<CilFlavor> for CilPrimitive {
 
 #[cfg(test)]
 mod tests {
+    use std::convert::TryFrom;
+
     use super::*;
     use crate::ParseFailure;
-    use std::convert::TryFrom;
 
     #[test]
     fn test_primitive_creation() {

@@ -12,8 +12,7 @@
 //! These tests verify the complete end-to-end functionality of writing
 //! modified assemblies to disk and ensuring they can be loaded back correctly.
 
-use dotscope::prelude::*;
-use dotscope::ChangeRefKind;
+use dotscope::{prelude::*, ChangeRefKind};
 
 #[test]
 fn extend_crafted_2() -> Result<()> {

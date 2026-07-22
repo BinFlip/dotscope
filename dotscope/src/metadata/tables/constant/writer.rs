@@ -84,13 +84,15 @@ impl RowWritable for ConstantRaw {
 mod tests {
     use std::sync::Arc;
 
-    use crate::metadata::tables::{
-        constant::ConstantRaw,
-        types::{
-            CodedIndex, CodedIndexType, RowReadable, RowWritable, TableId, TableInfo, TableRow,
+    use crate::metadata::{
+        tables::{
+            constant::ConstantRaw,
+            types::{
+                CodedIndex, CodedIndexType, RowReadable, RowWritable, TableId, TableInfo, TableRow,
+            },
         },
+        token::Token,
     };
-    use crate::metadata::token::Token;
 
     #[test]
     fn test_constant_row_size() {

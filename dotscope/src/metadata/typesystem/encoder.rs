@@ -526,8 +526,10 @@ impl TypeSignatureEncoder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::signatures::{SignatureArray, SignaturePointer, SignatureSzArray};
-    use crate::metadata::typesystem::ArrayDimensions;
+    use crate::metadata::{
+        signatures::{SignatureArray, SignaturePointer, SignatureSzArray},
+        typesystem::ArrayDimensions,
+    };
 
     #[test]
     fn test_encode_primitive_types() {

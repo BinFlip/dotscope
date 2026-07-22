@@ -85,9 +85,9 @@
 //! # Reference
 //! - [ECMA-335 II.24](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf)
 
+use std::{fmt, io::Write};
+
 use crate::{file::parser::Parser, Result};
-use std::fmt;
-use std::io::Write;
 
 metadata_flags! {
     /// COR20 runtime flags controlling .NET assembly behavior.

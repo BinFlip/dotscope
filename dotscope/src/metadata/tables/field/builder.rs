@@ -189,12 +189,13 @@ impl FieldBuilder {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::{
         cilassembly::{ChangeRefKind, CilAssembly},
         metadata::cilassemblyview::CilAssemblyView,
     };
-    use std::path::PathBuf;
 
     #[test]
     fn test_field_builder_basic() {

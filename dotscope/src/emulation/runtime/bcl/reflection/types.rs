@@ -2658,6 +2658,7 @@ fn assembly_name_get_public_key_token_pre(
 
 #[cfg(test)]
 mod tests {
+    use super::{type_get_module_pre, type_get_type_from_handle_pre};
     use crate::{
         emulation::{
             runtime::hook::{HookContext, PreHookResult},
@@ -2666,8 +2667,6 @@ mod tests {
         metadata::{token::Token, typesystem::PointerSize},
         test::emulation::create_test_thread,
     };
-
-    use super::{type_get_module_pre, type_get_type_from_handle_pre};
 
     #[test]
     fn test_get_module_hook() {

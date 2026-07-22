@@ -52,9 +52,7 @@ fn pe_invalid(field: &'static str, reason: String) -> Error {
     }
     .into()
 }
-use std::collections::HashMap;
-use std::fmt;
-use std::io::Write;
+use std::{collections::HashMap, fmt, io::Write};
 
 metadata_flags! {
     /// PE machine type identifier.

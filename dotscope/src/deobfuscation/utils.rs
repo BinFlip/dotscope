@@ -720,7 +720,6 @@ pub(crate) fn is_typed_method_named(
 
 #[cfg(test)]
 mod tests {
-    use crate::test::helpers::load_sample;
     use crate::{
         deobfuscation::utils::{
             build_call_site_counts, is_method_named, is_obfuscated_name, is_special_name,
@@ -730,6 +729,7 @@ mod tests {
             tables::{MemberRefRaw, MethodDefRaw, TableId, TypeDefRaw, TypeRefRaw},
             token::Token,
         },
+        test::helpers::load_sample,
     };
 
     #[test]

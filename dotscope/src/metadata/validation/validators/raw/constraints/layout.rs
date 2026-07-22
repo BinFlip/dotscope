@@ -71,6 +71,8 @@
 //! - [ECMA-335 II.22.8](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - ClassLayout table
 //! - [ECMA-335 II.22.16](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - FieldLayout table
 
+use rustc_hash::FxHashMap;
+
 use crate::{
     metadata::{
         cilassemblyview::CilAssemblyView,
@@ -83,7 +85,6 @@ use crate::{
     },
     Result,
 };
-use rustc_hash::FxHashMap;
 
 /// Foundation validator for field and class layout constraint integrity and consistency.
 ///

@@ -2538,7 +2538,6 @@ fn index_to_register(index: usize, bitness: u32) -> Option<X86Register> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use crate::{analysis::x86::decoder::x86_decode_all, compiler::SsaCodeGenerator};
 
     #[test]

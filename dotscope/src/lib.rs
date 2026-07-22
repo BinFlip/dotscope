@@ -894,6 +894,40 @@ pub mod project;
 /// ```
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Mutable assembly for editing and modification operations.
+///
+/// `CilAssembly` provides a mutable layer on top of [`CilAssemblyView`] that enables
+/// editing of .NET assembly metadata while tracking changes efficiently. It uses a
+/// copy-on-write strategy to minimize memory usage and provides high-level APIs
+/// for adding, modifying, and deleting metadata elements.
+///
+/// # Key Features
+///
+/// - **Change Tracking**: Efficiently tracks modifications without duplicating unchanged data
+/// - **High-level APIs**: Builder patterns for creating types, methods, fields, etc.
+/// - **Binary Generation**: Write modified assemblies back to disk
+/// - **Validation**: Optional validation of metadata consistency
+///
+/// # Usage Examples
+///
+/// ```rust,no_run
+/// use dotscope::{CilAssemblyView, CilAssembly};
+///
+/// // Load and convert to mutable assembly
+/// let view = CilAssemblyView::from_path(std::path::Path::new("assembly.dll"))?;
+/// let mut assembly = view.to_owned();
+///
+/// // Add a new string to the heap
+/// let string_index = assembly.string_add("Hello, World!")?;
+///
+/// // Write changes back to file
+/// assembly.to_file("modified_assembly.dll")?;
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+pub use cilassembly::{
+    ChangeRefKind, ChangeRefRc, CilAssembly, CleanupRequest, LastWriteWinsResolver,
+    MethodBodyBuilder, MethodBuilder,
+};
 /// `dotscope` Error type.
 ///
 /// The main error type for all operations in this crate. Provides detailed error information
@@ -912,7 +946,6 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// }
 /// ```
 pub use error::{Error, HeapKind, MethodLookupError, ParseFailure, ParseStage, StreamKind};
-
 /// Raw assembly view for editing and modification operations.
 ///
 /// `CilAssemblyView` provides direct access to .NET assembly metadata structures
@@ -961,43 +994,31 @@ pub use error::{Error, HeapKind, MethodLookupError, ParseFailure, ParseStage, St
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub use metadata::cilassemblyview::CilAssemblyView;
+mod cilassembly;
 
-/// Mutable assembly for editing and modification operations.
+/// Provides access to low-level file and memory parsing utilities.
 ///
-/// `CilAssembly` provides a mutable layer on top of [`CilAssemblyView`] that enables
-/// editing of .NET assembly metadata while tracking changes efficiently. It uses a
-/// copy-on-write strategy to minimize memory usage and provides high-level APIs
-/// for adding, modifying, and deleting metadata elements.
-///
-/// # Key Features
-///
-/// - **Change Tracking**: Efficiently tracks modifications without duplicating unchanged data
-/// - **High-level APIs**: Builder patterns for creating types, methods, fields, etc.
-/// - **Binary Generation**: Write modified assemblies back to disk
-/// - **Validation**: Optional validation of metadata consistency
+/// The [`crate::Parser`] type is used for decoding CIL bytecode and metadata streams.
 ///
 /// # Usage Examples
 ///
 /// ```rust,no_run
-/// use dotscope::{CilAssemblyView, CilAssembly};
-///
-/// // Load and convert to mutable assembly
-/// let view = CilAssemblyView::from_path(std::path::Path::new("assembly.dll"))?;
-/// let mut assembly = view.to_owned();
-///
-/// // Add a new string to the heap
-/// let string_index = assembly.string_add("Hello, World!")?;
-///
-/// // Write changes back to file
-/// assembly.to_file("modified_assembly.dll")?;
+/// use dotscope::{Parser, assembly::decode_instruction};
+/// let code = [0x2A]; // ret
+/// let mut parser = Parser::new(&code);
+/// let instr = decode_instruction(&mut parser, 0x1000)?;
+/// assert_eq!(instr.mnemonic, "ret");
 /// # Ok::<(), dotscope::Error>(())
 /// ```
-pub use cilassembly::{
-    ChangeRefKind, ChangeRefRc, CilAssembly, CleanupRequest, LastWriteWinsResolver,
-    MethodBodyBuilder, MethodBuilder,
+pub use file::{
+    parser::Parser,
+    pe::{
+        CoffHeader, DataDirectories, DataDirectory, DataDirectoryType, DosHeader,
+        Export as PeExport, Import as PeImport, Machine, OptionalHeader, Pe, PeCharacteristics,
+        SectionTable, StandardFields, Subsystem, WindowsFields,
+    },
+    File,
 };
-mod cilassembly;
-
 /// Main entry point for working with .NET assemblies.
 ///
 /// See [`crate::metadata::cilobject::CilObject`] for high-level analysis and metadata access.
@@ -1011,26 +1032,6 @@ mod cilassembly;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub use metadata::cilobject::CilObject;
-
-/// Configuration for metadata validation during assembly loading.
-///
-/// Controls which validation checks are performed when loading .NET assemblies.
-/// Different presets are available for various use cases.
-///
-/// # Usage Examples
-///
-/// ```rust,no_run
-/// use dotscope::{CilObject, ValidationConfig};
-///
-/// // Use minimal validation for best performance
-/// let assembly = CilObject::from_path_with_validation(
-///     std::path::Path::new("tests/samples/WindowsBase.dll"),
-///     ValidationConfig::minimal()
-/// )?;
-/// # Ok::<(), dotscope::Error>(())
-/// ```
-pub use metadata::validation::{ValidationConfig, ValidationEngine};
-
 /// Composable query builders for filtering types and methods.
 ///
 /// `TypeQuery` and `MethodQuery` provide a fluent API for searching and filtering
@@ -1051,7 +1052,6 @@ pub use metadata::validation::{ValidationConfig, ValidationEngine};
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub use metadata::query::{MethodQuery, TypeQuery};
-
 /// Metadata streams and heaps for direct access to ECMA-335 data structures.
 ///
 /// These types provide low-level access to the metadata structures:
@@ -1088,27 +1088,21 @@ pub use metadata::streams::{
     Blob, BlobIterator, Guid, GuidIterator, StreamHeader, Strings, StringsIterator, TablesHeader,
     UserStrings, UserStringsIterator,
 };
-
-/// Provides access to low-level file and memory parsing utilities.
+/// Configuration for metadata validation during assembly loading.
 ///
-/// The [`crate::Parser`] type is used for decoding CIL bytecode and metadata streams.
+/// Controls which validation checks are performed when loading .NET assemblies.
+/// Different presets are available for various use cases.
 ///
 /// # Usage Examples
 ///
 /// ```rust,no_run
-/// use dotscope::{Parser, assembly::decode_instruction};
-/// let code = [0x2A]; // ret
-/// let mut parser = Parser::new(&code);
-/// let instr = decode_instruction(&mut parser, 0x1000)?;
-/// assert_eq!(instr.mnemonic, "ret");
+/// use dotscope::{CilObject, ValidationConfig};
+///
+/// // Use minimal validation for best performance
+/// let assembly = CilObject::from_path_with_validation(
+///     std::path::Path::new("tests/samples/WindowsBase.dll"),
+///     ValidationConfig::minimal()
+/// )?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
-pub use file::{
-    parser::Parser,
-    pe::{
-        CoffHeader, DataDirectories, DataDirectory, DataDirectoryType, DosHeader,
-        Export as PeExport, Import as PeImport, Machine, OptionalHeader, Pe, PeCharacteristics,
-        SectionTable, StandardFields, Subsystem, WindowsFields,
-    },
-    File,
-};
+pub use metadata::validation::{ValidationConfig, ValidationEngine};

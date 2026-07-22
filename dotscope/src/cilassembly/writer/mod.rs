@@ -60,13 +60,11 @@ mod sizes;
 mod tables;
 
 // Re-export for use by other crate modules
-pub(crate) use tables::ResolvePlaceholders;
-
-// Internal use by CilAssembly
-pub(super) use generator::PeGenerator;
-
 // Public re-exports
 pub use generator::GeneratorConfig;
+// Internal use by CilAssembly
+pub(super) use generator::PeGenerator;
+pub(crate) use tables::ResolvePlaceholders;
 
 #[cfg(test)]
 mod tests {

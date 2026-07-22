@@ -361,9 +361,10 @@ impl Default for NativeExportsBuilder {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::cilassembly::CilAssembly;
-    use std::path::PathBuf;
 
     #[test]
     fn test_native_exports_builder_basic() {

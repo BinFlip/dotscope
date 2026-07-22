@@ -76,12 +76,13 @@ impl RowWritable for PropertyRaw {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{
-        metadata::tables::types::{RowReadable, TableInfo, TableRow},
-        metadata::token::Token,
-    };
     use std::sync::Arc;
+
+    use super::*;
+    use crate::metadata::{
+        tables::types::{RowReadable, TableInfo, TableRow},
+        token::Token,
+    };
 
     #[test]
     fn test_row_size() {

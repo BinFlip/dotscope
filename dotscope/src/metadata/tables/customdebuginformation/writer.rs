@@ -99,9 +99,12 @@ impl RowWritable for CustomDebugInformationRaw {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        metadata::tables::types::{CodedIndex, CodedIndexType, RowReadable, TableInfo, TableRow},
-        metadata::{tables::TableId, token::Token},
+    use crate::metadata::{
+        tables::{
+            types::{CodedIndex, CodedIndexType, RowReadable, TableInfo, TableRow},
+            TableId,
+        },
+        token::Token,
     };
 
     #[test]

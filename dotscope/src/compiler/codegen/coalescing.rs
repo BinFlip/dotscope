@@ -31,9 +31,8 @@ use std::{
     collections::{BTreeMap, BinaryHeap},
 };
 
-use rayon::prelude::*;
-
 use analyssa::BitSet;
+use rayon::prelude::*;
 
 use crate::{
     analysis::{
@@ -994,10 +993,9 @@ fn types_compatible(t1: Option<&SsaType>, t2: Option<&SsaType>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use std::collections::BTreeSet;
 
+    use super::*;
     use crate::analysis::{SsaFunctionBuilder, SsaType, SsaVarId};
 
     /// Helper to create N unique SsaVarIds

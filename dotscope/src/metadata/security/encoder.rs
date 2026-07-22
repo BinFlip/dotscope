@@ -123,6 +123,8 @@
 //! - [ECMA-335 6th Edition, Partition II, Section 23.1.4 - Security Permission Sets](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf)
 //! - Microsoft .NET Framework Security Documentation (archived)
 
+use std::{collections::HashMap, io::Write};
+
 use crate::{
     metadata::security::{
         ArgumentType, ArgumentValue, NamedArgument, Permission, PermissionSetFormat,
@@ -130,7 +132,6 @@ use crate::{
     utils::{to_u32, write_compressed_int, write_compressed_uint},
     Result,
 };
-use std::{collections::HashMap, io::Write};
 
 /// Encodes a permission set to binary format.
 ///

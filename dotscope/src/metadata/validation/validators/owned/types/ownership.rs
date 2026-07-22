@@ -67,8 +67,9 @@
 //! - [ECMA-335 II.10.7](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Nested types
 //! - [ECMA-335 I.6.2](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Assemblies and application domains
 
-use rayon::prelude::*;
 use std::collections::HashSet;
+
+use rayon::prelude::*;
 
 use crate::{
     metadata::validation::{

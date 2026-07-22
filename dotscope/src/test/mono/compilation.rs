@@ -3,12 +3,15 @@
 //! This module handles compilation of C# source code to .NET assemblies using
 //! the detected compiler from TestCapabilities.
 
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+};
+
 use crate::{
     prelude::*,
     test::mono::capabilities::{Architecture, Compiler, TestCapabilities},
 };
-use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// Result of a compilation operation
 #[derive(Debug, Clone)]
@@ -427,8 +430,9 @@ public class TestClass
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::TempDir;
+
+    use super::*;
 
     #[test]
     fn test_compilation_result() {

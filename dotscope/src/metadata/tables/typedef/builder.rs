@@ -273,6 +273,8 @@ impl TypeDefBuilder {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::{
         cilassembly::{ChangeRefKind, CilAssembly},
@@ -281,7 +283,6 @@ mod tests {
             tables::{TableId, TypeAttributes},
         },
     };
-    use std::path::PathBuf;
 
     #[test]
     fn test_typedef_builder_basic() {

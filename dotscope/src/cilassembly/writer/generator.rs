@@ -30,6 +30,16 @@
 //! - ECMA-335 §II.25 - File format extensions to PE
 //! - [PE Format Specification](https://docs.microsoft.com/en-us/windows/win32/debug/pe-format)
 
+use std::{
+    collections::{HashMap, HashSet},
+    io::Write,
+    path::Path,
+    sync::Arc,
+};
+
+use log::debug;
+use strum::IntoEnumIterator;
+
 #[cfg(feature = "x86")]
 use crate::analysis::x86_native_body_size;
 use crate::{
@@ -71,14 +81,6 @@ use crate::{
     utils::{align_to, calculate_table_row_size},
     Error, Result,
 };
-use log::debug;
-use std::{
-    collections::{HashMap, HashSet},
-    io::Write,
-    path::Path,
-    sync::Arc,
-};
-use strum::IntoEnumIterator;
 
 /// IAT (Import Address Table) size for .NET executables (8 bytes).
 const IAT_SIZE: u64 = 8;
@@ -3007,12 +3009,13 @@ impl<'a> PeGenerator<'a> {
 
 #[cfg(test)]
 mod tests {
+    use tempfile::NamedTempFile;
+
     use crate::{
         cilassembly::{writer::generator::PeGenerator, CilAssembly},
         metadata::{signatures::TypeSignature, tables::TableId},
         CilAssemblyView, MethodBuilder,
     };
-    use tempfile::NamedTempFile;
 
     #[test]
     fn test_pe_generator_basic() {

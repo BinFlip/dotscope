@@ -362,8 +362,10 @@ impl ModuleBuilder {
 fn generate_random_guid() -> [u8; 16] {
     // For now, generate a simple deterministic GUID based on timestamp and counter
     // In production, this should use a proper GUID generation library
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::{
+        sync::atomic::{AtomicU64, Ordering},
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     static COUNTER: AtomicU64 = AtomicU64::new(1);
 

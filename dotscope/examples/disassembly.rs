@@ -18,8 +18,9 @@
 //! - Understanding of CIL instruction set
 //! - Familiarity with control flow concepts
 
-use dotscope::prelude::*;
 use std::{env, path::Path};
+
+use dotscope::prelude::*;
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();

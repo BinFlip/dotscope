@@ -42,8 +42,9 @@
 //! - ECMA-335, Partition II, §22.23: `InterfaceImpl` table specification
 //! - ECMA-335, Partition II, §23.2.14: `TypeDefOrRef` coded index encoding
 //! - ECMA-335, Partition I, §8.9.11: Interface type contracts and inheritance
-use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
+
+use crossbeam_skiplist::SkipMap;
 
 use crate::metadata::token::Token;
 

@@ -16,7 +16,6 @@
 mod strings;
 mod unmanaged;
 
-pub use self::unmanaged::UnmanagedStringReversalPass;
-
 #[cfg(feature = "legacy-crypto")]
 pub use self::strings::StringDecryptionPass;
+pub use self::unmanaged::UnmanagedStringReversalPass;

@@ -95,12 +95,13 @@ pub mod reflection;
 pub mod runner;
 
 // Re-export main types
+use std::path::Path;
+
 pub use capabilities::{Architecture, TestCapabilities};
 pub use reflection::MethodTest;
 pub use runner::TestRunner;
 
 use crate::prelude::*;
-use std::path::Path;
 
 /// Result of a complete test run for one architecture
 #[derive(Debug)]

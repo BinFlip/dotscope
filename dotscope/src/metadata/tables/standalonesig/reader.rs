@@ -92,9 +92,8 @@ impl RowReadable for StandAloneSigRaw {
 mod tests {
     use std::sync::Arc;
 
-    use crate::metadata::tables::{MetadataTable, TableInfo};
-
     use super::*;
+    use crate::metadata::tables::{MetadataTable, TableInfo};
 
     #[test]
     fn crafted_short() {

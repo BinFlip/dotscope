@@ -11,8 +11,10 @@
 //! issues where architecture selection was static and didn't account for runtime
 //! limitations (e.g., .NET 8 SDK on 64-bit Windows cannot run x86 assemblies).
 
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::{
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+};
 
 /// Available C# compiler types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

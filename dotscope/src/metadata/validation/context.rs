@@ -55,6 +55,7 @@
 
 use std::sync::{Arc, OnceLock};
 
+use rayon::ThreadPool;
 use rustc_hash::FxHashMap;
 
 use crate::{
@@ -68,7 +69,6 @@ use crate::{
         validation::{config::ValidationConfig, scanner::ReferenceScanner},
     },
 };
-use rayon::ThreadPool;
 
 /// Validation stage indicator for context discrimination.
 ///
@@ -788,11 +788,12 @@ impl ValidationContext for OwnedValidationContext<'_> {
 
 /// Factory functions for creating validation contexts.
 pub mod factory {
+    use rayon::ThreadPool;
+
     use super::{
         AssemblyChanges, CilAssemblyView, CilObject, OwnedValidationContext, RawValidationContext,
         ReferenceScanner, ValidationConfig,
     };
-    use rayon::ThreadPool;
 
     /// Creates a raw validation context for loading validation.
     pub fn raw_loading_context<'a>(
@@ -828,10 +829,12 @@ pub mod factory {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use rayon::ThreadPoolBuilder;
+
     use super::*;
     use crate::metadata::validation::config::ValidationConfig;
-    use rayon::ThreadPoolBuilder;
-    use std::path::PathBuf;
 
     #[test]
     fn test_raw_loading_context() {

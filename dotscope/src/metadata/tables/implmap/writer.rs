@@ -94,13 +94,15 @@ impl RowWritable for ImplMapRaw {
 mod tests {
     use std::sync::Arc;
 
-    use crate::metadata::tables::{
-        implmap::ImplMapRaw,
-        types::{
-            CodedIndex, CodedIndexType, RowReadable, RowWritable, TableId, TableInfo, TableRow,
+    use crate::metadata::{
+        tables::{
+            implmap::ImplMapRaw,
+            types::{
+                CodedIndex, CodedIndexType, RowReadable, RowWritable, TableId, TableInfo, TableRow,
+            },
         },
+        token::Token,
     };
-    use crate::metadata::token::Token;
 
     #[test]
     fn test_implmap_row_size() {

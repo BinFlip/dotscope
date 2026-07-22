@@ -74,6 +74,8 @@
 //! - [ECMA-335 IV.7](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Security attributes
 //! - [.NET Framework Security Model](https://docs.microsoft.com/en-us/dotnet/framework/security/) - Security model compliance
 
+use rustc_hash::FxHashSet;
+
 use crate::{
     metadata::{
         customattributes::{CustomAttributeArgument, CustomAttributeValue},
@@ -85,7 +87,6 @@ use crate::{
     },
     Error, Result,
 };
-use rustc_hash::FxHashSet;
 
 /// Foundation validator for security constraints, permissions, and security attributes.
 ///

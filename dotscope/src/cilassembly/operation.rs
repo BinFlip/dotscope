@@ -59,8 +59,9 @@
 //! - Assembly validation - Operation validation and conflict detection
 //! - [`crate::metadata::tables`] - Table data structures and row types
 
-use crate::metadata::tables::TableDataOwned;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::metadata::tables::TableDataOwned;
 
 /// Specific operation types that can be applied to table rows.
 ///

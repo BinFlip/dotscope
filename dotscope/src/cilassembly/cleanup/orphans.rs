@@ -22,11 +22,10 @@ use std::collections::{BTreeSet, HashSet};
 use crate::{
     cilassembly::{
         cleanup::{
-            references::PreDeletionRefs,
             references::{
                 collect_referenced_standalonesig_rids,
                 collect_typerefs_from_deleted_memberref_sigs, remove_unreferenced_memberrefs,
-                remove_unreferenced_typerefs, remove_unreferenced_typespecs,
+                remove_unreferenced_typerefs, remove_unreferenced_typespecs, PreDeletionRefs,
             },
             utils::{list_range, remove_candidates_not_alive, try_remove},
             CleanupStats,

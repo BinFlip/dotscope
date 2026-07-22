@@ -9,9 +9,8 @@ use std::sync::{
     Arc, RwLock,
 };
 
-use dashmap::DashMap;
-
 use analyssa::graph::{algorithms, DirectedGraph, IndexedGraph, NodeId};
+use dashmap::DashMap;
 
 use crate::{
     metadata::{dependencies::AssemblyDependency, identity::AssemblyIdentity},
@@ -751,10 +750,9 @@ impl Default for AssemblyDependencyGraph {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use std::{collections::HashMap, thread};
 
+    use super::*;
     use crate::{
         metadata::dependencies::DependencyType,
         test::helpers::dependencies::{create_test_dependency, create_test_identity},

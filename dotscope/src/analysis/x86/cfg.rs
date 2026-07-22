@@ -4,17 +4,18 @@
 //! and their successor relationships. It leverages the existing graph infrastructure
 //! from [`crate::utils::graph`] for efficient analysis.
 
+use std::{collections::BTreeSet, sync::OnceLock};
+
 use analyssa::graph::{
     algorithms::{compute_dominators, DominatorTree},
     DirectedGraph, GraphBase, NodeId, Predecessors, RootedGraph, Successors,
 };
+use rustc_hash::FxHashMap;
 
 use crate::analysis::{
     cfg::has_back_edges,
     x86::types::{X86DecodedInstruction, X86EdgeKind, X86Instruction},
 };
-use rustc_hash::FxHashMap;
-use std::{collections::BTreeSet, sync::OnceLock};
 
 /// A basic block in the x86 CFG.
 #[derive(Debug, Clone)]

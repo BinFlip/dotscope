@@ -3,6 +3,8 @@
 //! Contains helper methods migrated from custom attributes source files
 //! for creating test data related to custom attribute parsing and encoding.
 
+use std::sync::Arc;
+
 use crate::{
     metadata::{
         identity::AssemblyIdentity,
@@ -11,7 +13,6 @@ use crate::{
     },
     test::MethodBuilder,
 };
-use std::sync::Arc;
 
 /// Helper to create a method with empty parameters for parsing tests
 ///

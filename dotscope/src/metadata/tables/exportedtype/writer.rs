@@ -109,8 +109,10 @@ impl RowWritable for ExportedTypeRaw {
 mod tests {
     use super::*;
     use crate::metadata::{
-        tables::types::{RowReadable, TableId, TableInfo, TableRow},
-        tables::CodedIndex,
+        tables::{
+            types::{RowReadable, TableId, TableInfo, TableRow},
+            CodedIndex,
+        },
         token::Token,
     };
 

@@ -60,17 +60,16 @@ mod obfuscar;
 mod registry;
 mod result;
 
+use std::sync::Arc;
+
 pub use assembly::WorkingAssembly;
+// Re-export findings types needed by infrastructure passes and the engine.
+#[cfg(feature = "legacy-crypto")]
+pub(crate) use bitmono::StringFindings as BitMonoStringFindings;
 pub use detection::{AttributionResult, Detection, Detections, Evidence};
 pub use registry::{ObfuscatorMatcher, ObfuscatorSignature, TechniqueRegistry};
 pub use result::TechniqueResult;
 pub(crate) use result::TechniqueResults;
-
-// Re-export findings types needed by infrastructure passes and the engine.
-#[cfg(feature = "legacy-crypto")]
-pub(crate) use bitmono::StringFindings as BitMonoStringFindings;
-
-use std::sync::Arc;
 
 use crate::{
     analysis::CilTarget,

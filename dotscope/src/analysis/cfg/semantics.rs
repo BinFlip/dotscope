@@ -730,7 +730,6 @@ impl<'a, T: Target> SemanticAnalyzer<'a, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use crate::analysis::{SsaFunctionBuilder, SsaType};
 
     #[test]

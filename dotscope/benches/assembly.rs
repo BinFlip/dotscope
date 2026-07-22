@@ -6,11 +6,14 @@
 
 extern crate dotscope;
 
-use criterion::{criterion_group, criterion_main, Criterion};
-use dotscope::assembly::{decode_stream, InstructionAssembler, InstructionEncoder};
-use dotscope::metadata::token::Token;
-use dotscope::Result;
 use std::hint::black_box;
+
+use criterion::{criterion_group, criterion_main, Criterion};
+use dotscope::{
+    assembly::{decode_stream, InstructionAssembler, InstructionEncoder},
+    metadata::token::Token,
+    Result,
+};
 
 fn assemble_simple() -> Result<(
     Vec<u8>,

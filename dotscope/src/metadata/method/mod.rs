@@ -99,10 +99,10 @@ mod exceptions;
 mod iter;
 mod types;
 
-use crossbeam_skiplist::SkipMap;
 use std::sync::{atomic::AtomicU32, Arc, OnceLock, Weak};
 
 pub use body::*;
+use crossbeam_skiplist::SkipMap;
 pub use encode::encode_method_body_header;
 pub use exceptions::*;
 pub use iter::InstructionIterator;
@@ -1962,7 +1962,6 @@ impl Method {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use crate::{
         assembly::{
             BasicBlock, FlowType, Instruction, InstructionCategory, Operand, StackBehavior,

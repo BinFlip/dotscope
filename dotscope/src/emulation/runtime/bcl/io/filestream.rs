@@ -1067,6 +1067,7 @@ fn streamreader_noop_pre(_ctx: &HookContext<'_>, _thread: &mut EmulationThread) 
 mod tests {
     use std::sync::{Arc, RwLock};
 
+    use super::*;
     use crate::{
         emulation::{
             filesystem::VirtualFs,
@@ -1080,8 +1081,6 @@ mod tests {
         metadata::{token::Token, typesystem::PointerSize},
         test::emulation::create_test_thread,
     };
-
-    use super::*;
 
     /// Creates a test thread with a virtual filesystem containing "test.exe".
     fn create_thread_with_vfs() -> EmulationThread {

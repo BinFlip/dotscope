@@ -60,6 +60,23 @@ pub use alignment::align_to;
 #[cfg(feature = "emulation")]
 pub use base64::{base64_decode, base64_encode};
 pub use compression::compressed_uint_size;
+#[cfg(all(feature = "deobfuscation", feature = "legacy-crypto"))]
+pub(crate) use crypto::derive_key_iv;
+#[cfg(all(feature = "legacy-crypto", feature = "emulation"))]
+pub(crate) use crypto::derive_pbkdf1_key;
+#[cfg(feature = "deobfuscation")]
+pub(crate) use crypto::CryptoParameters;
+#[cfg(feature = "emulation")]
+pub(crate) use crypto::{apply_crypto_transform, derive_pbkdf2_key, verify_rsa_pkcs1v15};
+#[cfg(feature = "emulation")]
+pub(crate) use crypto::{compute_hmac_sha256, compute_hmac_sha512};
+#[cfg(feature = "legacy-crypto")]
+pub(crate) use crypto::{compute_md5, compute_sha1};
+pub(crate) use crypto::{compute_sha256, compute_sha384, compute_sha512};
+#[allow(unused_imports)]
+pub(crate) use decompress::{
+    decompress_confuserex_lzma, decompress_deflate, decompress_gzip, is_confuserex_lzma,
+};
 pub use dot::escape_dot;
 pub use enums::EnumUtils;
 pub use hash::{hash_blob, hash_guid, hash_string};
@@ -80,22 +97,3 @@ pub use math::to_i32_saturating;
 pub use math::to_u32;
 pub use synchronization::FailFastBarrier;
 pub use visitedmap::VisitedMap;
-
-#[cfg(all(feature = "deobfuscation", feature = "legacy-crypto"))]
-pub(crate) use crypto::derive_key_iv;
-#[cfg(all(feature = "legacy-crypto", feature = "emulation"))]
-pub(crate) use crypto::derive_pbkdf1_key;
-#[cfg(feature = "deobfuscation")]
-pub(crate) use crypto::CryptoParameters;
-#[cfg(feature = "emulation")]
-pub(crate) use crypto::{apply_crypto_transform, derive_pbkdf2_key, verify_rsa_pkcs1v15};
-#[cfg(feature = "emulation")]
-pub(crate) use crypto::{compute_hmac_sha256, compute_hmac_sha512};
-#[cfg(feature = "legacy-crypto")]
-pub(crate) use crypto::{compute_md5, compute_sha1};
-pub(crate) use crypto::{compute_sha256, compute_sha384, compute_sha512};
-
-#[allow(unused_imports)]
-pub(crate) use decompress::{
-    decompress_confuserex_lzma, decompress_deflate, decompress_gzip, is_confuserex_lzma,
-};

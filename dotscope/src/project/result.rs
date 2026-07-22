@@ -3,13 +3,14 @@
 //! This module provides result types for project loading operations, tracking
 //! successfully loaded assemblies, failures, and missing dependencies.
 
-use crate::{
-    metadata::{cilassemblyview::CilAssemblyView, identity::AssemblyIdentity},
-    project::CilProject,
-};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     path::PathBuf,
+};
+
+use crate::{
+    metadata::{cilassemblyview::CilAssemblyView, identity::AssemblyIdentity},
+    project::CilProject,
 };
 
 /// A version mismatch between a required and actual assembly version.

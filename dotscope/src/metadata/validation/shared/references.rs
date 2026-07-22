@@ -63,14 +63,15 @@
 //! - Owned validators - Used by owned validators for cross-reference validation
 //! - [`crate::metadata::token`] - Validates token-based references
 
+use std::collections::HashSet;
+
+use rustc_hash::{FxHashMap, FxHashSet};
 use strum::IntoEnumIterator;
 
 use crate::{
     metadata::{tables::TableId, token::Token, validation::scanner::ReferenceScanner},
     Error, Result,
 };
-use rustc_hash::{FxHashMap, FxHashSet};
-use std::collections::HashSet;
 
 /// Shared reference validation utilities.
 ///
@@ -591,9 +592,10 @@ impl std::fmt::Display for ReferenceStatistics {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::metadata::cilassemblyview::CilAssemblyView;
-    use std::path::PathBuf;
 
     #[test]
     fn test_reference_validator_creation() {

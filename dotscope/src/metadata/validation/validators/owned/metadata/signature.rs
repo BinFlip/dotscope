@@ -71,8 +71,9 @@
 //! - [ECMA-335 I.8.6](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Assignment compatibility
 //! - [ECMA-335 II.10.1](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Method overriding and signatures
 
-use rayon::prelude::*;
 use std::collections::HashMap;
+
+use rayon::prelude::*;
 
 use crate::{
     metadata::validation::{

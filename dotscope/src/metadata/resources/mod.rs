@@ -161,12 +161,12 @@ mod encoder;
 mod parser;
 mod types;
 
+use std::{collections::BTreeMap, sync::Arc};
+
+use dashmap::DashMap;
 pub use encoder::*;
 pub use parser::{parse_dotnet_resource, parse_dotnet_resource_ref, Resource};
 pub use types::*;
-
-use dashmap::DashMap;
-use std::{collections::BTreeMap, sync::Arc};
 
 use crate::{file::File, metadata::tables::ManifestResourceRc};
 
@@ -635,9 +635,8 @@ impl<'a> IntoIterator for &'a Resources {
 
 #[cfg(test)]
 mod tests {
-    use crate::metadata::resources::parser::{parse_dotnet_resource, parse_dotnet_resource_ref};
-
     use super::*;
+    use crate::metadata::resources::parser::{parse_dotnet_resource, parse_dotnet_resource_ref};
 
     /// Helper trait to abstract over owned (ResourceType) and borrowed (ResourceTypeRef) variants.
     /// This allows writing generic test code that works with both.

@@ -31,11 +31,12 @@
 //! - [`crate::metadata::tables::types::read::access`] - Low-level access utilities
 //! - [`crate::metadata::tables::types::read::traits`] - Core trait definitions
 
+use std::{marker::PhantomData, sync::Arc};
+
 use crate::{
     metadata::tables::{RowReadable, TableInfoRef, TableIterator, TableParIterator},
     Result,
 };
-use std::{marker::PhantomData, sync::Arc};
 
 /// Generic container for metadata table data with typed row access.
 ///

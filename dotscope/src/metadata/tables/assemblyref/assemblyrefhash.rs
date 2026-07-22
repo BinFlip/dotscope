@@ -61,13 +61,14 @@
 //! - [RFC 1321](https://tools.ietf.org/html/rfc1321) - MD5 Message-Digest Algorithm (deprecated)
 //! - [RFC 3174](https://tools.ietf.org/html/rfc3174) - SHA-1 Hash Function (deprecated)
 
+use std::fmt::Write;
+
 #[cfg(feature = "legacy-crypto")]
 use crate::utils::{compute_md5, compute_sha1};
 use crate::{
     utils::{compute_sha256, compute_sha384, compute_sha512},
     Result,
 };
-use std::fmt::Write;
 
 /// Convert bytes to lowercase hexadecimal string representation
 ///

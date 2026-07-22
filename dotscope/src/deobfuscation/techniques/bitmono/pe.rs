@@ -115,8 +115,10 @@ impl Technique for BitMonoPeRepair {
 
 #[cfg(test)]
 mod tests {
-    use crate::deobfuscation::techniques::{bitmono::BitMonoPeRepair, Technique};
-    use crate::test::helpers::load_sample;
+    use crate::{
+        deobfuscation::techniques::{bitmono::BitMonoPeRepair, Technique},
+        test::helpers::load_sample,
+    };
 
     #[test]
     fn test_detect_positive() {

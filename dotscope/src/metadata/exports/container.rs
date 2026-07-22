@@ -43,8 +43,9 @@
 //! let functions = container.get_all_exported_functions();
 //! ```
 
-use dashmap::{mapref::entry::Entry, DashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
+
+use dashmap::{mapref::entry::Entry, DashMap};
 
 use crate::{
     metadata::{

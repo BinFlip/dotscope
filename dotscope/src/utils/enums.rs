@@ -4,6 +4,8 @@
 //! and parsing enum values from binary data. It's used by custom attributes, security
 //! permissions, and other metadata parsers that need to handle enum values.
 
+use std::sync::Arc;
+
 use crate::{
     file::parser::Parser,
     metadata::{
@@ -12,7 +14,6 @@ use crate::{
     },
     ParseFailure, ParseStage, Result,
 };
-use std::sync::Arc;
 
 /// Utilities for working with .NET enum types
 pub struct EnumUtils;

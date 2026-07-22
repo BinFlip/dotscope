@@ -89,6 +89,11 @@ mod edge;
 mod graph;
 mod semantics;
 
+#[cfg(feature = "compiler")]
+pub use analyssa::analysis::loop_analyzer::SsaLoopAnalysis;
+#[cfg(feature = "x86")]
+pub use analyssa::analysis::loops::has_back_edges;
+pub use analyssa::analysis::loops::{detect_loops, InductionVar, LoopForest, LoopInfo};
 pub use edge::{CfgEdge, CfgEdgeKind};
 pub use graph::ControlFlowGraph;
 pub use semantics::{BlockSemantics, LoopSemantics, SemanticAnalyzer};
@@ -96,12 +101,6 @@ pub use semantics::{BlockSemantics, LoopSemantics, SemanticAnalyzer};
 // `LoopAnalyzer` and the extended-loop primitives live analyssa-side. CIL
 // callers reach them through these aliases / re-exports.
 use crate::analysis::ssa::CilTarget;
-
-#[cfg(feature = "compiler")]
-pub use analyssa::analysis::loop_analyzer::SsaLoopAnalysis;
-#[cfg(feature = "x86")]
-pub use analyssa::analysis::loops::has_back_edges;
-pub use analyssa::analysis::loops::{detect_loops, InductionVar, LoopForest, LoopInfo};
 
 /// CIL-defaulted alias of [`analyssa::analysis::loop_analyzer::LoopAnalyzer`].
 pub type LoopAnalyzer<'a, T = CilTarget> = analyssa::analysis::loop_analyzer::LoopAnalyzer<'a, T>;

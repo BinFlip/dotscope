@@ -20,6 +20,8 @@
 //! - Familiarity with ECMA-335 specification concepts
 //! - Basic knowledge of P/Invoke and native interoperability
 
+use std::{env, path::Path};
+
 use dotscope::{
     metadata::{
         signatures::TypeSignature,
@@ -28,7 +30,6 @@ use dotscope::{
     prelude::*,
     CilAssembly, CilAssemblyView,
 };
-use std::{env, path::Path};
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();

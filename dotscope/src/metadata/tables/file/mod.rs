@@ -62,12 +62,14 @@
 //! # ECMA-335 Reference
 //! See ECMA-335, Partition II, §22.19 for the complete File table specification.
 
+use std::sync::Arc;
+
+use crossbeam_skiplist::SkipMap;
+
 use crate::metadata::{
     imports::{ImportContainer, ImportRc, Imports},
     token::Token,
 };
-use crossbeam_skiplist::SkipMap;
-use std::sync::Arc;
 
 mod builder;
 mod loader;

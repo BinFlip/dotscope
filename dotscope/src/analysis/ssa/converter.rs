@@ -36,6 +36,11 @@
 
 use std::collections::BTreeMap;
 
+use analyssa::{
+    graph::{algorithms::DominatorTree, NodeId},
+    BitSet,
+};
+
 use crate::{
     analysis::{
         cfg::ControlFlowGraph,
@@ -54,10 +59,6 @@ use crate::{
         typesystem::CilTypeReference,
     },
     CilObject, Error, Result,
-};
-use analyssa::{
-    graph::{algorithms::DominatorTree, NodeId},
-    BitSet,
 };
 
 /// A variable definition record during SSA construction.
@@ -2863,10 +2864,9 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use std::collections::BTreeSet;
 
+    use super::*;
     use crate::{
         assembly::{decode_blocks, InstructionAssembler},
         test::TestTypeProvider,

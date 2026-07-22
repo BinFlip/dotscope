@@ -126,8 +126,10 @@ impl Technique for BitMonoNops {
 
 #[cfg(test)]
 mod tests {
-    use crate::deobfuscation::techniques::{bitmono::BitMonoNops, Technique};
-    use crate::test::helpers::load_sample;
+    use crate::{
+        deobfuscation::techniques::{bitmono::BitMonoNops, Technique},
+        test::helpers::load_sample,
+    };
 
     #[test]
     fn test_detect_positive() {

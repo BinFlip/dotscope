@@ -87,7 +87,6 @@ mod tests {
     use std::collections::HashSet;
 
     use super::*;
-
     use crate::analysis::{
         ConstValue, PhiNode, PhiOperand, SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaVarId,
         VariableOrigin,

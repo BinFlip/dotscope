@@ -281,10 +281,9 @@ fn collect_runtime_method_tokens(assembly: &CilObject, runtime_type: Option<Toke
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use std::path::Path;
 
+    use super::*;
     use crate::metadata::validation::ValidationConfig;
 
     fn try_load_sample(name: &str) -> Option<CilObject> {

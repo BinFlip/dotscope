@@ -122,18 +122,17 @@ pub use passes::{
     CffReconstructionPass, DecryptionPass, DelegateProxyResolutionPass, DelegateTypeInfo,
     NativeMethodConversionPass, NeutralizationPass, OpaqueFieldPredicatePass, UnflattenConfig,
 };
-pub use renamer::SmartRenameConfig;
-pub use result::DeobfuscationResult;
-pub use techniques::{
-    AttributionResult, Detection, Detections, Evidence, ObfuscatorMatcher, ObfuscatorSignature,
-    Technique, TechniqueCategory, TechniqueRegistry, TechniqueResult, WorkingAssembly,
-};
-
 // Crate-internal re-exports (only items that are actually imported via this path)
 pub(crate) use processcell::ProcessCell;
+pub use renamer::SmartRenameConfig;
+pub use result::DeobfuscationResult;
 pub(crate) use statemachine::{
     CfgInfo, StateMachineCallSite, StateMachineProvider, StateMachineSemantics, StateMachineState,
     StateSlotOperation, StateUpdateCall,
+};
+pub use techniques::{
+    AttributionResult, Detection, Detections, Evidence, ObfuscatorMatcher, ObfuscatorSignature,
+    Technique, TechniqueCategory, TechniqueRegistry, TechniqueResult, WorkingAssembly,
 };
 pub(crate) use template::EmulationTemplatePool;
 

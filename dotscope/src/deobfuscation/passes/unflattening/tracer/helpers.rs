@@ -17,6 +17,7 @@
 
 use std::collections::BTreeSet;
 
+use analyssa::BitSet;
 use rayon::prelude::*;
 
 use crate::{
@@ -32,7 +33,6 @@ use crate::{
     metadata::{token::Token, typesystem::PointerSize},
     CilObject,
 };
-use analyssa::BitSet;
 
 /// Traces exception handler entry blocks that were not visited by the main trace.
 ///

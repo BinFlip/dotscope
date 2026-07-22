@@ -3,13 +3,16 @@
 //! This module handles execution of .NET assemblies using the detected runtime
 //! from TestCapabilities.
 
+use std::{
+    path::Path,
+    process::{Command, Output},
+    time::Duration,
+};
+
 use crate::{
     prelude::*,
     test::mono::capabilities::{Runtime, TestCapabilities},
 };
-use std::path::Path;
-use std::process::{Command, Output};
-use std::time::Duration;
 
 /// Result of executing an assembly
 #[derive(Debug, Clone)]
@@ -305,9 +308,10 @@ impl ChildExt for std::process::Child {
 
 #[cfg(test)]
 mod tests {
+    use tempfile::TempDir;
+
     use super::*;
     use crate::test::mono::compilation::{compile, templates};
-    use tempfile::TempDir;
 
     #[test]
     fn test_execution_result() {

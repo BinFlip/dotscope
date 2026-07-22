@@ -43,11 +43,12 @@
 //! let dependencies = container.get_all_dll_dependencies();
 //! ```
 
-use dashmap::{mapref::entry::Entry, DashMap};
 use std::{
     collections::HashSet,
     sync::atomic::{AtomicBool, Ordering},
 };
+
+use dashmap::{mapref::entry::Entry, DashMap};
 
 use crate::{
     metadata::{

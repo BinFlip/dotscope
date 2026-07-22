@@ -239,12 +239,13 @@ impl Default for AssemblyBuilder {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::{
         cilassembly::{ChangeRefKind, CilAssembly},
         metadata::cilassemblyview::CilAssemblyView,
     };
-    use std::path::PathBuf;
 
     #[test]
     fn test_assembly_builder_basic() {

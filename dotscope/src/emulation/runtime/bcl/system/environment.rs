@@ -400,13 +400,12 @@ fn get_os_version_pre(_ctx: &HookContext<'_>, thread: &mut EmulationThread) -> P
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::{
         emulation::runtime::hook::{HookContext, HookManager, PreHookResult},
         metadata::{token::Token, typesystem::PointerSize},
         test::emulation::create_test_thread,
     };
-
-    use super::*;
 
     #[test]
     fn test_register_hooks() {

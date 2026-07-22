@@ -8,9 +8,16 @@
 //! The implementation leverages generic graph infrastructure, providing access
 //! to standard graph algorithms.
 
-use std::collections::{HashMap, HashSet};
-use std::fmt::Write;
-use std::sync::OnceLock;
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Write,
+    sync::OnceLock,
+};
+
+use analyssa::graph::{
+    algorithms::{self, strongly_connected_components},
+    DirectedGraph, NodeId,
+};
 
 use crate::{
     analysis::callgraph::{CallGraphNode, CallResolver, CallSite, CallTarget, CallType},
@@ -23,10 +30,6 @@ use crate::{
     },
     utils::escape_dot,
     CilObject, Result,
-};
-use analyssa::graph::{
-    algorithms::{self, strongly_connected_components},
-    DirectedGraph, NodeId,
 };
 
 /// Inter-procedural call graph for a .NET assembly.

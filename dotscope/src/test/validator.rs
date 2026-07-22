@@ -17,6 +17,11 @@
 //! - Centralized cleanup and error handling
 //! - Clear separation of concerns
 
+use std::path::{Path, PathBuf};
+
+use rayon::ThreadPoolBuilder;
+use tempfile::NamedTempFile;
+
 use crate::{
     metadata::{
         cilassemblyview::CilAssemblyView,
@@ -26,9 +31,6 @@ use crate::{
     },
     Error, Result,
 };
-use rayon::ThreadPoolBuilder;
-use std::path::{Path, PathBuf};
-use tempfile::NamedTempFile;
 
 /// Test assembly specification for validator testing.
 ///

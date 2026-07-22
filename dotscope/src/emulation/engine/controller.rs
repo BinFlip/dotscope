@@ -2744,10 +2744,9 @@ impl Default for EmulationController {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use dashmap::DashMap;
 
+    use super::*;
     use crate::{
         emulation::{engine::typeops, process::UnknownMethodBehavior},
         test::emulation::create_test_thread,

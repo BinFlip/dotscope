@@ -49,7 +49,10 @@
 //! - [`crate::metadata::validation::context`] - Validation context abstractions
 //! - [`crate::metadata::validation::config`] - Configuration for validation behavior
 
+use std::{sync::OnceLock, time::Instant};
+
 use log::debug;
+use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
 
 use crate::{
     cilassembly::AssemblyChanges,
@@ -77,8 +80,6 @@ use crate::{
     },
     Error, Result,
 };
-use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
-use std::{sync::OnceLock, time::Instant};
 
 /// Static registry of raw validators.
 ///
@@ -587,6 +588,8 @@ pub mod factory {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::{
         cilassembly::AssemblyChanges,
@@ -598,7 +601,6 @@ mod tests {
             },
         },
     };
-    use std::path::PathBuf;
 
     // Test validator for validation
     struct TestRawValidator {

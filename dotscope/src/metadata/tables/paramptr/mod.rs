@@ -34,9 +34,11 @@
 //! - ECMA-335, Partition II, §22.26 - `ParamPtr` table specification
 //! - [`crate::metadata::tables::Param`] - Target parameter table entries
 //! - [`crate::metadata::loader`] - Metadata loading and resolution system
-use crate::metadata::token::Token;
-use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
+
+use crossbeam_skiplist::SkipMap;
+
+use crate::metadata::token::Token;
 
 mod builder;
 mod loader;

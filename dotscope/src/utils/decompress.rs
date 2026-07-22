@@ -220,7 +220,10 @@ pub fn decompress_gzip(data: &[u8]) -> DecompressResult<Vec<u8>> {
 mod tests {
     use std::io::Write;
 
-    use flate2::{write::DeflateEncoder, write::GzEncoder, Compression};
+    use flate2::{
+        write::{DeflateEncoder, GzEncoder},
+        Compression,
+    };
 
     use super::*;
 

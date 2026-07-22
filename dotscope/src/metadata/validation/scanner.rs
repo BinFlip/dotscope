@@ -55,6 +55,8 @@
 //! - [`crate::metadata::validation::engine`] - Creates scanner for validation runs
 //! - [`crate::metadata::validation::traits`] - Validators use scanner for reference validation
 
+use rustc_hash::{FxHashMap, FxHashSet};
+
 use crate::{
     dispatch_table_type,
     metadata::{
@@ -69,7 +71,6 @@ use crate::{
     },
     Blob, Error, Guid, HeapKind, ParseFailure, Result, Strings, UserStrings,
 };
-use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Reference scanner for metadata validation.
 ///
@@ -902,9 +903,10 @@ impl std::fmt::Display for ScannerStatistics {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::metadata::cilassemblyview::CilAssemblyView;
-    use std::path::PathBuf;
 
     #[test]
     fn test_reference_scanner_creation() {

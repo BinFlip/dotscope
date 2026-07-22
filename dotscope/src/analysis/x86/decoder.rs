@@ -3,6 +3,11 @@
 //! This module provides a thin wrapper around iced-x86 that converts its
 //! instruction representation to our simplified [`X86Instruction`] types.
 
+use std::collections::VecDeque;
+
+use iced_x86::{Decoder, DecoderOptions, Instruction, Mnemonic, OpKind, Register};
+use rustc_hash::FxHashSet;
+
 use crate::{
     analysis::x86::types::{
         X86Condition, X86DecodedInstruction, X86EpilogueInfo, X86Instruction, X86Memory,
@@ -10,9 +15,6 @@ use crate::{
     },
     Error, Result,
 };
-use iced_x86::{Decoder, DecoderOptions, Instruction, Mnemonic, OpKind, Register};
-use rustc_hash::FxHashSet;
-use std::collections::VecDeque;
 
 /// Decode x86/x64 bytes into our instruction representation.
 ///

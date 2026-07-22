@@ -365,13 +365,15 @@ macro_rules! owned_validators {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use rayon::ThreadPoolBuilder;
+
     use super::*;
     use crate::metadata::{
         cilassemblyview::CilAssemblyView,
         validation::{config::ValidationConfig, context::factory, scanner::ReferenceScanner},
     };
-    use rayon::ThreadPoolBuilder;
-    use std::path::PathBuf;
 
     struct TestRawValidator {
         name: &'static str,

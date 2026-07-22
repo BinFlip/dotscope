@@ -284,10 +284,9 @@ impl FailFastBarrier {
 
 #[cfg(test)]
 mod tests {
+    use std::{sync::Arc, thread, time::Duration};
+
     use super::*;
-    use std::sync::Arc;
-    use std::thread;
-    use std::time::Duration;
 
     #[test]
     fn test_normal_barrier_operation() {

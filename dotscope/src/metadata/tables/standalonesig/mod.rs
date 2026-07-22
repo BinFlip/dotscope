@@ -51,9 +51,11 @@
 //! - [`crate::metadata::signatures`] - Signature parsing and types
 //! - [`crate::metadata::streams::Blob`] - Blob stream access for signature data
 
-use crate::metadata::token::Token;
-use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
+
+use crossbeam_skiplist::SkipMap;
+
+use crate::metadata::token::Token;
 
 mod builder;
 mod loader;

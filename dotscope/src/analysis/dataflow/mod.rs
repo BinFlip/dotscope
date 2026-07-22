@@ -2,15 +2,14 @@
 //! `analyssa::analysis::dataflow`. CIL-defaulted aliases preserve historical
 //! `dotscope::analysis::*` API.
 
-use analyssa::graph::{NodeId, RootedGraph};
-
-use crate::analysis::{ssa::CilTarget, ControlFlowGraph};
-
 pub use analyssa::analysis::dataflow::{
     framework::{AnalysisResults, DataFlowAnalysis, DataFlowCfg, Direction},
     liveness::{LiveVariables, LivenessResult},
     reaching::ReachingDefinitions,
 };
+use analyssa::graph::{NodeId, RootedGraph};
+
+use crate::analysis::{ssa::CilTarget, ControlFlowGraph};
 
 /// CIL-defaulted alias of [`analyssa::analysis::dataflow::sccp::ConstantPropagation`].
 pub type ConstantPropagation<T = CilTarget> =
@@ -45,7 +44,6 @@ impl DataFlowCfg for ControlFlowGraph<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use crate::{
         analysis::{cfg::ControlFlowGraph, ssa::SsaConverter, SsaFunction},
         assembly::{decode_blocks, InstructionAssembler},

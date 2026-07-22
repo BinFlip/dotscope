@@ -26,20 +26,19 @@ mod prompt;
 mod providers;
 mod validate;
 
-pub use config::SmartRenameConfig;
-
 use std::collections::{HashMap, HashSet};
 
+pub use config::SmartRenameConfig;
+
+use self::{
+    cascade::CascadeRenamer,
+    providers::{SimpleNameGenerator, SimpleProvider},
+};
 use crate::{
     cilassembly::CilAssembly,
     deobfuscation::utils::{is_obfuscated_name, is_special_name},
     metadata::tables::{FieldRaw, MethodDefRaw, ParamRaw, TableDataOwned, TableId, TypeDefRaw},
     CilObject, Result,
-};
-
-use self::{
-    cascade::CascadeRenamer,
-    providers::{SimpleNameGenerator, SimpleProvider},
 };
 
 /// A provider that generates names from context.

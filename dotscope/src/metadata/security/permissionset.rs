@@ -270,6 +270,13 @@
 //! including various binary format variations and assembly name mappings that changed
 //! over time (e.g., mscorlib vs System.Private.CoreLib).
 
+use std::fmt;
+
+use quick_xml::{
+    events::{attributes::Attributes, Event},
+    Reader,
+};
+
 use crate::{
     file::parser::Parser,
     metadata::security::{
@@ -279,11 +286,6 @@ use crate::{
     utils::EnumUtils,
     ParseFailure, ParseStage, Result,
 };
-use quick_xml::{
-    events::{attributes::Attributes, Event},
-    Reader,
-};
-use std::fmt;
 
 /// Maximum number of permissions in a permission set.
 ///

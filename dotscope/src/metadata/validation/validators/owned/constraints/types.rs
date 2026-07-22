@@ -72,6 +72,8 @@
 //! - [ECMA-335 I.8.9.1](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Generic type instantiation
 //! - [ECMA-335 II.22.29](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - TypeSpec constraints
 
+use std::collections::HashSet;
+
 use crate::{
     metadata::{
         tables::GenericParamAttributes,
@@ -83,7 +85,6 @@ use crate::{
     },
     Error, Result,
 };
-use std::collections::HashSet;
 
 /// Foundation validator for generic type constraints, inheritance compatibility, and interface implementation requirements.
 ///

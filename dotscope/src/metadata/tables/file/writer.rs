@@ -77,11 +77,13 @@ impl RowWritable for FileRaw {
 mod tests {
     use std::sync::Arc;
 
-    use crate::metadata::tables::{
-        file::FileRaw,
-        types::{RowReadable, RowWritable, TableInfo, TableRow},
+    use crate::metadata::{
+        tables::{
+            file::FileRaw,
+            types::{RowReadable, RowWritable, TableInfo, TableRow},
+        },
+        token::Token,
     };
-    use crate::metadata::token::Token;
 
     #[test]
     fn test_file_row_size() {

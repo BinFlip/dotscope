@@ -655,8 +655,10 @@ mod tests {
     use super::*;
     use crate::{
         cilassembly::changes::{AssemblyChanges, HeapChanges},
-        metadata::tables::{CodedIndex, CodedIndexType},
-        metadata::token::Token,
+        metadata::{
+            tables::{CodedIndex, CodedIndexType},
+            token::Token,
+        },
     };
 
     #[test]

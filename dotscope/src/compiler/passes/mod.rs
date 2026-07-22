@@ -100,8 +100,7 @@ pub use analyssa::passes::{
 // `DeadMethodEliminationPass`; `constants`, `inlining`, `proxy` are
 // CIL-specific in their entirety.
 pub use self::constants::ConstantPropagationPass;
-pub use self::copying::CopyPropagationPass;
-pub use self::deadcode::DeadMethodEliminationPass;
-pub use self::inlining::InliningPass;
-pub use self::proxy::ProxyDevirtualizationPass;
-pub use self::strength::StrengthReductionPass;
+pub use self::{
+    copying::CopyPropagationPass, deadcode::DeadMethodEliminationPass, inlining::InliningPass,
+    proxy::ProxyDevirtualizationPass, strength::StrengthReductionPass,
+};

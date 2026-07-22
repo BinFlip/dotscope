@@ -73,6 +73,10 @@
 //! - [ECMA-335 II.22](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Metadata table specifications
 //! - [ECMA-335 II.24](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Metadata physical layout
 
+use std::collections::HashMap;
+
+use rustc_hash::{FxHashMap, FxHashSet};
+
 use crate::{
     cilassembly::{Operation, TableModifications},
     metadata::{
@@ -84,8 +88,6 @@ use crate::{
     },
     Error, Result,
 };
-use rustc_hash::{FxHashMap, FxHashSet};
-use std::collections::HashMap;
 
 /// Foundation validator for post-change assembly integrity and consistency validation.
 ///
@@ -680,6 +682,10 @@ impl Default for RawChangeIntegrityValidator {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{HashMap, HashSet};
+
+    use rayon::ThreadPoolBuilder;
+
     use super::*;
     use crate::{
         cilassembly::{AssemblyChanges, Operation, TableModifications, TableOperation},
@@ -700,8 +706,6 @@ mod tests {
         },
         Error,
     };
-    use rayon::ThreadPoolBuilder;
-    use std::collections::{HashMap, HashSet};
 
     /// Direct corruption testing for RawChangeIntegrityValidator bypassing file I/O.
     ///

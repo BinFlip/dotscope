@@ -362,12 +362,13 @@ impl Default for MethodSemanticsBuilder {
 
 #[cfg(test)]
 mod tests {
+    use std::{env, path::PathBuf};
+
     use super::*;
     use crate::{
         cilassembly::{ChangeRefKind, CilAssembly},
         metadata::{cilassemblyview::CilAssemblyView, tables::MethodSemanticsAttributes},
     };
-    use std::{env, path::PathBuf};
 
     #[test]
     fn test_methodsemantics_builder_creation() {

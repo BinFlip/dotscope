@@ -131,11 +131,12 @@ impl TryFrom<&AnalyssaConstValue<CilTarget>> for Immediate {
 
 #[cfg(test)]
 mod tests {
+    use analyssa::ir::{
+        value::{ComputedOp, ComputedValue},
+        variable::SsaVarId,
+    };
+
     use super::*;
-
-    use analyssa::ir::value::{ComputedOp, ComputedValue};
-    use analyssa::ir::variable::SsaVarId;
-
     use crate::metadata::typesystem::PointerSize;
 
     // Tests construct unit/numeric variants like `ConstValue::I32(_)` that

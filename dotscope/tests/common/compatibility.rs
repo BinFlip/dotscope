@@ -15,13 +15,14 @@
 
 #![allow(dead_code)]
 
-use dotscope::{project::ProjectLoader, CilAssemblyView};
-use rayon::prelude::*;
 use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
 };
+
+use dotscope::{project::ProjectLoader, CilAssemblyView};
+use rayon::prelude::*;
 
 /// Result of loading an assembly with a specific loader.
 #[derive(Debug, Clone)]

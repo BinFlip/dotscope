@@ -18,8 +18,9 @@
 //! - Familiarity with ECMA-335 metadata structures
 //! - Experience with binary parsing concepts
 
-use dotscope::prelude::*;
 use std::{env, fs, path::Path};
+
+use dotscope::prelude::*;
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();

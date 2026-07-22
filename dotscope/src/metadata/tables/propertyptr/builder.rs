@@ -185,9 +185,10 @@ impl Default for PropertyPtrBuilder {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::test::factories::table::assemblyref::get_test_assembly;
-    use std::sync::Arc;
 
     #[test]
     fn test_propertyptr_builder_new() {

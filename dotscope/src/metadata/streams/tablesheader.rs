@@ -294,6 +294,7 @@
 //! - **ECMA-335 II.25**: File format and metadata integration within PE files
 
 use std::{io::Write, sync::Arc};
+
 use strum::IntoEnumIterator;
 
 use crate::{

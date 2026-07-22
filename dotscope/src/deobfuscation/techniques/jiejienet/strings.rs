@@ -384,7 +384,6 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-
     use crate::{
         deobfuscation::techniques::Technique,
         emulation::{EmValue, EmulationOutcome, ProcessBuilder},

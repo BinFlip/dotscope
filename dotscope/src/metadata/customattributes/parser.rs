@@ -116,6 +116,8 @@
 //! - **Memory Safety**: Comprehensive bounds checking and nesting depth limiting
 //! - **Error Handling**: Detailed error messages for debugging malformed data
 
+use std::sync::Arc;
+
 use crate::{
     file::parser::Parser,
     metadata::{
@@ -131,7 +133,6 @@ use crate::{
     Error::DepthLimitExceeded,
     Result,
 };
-use std::sync::Arc;
 
 /// Maximum nesting depth for custom attribute parsing.
 ///
@@ -1417,22 +1418,25 @@ impl<'a> CustomAttributeParser<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::metadata::{
-        identity::AssemblyIdentity,
-        tables::{Param, ParamAttributes},
-        token::Token,
-        typesystem::{CilFlavor, CilPrimitiveKind, CilTypeRef, TypeBuilder, TypeRegistry},
-    };
-    use crate::test::factories::metadata::customattributes::{
-        create_constructor_with_params, create_constructor_with_params_and_registry,
-        create_empty_constructor, get_test_type_registry,
-    };
     use std::{
         collections::HashMap,
         sync::{
             atomic::{AtomicU64, Ordering},
             Arc, Mutex, OnceLock,
+        },
+    };
+
+    use super::*;
+    use crate::{
+        metadata::{
+            identity::AssemblyIdentity,
+            tables::{Param, ParamAttributes},
+            token::Token,
+            typesystem::{CilFlavor, CilPrimitiveKind, CilTypeRef, TypeBuilder, TypeRegistry},
+        },
+        test::factories::metadata::customattributes::{
+            create_constructor_with_params, create_constructor_with_params_and_registry,
+            create_empty_constructor, get_test_type_registry,
         },
     };
 

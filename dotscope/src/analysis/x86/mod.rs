@@ -145,24 +145,25 @@ pub use decoder::{
     x86_decode_all, x86_decode_single, x86_decode_traversal, x86_detect_epilogue,
     x86_detect_prologue, x86_native_body_size, X86TraversalDecodeResult,
 };
+// Re-export SSA translation types
+pub use ssa::X86ToSsaTranslator;
 pub use types::{
     X86Condition, X86DecodedInstruction, X86EdgeKind, X86EpilogueInfo, X86Instruction, X86Memory,
     X86Operand, X86PrologueInfo, X86PrologueKind, X86Register,
 };
 
-// Re-export SSA translation types
-pub use ssa::X86ToSsaTranslator;
-
 #[cfg(test)]
 mod tests {
-    use crate::analysis::{
-        x86::{
-            x86_decode_all, x86_detect_prologue, X86Function, X86Instruction, X86Operand,
-            X86PrologueKind, X86Register, X86ToSsaTranslator,
+    use crate::{
+        analysis::{
+            x86::{
+                x86_decode_all, x86_detect_prologue, X86Function, X86Instruction, X86Operand,
+                X86PrologueKind, X86Register, X86ToSsaTranslator,
+            },
+            ConstValue, SsaEvaluator, SsaOp,
         },
-        ConstValue, SsaEvaluator, SsaOp,
+        metadata::typesystem::PointerSize,
     };
-    use crate::metadata::typesystem::PointerSize;
 
     /// Test the full pipeline: decode -> build CFG
     #[test]

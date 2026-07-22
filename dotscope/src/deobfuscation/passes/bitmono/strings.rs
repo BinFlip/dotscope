@@ -494,9 +494,8 @@ fn decrypt_string(encrypted: &[u8], key: &[u8], iv: &[u8]) -> Result<String> {
 
 #[cfg(all(test, feature = "legacy-crypto"))]
 mod tests {
-    use crate::utils::{apply_crypto_transform, derive_key_iv, CryptoParameters};
-
     use super::decrypt_string;
+    use crate::utils::{apply_crypto_transform, derive_key_iv, CryptoParameters};
 
     #[test]
     fn test_derive_key_iv_zeros() {

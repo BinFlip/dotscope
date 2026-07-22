@@ -70,8 +70,9 @@
 //!
 //! - [ECMA-335 II.22.13](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - EncMap table specification
 
-use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
+
+use crossbeam_skiplist::SkipMap;
 
 use crate::metadata::token::Token;
 

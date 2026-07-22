@@ -136,11 +136,31 @@ mod tracer;
 mod value;
 
 // Re-export primary types from value module
-pub use value::{
-    BinaryOp, CompareOp, ConversionType, EmValue, HeapRef, ManagedPointer, PointerTarget,
-    SymbolicValue, TaintSource, UnaryOp,
+// Re-export primary types from capture module
+pub use capture::{
+    AssemblyLoadMethod, BufferSource, CaptureContext, CaptureSource, CapturedAssembly,
+    CapturedBuffer, CapturedMethodReturn, CapturedString, FileOpKind, FileOperation,
+    MemorySnapshot, NetworkOpKind, NetworkOperation,
 };
-
+// Re-export primary types from engine module
+pub use engine::{
+    synthetic_exception, EmulationContext, EmulationController, EmulationError, EmulationOutcome,
+    InstructionPointer, Interpreter, LimitExceeded, StepResult,
+};
+// Re-export primary types from exception module
+pub use exception::{
+    ExceptionClause, ExceptionHandler, ExceptionInfo, FrameSearchInfo, HandlerMatch,
+    HandlerSearchState, InstructionLocation, MethodHandlerResult, PendingFinally, StackUnwinder,
+    ThreadExceptionState, UnwindSequenceBuilder, UnwindStepResult,
+};
+// Re-export primary types from fakeobjects module
+pub use fakeobjects::{FakeObjects, SharedFakeObjects};
+// Re-export primary types from filesystem module
+pub use filesystem::VirtualFs;
+// Re-export primary types from loader module
+pub use loader::{
+    DataLoader, LoadedImage, LoadedSection, MappedRegionInfo, PeLoader, PeLoaderConfig,
+};
 // Re-export primary types from memory module
 pub use memory::{
     AddressSpace, ArgumentStorage, DictionaryKey, EncodingType, EvaluationStack, HeapObject,
@@ -148,40 +168,12 @@ pub use memory::{
     StaticFieldStorage, ThreadId, TypeInitState, TypeWrapper, UnmanagedMemory, UnmanagedRef,
     PAGE_SIZE,
 };
-
-// Re-export primary types from engine module
-pub use engine::{
-    synthetic_exception, EmulationContext, EmulationController, EmulationError, EmulationOutcome,
-    InstructionPointer, Interpreter, LimitExceeded, StepResult,
-};
-
 // Re-export primary types from process module
 pub use process::{
     CaptureConfig, EmulationConfig, EmulationLimits, EmulationProcess, EnvironmentConfig,
     LimitKind, MemoryConfig, ProcessBuilder, ProcessSummary, StackTraceEntry, StubConfig,
     TracingConfig, UnknownMethodBehavior,
 };
-
-// Re-export tracing infrastructure
-pub use tracer::{
-    build_call_tree, CallTreeBuilder, CallTreeNode, ExceptionRecord, InstructionTraceLevel,
-    MethodPattern, TraceEvent, TraceFilter, TraceListener, TraceWriter,
-};
-
-// Re-export primary types from exception module
-pub use exception::{
-    ExceptionClause, ExceptionHandler, ExceptionInfo, FrameSearchInfo, HandlerMatch,
-    HandlerSearchState, InstructionLocation, MethodHandlerResult, PendingFinally, StackUnwinder,
-    ThreadExceptionState, UnwindSequenceBuilder, UnwindStepResult,
-};
-
-// Re-export primary types from thread module
-pub use thread::{
-    EmulationThread, EventState, MonitorState, MutexState, SchedulerOutcome, SemaphoreState,
-    SyncError, SyncState, ThreadCallFrame, ThreadContext, ThreadPriority, ThreadScheduler,
-    ThreadState, WaitReason, WakeCondition,
-};
-
 // Re-export primary types from runtime module
 pub use runtime::{
     AppDomainState, Hook, HookContext, HookManager, HookMatcher, HookOutcome, HookPriority,
@@ -189,21 +181,18 @@ pub use runtime::{
     PostHookResult, PreHookFn, PreHookResult, RuntimeMatcher, RuntimeState, RuntimeStateBuilder,
     SignatureMatcher,
 };
-
-// Re-export primary types from capture module
-pub use capture::{
-    AssemblyLoadMethod, BufferSource, CaptureContext, CaptureSource, CapturedAssembly,
-    CapturedBuffer, CapturedMethodReturn, CapturedString, FileOpKind, FileOperation,
-    MemorySnapshot, NetworkOpKind, NetworkOperation,
+// Re-export primary types from thread module
+pub use thread::{
+    EmulationThread, EventState, MonitorState, MutexState, SchedulerOutcome, SemaphoreState,
+    SyncError, SyncState, ThreadCallFrame, ThreadContext, ThreadPriority, ThreadScheduler,
+    ThreadState, WaitReason, WakeCondition,
 };
-
-// Re-export primary types from loader module
-pub use loader::{
-    DataLoader, LoadedImage, LoadedSection, MappedRegionInfo, PeLoader, PeLoaderConfig,
+// Re-export tracing infrastructure
+pub use tracer::{
+    build_call_tree, CallTreeBuilder, CallTreeNode, ExceptionRecord, InstructionTraceLevel,
+    MethodPattern, TraceEvent, TraceFilter, TraceListener, TraceWriter,
 };
-
-// Re-export primary types from filesystem module
-pub use filesystem::VirtualFs;
-
-// Re-export primary types from fakeobjects module
-pub use fakeobjects::{FakeObjects, SharedFakeObjects};
+pub use value::{
+    BinaryOp, CompareOp, ConversionType, EmValue, HeapRef, ManagedPointer, PointerTarget,
+    SymbolicValue, TaintSource, UnaryOp,
+};

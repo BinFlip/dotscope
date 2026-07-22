@@ -9,9 +9,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use log::{debug, info, warn};
-
 use analyssa::scheduling::SsaPass as AnalyssaSsaPass;
+use log::{debug, info, warn};
 
 use crate::{
     analysis::{CilTarget, MethodRef},

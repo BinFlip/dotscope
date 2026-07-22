@@ -7,9 +7,10 @@
 
 extern crate dotscope;
 
+use std::{fs, hint::black_box, path::PathBuf};
+
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use dotscope::metadata::method::MethodBody;
-use std::{fs, hint::black_box, path::PathBuf};
 
 /// Run a method-body parsing benchmark over a sample file. Skips with a
 /// diagnostic message when the file cannot be read.

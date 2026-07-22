@@ -172,9 +172,8 @@ pub use modifications::TableModifications;
 pub use operation::{Operation, TableOperation};
 pub use resolver::LastWriteWinsResolver;
 pub use writer::GeneratorConfig;
-pub(crate) use writer::ResolvePlaceholders;
-
 use writer::PeGenerator;
+pub(crate) use writer::ResolvePlaceholders;
 
 /// A mutable view of a .NET assembly that tracks changes for editing operations.
 ///
@@ -1870,8 +1869,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::test::factories::table::cilassembly::create_test_typedef_row;
-    use crate::Error;
+    use crate::{test::factories::table::cilassembly::create_test_typedef_row, Error};
 
     #[test]
     fn test_convert_from_view() {
@@ -1994,14 +1992,16 @@ mod tests {
     /// Mono runtime compatibility tests for assembly modification and execution
     mod mono_tests {
         use super::*;
-        use crate::metadata::signatures::{
-            encode_method_signature, SignatureMethod, SignatureParameter, TypeSignature,
+        use crate::{
+            metadata::{
+                signatures::{
+                    encode_method_signature, SignatureMethod, SignatureParameter, TypeSignature,
+                },
+                tables::{CodedIndex, CodedIndexType, MemberRefBuilder, TableId, TypeRefBuilder},
+                token::Token,
+            },
+            test::mono::*,
         };
-        use crate::metadata::tables::{
-            CodedIndex, CodedIndexType, MemberRefBuilder, TableId, TypeRefBuilder,
-        };
-        use crate::metadata::token::Token;
-        use crate::test::mono::*;
 
         #[test]
         fn test_mono_runtime_compatibility() -> Result<()> {

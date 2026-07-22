@@ -42,9 +42,11 @@
 //! - [`crate::metadata::tables::Property`] - Property definitions
 //! - [`crate::metadata::tables::TypeDefRaw`] - Type definitions
 //! - [`crate::metadata::typesystem`] - Type system integration
-use crate::metadata::token::Token;
-use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
+
+use crossbeam_skiplist::SkipMap;
+
+use crate::metadata::token::Token;
 
 mod builder;
 mod loader;

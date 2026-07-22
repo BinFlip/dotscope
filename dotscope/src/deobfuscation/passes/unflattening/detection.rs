@@ -22,6 +22,13 @@ use std::{
     collections::{HashSet, VecDeque},
 };
 
+use analyssa::{
+    graph::{
+        algorithms::{compute_dominators, DominatorTree},
+        GraphBase, NodeId, Successors,
+    },
+    BitSet,
+};
 use rayon::prelude::*;
 
 use crate::{
@@ -31,13 +38,6 @@ use crate::{
         statevar::{identify_state_variable, StateVariable},
         UnflattenConfig,
     },
-};
-use analyssa::{
-    graph::{
-        algorithms::{compute_dominators, DominatorTree},
-        GraphBase, NodeId, Successors,
-    },
-    BitSet,
 };
 
 /// Entry point into a CFF region.
@@ -1185,12 +1185,11 @@ fn can_reach_dispatcher(
 mod tests {
     use analyssa::BitSet;
 
+    use super::{CffPattern, EntryCondition, EntryPoint};
     use crate::{
         analysis::SsaVarId,
         deobfuscation::passes::unflattening::dispatcher::{DispatcherInfo, StateTransform},
     };
-
-    use super::{CffPattern, EntryCondition, EntryPoint};
 
     #[test]
     fn test_cff_pattern_case_count() {

@@ -3,13 +3,15 @@
 //! This module provides the `ProjectContext` which manages barrier synchronization
 //! during parallel assembly loading to handle circular dependencies safely.
 
+use std::sync::Arc;
+
+use boxcar::Vec as BoxcarVec;
+
 use crate::{
     metadata::{identity::AssemblyIdentity, typesystem::TypeRegistry},
     utils::FailFastBarrier,
     Error, Result,
 };
-use boxcar::Vec as BoxcarVec;
-use std::sync::Arc;
 
 /// Coordination context for multi-assembly parallel loading with barrier synchronization.
 ///

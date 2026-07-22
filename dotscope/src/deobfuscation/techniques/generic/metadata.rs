@@ -237,8 +237,7 @@ impl Technique for GenericMetadata {
 
 #[cfg(test)]
 mod tests {
-    use crate::deobfuscation::techniques::Technique;
-    use crate::test::helpers::load_sample;
+    use crate::{deobfuscation::techniques::Technique, test::helpers::load_sample};
 
     /// Verify detection runs without error on a protected sample.
     ///

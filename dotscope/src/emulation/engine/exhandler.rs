@@ -43,6 +43,8 @@
 //! entered via reflection invoke, the exception is wrapped in a
 //! `TargetInvocationException` per real .NET behavior.
 
+use log::{debug, trace};
+
 use crate::{
     emulation::{
         engine::{
@@ -59,7 +61,6 @@ use crate::{
     metadata::token::Token,
     Result,
 };
-use log::{debug, trace};
 
 /// Creates a synthetic CLR exception object from an [`EmulationError`].
 ///

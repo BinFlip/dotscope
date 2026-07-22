@@ -38,16 +38,15 @@ mod rowpatch;
 mod streaming;
 
 // Streaming writers (primary API)
+use std::collections::HashMap;
+
+// Row patching utilities
+pub(crate) use rowpatch::patch_row_heap_refs;
 pub use streaming::{
     compute_blob_heap_offsets, compute_guid_heap_offsets, compute_strings_heap_offsets,
     compute_userstring_heap_offsets, stream_blob_heap, stream_guid_heap, stream_strings_heap,
     stream_userstring_heap,
 };
-
-// Row patching utilities
-pub(crate) use rowpatch::patch_row_heap_refs;
-
-use std::collections::HashMap;
 
 use crate::{
     cilassembly::{changes::AssemblyChanges, writer::context::WriteContext},

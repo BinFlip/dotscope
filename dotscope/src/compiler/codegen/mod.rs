@@ -4303,11 +4303,13 @@ impl SsaCodeGenerator {
                 dest_addr,
                 value,
                 size,
+                reverse: _,
             } => vec![*dest_addr, *value, *size],
             SsaOp::CopyBlk {
                 dest_addr,
                 src_addr,
                 size,
+                reverse: _,
             } => vec![*dest_addr, *src_addr, *size],
 
             // Exception handling

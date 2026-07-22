@@ -76,6 +76,8 @@
 
 use std::sync::Arc;
 
+pub use native::NativeFunctionRegistry;
+
 use crate::{
     emulation::{
         process::{EmulationConfig, UnknownMethodBehavior},
@@ -84,8 +86,6 @@ use crate::{
     metadata::token::Token,
     Result,
 };
-
-pub use native::NativeFunctionRegistry;
 
 /// Central runtime state for .NET emulation.
 ///

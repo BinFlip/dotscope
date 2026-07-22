@@ -67,9 +67,8 @@ impl SsaExceptionHandlerCilExt for AnalyssaSsaExceptionHandler<CilTarget> {
 
 #[cfg(test)]
 mod tests {
-    use crate::metadata::method::ExceptionHandlerFlags;
-
     use super::*;
+    use crate::metadata::method::ExceptionHandlerFlags;
 
     // Lock T to CilTarget for tests; they construct `SsaExceptionHandler` with
     // CIL flags directly.

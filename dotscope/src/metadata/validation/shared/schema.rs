@@ -506,9 +506,10 @@ impl std::fmt::Display for SchemaValidationStatistics {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::metadata::cilassemblyview::CilAssemblyView;
-    use std::path::PathBuf;
 
     #[test]
     fn test_schema_validator_creation() {

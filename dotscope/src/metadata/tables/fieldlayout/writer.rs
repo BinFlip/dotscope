@@ -65,11 +65,13 @@ impl RowWritable for FieldLayoutRaw {
 mod tests {
     use std::sync::Arc;
 
-    use crate::metadata::tables::{
-        fieldlayout::FieldLayoutRaw,
-        types::{RowReadable, RowWritable, TableId, TableInfo, TableRow},
+    use crate::metadata::{
+        tables::{
+            fieldlayout::FieldLayoutRaw,
+            types::{RowReadable, RowWritable, TableId, TableInfo, TableRow},
+        },
+        token::Token,
     };
-    use crate::metadata::token::Token;
 
     #[test]
     fn test_fieldlayout_row_size() {

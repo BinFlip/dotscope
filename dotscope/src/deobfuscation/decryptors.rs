@@ -626,8 +626,7 @@ impl DecryptorContext {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::thread;
+    use std::{sync::Arc, thread};
 
     use super::*;
 

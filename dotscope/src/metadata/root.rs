@@ -38,12 +38,13 @@
 //!
 //! - [ECMA-335 II.24.2.1: Metadata root](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf)
 
+use std::io::Write;
+
 use crate::{
     metadata::streams::StreamHeader,
     utils::{read_le, read_le_at},
     Error, ParseFailure, ParseStage, Result,
 };
-use std::io::Write;
 
 /// The MAGIC value indicating the CIL header ("BSJB" in ASCII).
 pub const CIL_HEADER_MAGIC: u32 = 0x424A_5342;

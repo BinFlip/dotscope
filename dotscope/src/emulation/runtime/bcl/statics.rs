@@ -157,9 +157,8 @@ fn opcode_value_from_field_name(field_name: &str) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
-    use crate::emulation::memory::ManagedHeap;
-
     use super::*;
+    use crate::emulation::memory::ManagedHeap;
 
     fn heap() -> ManagedHeap {
         ManagedHeap::new(1024 * 1024)

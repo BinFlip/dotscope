@@ -25,6 +25,7 @@
 //! * [ECMA-335 Partition II, Section 24.2.6](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Coded Indices
 
 use std::sync::Arc;
+
 use strum::{EnumCount, IntoEnumIterator};
 
 use crate::{

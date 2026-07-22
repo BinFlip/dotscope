@@ -74,6 +74,10 @@
 //! - [ECMA-335 II.22](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Metadata table specifications
 //! - [ECMA-335 II.24](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Metadata physical layout
 
+use std::collections::HashMap;
+
+use rustc_hash::{FxHashMap, FxHashSet};
+
 use crate::{
     cilassembly::{Operation, TableModifications},
     metadata::{
@@ -85,8 +89,6 @@ use crate::{
     },
     Result,
 };
-use rustc_hash::{FxHashMap, FxHashSet};
-use std::collections::HashMap;
 
 /// Foundation validator for assembly modification operation integrity and consistency.
 ///
@@ -605,6 +607,8 @@ impl Default for RawOperationValidator {
 
 #[cfg(test)]
 mod tests {
+    use rayon::ThreadPoolBuilder;
+
     use super::*;
     use crate::{
         cilassembly::AssemblyChanges,
@@ -619,7 +623,6 @@ mod tests {
         },
         Error,
     };
-    use rayon::ThreadPoolBuilder;
 
     #[test]
     fn test_raw_operation_validator() -> Result<()> {

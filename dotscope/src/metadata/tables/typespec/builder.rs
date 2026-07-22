@@ -558,6 +558,8 @@ impl TypeSpecBuilder {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::{
         cilassembly::{ChangeRefKind, CilAssembly},
@@ -566,7 +568,6 @@ mod tests {
             signatures::{SignatureMethod, SignatureParameter},
         },
     };
-    use std::path::PathBuf;
 
     #[test]
     fn test_typespec_builder_creation() {

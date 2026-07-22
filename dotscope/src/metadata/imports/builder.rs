@@ -297,9 +297,10 @@ impl Default for NativeImportsBuilder {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::cilassembly::CilAssembly;
-    use std::path::PathBuf;
 
     #[test]
     fn test_native_imports_builder_basic() {

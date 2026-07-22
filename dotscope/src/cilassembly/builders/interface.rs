@@ -618,12 +618,13 @@ impl Default for InterfaceBuilder {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::{
         cilassembly::{ChangeRefKind, CilAssembly},
         metadata::{cilassemblyview::CilAssemblyView, signatures::TypeSignature, tables::TableId},
     };
-    use std::path::PathBuf;
 
     fn get_test_assembly() -> Result<CilAssembly> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");

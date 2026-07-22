@@ -261,12 +261,13 @@ impl CustomAttributeBuilder {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::{
         cilassembly::{ChangeRefKind, CilAssembly},
         metadata::cilassemblyview::CilAssemblyView,
     };
-    use std::path::PathBuf;
 
     #[test]
     fn test_custom_attribute_builder_basic() {
