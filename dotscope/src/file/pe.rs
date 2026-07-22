@@ -2050,11 +2050,25 @@ pub fn relocate_resource_section(data: &mut [u8], old_rva: u32, new_rva: u32) ->
         })?;
 
     // Process the root directory at offset 0
-    relocate_resource_directory(data, 0, delta)
+    relocate_resource_directory(data, 0, delta, 0)
 }
 
+/// Deepest resource-directory nesting the relocator will follow.
+const MAX_RESOURCE_DEPTH: usize = 32;
+
 /// Recursively processes a resource directory and its entries, adjusting RVAs as needed.
-fn relocate_resource_directory(data: &mut [u8], offset: usize, delta: i64) -> Result<()> {
+fn relocate_resource_directory(
+    data: &mut [u8],
+    offset: usize,
+    delta: i64,
+    depth: usize,
+) -> Result<()> {
+    // Nothing checks that a subdirectory entry points *forward*, so a `.rsrc`
+    // entry naming its own directory recursed forever. Resource trees are three
+    // levels by convention (type/name/language).
+    if depth >= MAX_RESOURCE_DEPTH {
+        return Ok(());
+    }
     // Read the directory header
     let dir = ImageResourceDirectory::read_from(data, offset)?;
     let res_invalid = |field: &'static str, reason: String| ParseFailure::InvalidField {
@@ -2078,7 +2092,12 @@ fn relocate_resource_directory(data: &mut [u8], offset: usize, delta: i64) -> Re
 
         if entry.is_directory() {
             // Entry points to another directory - recurse
-            relocate_resource_directory(data, entry.target_offset(), delta)?;
+            relocate_resource_directory(
+                data,
+                entry.target_offset(),
+                delta,
+                depth.saturating_add(1),
+            )?;
         } else {
             // Entry points to a ResourceDataEntry - adjust the RVA in-place.
             // The RVA is the first 4 bytes of the ResourceDataEntry structure.

@@ -191,6 +191,21 @@ pub mod CALLING_CONVENTION {
 /// with deep generic hierarchies while still preventing resource exhaustion.
 const MAX_NESTING_DEPTH: usize = 1000;
 
+/// Maximum depth of **native** (call-stack) recursion in this parser.
+///
+/// Deliberately far tighter than [`MAX_NESTING_DEPTH`], because the two bound
+/// different resources. That one limits a heap work stack, where 1000 entries
+/// cost a few hundred KB and are harmless. This one limits real stack frames:
+/// `parse_type_simple` recurses natively, and so does the
+/// `parse_type` → `parse_method_signature` → `parse_param` → `parse_type`
+/// cycle. At debug frame sizes 1000 of those exhaust the stack outright, so
+/// reusing the heap number here left the guard nominally present and
+/// practically useless.
+///
+/// Real signatures do not approach this: pointer/generic nesting in shipped
+/// assemblies is single digits.
+const MAX_NATIVE_RECURSION_DEPTH: usize = 64;
+
 /// Maximum number of array dimensions allowed in a signature.
 ///
 /// .NET supports multi-dimensional arrays, but reasonable limits prevent memory exhaustion
@@ -347,6 +362,19 @@ const MAX_LOCAL_VARIABLES: u32 = 65536;
 pub struct SignatureParser<'a> {
     /// Binary data parser for reading signature bytes
     parser: Parser<'a>,
+    /// Current recursion depth, for stack-overflow prevention.
+    ///
+    /// Lives on the parser rather than as a per-call argument so the bound
+    /// survives the wrappers. [`parse_type`] is iterative and bounds itself with
+    /// a heap work stack, but it allocates a *fresh* one per invocation — so a
+    /// signature that re-enters it through `FNPTR` (`parse_type` →
+    /// `parse_method_signature` → `parse_param` → `parse_type`) re-armed the cap
+    /// on every hop and was effectively unbounded. `parse_type_simple`, the
+    /// lookahead helper, recursed natively with no bound at all.
+    ///
+    /// Both are attacker-reachable: signature blobs come straight from the
+    /// metadata heap of the .NET file being analyzed.
+    depth: usize,
 }
 
 impl<'a> SignatureParser<'a> {
@@ -382,6 +410,7 @@ impl<'a> SignatureParser<'a> {
     pub fn new(data: &'a [u8]) -> Self {
         SignatureParser {
             parser: Parser::new(data),
+            depth: 0,
         }
     }
 
@@ -432,6 +461,19 @@ impl<'a> SignatureParser<'a> {
     /// using an iterative stack-based approach. Custom modifiers are parsed inline
     /// and associated with the appropriate type elements.
     fn parse_type(&mut self) -> Result<TypeSignature> {
+        // Accounted on the parser, not just the local work stack: this function
+        // re-enters itself through `FNPTR` (→ `parse_method_signature` →
+        // `parse_param` → here), and each entry allocated a fresh work stack, so
+        // the local bound below re-armed on every hop and never fired. The
+        // running depth makes the cap survive the round trip.
+        self.enter()?;
+        let result = self.parse_type_inner();
+        self.exit();
+        result
+    }
+
+    /// Inner implementation of [`parse_type`]; depth is handled by the caller.
+    fn parse_type_inner(&mut self) -> Result<TypeSignature> {
         /// Work items for the iterative parsing stack
         enum WorkItem {
             /// Parse a type signature and push result
@@ -462,8 +504,14 @@ impl<'a> SignatureParser<'a> {
         work_stack.push(WorkItem::ParseType);
 
         while let Some(work) = work_stack.pop() {
-            // Check nesting depth limit
-            if work_stack.len().saturating_add(result_stack.len()) > MAX_NESTING_DEPTH {
+            // Nesting limit, counting both this invocation's pending work and
+            // the depth already accumulated by any enclosing invocations.
+            if self
+                .depth
+                .saturating_add(work_stack.len())
+                .saturating_add(result_stack.len())
+                > MAX_NESTING_DEPTH
+            {
                 return Err(DepthLimitExceeded(MAX_NESTING_DEPTH));
             }
 
@@ -745,9 +793,40 @@ impl<'a> SignatureParser<'a> {
             .ok_or_else(|| malformed_error!("internal: result stack empty after validation"))
     }
 
+    /// Enters one level of native recursion, refusing to go past
+    /// [`MAX_NATIVE_RECURSION_DEPTH`].
+    ///
+    /// Paired with [`exit`](Self::exit) — every early return between the two
+    /// would leak a level, so callers use it around a single recursive call.
+    fn enter(&mut self) -> Result<()> {
+        self.depth = self.depth.saturating_add(1);
+        if self.depth >= MAX_NATIVE_RECURSION_DEPTH {
+            self.depth = self.depth.saturating_sub(1);
+            return Err(DepthLimitExceeded(MAX_NATIVE_RECURSION_DEPTH));
+        }
+        Ok(())
+    }
+
+    /// Leaves one level of nesting.
+    fn exit(&mut self) {
+        self.depth = self.depth.saturating_sub(1);
+    }
+
     /// Helper method to parse a type signature without building the result (for lookahead).
     /// This is used to skip over types when we need to read metadata that comes after them.
+    ///
+    /// Depth-bounded: one input byte is one stack frame here, so a run of `PTR`
+    /// bytes in a field signature is a direct stack-exhaustion vector.
     fn parse_type_simple(&mut self) -> Result<()> {
+        self.enter()?;
+        let result = self.parse_type_simple_inner();
+        self.exit();
+        result
+    }
+
+    /// Inner implementation of [`parse_type_simple`]; depth is handled by the
+    /// caller, matching the `MarshallingParser` idiom in this crate.
+    fn parse_type_simple_inner(&mut self) -> Result<()> {
         let current_byte = self.parser.read_le::<u8>()?;
         match current_byte {
             ELEMENT_TYPE::VOID
@@ -2383,5 +2462,53 @@ mod tests {
         // Test invalid field signature format
         let mut parser = SignatureParser::new(&[0x07, 0x08]); // Should be 0x06 for FIELD
         assert!(parser.parse_field_signature().is_err());
+    }
+
+    /// A long run of `PTR` bytes in a field signature is refused, not recursed.
+    ///
+    /// `parse_type_simple` is the lookahead helper; it recursed natively with no
+    /// bound, so one attacker byte bought one stack frame. Measured before the
+    /// fix: a 50 KB blob aborted the process on an 8 MiB stack, ~5 KB on 2 MiB.
+    /// Signature blobs come straight out of the analyzed file's metadata heap,
+    /// so this is reachable by every .NET sample.
+    #[test]
+    fn a_deep_pointer_run_is_refused_rather_than_overflowing() {
+        // FIELD, ARRAY, then a long run of PTR, terminated by I4.
+        let mut blob = vec![0x06, 0x14];
+        blob.extend(std::iter::repeat_n(0x0F, 8192));
+        blob.push(0x08);
+
+        let mut parser = SignatureParser::new(&blob);
+        // Reaching a verdict at all is the assertion — this used to abort the
+        // process rather than return.
+        assert!(
+            parser.parse_field_signature().is_err(),
+            "a signature nested past the cap must be refused"
+        );
+    }
+
+    /// The nesting cap survives re-entry through `FNPTR`.
+    ///
+    /// `parse_type` bounds itself with a heap work stack, but allocated a fresh
+    /// one per invocation — so `parse_type` → `parse_method_signature` →
+    /// `parse_param` → `parse_type` re-armed the cap on every hop. Before the
+    /// fix, 1000 nested FNPTRs parsed successfully and the cap never fired.
+    #[test]
+    fn the_nesting_cap_survives_fnptr_reentry() {
+        // FIELD, then N × (FNPTR, DEFAULT calling convention, 0 params),
+        // bottoming out in I4.
+        let mut blob = vec![0x06];
+        for _ in 0..2000 {
+            blob.push(0x1B); // FNPTR
+            blob.push(0x00); // DEFAULT
+            blob.push(0x00); // param count 0
+        }
+        blob.push(0x08); // I4 return
+
+        let mut parser = SignatureParser::new(&blob);
+        assert!(
+            parser.parse_field_signature().is_err(),
+            "nesting through FNPTR must count toward the same cap"
+        );
     }
 }

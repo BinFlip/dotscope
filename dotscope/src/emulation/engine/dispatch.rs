@@ -93,6 +93,15 @@ pub struct DispatchResolver {
     vtables: DashMap<Token, VTable>,
 }
 
+/// Deepest inheritance chain the dispatch walkers will follow.
+///
+/// These walk `base()` to the root and are tail-recursive, which Rust does not
+/// guarantee to turn into a loop. `CilType::set_base` deliberately permits a
+/// cyclic chain — a dedicated validator reports it as a finding rather than
+/// refusing to represent it — so a corrupt assembly whose TypeDefs extend each
+/// other reaches these with no terminating condition.
+const MAX_BASE_WALK_DEPTH: usize = 256;
+
 impl DispatchResolver {
     /// Creates a new empty resolver.
     #[must_use]
@@ -185,7 +194,7 @@ impl DispatchResolver {
             return interface_method;
         };
 
-        if let Some(found) = Self::find_interface_impl(&rt, interface_method, base_method) {
+        if let Some(found) = Self::find_interface_impl(0, &rt, interface_method, base_method) {
             return found;
         }
 
@@ -206,10 +215,14 @@ impl DispatchResolver {
     ///    (skipping methods that explicitly override a DIFFERENT interface method)
     /// 3. Walk base types — recurse on the base type
     fn find_interface_impl(
+        depth: usize,
         type_info: &CilType,
         interface_method: Token,
         base_method: &Method,
     ) -> Option<Token> {
+        if depth >= MAX_BASE_WALK_DEPTH {
+            return None;
+        }
         // Step 1: Explicit MethodImpl — check each method's overrides list
         for (_, method_ref) in type_info.methods.iter() {
             let Some(method) = method_ref.upgrade() else {
@@ -260,7 +273,12 @@ impl DispatchResolver {
 
         // Step 3: Walk base types
         if let Some(base) = type_info.base() {
-            return Self::find_interface_impl(&base, interface_method, base_method);
+            return Self::find_interface_impl(
+                depth.saturating_add(1),
+                &base,
+                interface_method,
+                base_method,
+            );
         }
 
         None
@@ -277,7 +295,7 @@ impl DispatchResolver {
             return base_method.token;
         };
 
-        if let Some(found) = Self::find_virtual_override(&rt, &base_method.name, base_method) {
+        if let Some(found) = Self::find_virtual_override(0, &rt, &base_method.name, base_method) {
             return found;
         }
 
@@ -286,10 +304,14 @@ impl DispatchResolver {
 
     /// Finds a virtual method override in a type hierarchy.
     fn find_virtual_override(
+        depth: usize,
         type_info: &CilType,
         method_name: &str,
         base_method: &Method,
     ) -> Option<Token> {
+        if depth >= MAX_BASE_WALK_DEPTH {
+            return None;
+        }
         for (_, method_ref) in type_info.methods.iter() {
             let Some(method) = method_ref.upgrade() else {
                 continue;
@@ -304,7 +326,12 @@ impl DispatchResolver {
 
         // Walk base types
         if let Some(base) = type_info.base() {
-            return Self::find_virtual_override(&base, method_name, base_method);
+            return Self::find_virtual_override(
+                depth.saturating_add(1),
+                &base,
+                method_name,
+                base_method,
+            );
         }
 
         None
@@ -332,19 +359,22 @@ impl DispatchResolver {
         let mut slots = HashMap::new();
 
         // Collect all virtual methods from the type hierarchy (most-derived first)
-        Self::collect_virtual_slots(&rt, &mut slots);
+        Self::collect_virtual_slots(0, &rt, &mut slots);
 
         // Collect interface implementations
-        Self::collect_interface_slots(&rt, &mut slots);
+        Self::collect_interface_slots(0, &rt, &mut slots);
 
         self.vtables.insert(runtime_type, VTable { slots });
     }
 
     /// Collects virtual method slots from a type's inheritance chain.
-    fn collect_virtual_slots(type_info: &CilType, slots: &mut HashMap<Token, Token>) {
+    fn collect_virtual_slots(depth: usize, type_info: &CilType, slots: &mut HashMap<Token, Token>) {
+        if depth >= MAX_BASE_WALK_DEPTH {
+            return;
+        }
         // Walk base types first (root → derived) so derived overrides win
         if let Some(base) = type_info.base() {
-            Self::collect_virtual_slots(&base, slots);
+            Self::collect_virtual_slots(depth.saturating_add(1), &base, slots);
         }
 
         // Override slots for virtual methods on this type
@@ -374,7 +404,14 @@ impl DispatchResolver {
     }
 
     /// Collects interface method implementations for a type.
-    fn collect_interface_slots(type_info: &CilType, slots: &mut HashMap<Token, Token>) {
+    fn collect_interface_slots(
+        depth: usize,
+        type_info: &CilType,
+        slots: &mut HashMap<Token, Token>,
+    ) {
+        if depth >= MAX_BASE_WALK_DEPTH {
+            return;
+        }
         // For each interface the type implements, resolve all methods
         for (_, iface_entry) in type_info.interfaces.iter() {
             let Some(iface_type) = iface_entry.interface.upgrade() else {
@@ -393,7 +430,7 @@ impl DispatchResolver {
 
                 // Try to find implementation
                 if let Some(impl_token) =
-                    Self::find_interface_impl(type_info, iface_method.token, &iface_method)
+                    Self::find_interface_impl(0, type_info, iface_method.token, &iface_method)
                 {
                     slots.insert(iface_method.token, impl_token);
                 } else if iface_method.has_body() && !iface_method.is_abstract() {
@@ -405,7 +442,7 @@ impl DispatchResolver {
 
         // Recurse into base type for inherited interface implementations
         if let Some(base) = type_info.base() {
-            Self::collect_interface_slots(&base, slots);
+            Self::collect_interface_slots(depth.saturating_add(1), &base, slots);
         }
     }
 }

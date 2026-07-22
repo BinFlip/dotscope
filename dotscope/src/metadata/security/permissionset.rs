@@ -419,6 +419,9 @@ pub struct PermissionSet {
     data: Vec<u8>,
 }
 
+/// Deepest `TAGGED_OBJECT` nesting a permission-set blob may declare.
+const MAX_ARGUMENT_NESTING: usize = 64;
+
 impl PermissionSet {
     /// Creates a new `PermissionSet` from binary data.
     ///
@@ -596,16 +599,21 @@ impl PermissionSet {
                         String::new()
                     };
 
-                    let (arg_type, value) =
-                        Self::parse_argument_value(&mut parser, prop_type, &class_name, &prop_name)
-                            .map_err(|e| {
-                                malformed_error!(
+                    let (arg_type, value) = Self::parse_argument_value(
+                        &mut parser,
+                        prop_type,
+                        0,
+                        &class_name,
+                        &prop_name,
+                    )
+                    .map_err(|e| {
+                        malformed_error!(
                             "Permission '{}', property '{}': failed to parse argument value: {}",
                             class_name,
                             prop_name,
                             e
                         )
-                            })?;
+                    })?;
 
                     named_arguments.push(NamedArgument {
                         name: prop_name,
@@ -1029,9 +1037,16 @@ impl PermissionSet {
     fn parse_argument_value(
         parser: &mut Parser,
         arg_type: u8,
+        depth: usize,
         permission_class: &str,
         property_name: &str,
     ) -> Result<(ArgumentType, ArgumentValue)> {
+        // `TAGGED_OBJECT` (0x51) nests another value inside itself, so one
+        // attacker byte bought one stack frame. Permission-set blobs come from
+        // the analyzed assembly's metadata, so this is untrusted input.
+        if depth >= MAX_ARGUMENT_NESTING {
+            return Err(crate::Error::DepthLimitExceeded(MAX_ARGUMENT_NESTING));
+        }
         match arg_type {
             // ELEMENT_TYPE_BOOLEAN (0x02)
             0x02 => {
@@ -1111,6 +1126,7 @@ impl PermissionSet {
                 let (_inner_arg_type, inner_value) = Self::parse_argument_value(
                     parser,
                     inner_type,
+                    depth.saturating_add(1),
                     permission_class,
                     property_name,
                 )?;
