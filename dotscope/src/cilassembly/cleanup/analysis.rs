@@ -177,34 +177,47 @@ pub fn find_unreferenced_types(
 
     // Compute which candidates have live external callers
     let mut has_external_caller: HashSet<Token> = HashSet::new();
-
-    for (caller_token, callees) in method_call_graph {
-        // Skip callers that are deleted
-        if deleted_methods.contains(caller_token) {
-            continue;
-        }
-        let Some(caller_type) = method_to_type.get(caller_token).copied() else {
-            continue;
-        };
-        // Skip callers whose type is deleted
-        if deleted_types.contains(&caller_type) {
-            continue;
-        }
-        // Skip callers that are themselves candidates — their edges are
-        // intra-cluster and don't constitute external references
-        let caller_is_candidate = candidates.contains(&caller_type);
-
-        for callee_token in callees {
-            let Some(callee_type) = method_to_type.get(callee_token).copied() else {
+    loop {
+        /* We need to loop here, because if one type has an external reference,
+           that type is no longer a candidate and can reference other candidate types.
+        */
+        let mut changed = false;
+        for (caller_token, callees) in method_call_graph {
+            // Skip callers that are deleted
+            if deleted_methods.contains(caller_token) {
+                continue;
+            }
+            let Some(caller_type) = method_to_type.get(caller_token).copied() else {
                 continue;
             };
-            if caller_type == callee_type {
+            // Skip callers whose type is deleted
+            if deleted_types.contains(&caller_type) {
                 continue;
             }
-            // Only mark as externally referenced if the caller is NOT a candidate
-            if !caller_is_candidate && candidates.contains(&callee_type) {
-                has_external_caller.insert(callee_type);
+            // Skip callers that are themselves candidates — their edges are
+            // intra-cluster and don't constitute external references
+            let caller_is_candidate = candidates.contains(&caller_type);
+
+            for callee_token in callees {
+                let Some(callee_type) = method_to_type.get(callee_token).copied() else {
+                    continue;
+                };
+                if caller_type == callee_type {
+                    continue;
+                }
+                // Only mark as externally referenced if the caller is NOT a candidate
+                if !caller_is_candidate && candidates.contains(&callee_type) {
+                    has_external_caller.insert(callee_type);
+                    candidates.remove(&callee_type);
+                    // Track changes to ensure any types that are no longer candidates are accounted for
+                    changed = true;
+                }
             }
+        }
+
+        // Stop looping once theres no more candidate deletions, or no more candidates.
+        if !changed || candidates.is_empty() {
+            break;
         }
     }
 
