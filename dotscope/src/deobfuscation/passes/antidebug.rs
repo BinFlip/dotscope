@@ -57,7 +57,7 @@ use crate::{
         CilTarget, MethodRef, PhiTaintMode, SsaFunction, SsaOp, TaintConfig, TokenTaintBuilder,
     },
     compiler::{CompilerContext, EventKind, ModificationScope, SsaPass},
-    deobfuscation::utils::resolve_qualified_method_name,
+    deobfuscation::utils::{resolve_qualified_method_name, retain_removable},
     metadata::token::Token,
     CilObject,
 };
@@ -212,13 +212,30 @@ impl SsaPass<CilTarget, CompilerContext> for SentinelTaintRemovalPass {
             return Ok(false);
         }
 
-        let tainted_instrs: HashSet<(usize, usize)> =
+        let mut tainted_instrs: HashSet<(usize, usize)> =
             taint.tainted_instructions().iter().copied().collect();
+        let mut tainted_phis: HashSet<(usize, usize)> =
+            taint.tainted_phis().iter().copied().collect();
+
+        // Step 2b: Refuse to destroy a definition something still reads.
+        // `PhiTaintMode::NoPropagation` makes phis taint barriers, so a phi can
+        // merge a tainted definition into code the analysis never marks — and
+        // NOPing the definition would leave that read dangling, which the SSA
+        // verifier rejects for the whole method.
+        retain_removable(ssa, &mut tainted_instrs, &mut tainted_phis);
+        if tainted_instrs.is_empty() && tainted_phis.is_empty() {
+            return Ok(false);
+        }
+
+        // Sorted so the event log and the rewrite order do not depend on hash
+        // iteration order.
+        let mut removals: Vec<(usize, usize)> = tainted_instrs.iter().copied().collect();
+        removals.sort_unstable();
 
         // Step 3: Pre-compute branch redirect targets (immutable borrow)
         // before mutating instructions (mutable borrow).
         let mut branch_redirects: Vec<(usize, usize, usize)> = Vec::new();
-        for &(block_idx, instr_idx) in taint.tainted_instructions() {
+        for &(block_idx, instr_idx) in &removals {
             if let Some(block) = ssa.block(block_idx) {
                 if let Some(instr) = block.instruction(instr_idx) {
                     if instr.is_terminator() {
@@ -251,7 +268,7 @@ impl SsaPass<CilTarget, CompilerContext> for SentinelTaintRemovalPass {
         // Step 4: Apply mutations.
         let mut neutralized = 0usize;
 
-        for &(block_idx, instr_idx) in taint.tainted_instructions() {
+        for &(block_idx, instr_idx) in &removals {
             if let Some(block) = ssa.block_mut(block_idx) {
                 if let Some(instr) = block.instruction_mut(instr_idx) {
                     // Record metadata tokens before neutralizing
@@ -279,9 +296,9 @@ impl SsaPass<CilTarget, CompilerContext> for SentinelTaintRemovalPass {
         }
 
         // Step 5: Remove tainted PHI nodes (reverse order for safe removal).
-        let mut tainted_phis: Vec<(usize, usize)> = taint.tainted_phis().iter().copied().collect();
-        tainted_phis.sort_by(|a, b| b.cmp(a));
-        for (block_idx, phi_idx) in tainted_phis {
+        let mut removable_phis: Vec<(usize, usize)> = tainted_phis.into_iter().collect();
+        removable_phis.sort_by(|a, b| b.cmp(a));
+        for (block_idx, phi_idx) in removable_phis {
             if let Some(block) = ssa.block_mut(block_idx) {
                 if phi_idx < block.phi_nodes().len() {
                     block.phi_nodes_mut().remove(phi_idx);

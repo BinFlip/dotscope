@@ -503,6 +503,10 @@ pub mod analysis;
 /// - [`crate::compiler::DeadCodeEliminationPass`] - Removes unreachable blocks
 /// - [`crate::compiler::DeadMethodEliminationPass`] - Identifies methods with no callers
 ///
+/// Memory:
+/// - [`crate::compiler::MemoryOptimizationPass`] - Forwards stores to loads, drops
+///   redundant loads, removes dead stores, each gated on an alias proof
+///
 /// Other passes:
 /// - [`crate::compiler::OpaquePredicatePass`] - Removes always-true/false conditions
 /// - [`crate::deobfuscation::DecryptionPass`] - Decrypts values via emulation

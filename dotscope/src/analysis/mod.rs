@@ -108,8 +108,10 @@ pub(crate) use ssa::conv_op_for_target;
 #[cfg(feature = "z3")]
 pub use ssa::Z3Solver;
 pub use ssa::{
-    resolve_corelib_valuetype, AbstractValue, BinaryOpKind, CilTarget, CmpKind, ConstEvaluator,
-    ConstValue, ConstValueCilExt, ControlFlow, DefSite, FieldRef, MethodPurity, MethodRef,
+    address, pointsto, resolve_corelib_valuetype, AbstractValue, AliasResult, ArrayIndex,
+    BinaryOpKind, CilTarget, CmpKind, ConstEvaluator, ConstValue, ConstValueCilExt, ControlFlow,
+    DefSite, FieldRef, IndirectLocation, MemoryDefSite, MemoryLocation, MemoryOp, MemoryPhi,
+    MemoryPhiOperand, MemorySsa, MemorySsaStats, MemoryVersion, MethodPurity, MethodRef,
     PhiAnalyzer, PhiNode, PhiOperand, ReturnInfo, SsaBlock, SsaCfg, SsaConverter, SsaEvaluator,
     SsaExceptionHandler, SsaExceptionHandlerCilExt, SsaFunction, SsaFunctionBuilder,
     SsaFunctionCilExt, SsaFunctionSemanticsExt, SsaInstruction, SsaOp, SsaOpCilExt, SsaType,

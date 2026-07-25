@@ -99,9 +99,9 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "analyssa"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf6eaaf643f25047ba272c9bbd3246ca7a75a3f1db908fe98577c325b4ed9ebf"
+checksum = "0a0726f03883c31e7c28d5510ed2e74141e5f3ce1dd7018f2c2205e208191d62"
 dependencies = [
  "boxcar",
  "dashmap",

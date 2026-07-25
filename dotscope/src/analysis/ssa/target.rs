@@ -153,6 +153,21 @@ impl Target for CilTarget {
         *flags == ExceptionHandlerFlags::FILTER
     }
 
+    fn field_member_index(field: &Self::FieldRef) -> Option<u32> {
+        // Field-sensitive points-to keys its abstract cells on
+        // `(object, member_index)`, so all this needs to be is a *stable and
+        // distinct* identity per field — the CIL metadata token already is one,
+        // and it is the same identity `MemoryLocation::InstanceField` compares
+        // on. A declaration-order index within the parent type would need the
+        // assembly, which this associated function has no access to.
+        //
+        // A null token means the field never resolved; returning `None` there
+        // takes the sound field-insensitive whole-object fallback rather than
+        // collapsing every unresolved field onto one cell.
+        let token = field.token().value();
+        (token != 0).then_some(token)
+    }
+
     fn result_type_for_const(value: &ConstValue<Self>) -> Option<Self::Type> {
         Some(match value {
             ConstValue::I8(_) => SsaType::I8,
@@ -434,9 +449,12 @@ mod tests {
     use analyssa::{MockTarget, MockType};
 
     use super::*;
-    use crate::analysis::ssa::{
-        value::ConstValue, DefSite, SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaVarId,
-        VariableOrigin,
+    use crate::{
+        analysis::ssa::{
+            value::ConstValue, DefSite, SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaVarId,
+            VariableOrigin,
+        },
+        metadata::token::Token,
     };
 
     #[test]
@@ -480,6 +498,34 @@ mod tests {
         assert_eq!(CilTarget::bit_width(&SsaType::I64), Some(64));
         assert_eq!(CilTarget::bit_width(&SsaType::Bool), Some(8));
         assert_eq!(CilTarget::bit_width(&SsaType::NativeInt), None);
+    }
+
+    #[test]
+    fn cil_target_field_member_index() {
+        // Distinct fields must get distinct cell identities, or field-sensitive
+        // points-to collapses them onto one abstract cell.
+        let a = FieldRef::new(Token::new(0x0400_0001));
+        let b = FieldRef::new(Token::new(0x0400_0002));
+        assert_ne!(
+            CilTarget::field_member_index(&a),
+            CilTarget::field_member_index(&b)
+        );
+        // Same field, asked twice, must be stable.
+        assert_eq!(
+            CilTarget::field_member_index(&a),
+            CilTarget::field_member_index(&FieldRef::new(Token::new(0x0400_0001)))
+        );
+        // A MemberRef-sourced field is a different token, so it never collides
+        // with a FieldDef of the same row.
+        assert_ne!(
+            CilTarget::field_member_index(&a),
+            CilTarget::field_member_index(&FieldRef::new(Token::new(0x0A00_0001)))
+        );
+        // An unresolved (null) field takes the field-insensitive fallback.
+        assert_eq!(
+            CilTarget::field_member_index(&FieldRef::new(Token::new(0))),
+            None
+        );
     }
 
     #[test]

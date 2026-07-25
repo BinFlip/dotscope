@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Memory optimization pass** (`compiler::MemoryOptimizationPass`): store-to-load forwarding, redundant load elimination, and block-local dead store elimination, every rewrite gated on a Memory SSA alias proof. Registered in the deobfuscation pipeline's normalize phase and enabled by default; disable with `PassConfig::memory_optimization = false`. This reaches the field and array traffic obfuscators use to keep values out of SSA registers, which the register-level passes cannot see through
+- **Field-sensitive points-to for CIL** (`CilTarget::field_member_index`): the field's metadata token supplies the stable per-field cell identity Andersen's analysis keys on, so `&o.a` and `&o.b` no longer alias. An unresolved (null) field token falls back to the sound whole-object approximation
+- **x86 segment overrides reach the IR**: `X86Memory` gained a `segment` field, decoded from the instruction's explicit prefix, and `fs:`/`gs:`-qualified accesses now lower to `LoadIndirect`/`StoreIndirect` with a distinct `address_space` (257/256, following LLVM's numbering). Alias analysis treats the spaces as disjoint, so TEB/PEB and stack-cookie accesses stop colliding with flat memory at the same displacement. `cs:`/`ds:`/`es:`/`ss:` deliberately stay in the flat default — in flat user mode they share a base, and marking them would let alias analysis prove two names for one cell disjoint
+- **Re-exports for analyssa's new alias machinery**: `analysis::{pointsto, address}` modules plus `MemorySsa`, `IndirectLocation`, `ArrayIndex`, `AliasResult`, `MemoryDefSite`, `MemoryPhiOperand`, and `MemorySsaStats`
+
+### Fixed
+
+- **Taint-driven neutralization could produce IR with dangling reads**: `SentinelTaintRemovalPass` and `NeutralizationPass` rewrote every tainted instruction to `Nop` and dropped every tainted phi, destroying definitions that surviving code still read. `PhiTaintMode::NoPropagation` makes phis taint barriers by design, so a phi routinely merges a tainted definition into code the analysis never marks. Both passes now shrink the removal set to a fixpoint (`utils::retain_removable`) — a candidate whose result still has a reader is kept rather than the removal widening into legitimate code. `NeutralizationPass` also excludes its protected `DecryptedString` constants from the candidate set rather than at rewrite time, so branch-target selection sees what is actually removed
+- **`AssemblyDependencyGraph::find_cycles` reports participants, not a closed walk**: following analyssa's switch to a single deterministic Tarjan pass, a self-dependency now names the assembly once rather than twice. The stale "modified DFS with three-color marking" documentation was corrected to match
+
+### Changed
+
+- **Dependencies**: bumped `analyssa` (0.3.0 → 0.4.0)
+
 ## [0.8.3] - 2026-07-16
 
 ### Changed

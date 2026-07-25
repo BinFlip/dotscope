@@ -916,12 +916,22 @@ fn convert_memory_operand(instr: &Instruction, _index: u32) -> Result<X86Memory>
     #[allow(clippy::cast_possible_truncation)]
     let size = instr.memory_size().size() as u8;
 
+    // `segment_prefix()` is the *explicit* override and is `Register::None`
+    // otherwise — which is what we want. `memory_segment()` would resolve the
+    // default (`ds`, or `ss` for an rbp/rsp base) and make every ordinary
+    // access look segment-qualified.
+    let segment = match instr.segment_prefix() {
+        Register::None => None,
+        reg => Some(convert_register(reg)?),
+    };
+
     Ok(X86Memory {
         base,
         index,
         scale,
         displacement,
         size,
+        segment,
     })
 }
 
@@ -1236,6 +1246,32 @@ mod tests {
             _ => panic!("Expected Mov instruction"),
         }
         assert!(matches!(result[1].instruction, X86Instruction::Ret));
+    }
+
+    /// A segment override prefix must survive decoding, and an unprefixed
+    /// access must not pick up the default segment: the SSA lowering keys an
+    /// address space off this, and a spurious `ds:`/`ss:` there would make two
+    /// names for one flat cell look disjoint.
+    #[test]
+    fn test_decode_segment_prefix() {
+        // mov eax, fs:[0x30]  /  ret
+        let bytes = [0x64, 0xa1, 0x30, 0x00, 0x00, 0x00, 0xc3];
+        let result = x86_decode_all(&bytes, 32, 0).unwrap();
+        let X86Instruction::Mov { src, .. } = &result[0].instruction else {
+            panic!("Expected Mov instruction");
+        };
+        assert_eq!(
+            src.as_memory().and_then(|m| m.segment),
+            Some(X86Register::Fs)
+        );
+
+        // mov eax, [ebp-4]  /  ret — defaults to ss:, which must stay `None`.
+        let bytes = [0x8b, 0x45, 0xfc, 0xc3];
+        let result = x86_decode_all(&bytes, 32, 0).unwrap();
+        let X86Instruction::Mov { src, .. } = &result[0].instruction else {
+            panic!("Expected Mov instruction");
+        };
+        assert_eq!(src.as_memory().and_then(|m| m.segment), None);
     }
 
     #[test]

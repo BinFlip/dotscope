@@ -54,6 +54,14 @@ pub struct PassConfig {
     pub opaque_predicate_removal: bool,
     /// Enable copy propagation pass.
     pub copy_propagation: bool,
+    /// Enable the memory optimization pass (store-to-load forwarding, redundant
+    /// load elimination, dead store elimination).
+    ///
+    /// Every rewrite is gated on a Memory SSA alias proof, so this reaches the
+    /// field and array traffic that obfuscators use to keep values out of SSA
+    /// registers — ConfuserEx state fields, array-backed string tables — which
+    /// the register-level passes cannot see through.
+    pub memory_optimization: bool,
     /// Enable strength reduction pass (mul->shl, div->shr, rem->and for powers of 2).
     pub strength_reduction: bool,
     /// Enable control flow simplification pass.
@@ -86,6 +94,7 @@ impl Default for PassConfig {
             dead_code_elimination: true,
             opaque_predicate_removal: true,
             copy_propagation: true,
+            memory_optimization: true,
             strength_reduction: true,
             control_flow_simplification: true,
             interprocedural: true,

@@ -2152,7 +2152,9 @@ impl SsaCodeGenerator {
                     // If not in the compacted mapping, fall through to allocate
                     // (this handles edge cases where a Local var wasn't seen during coalescing)
                 }
-                VariableOrigin::Phi => {
+                // `EntryLiveIn` is unreachable here: it is produced only by
+                // machine-code front ends, and a CIL method has no such storage.
+                VariableOrigin::Phi | VariableOrigin::EntryLiveIn => {
                     // Fall through to allocate a new local
                 }
             }

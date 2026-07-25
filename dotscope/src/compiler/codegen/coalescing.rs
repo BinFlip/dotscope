@@ -305,7 +305,12 @@ impl LocalCoalescer {
             .iter()
             .filter_map(|v| match v.origin() {
                 VariableOrigin::Phi => Some(v.id()),
-                VariableOrigin::Argument(_) | VariableOrigin::Local(_) => None,
+                // An entry live-in is caller-supplied like an argument, so it
+                // keeps fixed storage rather than being freely coalescable.
+                // Unreachable from the CIL front end, which never builds one.
+                VariableOrigin::Argument(_)
+                | VariableOrigin::Local(_)
+                | VariableOrigin::EntryLiveIn => None,
             })
             .collect();
 

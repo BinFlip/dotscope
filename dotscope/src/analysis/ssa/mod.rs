@@ -107,17 +107,17 @@ pub type SsaFunction<T = CilTarget> = analyssa::ir::function::SsaFunction<T>;
 pub type ReturnInfo<T = CilTarget> = analyssa::ir::function::ReturnInfo<T>;
 #[allow(unused_imports)]
 pub use analyssa::analysis::consts::evaluate_const_op;
-// Direct re-exports from analyssa for the now-collapsed shim files. Each line
-// here used to be a one-line module file in `dotscope/src/analysis/ssa/`.
 pub use analyssa::ir::phi::{PhiNode, PhiOperand};
 pub use analyssa::{
     analysis::{
         evaluator::ControlFlow,
+        memory::{AliasResult, ArrayIndex, IndirectLocation, MemoryDefSite, MemoryPhiOperand},
         phis::{place_pruned_phis, PhiAnalyzer, PhiPlacementConfig},
     },
     ir::variable::{DefSite, FunctionVarAllocator, SsaVarId, UseSite, VariableOrigin},
     Target,
 };
+pub use analyssa::analysis::{address, pointsto};
 pub use resolver::ValueResolver;
 pub use stack::{SimulationResult, StackSimulator, StackSlot, StackSlotSource};
 #[cfg(feature = "z3")]
@@ -167,6 +167,10 @@ pub type MemoryOp<T = CilTarget> = analyssa::analysis::memory::MemoryOp<T>;
 pub type MemoryPhi<T = CilTarget> = analyssa::analysis::memory::MemoryPhi<T>;
 /// CIL-defaulted alias of [`analyssa::analysis::memory::MemoryVersion`].
 pub type MemoryVersion<T = CilTarget> = analyssa::analysis::memory::MemoryVersion<T>;
+/// CIL-defaulted alias of [`analyssa::analysis::memory::MemorySsa`].
+pub type MemorySsa<T = CilTarget> = analyssa::analysis::memory::MemorySsa<T>;
+/// CIL-defaulted alias of [`analyssa::analysis::memory::MemorySsaStats`].
+pub type MemorySsaStats = analyssa::analysis::memory::MemorySsaStats;
 /// CIL-defaulted alias of [`analyssa::analysis::verifier::SsaVerifier`].
 pub type SsaVerifier<'a, T = CilTarget> = analyssa::analysis::verifier::SsaVerifier<'a, T>;
 

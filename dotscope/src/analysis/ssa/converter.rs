@@ -240,7 +240,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         match origin {
             VariableOrigin::Argument(idx) => self.type_provider.arg_type(idx),
             VariableOrigin::Local(idx) => self.type_provider.local_type(idx),
-            VariableOrigin::Phi => SsaType::Unknown,
+            VariableOrigin::Phi | VariableOrigin::EntryLiveIn => SsaType::Unknown,
         }
     }
 
@@ -1052,7 +1052,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                 let group = match origin {
                     VariableOrigin::Argument(idx) => self.arg_group(idx),
                     VariableOrigin::Local(idx) => self.local_group(idx),
-                    VariableOrigin::Phi => continue,
+                    VariableOrigin::Phi | VariableOrigin::EntryLiveIn => continue,
                 };
                 self.defs
                     .entry(group)
@@ -1065,7 +1065,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                 let use_group = match use_origin {
                     VariableOrigin::Argument(idx) => self.arg_group(idx),
                     VariableOrigin::Local(idx) => self.local_group(idx),
-                    VariableOrigin::Phi => continue,
+                    VariableOrigin::Phi | VariableOrigin::EntryLiveIn => continue,
                 };
                 self.uses
                     .entry(use_group)
@@ -1080,7 +1080,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                 let store_group = match store_target {
                     VariableOrigin::Argument(idx) => self.arg_group(idx),
                     VariableOrigin::Local(idx) => self.local_group(idx),
-                    VariableOrigin::Phi => continue,
+                    VariableOrigin::Phi | VariableOrigin::EntryLiveIn => continue,
                 };
                 self.defs
                     .entry(store_group)
@@ -2057,7 +2057,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         let group = match origin {
             VariableOrigin::Argument(idx) => self.arg_group(idx),
             VariableOrigin::Local(idx) => self.local_group(idx),
-            VariableOrigin::Phi => return None,
+            VariableOrigin::Phi | VariableOrigin::EntryLiveIn => return None,
         };
         self.current_def(group)
     }
@@ -2240,7 +2240,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                         mapped
                     }
                 }
-                VariableOrigin::Phi => {
+                VariableOrigin::Phi | VariableOrigin::EntryLiveIn => {
                     // Stack temps have Phi origin — resolve via rename group or
                     // var_stack_positions (simulation variables may not have groups yet)
                     let group = self.function.rename_group(mapped);
@@ -2280,7 +2280,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                         use_var
                     }
                 }
-                VariableOrigin::Phi => {
+                VariableOrigin::Phi | VariableOrigin::EntryLiveIn => {
                     // Stack temps have Phi origin — resolve via rename group or
                     // var_stack_positions (simulation variables may not have groups yet)
                     let group = self.function.rename_group(use_var);
@@ -2460,7 +2460,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                         match origin {
                             VariableOrigin::Argument(idx) => self.arg_group(idx),
                             VariableOrigin::Local(idx) => self.local_group(idx),
-                            VariableOrigin::Phi => {
+                            VariableOrigin::Phi | VariableOrigin::EntryLiveIn => {
                                 // Stack phi — find slot from entry stack
                                 self.stack_group(0)
                             }
@@ -2742,7 +2742,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                         let group = match origin {
                             VariableOrigin::Argument(idx) => self.arg_group(idx),
                             VariableOrigin::Local(idx) => self.local_group(idx),
-                            VariableOrigin::Phi => u32::MAX, // shouldn't happen for infer_origin
+                            VariableOrigin::Phi | VariableOrigin::EntryLiveIn => u32::MAX, // shouldn't happen for infer_origin
                         };
                         let var_type = self.type_for_origin(origin);
                         let v = self.new_def(origin, group, block_idx, Some(instr_idx), var_type);
@@ -2781,7 +2781,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                     let store_group = match store_target {
                         VariableOrigin::Argument(idx) => self.arg_group(idx),
                         VariableOrigin::Local(idx) => self.local_group(idx),
-                        VariableOrigin::Phi => u32::MAX,
+                        VariableOrigin::Phi | VariableOrigin::EntryLiveIn => u32::MAX,
                     };
                     let var_type = self.type_for_origin(store_target);
                     let _new_version = self.new_def(
@@ -2823,7 +2823,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                                 group = match phi.origin() {
                                     VariableOrigin::Argument(idx) => self.arg_group(idx),
                                     VariableOrigin::Local(idx) => self.local_group(idx),
-                                    VariableOrigin::Phi => u32::MAX,
+                                    VariableOrigin::Phi | VariableOrigin::EntryLiveIn => u32::MAX,
                                 };
                             }
                             (phi.result(), group)

@@ -1208,6 +1208,8 @@ fn decompose_fe_instruction(
                     dest_addr,
                     src_addr,
                     size,
+                    // CIL `cpblk` is always forward (no direction flag).
+                    reverse: false,
                 })
             } else {
                 None
@@ -1222,6 +1224,8 @@ fn decompose_fe_instruction(
                     dest_addr,
                     value,
                     size,
+                    // CIL `initblk` is always forward (no direction flag).
+                    reverse: false,
                 })
             } else {
                 None
@@ -1412,6 +1416,8 @@ fn ldind_typed(uses: &[SsaVarId], def: Option<SsaVarId>, value_type: SsaType) ->
             dest,
             addr,
             value_type,
+            // CIL `ldind` has no segment/address-space qualifier.
+            address_space: None,
         })
     } else {
         None
@@ -1424,6 +1430,8 @@ fn stind_typed(uses: &[SsaVarId], value_type: SsaType) -> Option<SsaOp> {
             addr,
             value,
             value_type,
+            // CIL `stind` has no segment/address-space qualifier.
+            address_space: None,
         })
     } else {
         None
