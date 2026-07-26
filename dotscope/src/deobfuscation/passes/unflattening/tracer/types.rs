@@ -10,11 +10,19 @@
 //! terminated by one of the [`TraceTerminator`] variants (state transition, user
 //! branch, exit, loop, or stop).
 
-use std::collections::BTreeMap;
-
 use analyssa::BitSet;
+use smallvec::{smallvec, SmallVec};
 
-use crate::analysis::{SsaInstruction, SsaVarId};
+use crate::analysis::SsaVarId;
+
+/// Blocks recorded for one trace segment.
+///
+/// A segment nearly always covers a single block — a 1200-block NetReactor
+/// method produced 4.8 million nodes averaging about one block each — so the
+/// common case is stored inline. Heap-allocating a one-element vector per node
+/// cost ~92 million allocations across that method's dispatchers, and the
+/// allocator churn showed up as the tracer's single largest expense.
+pub type VisitedBlocks = SmallVec<[usize; 1]>;
 
 /// Information about the dispatcher found during tracing.
 #[derive(Debug, Clone)]
@@ -53,22 +61,6 @@ pub enum StopReason {
 
     /// Visited same block too many times (likely infinite loop).
     InfiniteLoop { block: usize },
-}
-
-/// An instruction together with the concrete values it used at this trace step.
-#[derive(Debug, Clone)]
-pub struct InstructionWithValues {
-    /// The SSA instruction that was executed.
-    pub instruction: SsaInstruction,
-
-    /// Block index where this instruction lives.
-    pub block_idx: usize,
-
-    /// Concrete values of input variables at this point.
-    pub input_values: BTreeMap<SsaVarId, i64>,
-
-    /// Concrete value of output variable (if instruction defines one).
-    pub output_value: Option<i64>,
 }
 
 /// A trace of an exception handler entry block.
@@ -136,11 +128,8 @@ pub struct TraceNode {
     /// The block index where this segment starts.
     pub start_block: usize,
 
-    /// Linear sequence of instructions in this segment.
-    pub instructions: Vec<InstructionWithValues>,
-
     /// Blocks visited in this segment (in order).
-    pub blocks_visited: Vec<usize>,
+    pub blocks_visited: VisitedBlocks,
 
     /// How this segment ends.
     pub terminator: TraceTerminator,
@@ -248,17 +237,11 @@ impl TraceNode {
         Self {
             id,
             start_block,
-            instructions: Vec::new(),
-            blocks_visited: vec![start_block],
+            blocks_visited: smallvec![start_block],
             terminator: TraceTerminator::Stopped {
                 reason: StopReason::UnknownControlFlow { block: start_block },
             },
         }
-    }
-
-    /// Adds an instruction to this node.
-    pub fn add_instruction(&mut self, instr: InstructionWithValues) {
-        self.instructions.push(instr);
     }
 
     /// Records visiting a block.

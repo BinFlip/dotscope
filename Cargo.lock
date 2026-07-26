@@ -99,9 +99,9 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "analyssa"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a0726f03883c31e7c28d5510ed2e74141e5f3ce1dd7018f2c2205e208191d62"
+checksum = "79845a7f52583759a36e031fef550604c1d8d83b66fdeb7e3e0d31677bad144c"
 dependencies = [
  "boxcar",
  "dashmap",
@@ -1598,6 +1598,7 @@ dependencies = [
  "rustc-hash 2.1.3",
  "sha1 0.11.0",
  "sha2 0.11.0",
+ "smallvec 1.15.2",
  "strum 0.28.0",
  "tempfile",
  "thiserror 2.0.19",

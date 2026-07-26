@@ -12,14 +12,15 @@
 //! semantic methods that encapsulate invariants (visit budgets, case loop
 //! detection thresholds, expression switch mode transitions).
 
-use std::{collections::BTreeSet, mem};
+use std::mem;
 
 use analyssa::BitSet;
+use rustc_hash::FxHashSet;
 
 use crate::{
     analysis::{
-        cff_taint_config, ConstValue, SsaEvaluator, SsaFunction, SsaOp, SsaVarId, SsaVariable,
-        TaintAnalysis,
+        cff_taint_config, ConstValue, EvaluatorMark, SsaEvaluator, SsaFunction, SsaOp, SsaVarId,
+        SsaVariable, TaintAnalysis, VariableOrigin,
     },
     deobfuscation::passes::unflattening::{
         tracer::{helpers, types::TracedDispatcher},
@@ -27,6 +28,75 @@ use crate::{
     },
     CilObject,
 };
+
+/// Multiplier applied to `max_block_visits` to derive the monotonic global
+/// visit cap.
+///
+/// Generous enough that methods which trace normally never reach it — only
+/// pathological nesting, where the per-arm budget reset would otherwise let
+/// tracing run unbounded, is cut off.
+const GLOBAL_VISIT_BUDGET_FACTOR: usize = 4;
+
+/// Per-block properties that depend only on the shape of the SSA and on which
+/// blocks are dispatchers — never on the values a particular path carries.
+///
+/// The tracer asks these questions once per block *visit*, and a flattened
+/// method is visited millions of times, so answering them by re-walking the
+/// CFG turns constant-time predicates into a dominant cost. Every field here is
+/// a pure function of `(ssa, dispatcher, other_dispatcher_blocks)`, so a single
+/// computation is valid for the whole trace.
+struct BlockFacts {
+    /// Whether the block is a direct target of the dispatcher switch.
+    ///
+    /// Replaces a linear scan of the switch's target list, which for a
+    /// flattened method has one entry per case.
+    dispatch_target: Vec<bool>,
+
+    /// Whether the block is a dispatcher of a *different* CFF instance in the
+    /// same method.
+    other_dispatcher: Vec<bool>,
+
+    /// Jump target of the block if it is a constant-producer, else `None`.
+    ///
+    /// See [`helpers::const_producer_target`], which this caches.
+    const_producer: Vec<Option<usize>>,
+
+    /// Memoized [`overflow_dispatch_site`](Self::overflow_dispatch_site)
+    /// answers: `None` until first queried.
+    ///
+    /// Computed lazily rather than eagerly because the predecessor walk is
+    /// only ever asked about blocks ending in an equality comparison, a small
+    /// minority of the CFG.
+    overflow_site: Vec<Option<bool>>,
+}
+
+impl BlockFacts {
+    fn new(ssa: &SsaFunction, dispatcher: Option<&TracedDispatcher>) -> Self {
+        let count = ssa.block_count();
+        let mut dispatch_target = vec![false; count];
+        if let Some(d) = dispatcher {
+            for &target in d.targets.iter().chain(std::iter::once(&d.default)) {
+                if let Some(slot) = dispatch_target.get_mut(target) {
+                    *slot = true;
+                }
+            }
+        }
+
+        let mut const_producer = vec![None; count];
+        for block in ssa.blocks() {
+            if let Some(slot) = const_producer.get_mut(block.id()) {
+                *slot = helpers::const_producer_target(block);
+            }
+        }
+
+        Self {
+            dispatch_target,
+            other_dispatcher: vec![false; count],
+            const_producer,
+            overflow_site: vec![None; count],
+        }
+    }
+}
 
 /// Context for tree-based tracing.
 ///
@@ -41,7 +111,32 @@ pub struct TreeTraceContext<'a> {
     state_tainted: BitSet,
     next_node_id: usize,
     total_visits: usize,
-    visited_states: BTreeSet<(usize, i64)>,
+    /// Monotonic visit counter that is never reset, unlike `total_visits`.
+    ///
+    /// `total_visits` is deliberately reset when entering an expression-switch
+    /// false arm so each arm gets its own budget. On heavily nested methods that
+    /// reset fires often enough that the effective budget becomes unbounded — a
+    /// 348-block ConfuserEx method reached 3.3M block visits against a 50k
+    /// budget. This counter is the backstop: it bounds total tracing work per
+    /// context while leaving the per-arm budget semantics untouched.
+    global_visits: usize,
+    /// Hard cap on `global_visits`, derived from `max_block_visits`.
+    max_global_visits: usize,
+    /// Blocks already entered on the current path, keyed by execution state.
+    ///
+    /// Only ever grows while a path is followed — [`mark_visited`](Self::mark_visited)
+    /// is its sole writer — so a fork records the keys it adds and a restore
+    /// removes them again, the same trick the evaluator uses. Copying the set
+    /// per fork was the tracer's largest remaining cost once the evaluator
+    /// stopped being copied.
+    visited_states: FxHashSet<(usize, i64)>,
+    /// Keys added to [`visited_states`](Self::visited_states) since journaling
+    /// began, oldest first.
+    visited_journal: Vec<(usize, i64)>,
+    /// Whether [`visited_journal`](Self::visited_journal) is being recorded.
+    ///
+    /// Latched on by the first snapshot, mirroring the evaluator's own journal.
+    visit_journaling: bool,
     last_case_index: usize,
     visited_case_counts: Vec<u8>,
     /// Last state value dispatched to each case, parallel to `visited_case_counts`.
@@ -55,6 +150,17 @@ pub struct TreeTraceContext<'a> {
     max_tree_depth: usize,
     other_dispatcher_blocks: Vec<usize>,
     no_fork: bool,
+    /// Structural per-block answers, shared by every visit. See [`BlockFacts`].
+    facts: BlockFacts,
+    /// SSA variables grouped by the local slot they originate from, in variable
+    /// table order.
+    ///
+    /// The cross-scope bridge in the inner trace loop needs "the first variable
+    /// for this local that currently has a value". Scanning the whole variable
+    /// table for that runs inside the per-instruction loop, making the trace
+    /// quadratic in a method's variable count; this index makes it proportional
+    /// to the number of versions of the one local involved.
+    vars_by_local: Vec<Vec<SsaVarId>>,
 }
 
 impl<'a> TreeTraceContext<'a> {
@@ -68,6 +174,19 @@ impl<'a> TreeTraceContext<'a> {
         config: &UnflattenConfig,
         assembly: Option<&'a CilObject>,
     ) -> Self {
+        let mut vars_by_local: Vec<Vec<SsaVarId>> = Vec::new();
+        for var in ssa.variables() {
+            if let VariableOrigin::Local(idx) = var.origin() {
+                let idx = usize::from(idx);
+                if vars_by_local.len() <= idx {
+                    vars_by_local.resize_with(idx.saturating_add(1), Vec::new);
+                }
+                if let Some(slot) = vars_by_local.get_mut(idx) {
+                    slot.push(var.id());
+                }
+            }
+        }
+
         Self {
             ssa,
             evaluator: SsaEvaluator::new(ssa, config.pointer_size),
@@ -76,7 +195,13 @@ impl<'a> TreeTraceContext<'a> {
             state_tainted: BitSet::new(ssa.var_id_capacity()),
             next_node_id: 0,
             total_visits: 0,
-            visited_states: BTreeSet::new(),
+            global_visits: 0,
+            max_global_visits: config
+                .max_block_visits
+                .saturating_mul(GLOBAL_VISIT_BUDGET_FACTOR),
+            visited_states: FxHashSet::default(),
+            visited_journal: Vec::new(),
+            visit_journaling: false,
             last_case_index: usize::MAX,
             visited_case_counts: Vec::new(),
             last_case_state: Vec::new(),
@@ -84,6 +209,8 @@ impl<'a> TreeTraceContext<'a> {
             max_tree_depth: config.max_tree_depth,
             other_dispatcher_blocks: Vec::new(),
             no_fork: false,
+            facts: BlockFacts::new(ssa, None),
+            vars_by_local,
         }
     }
 
@@ -178,6 +305,7 @@ impl<'a> TreeTraceContext<'a> {
         // (+1 for default, which uses targets.len() as its index).
         ctx.visited_case_counts = vec![0u8; dispatcher.targets.len().saturating_add(1)];
         ctx.last_case_state = vec![None; dispatcher.targets.len().saturating_add(1)];
+        ctx.facts = BlockFacts::new(ssa, Some(&dispatcher));
         ctx.dispatcher = Some(dispatcher);
         ctx
     }
@@ -223,9 +351,11 @@ impl<'a> TreeTraceContext<'a> {
     /// Returns true if the given block is a direct target of the dispatcher
     /// (case block or default).
     pub fn is_dispatch_target(&self, block: usize) -> bool {
-        self.dispatcher
-            .as_ref()
-            .is_some_and(|d| d.targets.contains(&block) || d.default == block)
+        self.facts
+            .dispatch_target
+            .get(block)
+            .copied()
+            .unwrap_or(false)
     }
 
     /// Returns the state variable (phi at the dispatcher), if detected.
@@ -241,12 +371,63 @@ impl<'a> TreeTraceContext<'a> {
     /// Returns true if the given block is another CFF dispatcher in the same
     /// method (not the one we're tracing for).
     pub fn is_other_dispatcher(&self, block: usize) -> bool {
-        self.other_dispatcher_blocks.contains(&block)
+        self.facts
+            .other_dispatcher
+            .get(block)
+            .copied()
+            .unwrap_or(false)
     }
 
     /// Sets the blocks of other CFF dispatchers in this method.
     pub fn set_other_dispatcher_blocks(&mut self, blocks: Vec<usize>) {
+        for slot in &mut self.facts.other_dispatcher {
+            *slot = false;
+        }
+        for &block in &blocks {
+            if let Some(slot) = self.facts.other_dispatcher.get_mut(block) {
+                *slot = true;
+            }
+        }
+        // `is_overflow_dispatch_site` consults the other-dispatcher set, so any
+        // answer cached before this point was computed against a stale one.
+        for slot in &mut self.facts.overflow_site {
+            *slot = None;
+        }
         self.other_dispatcher_blocks = blocks;
+    }
+
+    /// Returns the jump target of `block` if it is a constant-producer block.
+    ///
+    /// Cached form of [`helpers::const_producer_target`].
+    pub fn const_producer_target(&self, block: usize) -> Option<usize> {
+        self.facts.const_producer.get(block).copied().flatten()
+    }
+
+    /// Returns the cached answer for `block`, computing it with `compute` on
+    /// first use.
+    ///
+    /// See [`BlockFacts::overflow_site`] for why this one is lazy.
+    pub fn overflow_dispatch_site(
+        &mut self,
+        block: usize,
+        compute: impl FnOnce(&Self) -> bool,
+    ) -> bool {
+        if let Some(cached) = self.facts.overflow_site.get(block).copied().flatten() {
+            return cached;
+        }
+        let answer = compute(self);
+        if let Some(slot) = self.facts.overflow_site.get_mut(block) {
+            *slot = Some(answer);
+        }
+        answer
+    }
+
+    /// Returns the SSA variables that originate from local slot `local_idx`, in
+    /// variable table order.
+    pub fn vars_for_local(&self, local_idx: u16) -> &[SsaVarId] {
+        self.vars_by_local
+            .get(usize::from(local_idx))
+            .map_or(&[], Vec::as_slice)
     }
 
     /// Checks if a variable is state-tainted.
@@ -317,13 +498,17 @@ impl<'a> TreeTraceContext<'a> {
 
     /// Marks a block as visited in the current execution context.
     pub fn mark_visited(&mut self, block: usize) {
-        self.visited_states.insert((block, self.visit_state()));
+        let key = (block, self.visit_state());
+        if self.visited_states.insert(key) && self.visit_journaling {
+            self.visited_journal.push(key);
+        }
     }
 
     /// Increments the visit counter and returns true if the budget is exceeded.
     pub fn check_visit_budget(&mut self) -> bool {
         self.total_visits = self.total_visits.saturating_add(1);
-        self.total_visits > self.max_block_visits
+        self.global_visits = self.global_visits.saturating_add(1);
+        self.total_visits > self.max_block_visits || self.global_visits > self.max_global_visits
     }
 
     /// Returns the maximum tree depth allowed.
@@ -379,12 +564,15 @@ impl<'a> TreeTraceContext<'a> {
         self.no_fork
     }
 
-    /// Takes a full snapshot of the mutable context state that must be
-    /// preserved across branch/switch forks.
-    pub fn snapshot(&self) -> ContextSnapshot<'a> {
+    /// Takes a snapshot of the mutable context state that must be preserved
+    /// across branch/switch forks.
+    ///
+    /// The evaluator is marked rather than copied — see [`ContextSnapshot`].
+    pub fn snapshot(&mut self) -> ContextSnapshot {
+        self.visit_journaling = true;
         ContextSnapshot {
-            evaluator: self.evaluator.clone(),
-            visited_states: self.visited_states.clone(),
+            evaluator: self.evaluator.checkpoint(),
+            visited_mark: self.visited_journal.len(),
             last_case_index: self.last_case_index,
             visited_case_counts: self.visited_case_counts.clone(),
             last_case_state: self.last_case_state.clone(),
@@ -392,9 +580,14 @@ impl<'a> TreeTraceContext<'a> {
     }
 
     /// Restores all mutable context fields from a snapshot, consuming it.
-    pub fn restore(&mut self, snap: ContextSnapshot<'a>) {
-        self.evaluator = snap.evaluator;
-        self.visited_states = snap.visited_states;
+    pub fn restore(&mut self, snap: ContextSnapshot) {
+        self.evaluator.rollback(snap.evaluator);
+        while self.visited_journal.len() > snap.visited_mark {
+            let Some(key) = self.visited_journal.pop() else {
+                break;
+            };
+            self.visited_states.remove(&key);
+        }
         self.last_case_index = snap.last_case_index;
         self.visited_case_counts = snap.visited_case_counts;
         self.last_case_state = snap.last_case_state;
@@ -467,7 +660,11 @@ impl<'a> TreeTraceContext<'a> {
             state_tainted: self.state_tainted.clone(),
             next_node_id: node_id_offset,
             total_visits: 0,
-            visited_states: BTreeSet::new(),
+            global_visits: 0,
+            max_global_visits: self.max_global_visits,
+            visited_states: FxHashSet::default(),
+            visited_journal: Vec::new(),
+            visit_journaling: false,
             last_case_index: usize::MAX,
             visited_case_counts: vec![0u8; case_count_len],
             last_case_state: vec![None; case_count_len],
@@ -475,6 +672,13 @@ impl<'a> TreeTraceContext<'a> {
             max_tree_depth: self.max_tree_depth,
             other_dispatcher_blocks: self.other_dispatcher_blocks.clone(),
             no_fork: false,
+            facts: BlockFacts {
+                dispatch_target: self.facts.dispatch_target.clone(),
+                other_dispatcher: self.facts.other_dispatcher.clone(),
+                const_producer: self.facts.const_producer.clone(),
+                overflow_site: self.facts.overflow_site.clone(),
+            },
+            vars_by_local: self.vars_by_local.clone(),
         }
     }
 
@@ -492,21 +696,33 @@ impl<'a> TreeTraceContext<'a> {
 /// Snapshot of `TreeTraceContext` mutable state saved at branch/switch fork
 /// points. Allows the iterative tracer to restore context before tracing
 /// each alternative arm.
-pub struct ContextSnapshot<'a> {
-    evaluator: SsaEvaluator<'a>,
-    visited_states: BTreeSet<(usize, i64)>,
+///
+/// The evaluator is held as a mark into its undo journal, not as a copy. A
+/// flattened method forks millions of times and the evaluator's state grows
+/// with everything the trace has learned, so copying it per fork costs more
+/// than the tracing itself — measured at 99% of tracer time on a NetReactor
+/// sample. Rolling back to a mark instead costs one entry per value the
+/// abandoned arm actually changed.
+///
+/// This makes fork discipline part of the contract: marks are released in
+/// reverse order of creation. The work stack in
+/// [`engine`](super::engine) guarantees it — a snapshot lives in a work item,
+/// and every item pushed after it is popped before it is.
+pub struct ContextSnapshot {
+    evaluator: EvaluatorMark,
+    visited_mark: usize,
     last_case_index: usize,
     visited_case_counts: Vec<u8>,
     last_case_state: Vec<Option<i64>>,
 }
 
-impl<'a> ContextSnapshot<'a> {
+impl ContextSnapshot {
     /// Clones this snapshot (used when restoring the same snapshot for
     /// multiple switch case arms).
     pub fn clone_snapshot(&self) -> Self {
         Self {
             evaluator: self.evaluator.clone(),
-            visited_states: self.visited_states.clone(),
+            visited_mark: self.visited_mark,
             last_case_index: self.last_case_index,
             visited_case_counts: self.visited_case_counts.clone(),
             last_case_state: self.last_case_state.clone(),

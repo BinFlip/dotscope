@@ -15,8 +15,6 @@
 //! - **Statistics** ([`compute_tree_stats`]): Recursive tree traversal counting
 //!   nodes, branches, transitions, exits, and max depth
 
-use std::collections::BTreeSet;
-
 use analyssa::BitSet;
 use rayon::prelude::*;
 
@@ -208,36 +206,36 @@ pub fn resolve_call_result(
 /// tracer forks O(2^N) at these branches. With detection, both forks share
 /// accumulated tracking state so the false branch stops at the convergence point.
 pub fn detect_expression_switch(
-    ssa: &SsaFunction,
+    ctx: &TreeTraceContext<'_>,
     true_target: usize,
     false_target: usize,
-    tainted: &BitSet,
 ) -> Option<usize> {
-    let (Some(tb), Some(fb)) = (ssa.block(true_target), ssa.block(false_target)) else {
-        return None;
-    };
-
-    let true_merge = const_producer_target(tb)?;
-    let false_merge = const_producer_target(fb)?;
+    // The structural half of the test — are both arms constant-producers that
+    // meet at the same block — is a property of the CFG, so it is answered from
+    // the context's precomputed table rather than re-walked. Only the taint
+    // check below depends on trace state.
+    let true_merge = ctx.const_producer_target(true_target)?;
+    let false_merge = ctx.const_producer_target(false_target)?;
 
     if true_merge != false_merge {
         return None;
     }
 
-    let merge = ssa.block(true_merge)?;
-    if merge.phi_nodes().is_empty() {
+    let merge = ctx.ssa().block(true_merge)?;
+    let phis = merge.phi_nodes();
+    if phis.is_empty() {
         return None;
     }
 
-    let phi_results: BTreeSet<SsaVarId> =
-        merge.phi_nodes().iter().map(|phi| phi.result()).collect();
+    let tainted = ctx.state_tainted();
+    let is_phi_result = |var: &SsaVarId| phis.iter().any(|phi| phi.result() == *var);
 
     let feeds_tainted = merge.instructions().iter().any(|instr| match instr.op() {
         SsaOp::Xor { left, right, .. }
         | SsaOp::Add { left, right, .. }
         | SsaOp::Sub { left, right, .. }
         | SsaOp::Mul { left, right, .. } => {
-            let one_is_phi = phi_results.contains(left) || phi_results.contains(right);
+            let one_is_phi = is_phi_result(left) || is_phi_result(right);
             let one_is_tainted = tainted.contains(left.index()) || tainted.contains(right.index());
             one_is_phi && one_is_tainted
         }

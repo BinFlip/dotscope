@@ -48,7 +48,8 @@ use crate::{
             decompose::decompose_instruction, liveness, place_pruned_phis,
             resolve_corelib_valuetype, ConstValue, DefSite, PhiNode, PhiPlacementConfig,
             SimulationResult, SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaType, SsaVarId,
-            StackSimulator, StackSlot, StackSlotSource, TypeProvider, UseSite, VariableOrigin,
+            StackSimulator, StackSlot, StackSlotSource, TypeProvider, TypeRef, UseSite,
+            VariableOrigin,
         },
     },
     assembly::{opcodes, Immediate, Instruction, Operand},
@@ -60,6 +61,28 @@ use crate::{
     },
     CilObject, Error, Result,
 };
+
+/// How a read-but-never-written variable gets its default value.
+///
+/// See [`SsaConverter::materialize_undefined_definitions`].
+enum DefaultInit {
+    /// A constant zero or null, emitted as a single `Const`.
+    Const {
+        /// Variable to define.
+        dest: SsaVarId,
+        /// The zero value for the variable's type.
+        value: ConstValue,
+    },
+    /// A zeroed struct, emitted as `ldloca; initobj; ldloc`.
+    ZeroStruct {
+        /// Variable to define.
+        dest: SsaVarId,
+        /// The value type to zero.
+        type_ref: TypeRef,
+        /// CIL local slot backing the variable.
+        local_index: u16,
+    },
+}
 
 /// A variable definition record during SSA construction.
 #[derive(Debug, Clone)]
@@ -555,6 +578,212 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             .create_variable(origin, 0, DefSite::entry(), var_type)
     }
 
+    /// Returns the constant zero for a type, or `None` if it has no constant form.
+    ///
+    /// Mirrors CIL's `.locals init` semantics: integers and floats zero, references
+    /// null. Value types are not covered here — a zeroed struct is not `ldnull` —
+    /// and are handled by [`zero_init_value_type`](Self::zero_init_value_type).
+    fn zero_value_for(ty: &SsaType) -> Option<ConstValue> {
+        Some(match ty {
+            SsaType::Bool => ConstValue::False,
+            SsaType::I8 => ConstValue::I8(0),
+            SsaType::U8 => ConstValue::U8(0),
+            SsaType::I16 => ConstValue::I16(0),
+            SsaType::U16 => ConstValue::U16(0),
+            SsaType::Char => ConstValue::U16(0),
+            SsaType::I32 => ConstValue::I32(0),
+            SsaType::U32 => ConstValue::U32(0),
+            SsaType::I64 => ConstValue::I64(0),
+            SsaType::U64 => ConstValue::U64(0),
+            SsaType::NativeInt => ConstValue::NativeInt(0),
+            SsaType::NativeUInt => ConstValue::NativeUInt(0),
+            SsaType::F32 => ConstValue::F32(0.0),
+            SsaType::F64 => ConstValue::F64(0.0),
+            SsaType::Object
+            | SsaType::String
+            | SsaType::Null
+            | SsaType::Class(_)
+            | SsaType::Array(_, _)
+            | SsaType::GenericInst(_, _)
+            | SsaType::Pointer(_)
+            | SsaType::ByRef(_)
+            | SsaType::FnPtr(_) => ConstValue::Null,
+            _ => return None,
+        })
+    }
+
+    /// How a read-but-never-written variable should be given its default value.
+    ///
+    /// Named rather than expressed as a tuple because the two cases produce a
+    /// different number of instructions, which the insertion accounting depends on.
+    fn default_init_plan(&self, var_id: SsaVarId) -> Option<DefaultInit> {
+        let variable = self.function.variable(var_id)?;
+        // Arguments arrive from the caller — never synthesize a value.
+        if matches!(variable.origin(), VariableOrigin::Argument(_)) {
+            return None;
+        }
+
+        let var_type = variable.var_type();
+        if let Some(value) = Self::zero_value_for(var_type) {
+            return Some(DefaultInit::Const {
+                dest: var_id,
+                value,
+            });
+        }
+
+        // A struct is zeroed with `ldloca; initobj`, then read back. That needs a
+        // real local slot to take the address of, so it only works for variables
+        // that correspond to a CIL local. Stack temporaries of value type have no
+        // slot and are left undefined.
+        if let (SsaType::ValueType(type_ref), VariableOrigin::Local(local_index)) =
+            (var_type, variable.origin())
+        {
+            return Some(DefaultInit::ZeroStruct {
+                dest: var_id,
+                type_ref: *type_ref,
+                local_index,
+            });
+        }
+
+        None
+    }
+
+    /// Materializes explicit default definitions for variables that are read but
+    /// never written.
+    ///
+    /// SSA construction registers a placeholder variable whenever no reaching
+    /// definition can be found — an uninitialized local, or a stack slot that no
+    /// predecessor supplies (see [`create_undefined_var`](Self::create_undefined_var)).
+    /// The placeholder is entered in the variable table with `DefSite::entry()`
+    /// but no instruction ever defines it.
+    ///
+    /// That is stable only for as long as nobody rebuilds the function.
+    /// `SsaFunction::rebuild_ssa` reconstructs the variable table from actual
+    /// definitions, so the placeholders disappear and every remaining read of one
+    /// becomes an undefined use that fails verification. Passes that legitimately
+    /// promote a phi operand into an instruction operand — CFF unflattening
+    /// materializing dispatcher phis, for example — turn a tolerated dangling phi
+    /// operand into exactly such a read.
+    ///
+    /// Emitting a real definition in the entry block, which dominates everything,
+    /// makes the invariant hold by construction. The values match what the runtime
+    /// would supply for a zero-initialized local, so behaviour is unchanged: zero
+    /// for primitives, null for references, and an `initobj`-zeroed struct for
+    /// value types. Only variables that are actually read get a definition, so
+    /// unused entry seeds do not accumulate dead code.
+    fn materialize_undefined_definitions(&mut self) {
+        let entry_block = self.cfg.entry().index();
+
+        let mut defined: BTreeMap<SsaVarId, ()> = BTreeMap::new();
+        let mut used: BTreeMap<SsaVarId, ()> = BTreeMap::new();
+        for block in self.function.blocks() {
+            for phi in block.phi_nodes() {
+                defined.insert(phi.result(), ());
+                for operand in phi.operands() {
+                    used.insert(operand.value(), ());
+                }
+            }
+            for instr in block.instructions() {
+                if let Some(dest) = instr.def() {
+                    defined.insert(dest, ());
+                }
+                for use_var in instr.uses() {
+                    used.insert(use_var, ());
+                }
+            }
+        }
+
+        let plans: Vec<DefaultInit> = used
+            .keys()
+            .filter(|var_id| !defined.contains_key(*var_id))
+            .filter_map(|var_id| self.default_init_plan(*var_id))
+            .collect();
+
+        if plans.is_empty() {
+            return;
+        }
+
+        // Build the instruction sequence first: a struct default needs an extra
+        // address temporary, so the instruction count is not the plan count.
+        let mut prologue: Vec<SsaInstruction> = Vec::new();
+        for plan in plans {
+            match plan {
+                DefaultInit::Const { dest, value } => {
+                    prologue.push(SsaInstruction::synthetic(SsaOp::Const { dest, value }));
+                }
+                DefaultInit::ZeroStruct {
+                    dest,
+                    type_ref,
+                    local_index,
+                } => {
+                    // ldloca local_index; initobj T; ldloc local_index
+                    let addr = self.function.create_variable(
+                        VariableOrigin::Phi,
+                        0,
+                        DefSite::instruction(entry_block, prologue.len()),
+                        SsaType::ByRef(Box::new(SsaType::ValueType(type_ref))),
+                    );
+                    prologue.push(SsaInstruction::synthetic(SsaOp::LoadLocalAddr {
+                        dest: addr,
+                        local_index,
+                    }));
+                    prologue.push(SsaInstruction::synthetic(SsaOp::InitObj {
+                        dest_addr: addr,
+                        value_type: type_ref,
+                    }));
+                    prologue.push(SsaInstruction::synthetic(SsaOp::LoadLocal {
+                        dest,
+                        local_index,
+                    }));
+                }
+            }
+        }
+
+        // Inserting at the front of the entry block shifts every instruction
+        // already there, so def sites recorded against it must move too. The
+        // address temporaries created above are corrected afterwards.
+        let inserted = prologue.len();
+        for variable in self.function.variables_mut() {
+            let site = variable.def_site();
+            if site.block == entry_block {
+                if let Some(idx) = site.instruction {
+                    variable.set_def_site(DefSite::instruction(
+                        entry_block,
+                        idx.saturating_add(inserted),
+                    ));
+                }
+            }
+        }
+
+        let Some(entry) = self.function.block_mut(entry_block) else {
+            return;
+        };
+        for (offset, instr) in prologue.into_iter().enumerate() {
+            entry.instructions_mut().insert(offset, instr);
+        }
+
+        // Record where each prologue instruction actually defines its variable.
+        // This runs after the shift above so it is not displaced by it.
+        let defs: Vec<(usize, SsaVarId)> = self
+            .function
+            .block(entry_block)
+            .map(|block| {
+                block
+                    .instructions()
+                    .iter()
+                    .take(inserted)
+                    .enumerate()
+                    .filter_map(|(idx, instr)| instr.def().map(|dest| (idx, dest)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (idx, dest) in defs {
+            if let Some(variable) = self.function.variable_mut(dest) {
+                variable.set_def_site(DefSite::instruction(entry_block, idx));
+            }
+        }
+    }
+
     /// Tries to map a placeholder variable to a value from a predecessor's exit stack.
     ///
     /// This is used when the immediate dominator's exit stack doesn't have the needed
@@ -683,6 +912,11 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         // Resolved loads are converted to Nop during rename; removing them here
         // keeps the initial SSA clean and avoids stale instruction indices.
         builder.strip_resolved_loads();
+
+        // Phase 3c: Give every read-but-never-written variable a real definition.
+        // Must run after `strip_resolved_loads` so entry-block instruction
+        // indices are final, and before `reindex_variables`.
+        builder.materialize_undefined_definitions();
 
         // Set original local type signatures from type provider for code generation
         if let Some(local_types) = type_provider.local_type_signatures() {

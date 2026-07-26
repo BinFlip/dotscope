@@ -38,6 +38,7 @@
 mod detection;
 mod dispatcher;
 mod reconstruction;
+mod spill;
 mod statevar;
 mod tracer;
 
@@ -167,8 +168,22 @@ pub fn unflatten_with_dispatchers(
         return None;
     }
 
-    // Step 4: Clone the SSA and apply the combined patches once
+    // Step 4: Clone the SSA, give every cross-block value a storage location,
+    // then apply the combined patches once.
+    //
+    // The promotion must happen before any terminator is rewired. Patching
+    // invalidates the phi nodes that record which SSA names denote the same
+    // value across a merge, and for edges the patch creates no phi ever recorded
+    // anything at all — so a value carried between blocks in a stack temporary
+    // becomes unreconstructible the moment the CFG changes. Promoting those
+    // values to local slots first gives `rebuild_ssa` a storage location to
+    // resolve them against, which is what makes the rebuild well-defined for an
+    // arbitrarily rewired CFG.
     let mut patched = ssa.clone();
+    let spilled = spill::promote_cross_block_values(&mut patched);
+    if spilled > 0 {
+        log::debug!("Promoted {spilled} cross-block value(s) to locals before unflattening");
+    }
     let _result = apply_patch_plan(&mut patched, &merged);
 
     // Note: we do NOT reject based on dispatcher_still_needed. With multiple

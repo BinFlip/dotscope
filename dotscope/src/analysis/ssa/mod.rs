@@ -107,17 +107,20 @@ pub type SsaFunction<T = CilTarget> = analyssa::ir::function::SsaFunction<T>;
 pub type ReturnInfo<T = CilTarget> = analyssa::ir::function::ReturnInfo<T>;
 #[allow(unused_imports)]
 pub use analyssa::analysis::consts::evaluate_const_op;
-pub use analyssa::ir::phi::{PhiNode, PhiOperand};
 pub use analyssa::{
     analysis::{
+        address,
         evaluator::ControlFlow,
         memory::{AliasResult, ArrayIndex, IndirectLocation, MemoryDefSite, MemoryPhiOperand},
         phis::{place_pruned_phis, PhiAnalyzer, PhiPlacementConfig},
+        pointsto,
     },
-    ir::variable::{DefSite, FunctionVarAllocator, SsaVarId, UseSite, VariableOrigin},
+    ir::{
+        phi::{PhiNode, PhiOperand},
+        variable::{DefSite, FunctionVarAllocator, SsaVarId, UseSite, VariableOrigin},
+    },
     Target,
 };
-pub use analyssa::analysis::{address, pointsto};
 pub use resolver::ValueResolver;
 pub use stack::{SimulationResult, StackSimulator, StackSlot, StackSlotSource};
 #[cfg(feature = "z3")]
@@ -142,6 +145,8 @@ pub type SsaCfg<'a, T = CilTarget> = analyssa::analysis::cfg::SsaCfg<'a, T>;
 pub type ConstEvaluator<'a, T = CilTarget> = analyssa::analysis::consts::ConstEvaluator<'a, T>;
 /// CIL-defaulted alias of [`analyssa::analysis::evaluator::SsaEvaluator`].
 pub type SsaEvaluator<'a, T = CilTarget> = analyssa::analysis::evaluator::SsaEvaluator<'a, T>;
+/// CIL-defaulted alias of [`analyssa::analysis::evaluator::EvaluatorMark`].
+pub type EvaluatorMark<T = CilTarget> = analyssa::analysis::evaluator::EvaluatorMark<T>;
 /// CIL-defaulted alias of [`analyssa::analysis::evaluator::ExecutionTrace`].
 pub type ExecutionTrace<T = CilTarget> = analyssa::analysis::evaluator::ExecutionTrace<T>;
 /// CIL-defaulted alias of [`analyssa::analysis::patterns::PatternDetector`].

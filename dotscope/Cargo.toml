@@ -63,13 +63,14 @@ dashmap = "6.2.1"
 crossbeam-skiplist = "0.1.3"
 rayon = "1.12.0"
 rustc-hash = "2.1.3"
+smallvec = "1.15"
 boxcar = "0.2.14"
 quick-xml = "0.41.0"
 hex = "0.4.3"
 num-bigint = { version = "0.5.1", optional = true }
 log = "0.4.33"
 flate2 = "1.1.9"
-analyssa = "0.4.0"
+analyssa = "0.4.1"
 lzma-rs = "0.3.0"
 z3 = { version = "0.20.2", optional = true }
 iced-x86 = { version = "1.21.0", default-features = false, features = ["std", "decoder", "instr_info"], optional = true }
@@ -175,3 +176,8 @@ harness = false
 [[bench]]
 name = "security"
 harness = false
+
+[[bench]]
+name = "deobfuscation"
+harness = false
+required-features = ["deobfuscation"]

@@ -35,6 +35,7 @@ use std::sync::{
     Arc, RwLock,
 };
 
+use dashmap::DashMap;
 use log::{debug, trace};
 
 use crate::{
@@ -132,6 +133,12 @@ pub struct EmulationController {
 
     /// Monotonically increasing call ID for correlating call/return trace events.
     next_call_id: AtomicU64,
+
+    /// Memoized per-assembly emulation contexts, keyed by loaded assembly index.
+    ///
+    /// Keeps each assembly's decoded-method cache alive across the execution
+    /// loop instead of rebuilding it on every instruction.
+    assembly_contexts: DashMap<u8, Arc<EmulationContext>>,
 }
 
 impl EmulationController {
@@ -160,6 +167,7 @@ impl EmulationController {
             cctor_tracker: CctorTracker::new(),
             generics,
             next_call_id: AtomicU64::new(1),
+            assembly_contexts: DashMap::new(),
         })
     }
 
@@ -304,7 +312,14 @@ impl EmulationController {
     /// Returns `None` if the assembly index doesn't exist in the `RuntimeState`.
     /// This is called per-iteration when executing a frame from a loaded assembly,
     /// but `EmulationContext::new` is trivial (wraps an `Arc`), so the cost is negligible.
-    fn loaded_assembly_context(&self, index: u8) -> Result<Option<EmulationContext>> {
+    fn loaded_assembly_context(&self, index: u8) -> Result<Option<Arc<EmulationContext>>> {
+        // The execution loop resolves the frame's context on every instruction.
+        // Rebuilding the context each time meant taking the runtime lock and
+        // discarding the assembly's decoded-method cache per step, so memoize it.
+        if let Some(cached) = self.assembly_contexts.get(&index) {
+            return Ok(Some(Arc::clone(cached.value())));
+        }
+
         let state = self
             .context
             .runtime
@@ -312,12 +327,16 @@ impl EmulationController {
             .map_err(|_| EmulationError::LockPoisoned {
                 description: "runtime state",
             })?;
-        Ok(state
-            .app_domain()
-            .get_parsed_assembly(index as usize)
-            .map(|asm| {
-                EmulationContext::new(Arc::clone(asm), Arc::clone(&self.context.synthetic_methods))
-            }))
+        let Some(asm) = state.app_domain().get_parsed_assembly(index as usize) else {
+            return Ok(None);
+        };
+
+        let context = Arc::new(EmulationContext::new(
+            Arc::clone(asm),
+            Arc::clone(&self.context.synthetic_methods),
+        ));
+        self.assembly_contexts.insert(index, Arc::clone(&context));
+        Ok(Some(context))
     }
 
     /// Emulates a method with the given arguments.
@@ -586,14 +605,18 @@ impl EmulationController {
             let loaded_context;
             let context = if let Some(idx) = asm_index {
                 loaded_context = self.loaded_assembly_context(idx)?;
-                loaded_context.as_ref().unwrap_or(context)
+                loaded_context.as_deref().unwrap_or(context)
             } else {
                 context
             };
 
-            // Get the instruction at current offset
-            let instruction =
-                context.get_instruction_at(current_method, interpreter.ip().offset())?;
+            // Get the instruction at current offset. The decoded body is cached
+            // and shared, so this borrows the instruction rather than cloning it.
+            let method_code = context.get_method_code(current_method)?;
+            let offset = interpreter.ip().offset();
+            let instruction = method_code
+                .instruction_at(offset)
+                .ok_or(EmulationError::InvalidInstructionPointer { offset })?;
 
             // Capture pre-execution instruction info for tracing
             let trace_info = if self.trace_instructions_enabled() {
@@ -631,7 +654,7 @@ impl EmulationController {
             };
 
             // Execute the instruction
-            let step_result = match interpreter.step(thread, &instruction) {
+            let step_result = match interpreter.step(thread, instruction) {
                 Ok(result) => result,
                 Err(err) => {
                     match self.handle_step_error(

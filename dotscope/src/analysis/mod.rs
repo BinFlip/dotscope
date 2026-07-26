@@ -80,8 +80,7 @@ mod x86;
 
 // Re-export primary public types at module level
 // Direct re-exports from analyssa for the formerly-shimmed analyses.
-pub use analyssa::analysis::algebraic::simplify_op;
-pub use analyssa::analysis::defuse::Location;
+pub use analyssa::analysis::{algebraic::simplify_op, defuse::Location};
 pub use callgraph::{
     CallGraph, CallGraphNode, CallGraphStats, CallResolver, CallSite, CallTarget, CallType,
     ResolverStats,
@@ -110,8 +109,8 @@ pub use ssa::Z3Solver;
 pub use ssa::{
     address, pointsto, resolve_corelib_valuetype, AbstractValue, AliasResult, ArrayIndex,
     BinaryOpKind, CilTarget, CmpKind, ConstEvaluator, ConstValue, ConstValueCilExt, ControlFlow,
-    DefSite, FieldRef, IndirectLocation, MemoryDefSite, MemoryLocation, MemoryOp, MemoryPhi,
-    MemoryPhiOperand, MemorySsa, MemorySsaStats, MemoryVersion, MethodPurity, MethodRef,
+    DefSite, EvaluatorMark, FieldRef, IndirectLocation, MemoryDefSite, MemoryLocation, MemoryOp,
+    MemoryPhi, MemoryPhiOperand, MemorySsa, MemorySsaStats, MemoryVersion, MethodPurity, MethodRef,
     PhiAnalyzer, PhiNode, PhiOperand, ReturnInfo, SsaBlock, SsaCfg, SsaConverter, SsaEvaluator,
     SsaExceptionHandler, SsaExceptionHandlerCilExt, SsaFunction, SsaFunctionBuilder,
     SsaFunctionCilExt, SsaFunctionSemanticsExt, SsaInstruction, SsaOp, SsaOpCilExt, SsaType,

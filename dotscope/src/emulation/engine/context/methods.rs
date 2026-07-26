@@ -8,7 +8,10 @@ use std::sync::Arc;
 use crate::{
     assembly::Instruction,
     emulation::{
-        engine::{context::EmulationContext, error::EmulationError},
+        engine::{
+            context::{EmulationContext, MethodCode},
+            error::EmulationError,
+        },
         exception::ExceptionClause,
     },
     metadata::{method::Method, signatures::TypeSignature, token::Token, typesystem::CilFlavor},
@@ -44,6 +47,12 @@ impl EmulationContext {
             return Ok(synthetic.instructions.clone());
         }
 
+        // Serve from the code cache when possible so repeated callers do not
+        // re-decode the whole body.
+        if let Some(code) = self.code_cache.get(&method_token) {
+            return Ok(code.instructions().to_vec());
+        }
+
         let method = self.get_method(method_token)?;
 
         // Get instructions from the method's blocks
@@ -57,6 +66,52 @@ impl EmulationContext {
         Ok(instructions)
     }
 
+    /// Gets the offset-indexed, cached body for a method.
+    ///
+    /// The body is decoded once per method token and shared behind an `Arc`.
+    /// Both instruction fetch and RVA-to-offset conversion are O(1) against the
+    /// returned value, which is what the execution loop relies on.
+    ///
+    /// Synthetic method bodies are not cached — `ILGenerator` can mutate them
+    /// after registration — so they are rebuilt on each call.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the method is not found or has no decodable body.
+    pub fn get_method_code(&self, method_token: Token) -> Result<Arc<MethodCode>> {
+        if let Some(code) = self.code_cache.get(&method_token) {
+            return Ok(Arc::clone(code.value()));
+        }
+
+        // Synthetic bodies are mutable at runtime; build fresh and do not cache.
+        if let Some(synthetic) = self.synthetic_methods.get(&method_token) {
+            return MethodCode::new(synthetic.instructions.clone())
+                .map(Arc::new)
+                .ok_or_else(|| {
+                    EmulationError::MissingMethodBody {
+                        token: method_token,
+                    }
+                    .into()
+                });
+        }
+
+        let method = self.get_method(method_token)?;
+        let instructions: Vec<Instruction> = method.instructions().cloned().collect();
+
+        // An empty list means either a genuinely bodiless method or a body whose
+        // blocks have not been decoded yet. Neither is safe to cache.
+        let Some(code) = MethodCode::new(instructions) else {
+            return Err(EmulationError::MissingMethodBody {
+                token: method_token,
+            }
+            .into());
+        };
+
+        let code = Arc::new(code);
+        self.code_cache.insert(method_token, Arc::clone(&code));
+        Ok(code)
+    }
+
     /// Gets the base RVA (address of the first instruction) of a method.
     ///
     /// This is used to convert between absolute RVAs and method-relative offsets.
@@ -65,13 +120,7 @@ impl EmulationContext {
     ///
     /// Returns an error if the method is not found or has no instructions.
     pub fn get_method_base_rva(&self, method_token: Token) -> Result<u64> {
-        let instructions = self.get_instructions(method_token)?;
-        instructions.first().map(|instr| instr.rva).ok_or_else(|| {
-            EmulationError::MissingMethodBody {
-                token: method_token,
-            }
-            .into()
-        })
+        Ok(self.get_method_code(method_token)?.base_rva())
     }
 
     /// Converts an absolute RVA to a method-relative offset.
@@ -83,11 +132,8 @@ impl EmulationContext {
     ///
     /// Returns an error if the method is not found.
     /// Method-relative offsets are bounded by IL method body size (< u32::MAX)
-    #[allow(clippy::cast_possible_truncation)]
     pub fn rva_to_method_offset(&self, method_token: Token, rva: u64) -> Result<u32> {
-        let base_rva = self.get_method_base_rva(method_token)?;
-        let offset = rva.saturating_sub(base_rva);
-        Ok(offset as u32)
+        Ok(self.get_method_code(method_token)?.rva_to_offset(rva))
     }
 
     /// Gets an instruction at a specific method-relative offset.
@@ -99,26 +145,10 @@ impl EmulationContext {
     ///
     /// Returns an error if the method is not found or no instruction exists at the offset.
     pub fn get_instruction_at(&self, method_token: Token, offset: u32) -> Result<Instruction> {
-        let instructions = self.get_instructions(method_token)?;
-
-        // Get the base RVA to compute method-relative offsets from RVAs
-        // Branch targets are stored as absolute RVAs and converted to method offsets
-        // using rva_to_method_offset(target_rva - base_rva), so we need to match
-        // instructions by their RVA-based offset, not accumulated instruction sizes
-        let base_rva = instructions
-            .first()
-            .map(|instr| instr.rva)
-            .ok_or(EmulationError::InvalidInstructionPointer { offset })?;
-
-        // Find instruction at the given method-relative offset using RVA
-        for instr in instructions {
-            let instr_offset = instr.rva.saturating_sub(base_rva);
-            if instr_offset == u64::from(offset) {
-                return Ok(instr);
-            }
-        }
-
-        Err(EmulationError::InvalidInstructionPointer { offset }.into())
+        self.get_method_code(method_token)?
+            .instruction_at(offset)
+            .cloned()
+            .ok_or_else(|| EmulationError::InvalidInstructionPointer { offset }.into())
     }
 
     /// Gets an instruction by index within a method's instruction list.

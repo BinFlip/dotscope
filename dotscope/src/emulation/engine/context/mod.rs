@@ -3,6 +3,7 @@
 //! The [`EmulationContext`] provides the interpreter with access to
 //! the loaded assembly's metadata, instructions, and strings.
 
+mod code;
 mod generics;
 mod lookup;
 mod metadata;
@@ -11,6 +12,7 @@ mod types;
 
 use std::sync::Arc;
 
+pub use code::MethodCode;
 use dashmap::DashMap;
 
 use crate::{
@@ -49,6 +51,14 @@ pub struct EmulationContext {
     pub(crate) assembly: Arc<CilObject>,
     /// Synthetic method bodies created by DynamicMethod/ILGenerator.
     pub(crate) synthetic_methods: Arc<DashMap<Token, SyntheticMethodBody>>,
+    /// Offset-indexed method bodies, decoded once per method token.
+    ///
+    /// Shared so that contexts recreated for the same assembly (e.g. per-frame
+    /// context resolution in the execution loop) reuse the same decoded bodies.
+    /// Only non-synthetic, non-empty bodies are cached — synthetic bodies can be
+    /// mutated at runtime by `ILGenerator`, and an empty body may simply mean the
+    /// decoder has not populated blocks yet.
+    pub(crate) code_cache: Arc<DashMap<Token, Arc<MethodCode>>>,
 }
 
 impl EmulationContext {
@@ -61,6 +71,25 @@ impl EmulationContext {
         EmulationContext {
             assembly,
             synthetic_methods,
+            code_cache: Arc::new(DashMap::new()),
+        }
+    }
+
+    /// Creates a new emulation context that shares an existing code cache.
+    ///
+    /// Used when a context must be rebuilt for the same assembly (for example
+    /// when resolving the context for a call frame in another loaded assembly)
+    /// so the decoded method bodies are not thrown away.
+    #[must_use]
+    pub fn with_code_cache(
+        assembly: Arc<CilObject>,
+        synthetic_methods: Arc<DashMap<Token, SyntheticMethodBody>>,
+        code_cache: Arc<DashMap<Token, Arc<MethodCode>>>,
+    ) -> Self {
+        EmulationContext {
+            assembly,
+            synthetic_methods,
+            code_cache,
         }
     }
 
