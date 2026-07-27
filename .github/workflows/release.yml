@@ -30,9 +30,15 @@ jobs:
       run: |
         TAG="${{ github.event.release.tag_name }}"
         VERSION="${TAG#v}"
-        MANIFEST=$(grep '^version = ' dotscope/Cargo.toml | head -1 | cut -d '"' -f 2)
-        if [ "$VERSION" != "$MANIFEST" ]; then
-          echo "::error::Release tag ${TAG} implies version ${VERSION}, but dotscope/Cargo.toml declares ${MANIFEST}"
+        FAILED=0
+        for MANIFEST in dotscope/Cargo.toml dotscope-cli/Cargo.toml; do
+          DECLARED=$(grep '^version = ' "$MANIFEST" | head -1 | cut -d '"' -f 2)
+          if [ "$VERSION" != "$DECLARED" ]; then
+            echo "::error::Release tag ${TAG} implies version ${VERSION}, but ${MANIFEST} declares ${DECLARED}"
+            FAILED=1
+          fi
+        done
+        if [ "$FAILED" -ne 0 ]; then
           exit 1
         fi
         echo "version=$VERSION" >> $GITHUB_OUTPUT
