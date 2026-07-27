@@ -6,10 +6,17 @@
 //!
 //! # ConfuserEx LZMA Format
 //!
-//! ConfuserEx uses a custom LZMA format:
-//! - 5 bytes: LZMA decoder properties
-//! - 4 bytes: Uncompressed size (little-endian i32)
-//! - Rest: Compressed data stream
+//! Two header layouts appear in the wild, sharing the same 5 property bytes and
+//! differing only in the width of the uncompressed-size field that follows:
+//!
+//! - 5 bytes properties + 8 bytes size (little-endian u64) — the standard
+//!   `.lzma` (alone) header, written by builds that drive the LZMA SDK's stream
+//!   API directly
+//! - 5 bytes properties + 4 bytes size (little-endian u32) — stock ConfuserEx's
+//!   `Lzma.Decompress`
+//!
+//! Nothing in the assembly records which is in use, so both are attempted and
+//! each is held to the length its own header declares.
 //!
 //! # Deflate Format
 //!
@@ -332,9 +339,7 @@ mod tests {
         assert_eq!(out.len(), 44, "must honour the declared size");
         // Length-prefixed UTF-8 constants, as ConfuserEx stores them.
         assert!(out.windows(8).any(|w| w == b"Result: "));
-        assert!(out
-            .windows(27)
-            .any(|w| w == b"Hello From ConfuserEx test."));
+        assert!(out.windows(27).any(|w| w == b"Hello From ConfuserEx test."));
     }
 
     #[test]
@@ -367,7 +372,9 @@ mod tests {
     #[test]
     fn test_confuserex_lzma_rejects_non_lzma() {
         // Plausible length, but the dictionary size is nonsense.
-        let junk = [0x5D, 0x11, 0x22, 0x33, 0x44, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let junk = [
+            0x5D, 0x11, 0x22, 0x33, 0x44, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
         assert!(!is_confuserex_lzma(&junk));
         assert!(decompress_confuserex_lzma(&junk).is_err());
     }

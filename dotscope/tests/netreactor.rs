@@ -472,9 +472,7 @@ fn test_all_netreactor_samples() {
                 "{}: cleanup removed {} of {} methods — the VM runtime is still \
                  referenced by the virtualized method stubs and must survive",
                 result.sample.filename,
-                result
-                    .methods_before
-                    .saturating_sub(result.methods_after),
+                result.methods_before.saturating_sub(result.methods_after),
                 result.methods_before
             );
         }
