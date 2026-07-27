@@ -55,6 +55,32 @@ use crate::{
     CilObject, Result,
 };
 
+/// Returns the registered decryptors that still have call sites in the
+/// post-pass call graph.
+///
+/// Decryption rewrites a call site into the constant it produced, so a
+/// decryptor nothing calls any more has been fully reversed and its
+/// infrastructure can go. One that is still called has not been reversed —
+/// whether because emulation failed, or because the call site was never
+/// reached — and neither it nor the type that owns it may be deleted.
+///
+/// Generic decryptors are invoked through `MethodSpec` tokens rather than the
+/// `MethodDef` directly, so each callee is resolved back to its base decryptor.
+fn decryptors_still_called(
+    ctx: &AnalysisContext,
+    ssa_call_graph: &BTreeMap<Token, BTreeSet<Token>>,
+) -> HashSet<Token> {
+    let mut still_called = HashSet::new();
+    for callees in ssa_call_graph.values() {
+        for callee in callees {
+            if let Some(decryptor) = ctx.decryptors.resolve_decryptor(*callee) {
+                still_called.insert(decryptor);
+            }
+        }
+    }
+    still_called
+}
+
 /// Builds a complete cleanup request from detection results and analysis state.
 ///
 /// This consolidates all cleanup sources into a single request:
@@ -85,6 +111,7 @@ pub(crate) fn build_cleanup_request(
     // Start with technique-merged cleanup
     let registry = engine.technique_registry();
     let mut request = detections.merged_cleanup();
+    let still_called = decryptors_still_called(ctx, ssa_call_graph);
     for tech in registry.sorted_techniques(detections) {
         if !detections.is_detected(tech.id()) {
             continue;
@@ -93,25 +120,45 @@ pub(crate) fn build_cleanup_request(
             continue;
         };
         if let Some(tech_cleanup) = tech.cleanup(detection) {
-            request.merge(&tech_cleanup);
+            // A technique builds its cleanup request from detection findings
+            // alone — it cannot see whether the transformation it implies
+            // actually succeeded. Merging it unconditionally deletes the
+            // decryptor, its owning infrastructure type and the encrypted data
+            // even when not a single call site was reversed, leaving live call
+            // sites pointing at methods that no longer exist. Withhold the whole
+            // request when a decryptor it removes is still called: deleting what
+            // was never replaced is strictly worse than leaving the obfuscation
+            // in place.
+            let unreversed: Vec<Token> = tech_cleanup
+                .methods()
+                .filter(|t| still_called.contains(t))
+                .copied()
+                .collect();
+            if unreversed.is_empty() {
+                request.merge(&tech_cleanup);
+            } else {
+                log::warn!(
+                    "Skipping cleanup for {}: {} decryptor(s) still have live call sites \
+                     ({} decryption failures); their infrastructure must survive",
+                    tech.id(),
+                    unreversed.len(),
+                    ctx.decryptors.total_failed(),
+                );
+            }
         }
     }
 
-    // Protect registered decryptors that were NOT fully decrypted.
-    // Techniques may unconditionally mark decryptor methods for cleanup, but
-    // if emulation failed for any call site, the method must survive — deleting
-    // it would leave broken call sites that reference a now-missing method.
-    // Only fully-decrypted methods are safe to remove.
-    let removable = ctx.decryptors.removable_decryptors();
+    // Protect decryptors that anything still calls, and remove the rest.
+    // A successful decryption rewrites its call site to the decrypted constant,
+    // so a decryptor with no remaining callers has been fully reversed and is
+    // safe to delete. One that is still called has not been — deleting it would
+    // leave those call sites referencing a method that no longer exists.
     for token in ctx.decryptors.registered_tokens() {
-        if !removable.contains(&token) {
+        if still_called.contains(&token) {
             request.protect_token(token);
+        } else {
+            request.add_method(token);
         }
-    }
-
-    // Add decryptors that were fully emulated and are now safe to remove.
-    for token in removable {
-        request.add_method(token);
     }
 
     // Pre-scan: mark <Module> methods as dead if they have no live callers.
