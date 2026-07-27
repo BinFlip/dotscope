@@ -943,18 +943,11 @@ impl Interpreter {
         let index = thread.pop()?;
         let array_ref = thread.pop()?;
 
-        let idx_i64 = match index {
-            EmValue::I32(v) => i64::from(v),
-            EmValue::NativeInt(v) => v,
-            _ => {
-                return Err(EmulationError::TypeMismatch {
-                    operation: "ldelema",
-                    expected: "integer index",
-                    found: index.cil_flavor().as_str(),
-                }
-                .into())
-            }
-        };
+        // Share the index extraction used by `ldelem`/`stelem` rather than
+        // matching a narrower set here. `native uint` is a legal array index and
+        // appears in ConfuserEx's constants `Initialize()`; accepting only
+        // `I32`/`NativeInt` rejected it and aborted the whole emulation.
+        let idx_i64 = Self::extract_array_index(thread, &index, "ldelema")?;
 
         let idx = usize::try_from(idx_i64).map_err(|_| {
             Error::from(EmulationError::ArrayIndexOutOfBounds {
