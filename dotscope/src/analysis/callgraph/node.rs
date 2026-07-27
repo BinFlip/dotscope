@@ -154,8 +154,10 @@ impl CallGraphNode {
 
 #[cfg(test)]
 mod tests {
-    use crate::analysis::callgraph::{CallGraphNode, CallSite, CallTarget, CallType};
-    use crate::metadata::token::Token;
+    use crate::{
+        analysis::callgraph::{CallGraphNode, CallSite, CallTarget, CallType},
+        metadata::token::Token,
+    };
 
     #[test]
     fn test_node_creation() {

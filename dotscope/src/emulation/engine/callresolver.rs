@@ -1928,7 +1928,6 @@ fn resolve_native_delegate_return(
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use crate::emulation::{
         engine::generics::GenericRegistry, process::EmulationConfig, runtime::RuntimeState,
         tracer::TraceWriter,

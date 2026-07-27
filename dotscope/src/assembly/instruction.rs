@@ -47,8 +47,9 @@
 //! - [`crate::assembly::block`] - Uses instructions to build basic block sequences
 //! - [`crate::metadata::token`] - References metadata tokens in operands
 
-use crate::metadata::token::Token;
 use std::fmt::{self, Display, UpperHex};
+
+use crate::metadata::token::Token;
 
 /// Types of operands for CIL instructions.
 ///

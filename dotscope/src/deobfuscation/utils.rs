@@ -16,7 +16,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    analysis::{SsaFunction, SsaOp, SsaVarId},
+    analysis::{SsaFunction, SsaInstruction, SsaOp, SsaVarId},
     metadata::{
         signatures::{parse_field_signature, TypeSignature},
         streams::Strings,
@@ -95,6 +95,114 @@ pub(crate) fn build_def_map(ssa: &SsaFunction) -> HashMap<SsaVarId, &SsaOp> {
         }
     }
     defs
+}
+
+/// Shrinks a candidate removal set until nothing it destroys is still read.
+///
+/// Neutralizing an instruction (rewriting it to `Nop`) or dropping a phi
+/// destroys the definition it produced. If any *surviving* instruction or phi
+/// operand still reads that variable, the result is IR with a read of a
+/// variable nothing defines — which the SSA verifier rejects outright, failing
+/// the whole method rather than the one rewrite. Taint analysis does not
+/// prevent this on its own: [`PhiTaintMode::NoPropagation`] deliberately makes
+/// phis taint barriers, so a phi can merge a tainted definition into code that
+/// is never itself marked tainted.
+///
+/// The resolution is to keep the definition, not to widen the removal into
+/// legitimate code: a candidate whose result still has a reader is dropped from
+/// the set. Dropping it makes it a survivor in turn, so its own operands must
+/// be kept too — hence the fixpoint. The sets only ever shrink, so this
+/// terminates in at most one round per candidate.
+///
+/// # Arguments
+///
+/// * `ssa` - The SSA function the candidates index into.
+/// * `instrs` - Candidate `(block, instr)` instruction locations. Shrunk in place.
+/// * `phis` - Candidate `(block, phi)` phi locations. Shrunk in place.
+///
+/// [`PhiTaintMode::NoPropagation`]: crate::analysis::PhiTaintMode::NoPropagation
+pub(crate) fn retain_removable(
+    ssa: &SsaFunction,
+    instrs: &mut HashSet<(usize, usize)>,
+    phis: &mut HashSet<(usize, usize)>,
+) {
+    loop {
+        // Every variable the current candidate set would destroy, mapped back to
+        // the candidate that has to be dropped if the variable turns out live.
+        let mut destroyed: HashMap<SsaVarId, Removal> = HashMap::new();
+        for &(block_idx, instr_idx) in instrs.iter() {
+            let Some(op) = ssa
+                .block(block_idx)
+                .and_then(|b| b.instruction(instr_idx))
+                .map(SsaInstruction::op)
+            else {
+                continue;
+            };
+            for def in op.defs() {
+                destroyed.insert(def, Removal::Instruction(block_idx, instr_idx));
+            }
+        }
+        for &(block_idx, phi_idx) in phis.iter() {
+            if let Some(phi) = ssa
+                .block(block_idx)
+                .and_then(|b| b.phi_nodes().get(phi_idx))
+            {
+                destroyed.insert(phi.result(), Removal::Phi(block_idx, phi_idx));
+            }
+        }
+        if destroyed.is_empty() {
+            return;
+        }
+
+        // Anything not being removed is a survivor, and its reads keep the
+        // definitions behind them alive.
+        let mut rescued: HashSet<Removal> = HashSet::new();
+        for (block_idx, block) in ssa.blocks().iter().enumerate() {
+            for (phi_idx, phi) in block.phi_nodes().iter().enumerate() {
+                if phis.contains(&(block_idx, phi_idx)) {
+                    continue;
+                }
+                for operand in phi.operands() {
+                    if let Some(removal) = destroyed.get(&operand.value()) {
+                        rescued.insert(*removal);
+                    }
+                }
+            }
+            for (instr_idx, instr) in block.instructions().iter().enumerate() {
+                if instrs.contains(&(block_idx, instr_idx)) {
+                    continue;
+                }
+                instr.op().for_each_use(|used| {
+                    if let Some(removal) = destroyed.get(&used) {
+                        rescued.insert(*removal);
+                    }
+                });
+            }
+        }
+        if rescued.is_empty() {
+            return;
+        }
+
+        for removal in rescued {
+            match removal {
+                Removal::Instruction(block_idx, instr_idx) => {
+                    instrs.remove(&(block_idx, instr_idx));
+                }
+                Removal::Phi(block_idx, phi_idx) => {
+                    phis.remove(&(block_idx, phi_idx));
+                }
+            }
+        }
+    }
+}
+
+/// A location in the candidate removal set handled by [`retain_removable`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Removal {
+    /// Instruction at `(block, instr)`.
+    Instruction(usize, usize),
+    /// Phi node at `(block, phi)`.
+    Phi(usize, usize),
 }
 
 /// Checks if a name contains obfuscation indicators (zero-width chars, PUA, spaces).
@@ -720,7 +828,6 @@ pub(crate) fn is_typed_method_named(
 
 #[cfg(test)]
 mod tests {
-    use crate::test::helpers::load_sample;
     use crate::{
         deobfuscation::utils::{
             build_call_site_counts, is_method_named, is_obfuscated_name, is_special_name,
@@ -730,6 +837,7 @@ mod tests {
             tables::{MemberRefRaw, MethodDefRaw, TableId, TypeDefRaw, TypeRefRaw},
             token::Token,
         },
+        test::helpers::load_sample,
     };
 
     #[test]

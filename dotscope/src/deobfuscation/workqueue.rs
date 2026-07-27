@@ -9,11 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use dashmap::{DashMap, DashSet};
 use log::warn;
 
-use crate::{
-    analysis::SsaFunction,
-    metadata::token::Token,
-    {Error, Result},
-};
+use crate::{analysis::SsaFunction, metadata::token::Token, Error, Result};
 
 /// A work item representing a pending operation in the deobfuscation pipeline.
 #[derive(Debug)]

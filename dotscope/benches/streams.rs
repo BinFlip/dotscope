@@ -10,9 +10,10 @@
 
 extern crate dotscope;
 
+use std::{fs, hint::black_box, path::PathBuf};
+
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use dotscope::metadata::streams::{Blob, Guid, Strings, UserStrings};
-use std::{fs, hint::black_box, path::PathBuf};
 
 /// Read a sample file from the workspace samples directory. Returns `None`
 /// (with a stderr diagnostic) if the file is missing, so benchmarks can be

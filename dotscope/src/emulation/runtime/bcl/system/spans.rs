@@ -432,6 +432,7 @@ fn memory_get_length_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) ->
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::{
         emulation::{runtime::hook::HookManager, EmValue},
         metadata::{
@@ -440,8 +441,6 @@ mod tests {
         },
         test::emulation::create_test_thread,
     };
-
-    use super::*;
 
     fn ctx<'a>(
         type_name: &'a str,

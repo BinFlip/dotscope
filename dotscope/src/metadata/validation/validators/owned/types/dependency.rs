@@ -72,6 +72,11 @@
 //! - [ECMA-335 II.22.35](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - TypeDef table dependencies
 //! - [ECMA-335 II.6.3](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Accessing data and calling methods
 
+use std::sync::Arc;
+
+use rayon::prelude::*;
+use rustc_hash::{FxHashMap, FxHashSet};
+
 use crate::{
     metadata::validation::{
         context::{OwnedValidationContext, ValidationContext},
@@ -80,9 +85,6 @@ use crate::{
     prelude::CilTypeRc,
     Error, Result,
 };
-use rayon::prelude::*;
-use rustc_hash::{FxHashMap, FxHashSet};
-use std::sync::Arc;
 
 /// Foundation validator for dependency relationships between types, assemblies, and metadata elements.
 ///

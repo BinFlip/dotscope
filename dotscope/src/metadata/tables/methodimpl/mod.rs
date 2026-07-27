@@ -165,9 +165,11 @@
 //!
 //! [`SkipMap`]: crossbeam_skiplist::SkipMap
 //! [`Arc<boxcar::Vec>`]: std::sync::Arc
-use crate::metadata::token::Token;
-use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
+
+use crossbeam_skiplist::SkipMap;
+
+use crate::metadata::token::Token;
 
 mod builder;
 mod loader;

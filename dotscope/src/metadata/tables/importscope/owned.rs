@@ -5,7 +5,7 @@
 //! All heap indices have been resolved to their actual values and
 //! the imports blob has been parsed into structured declarations.
 
-use crate::{metadata::importscope::ImportsInfo, metadata::token::Token};
+use crate::metadata::{importscope::ImportsInfo, token::Token};
 
 /// Owned representation of an `ImportScope` table entry
 ///

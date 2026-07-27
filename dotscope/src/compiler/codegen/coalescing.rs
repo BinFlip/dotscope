@@ -31,9 +31,8 @@ use std::{
     collections::{BTreeMap, BinaryHeap},
 };
 
-use rayon::prelude::*;
-
 use analyssa::BitSet;
+use rayon::prelude::*;
 
 use crate::{
     analysis::{
@@ -306,7 +305,12 @@ impl LocalCoalescer {
             .iter()
             .filter_map(|v| match v.origin() {
                 VariableOrigin::Phi => Some(v.id()),
-                VariableOrigin::Argument(_) | VariableOrigin::Local(_) => None,
+                // An entry live-in is caller-supplied like an argument, so it
+                // keeps fixed storage rather than being freely coalescable.
+                // Unreachable from the CIL front end, which never builds one.
+                VariableOrigin::Argument(_)
+                | VariableOrigin::Local(_)
+                | VariableOrigin::EntryLiveIn => None,
             })
             .collect();
 
@@ -994,10 +998,9 @@ fn types_compatible(t1: Option<&SsaType>, t2: Option<&SsaType>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use std::collections::BTreeSet;
 
+    use super::*;
     use crate::analysis::{SsaFunctionBuilder, SsaType, SsaVarId};
 
     /// Helper to create N unique SsaVarIds

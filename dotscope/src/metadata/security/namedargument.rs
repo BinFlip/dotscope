@@ -149,8 +149,9 @@
 //!
 //! [`NamedArgument`] instances are immutable after creation and safe to share across threads.
 
-use crate::metadata::security::{ArgumentType, ArgumentValue};
 use std::fmt;
+
+use crate::metadata::security::{ArgumentType, ArgumentValue};
 
 /// Represents a named argument (property or field) in a .NET security permission.
 ///

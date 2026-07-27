@@ -25,8 +25,9 @@
 //! cargo run --example project_loader -- tests/samples/crafted_2.exe --search-path tests/samples/mono_4.8
 //! ```
 
-use dotscope::project::ProjectLoader;
 use std::env;
+
+use dotscope::project::ProjectLoader;
 
 fn main() -> dotscope::Result<()> {
     let args: Vec<String> = env::args().collect();

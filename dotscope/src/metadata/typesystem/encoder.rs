@@ -322,7 +322,11 @@ impl TypeSignatureEncoder {
             // Function pointer
             TypeSignature::FnPtr(method_sig) => {
                 buffer.push(0x1B); // ELEMENT_TYPE_FNPTR
-                Self::encode_method_signature(method_sig.as_ref(), buffer)?;
+                Self::encode_method_signature(
+                    method_sig.as_ref(),
+                    buffer,
+                    depth.saturating_add(1),
+                )?;
             }
 
             // Custom modifiers
@@ -385,7 +389,14 @@ impl TypeSignatureEncoder {
     /// # Returns
     ///
     /// Success or error result from encoding.
-    fn encode_method_signature(method_sig: &SignatureMethod, buffer: &mut Vec<u8>) -> Result<()> {
+    fn encode_method_signature(
+        method_sig: &SignatureMethod,
+        buffer: &mut Vec<u8>,
+        depth: usize,
+    ) -> Result<()> {
+        if depth >= MAX_RECURSION_DEPTH {
+            return Err(crate::Error::RecursionLimit(MAX_RECURSION_DEPTH));
+        }
         let mut calling_conv = 0u8;
         if method_sig.has_this {
             calling_conv |= 0x20;
@@ -423,10 +434,17 @@ impl TypeSignatureEncoder {
             })?,
             buffer,
         );
-        Self::encode_type_signature(&method_sig.return_type.base, buffer)?;
+        // Carries the depth rather than calling the public depth-0 wrapper:
+        // re-entering at zero re-armed the cap on every FNPTR hop, so a
+        // signature nesting through method signatures was unbounded.
+        Self::encode_type_signature_internal(
+            &method_sig.return_type.base,
+            buffer,
+            depth.saturating_add(1),
+        )?;
 
         for param in &method_sig.params {
-            Self::encode_type_signature(&param.base, buffer)?;
+            Self::encode_type_signature_internal(&param.base, buffer, depth.saturating_add(1))?;
         }
 
         Ok(())
@@ -508,8 +526,10 @@ impl TypeSignatureEncoder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::signatures::{SignatureArray, SignaturePointer, SignatureSzArray};
-    use crate::metadata::typesystem::ArrayDimensions;
+    use crate::metadata::{
+        signatures::{SignatureArray, SignaturePointer, SignatureSzArray},
+        typesystem::ArrayDimensions,
+    };
 
     #[test]
     fn test_encode_primitive_types() {

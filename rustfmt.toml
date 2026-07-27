@@ -1,0 +1,13 @@
+# Enforces the import convention mechanically rather than by review:
+#
+#   1. std / core / alloc
+#   2. external crates
+#   3. crate:: / self:: / super::
+#
+# separated by blank lines, with one grouped `use` per root.
+#
+# Both options are nightly-only, so formatting runs as `cargo +nightly fmt`.
+# This affects formatting only — the crate still builds on the stable toolchain
+# named in `rust-version`.
+group_imports = "StdExternalCrate"
+imports_granularity = "Crate"

@@ -42,9 +42,11 @@
 //! - [`crate::metadata::tables::PropertyMap`] - Property to type mapping
 //! - [`crate::metadata::tables::MethodSemantics`] - Property method associations
 //! - [`crate::metadata::signatures`] - Property signature parsing
-use crate::metadata::token::Token;
-use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
+
+use crossbeam_skiplist::SkipMap;
+
+use crate::metadata::token::Token;
 
 mod builder;
 mod loader;

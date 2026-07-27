@@ -16,14 +16,15 @@
 
 use std::{fmt::Debug, sync::Arc};
 
-use super::verification::{
-    assert_deobfuscation_diagnostics, assert_structural_match, verify_semantic_preservation,
-    AssemblyStats, SemanticVerificationResult, StructuralConfig, VerificationLevel,
-};
 use dotscope::{
     deobfuscation::{DeobfuscationEngine, DeobfuscationResult, EngineConfig},
     metadata::validation::ValidationConfig,
     CilObject,
+};
+
+use super::verification::{
+    assert_deobfuscation_diagnostics, assert_structural_match, verify_semantic_preservation,
+    AssemblyStats, SemanticVerificationResult, StructuralConfig, VerificationLevel,
 };
 
 /// The 17 standard methods used for semantic preservation checks across all

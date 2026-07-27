@@ -43,8 +43,9 @@
 //! This type is [`Send`] and [`Sync`] as it contains no mutable state and operates
 //! purely on the input data.
 
-use crate::{cilassembly::TableOperation, Error, Result};
 use std::collections::HashMap;
+
+use crate::{cilassembly::TableOperation, Error, Result};
 
 /// Trait for conflict resolution strategies.
 ///

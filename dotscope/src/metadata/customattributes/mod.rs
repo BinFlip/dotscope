@@ -125,15 +125,19 @@ pub use types::*;
 
 #[cfg(test)]
 mod tests {
-    use crate::metadata::customattributes::{
-        encode_custom_attribute_value, parse_custom_attribute_data,
-        parse_custom_attribute_data_with_registry, CustomAttributeArgument,
-        CustomAttributeNamedArgument, CustomAttributeValue,
-    };
-    use crate::metadata::typesystem::{CilFlavor, CilTypeReference};
-    use crate::test::factories::metadata::customattributes::{
-        create_constructor_with_params_and_registry, create_empty_method,
-        create_method_with_params, get_test_type_registry,
+    use crate::{
+        metadata::{
+            customattributes::{
+                encode_custom_attribute_value, parse_custom_attribute_data,
+                parse_custom_attribute_data_with_registry, CustomAttributeArgument,
+                CustomAttributeNamedArgument, CustomAttributeValue,
+            },
+            typesystem::{CilFlavor, CilTypeReference},
+        },
+        test::factories::metadata::customattributes::{
+            create_constructor_with_params_and_registry, create_empty_method,
+            create_method_with_params, get_test_type_registry,
+        },
     };
 
     /// Helper macro to assert that two `CustomAttributeArgument` values match and are equal.

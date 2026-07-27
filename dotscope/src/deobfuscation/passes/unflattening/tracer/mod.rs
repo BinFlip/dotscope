@@ -145,7 +145,6 @@ fn build_trace_tree(ctx: &mut TreeTraceContext<'_>) -> TraceTree {
     for ht in &tree.handler_traces {
         compute_tree_stats(&ht.root, &mut tree.stats, 0);
     }
-
     tree
 }
 

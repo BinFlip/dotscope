@@ -18,9 +18,9 @@
 //! - Familiarity with ECMA-335 specification
 //! - Experience with basic dotscope operations
 
-use dotscope::metadata::customattributes::CustomAttributeValueRc;
-use dotscope::prelude::*;
 use std::{collections::HashMap, env, path::Path};
+
+use dotscope::{metadata::customattributes::CustomAttributeValueRc, prelude::*};
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();

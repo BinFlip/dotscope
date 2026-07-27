@@ -3,12 +3,14 @@
 //! This module provides the test runner infrastructure that coordinates compilation,
 //! execution, and verification of .NET assemblies across supported architectures.
 
+use std::path::{Path, PathBuf};
+
+use tempfile::TempDir;
+
 use crate::{
     prelude::*,
     test::mono::capabilities::{Architecture, TestCapabilities},
 };
-use std::path::{Path, PathBuf};
-use tempfile::TempDir;
 
 /// Test runner that manages the test environment and coordinates test execution
 pub struct TestRunner {

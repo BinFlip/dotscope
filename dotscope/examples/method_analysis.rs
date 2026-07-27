@@ -23,8 +23,9 @@
 //! - Understanding of method signatures
 //! - Familiarity with CIL instruction formats
 
-use dotscope::prelude::*;
 use std::{env, path::Path};
+
+use dotscope::prelude::*;
 
 // Helper functions to format implementation attributes
 fn format_impl_code_type(code_type: &MethodImplCodeType) -> String {

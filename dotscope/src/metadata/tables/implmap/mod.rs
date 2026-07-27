@@ -49,8 +49,9 @@
 //! [`SUPPORTS_LAST_ERROR`]: PInvokeAttributes::SUPPORTS_LAST_ERROR
 //! [`BEST_FIT_ENABLED`]: PInvokeAttributes::BEST_FIT_ENABLED
 //! [`THROW_ON_UNMAPPABLE_ENABLED`]: PInvokeAttributes::THROW_ON_UNMAPPABLE_ENABLED
-use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
+
+use crossbeam_skiplist::SkipMap;
 
 use crate::metadata::token::Token;
 

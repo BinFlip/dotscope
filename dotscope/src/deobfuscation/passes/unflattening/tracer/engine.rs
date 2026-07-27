@@ -23,7 +23,7 @@
 //!    until hitting a terminator that requires forking or state transition.
 //!    Returns either a completed node or a [`ForkRequest`].
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use crate::{
     analysis::{
@@ -32,8 +32,8 @@ use crate::{
     },
     deobfuscation::passes::unflattening::tracer::{
         context::{ContextSnapshot, TreeTraceContext},
-        helpers::{const_producer_target, detect_expression_switch, resolve_call_result},
-        types::{InstructionWithValues, StopReason, TraceNode, TraceTerminator},
+        helpers::{detect_expression_switch, resolve_call_result},
+        types::{StopReason, TraceNode, TraceTerminator},
     },
 };
 
@@ -42,7 +42,7 @@ use crate::{
 /// Each variant represents a pending operation that was deferred when the
 /// tracer encountered a branch or switch fork. Instead of recursing, the
 /// tracer pushes these frames and processes them one at a time.
-enum WorkItem<'a> {
+enum WorkItem {
     /// Start tracing a block. The resulting TraceNode becomes `current_result`.
     TraceBlock { block: usize, depth: usize },
 
@@ -63,7 +63,7 @@ enum WorkItem<'a> {
         condition: SsaVarId,
         false_target: usize,
         depth: usize,
-        snapshot: ContextSnapshot<'a>,
+        snapshot: ContextSnapshot,
         case_counts_snapshot: Option<Vec<u8>>,
         is_expr_switch: bool,
     },
@@ -86,7 +86,7 @@ enum WorkItem<'a> {
         targets: Vec<usize>,
         default_target: usize,
         depth: usize,
-        snapshot: ContextSnapshot<'a>,
+        snapshot: ContextSnapshot,
         completed_cases: Vec<(i64, Box<TraceNode>)>,
         next_case_index: usize,
     },
@@ -111,7 +111,7 @@ pub fn trace_from_block(
     block_idx: usize,
     depth: usize,
 ) -> TraceNode {
-    let mut work_stack: Vec<WorkItem<'_>> = Vec::new();
+    let mut work_stack: Vec<WorkItem> = Vec::new();
     let mut current_result: Option<TraceNode> = None;
 
     work_stack.push(WorkItem::TraceBlock {
@@ -338,11 +338,11 @@ pub fn trace_from_block(
 /// stop). When a user branch/switch fork is needed, pushes continuation frames
 /// onto the `work_stack` and returns the node-so-far as `current_result` so
 /// the outer `trace_from_block` loop can process the fork.
-fn trace_from_block_linear<'a>(
-    ctx: &mut TreeTraceContext<'a>,
+fn trace_from_block_linear(
+    ctx: &mut TreeTraceContext<'_>,
     block_idx: usize,
     depth: usize,
-    work_stack: &mut Vec<WorkItem<'a>>,
+    work_stack: &mut Vec<WorkItem>,
 ) -> TraceNode {
     // State transition chain — same iterative mechanism as before.
     let mut transition_chain: Vec<(TraceNode, i64, usize)> = Vec::new();
@@ -469,13 +469,13 @@ fn trace_from_block_linear<'a>(
 
 /// Fork request returned by the inner tracer when it encounters a user
 /// branch or switch that needs to trace multiple arms.
-enum ForkRequest<'a> {
+enum ForkRequest {
     Branch {
         block_idx: usize,
         condition: SsaVarId,
         true_target: usize,
         false_target: usize,
-        snapshot: ContextSnapshot<'a>,
+        snapshot: ContextSnapshot,
         case_counts_snapshot: Option<Vec<u8>>,
         is_expr_switch: bool,
     },
@@ -484,7 +484,7 @@ enum ForkRequest<'a> {
         value: SsaVarId,
         targets: Vec<usize>,
         default_target: usize,
-        snapshot: ContextSnapshot<'a>,
+        snapshot: ContextSnapshot,
         is_foreign: bool,
     },
 }
@@ -499,11 +499,11 @@ enum ForkRequest<'a> {
 ///   `(node, Some(ForkRequest))` for the caller to trace both arms
 /// - A **leaf** (return, throw, loop, stop) → returns `(node, None)` as a
 ///   completed terminal node
-fn trace_from_block_inner<'a>(
-    ctx: &mut TreeTraceContext<'a>,
+fn trace_from_block_inner(
+    ctx: &mut TreeTraceContext<'_>,
     block_idx: usize,
     depth: usize,
-) -> (TraceNode, Option<ForkRequest<'a>>) {
+) -> (TraceNode, Option<ForkRequest>) {
     let mut node = TraceNode::new(ctx.next_id(), block_idx);
 
     // Safety limits
@@ -648,25 +648,25 @@ fn trace_from_block_inner<'a>(
 
         // Process instructions with cross-scope variable bridging
         for instr in block.instructions() {
-            let step = trace_instruction(ctx, instr, current_block);
-            node.add_instruction(step);
+            trace_instruction(ctx, instr);
 
             // Bridge unknown local-variable references from known definitions
             // of the same local index (cross-scope reaching definitions).
             if let SsaOp::Copy { dest, src } = instr.op() {
                 if ctx.evaluator().get(*dest).is_none() {
-                    if let Some(src_var) = ssa.variable(*src) {
-                        if let VariableOrigin::Local(local_idx) = src_var.origin() {
-                            for var in ssa.variables() {
-                                if var.id() != *src
-                                    && matches!(var.origin(), VariableOrigin::Local(li) if li == local_idx)
-                                {
-                                    if let Some(val) = ctx.evaluator().get(var.id()).cloned() {
-                                        ctx.evaluator_mut().set_symbolic_expr(*dest, val);
-                                        break;
-                                    }
-                                }
-                            }
+                    if let Some(VariableOrigin::Local(local_idx)) =
+                        ssa.variable(*src).map(|v| v.origin())
+                    {
+                        // The context indexes variables by local slot, so this
+                        // walks the versions of one local rather than the whole
+                        // variable table — same order, same first match.
+                        let bridged = ctx
+                            .vars_for_local(local_idx)
+                            .iter()
+                            .filter(|&&var| var != *src)
+                            .find_map(|&var| ctx.evaluator().get(var).cloned());
+                        if let Some(val) = bridged {
+                            ctx.evaluator_mut().set_symbolic_expr(*dest, val);
                         }
                     }
                 }
@@ -781,7 +781,7 @@ fn bridge_phi_operands(ctx: &mut TreeTraceContext<'_>, block_idx: usize) {
 ///
 /// Tells the inner trace loop how to proceed after processing a block's
 /// terminator (jump, branch, switch, return, etc.).
-enum TerminatorResult<'a> {
+enum TerminatorResult {
     /// Follow an unconditional edge to the next block (jump, leave).
     /// The caller continues the linear block chain within the same node.
     Continue(usize),
@@ -799,7 +799,7 @@ enum TerminatorResult<'a> {
         condition: SsaVarId,
         true_target: usize,
         false_target: usize,
-        snapshot: ContextSnapshot<'a>,
+        snapshot: ContextSnapshot,
         case_counts_snapshot: Option<Vec<u8>>,
         is_expr_switch: bool,
     },
@@ -809,19 +809,19 @@ enum TerminatorResult<'a> {
         value: SsaVarId,
         targets: Vec<usize>,
         default_target: usize,
-        snapshot: ContextSnapshot<'a>,
+        snapshot: ContextSnapshot,
         is_foreign: bool,
     },
 }
 
 /// Handles a block terminator, potentially forking the trace.
-fn handle_terminator<'a>(
-    ctx: &mut TreeTraceContext<'a>,
+fn handle_terminator(
+    ctx: &mut TreeTraceContext<'_>,
     block: &SsaBlock,
     block_idx: usize,
     node: &mut TraceNode,
     depth: usize,
-) -> TerminatorResult<'a> {
+) -> TerminatorResult {
     let Some(terminator) = block.instructions().last() else {
         node.set_terminator(TraceTerminator::Stopped {
             reason: StopReason::UnknownControlFlow { block: block_idx },
@@ -937,13 +937,8 @@ fn handle_terminator<'a>(
             } else {
                 // BranchCmp in no_fork mode has an additional check: allow forking
                 // for conditional CFF state transitions even when no_fork is set.
-                let is_expr_switch = detect_expression_switch(
-                    ctx.ssa(),
-                    *true_target,
-                    *false_target,
-                    ctx.state_tainted(),
-                )
-                .is_some();
+                let is_expr_switch =
+                    detect_expression_switch(ctx, *true_target, *false_target).is_some();
 
                 if ctx.no_fork() && !is_expr_switch {
                     let is_cff_state_transition =
@@ -988,17 +983,15 @@ fn handle_terminator<'a>(
 ///
 /// Detects expression switches, respects no_fork mode, creates snapshot
 /// and returns a ForkBranch result.
-fn handle_user_branch_fork<'a>(
-    ctx: &mut TreeTraceContext<'a>,
+fn handle_user_branch_fork(
+    ctx: &mut TreeTraceContext<'_>,
     block_idx: usize,
     true_target: usize,
     false_target: usize,
     condition: SsaVarId,
     _: usize,
-) -> TerminatorResult<'a> {
-    let is_expr_switch =
-        detect_expression_switch(ctx.ssa(), true_target, false_target, ctx.state_tainted())
-            .is_some();
+) -> TerminatorResult {
+    let is_expr_switch = detect_expression_switch(ctx, true_target, false_target).is_some();
 
     // In no_fork mode, only fork for expression switches.
     if ctx.no_fork() && !is_expr_switch {
@@ -1016,14 +1009,14 @@ fn handle_user_branch_fork<'a>(
 }
 
 /// Builds a ForkBranch result with the appropriate snapshot.
-fn build_fork_branch<'a>(
-    ctx: &mut TreeTraceContext<'a>,
+fn build_fork_branch(
+    ctx: &mut TreeTraceContext<'_>,
     block_idx: usize,
     true_target: usize,
     false_target: usize,
     condition: SsaVarId,
     is_expr_switch: bool,
-) -> TerminatorResult<'a> {
+) -> TerminatorResult {
     let snapshot = ctx.snapshot();
     let case_counts_snapshot = if is_expr_switch {
         None
@@ -1056,11 +1049,8 @@ fn is_conditional_state_transition(
         return false;
     };
 
-    let true_merge = ctx.ssa().block(true_target).and_then(const_producer_target);
-    let false_merge = ctx
-        .ssa()
-        .block(false_target)
-        .and_then(const_producer_target);
+    let true_merge = ctx.const_producer_target(true_target);
+    let false_merge = ctx.const_producer_target(false_target);
 
     match (true_merge, false_merge) {
         (Some(tm), Some(fm)) if tm == fm => {
@@ -1092,7 +1082,17 @@ fn is_conditional_state_transition(
 /// through other pure/overflow blocks), the current block is part of the
 /// chain and a tainted BranchCmp can safely be forked as a CFF continuation
 /// rather than preserved as user code.
-fn is_overflow_dispatch_site(ctx: &TreeTraceContext<'_>, block_idx: usize) -> bool {
+/// Memoizing wrapper — the answer depends only on the CFG and on which blocks
+/// are dispatchers, both fixed for the lifetime of a trace, while the walk
+/// itself allocates and visits up to eight levels of predecessors. On a
+/// flattened method the same blocks are asked about millions of times.
+fn is_overflow_dispatch_site(ctx: &mut TreeTraceContext<'_>, block_idx: usize) -> bool {
+    ctx.overflow_dispatch_site(block_idx, |ctx| {
+        compute_overflow_dispatch_site(ctx, block_idx)
+    })
+}
+
+fn compute_overflow_dispatch_site(ctx: &TreeTraceContext<'_>, block_idx: usize) -> bool {
     let Some(dispatcher) = ctx.dispatcher_block() else {
         return false;
     };
@@ -1205,15 +1205,15 @@ fn default_has_overflow_check(ctx: &TreeTraceContext<'_>, default: usize) -> boo
 }
 
 /// Handles a switch terminator (dispatcher or user switch).
-fn handle_switch<'a>(
-    ctx: &mut TreeTraceContext<'a>,
+fn handle_switch(
+    ctx: &mut TreeTraceContext<'_>,
     node: &mut TraceNode,
     block_idx: usize,
     value: &SsaVarId,
     targets: &[usize],
     default: &usize,
     _: usize,
-) -> TerminatorResult<'a> {
+) -> TerminatorResult {
     let is_dispatcher = ctx.is_dispatcher_block(block_idx);
 
     let is_argument = ctx
@@ -1314,13 +1314,13 @@ fn handle_switch<'a>(
 }
 
 /// Handles a user switch by forking for all cases.
-fn handle_user_switch<'a>(
-    ctx: &mut TreeTraceContext<'a>,
+fn handle_user_switch(
+    ctx: &mut TreeTraceContext<'_>,
     block_idx: usize,
     value: &SsaVarId,
     targets: &[usize],
     default: &usize,
-) -> TerminatorResult<'a> {
+) -> TerminatorResult {
     // No-fork mode: follow the evaluated path or first target.
     if ctx.no_fork() {
         let target = ctx
@@ -1345,24 +1345,15 @@ fn handle_user_switch<'a>(
     }
 }
 
-/// Traces a single instruction, evaluating it and recording values.
-fn trace_instruction(
-    ctx: &mut TreeTraceContext<'_>,
-    instr: &SsaInstruction,
-    block_idx: usize,
-) -> InstructionWithValues {
-    // Capture input values BEFORE evaluation
-    let input_values: BTreeMap<SsaVarId, i64> = instr
-        .uses()
-        .iter()
-        .filter_map(|&var| {
-            ctx.evaluator()
-                .get_concrete(var)
-                .and_then(ConstValue::as_i64)
-                .map(|v| (var, v))
-        })
-        .collect();
-
+/// Evaluates a single instruction, updating the evaluator and taint state.
+///
+/// The tracer used to record each instruction together with the concrete values
+/// of its operands. Nothing consumed those values — the only reader of the log
+/// needed the opcode, which is available from the SSA — while building it cost a
+/// `BTreeMap` allocation and a full `SsaInstruction` clone per instruction per
+/// visit. On a heavily nested method that is billions of allocations, so the log
+/// is no longer produced.
+fn trace_instruction(ctx: &mut TreeTraceContext<'_>, instr: &SsaInstruction) {
     if ctx.any_tainted(&instr.uses()) {
         if let Some(def) = instr.def() {
             ctx.taint(def);
@@ -1395,18 +1386,5 @@ fn trace_instruction(
                 }
             }
         }
-    }
-
-    // Capture output value AFTER evaluation
-    let output_value = instr
-        .def()
-        .and_then(|d| ctx.evaluator().get_concrete(d))
-        .and_then(ConstValue::as_i64);
-
-    InstructionWithValues {
-        instruction: instr.clone(),
-        block_idx,
-        input_values,
-        output_value,
     }
 }

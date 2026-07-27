@@ -937,8 +937,8 @@ pub use crate::compiler::{
     AlgebraicSimplificationPass, BlockMergingPass, ConstantPropagationPass,
     ControlFlowSimplificationPass, CopyPropagationPass, DeadCodeEliminationPass,
     DeadMethodEliminationPass, GlobalValueNumberingPass, InliningPass, JumpThreadingPass, LicmPass,
-    LoopCanonicalizationPass, OpaquePredicatePass, ReassociationPass, StrengthReductionPass,
-    ValueRangePropagationPass,
+    LoopCanonicalizationPass, MemoryOptimizationPass, OpaquePredicatePass, ReassociationPass,
+    StrengthReductionPass, ValueRangePropagationPass,
 };
 
 /// Deobfuscation-specific SSA passes.

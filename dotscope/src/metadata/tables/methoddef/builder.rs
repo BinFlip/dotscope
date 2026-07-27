@@ -301,12 +301,13 @@ impl Default for MethodDefBuilder {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::{
         cilassembly::{ChangeRefKind, CilAssembly},
         metadata::method::{MethodAccessFlags, MethodImplCodeType, MethodModifiers},
     };
-    use std::path::PathBuf;
 
     #[test]
     fn test_method_builder_basic() {

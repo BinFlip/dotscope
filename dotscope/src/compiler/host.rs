@@ -13,7 +13,7 @@
 use std::sync::Arc;
 
 use analyssa::{
-    events::EventLog,
+    events::EventListener,
     host::{DirtySet, SsaStore},
     ir::function::SsaFunction,
     scheduling::SsaPassHost,
@@ -81,12 +81,12 @@ impl World<CilTarget> for CompilerContext {
         self.dead_methods.insert(method.0);
     }
 
-    fn methods_reverse_topological(&self) -> Vec<MethodRef> {
-        CompilerContext::methods_reverse_topological(self)
-            .into_iter()
-            .map(MethodRef::new)
-            .collect()
-    }
+    // `methods_reverse_topological` is deliberately not overridden: analyssa's
+    // default derives the call graph's strongly-connected components from
+    // `callees`, which groups mutually recursive methods together. The inherent
+    // `CompilerContext::methods_reverse_topological` returns a flat order that
+    // cannot express that grouping, so overriding with it would lose
+    // information the interprocedural driver needs.
 }
 
 impl SsaStore<CilTarget> for CompilerContext {
@@ -145,7 +145,7 @@ impl DirtySet<CilTarget> for CompilerContext {
 }
 
 impl SsaPassHost<CilTarget> for CompilerContext {
-    fn events(&self) -> &EventLog<CilTarget> {
+    fn events(&self) -> &dyn EventListener<CilTarget> {
         &self.events
     }
 

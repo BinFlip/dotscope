@@ -1114,8 +1114,9 @@ fn write_userstring_entry(output: &mut Output, pos: u64, s: &str) -> Result<()> 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::NamedTempFile;
+
+    use super::*;
 
     #[test]
     fn test_stream_strings_heap_empty() {

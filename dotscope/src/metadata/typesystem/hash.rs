@@ -27,11 +27,12 @@
 //!     .finalize();
 //! ```
 
+use std::hash::{DefaultHasher, Hash, Hasher};
+
 use crate::metadata::{
     token::Token,
     typesystem::{CilFlavor, TypeSource},
 };
-use std::hash::{DefaultHasher, Hash, Hasher};
 
 /// High-quality hash builder for type signatures using FNV-1a inspired mixing
 ///

@@ -15,6 +15,8 @@
 //! All types in this module are [`Send`] and [`Clone`], enabling safe sharing
 //! across threads and efficient copying when needed.
 
+use std::sync::Arc;
+
 use crate::{
     metadata::{
         customdebuginformation::{parse_custom_debug_blob, CustomDebugKind},
@@ -28,7 +30,6 @@ use crate::{
     },
     Result,
 };
-use std::sync::Arc;
 
 /// Raw binary representation of a `CustomDebugInformation` table entry
 ///

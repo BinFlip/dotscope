@@ -492,9 +492,9 @@ impl fmt::Display for Diagnostics {
 
 #[cfg(test)]
 mod tests {
+    use std::{sync::Arc, thread};
+
     use super::*;
-    use std::sync::Arc;
-    use std::thread;
 
     #[test]
     fn test_diagnostic_creation() {

@@ -5,6 +5,8 @@
 //! the metadata tables stream. This is the low-level representation used during
 //! the initial parsing phase, containing unresolved table indices.
 
+use std::sync::Arc;
+
 use crate::{
     metadata::{
         method::MethodMap,
@@ -16,7 +18,6 @@ use crate::{
     },
     Result,
 };
-use std::sync::Arc;
 
 /// Raw binary representation of a `LocalScope` table entry
 ///

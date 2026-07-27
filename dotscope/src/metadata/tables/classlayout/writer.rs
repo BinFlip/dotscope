@@ -69,11 +69,13 @@ impl RowWritable for ClassLayoutRaw {
 mod tests {
     use std::sync::Arc;
 
-    use crate::metadata::tables::{
-        classlayout::ClassLayoutRaw,
-        types::{RowReadable, RowWritable, TableId, TableInfo, TableRow},
+    use crate::metadata::{
+        tables::{
+            classlayout::ClassLayoutRaw,
+            types::{RowReadable, RowWritable, TableId, TableInfo, TableRow},
+        },
+        token::Token,
     };
-    use crate::metadata::token::Token;
 
     #[test]
     fn test_classlayout_row_size() {

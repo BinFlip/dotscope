@@ -850,9 +850,8 @@ impl MethodBody {
 
 #[cfg(test)]
 mod tests {
-    use crate::metadata::method::ExceptionHandlerFlags;
-
     use super::*;
+    use crate::metadata::method::ExceptionHandlerFlags;
 
     #[test]
     fn tiny() {

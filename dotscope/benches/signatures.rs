@@ -10,12 +10,13 @@
 
 extern crate dotscope;
 
+use std::hint::black_box;
+
 use criterion::{criterion_group, criterion_main, Criterion};
 use dotscope::metadata::signatures::{
     parse_field_signature, parse_local_var_signature, parse_method_signature,
     parse_method_spec_signature, parse_property_signature, parse_type_spec_signature,
 };
-use std::hint::black_box;
 
 /// Benchmark parsing a simple void method with no parameters.
 /// Signature: void Method()

@@ -3,8 +3,9 @@
 //! This module tests realistic scenarios where multiple builders are used together
 //! to create complete .NET types with properties, events, and methods.
 
-use dotscope::{metadata::tables::TableId, prelude::*, ChangeRefKind, Result};
 use std::path::PathBuf;
+
+use dotscope::{metadata::tables::TableId, prelude::*, ChangeRefKind, Result};
 
 fn get_test_assembly() -> Result<CilAssembly> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");

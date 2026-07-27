@@ -89,6 +89,13 @@ pub mod context;
 mod loader;
 mod result;
 
+use std::sync::{Arc, OnceLock};
+
+pub(crate) use context::ProjectContext;
+use dashmap::DashMap;
+pub use loader::ProjectLoader;
+pub use result::{ProjectResult, VersionMismatch};
+
 use crate::{
     metadata::{
         cilobject::CilObject, identity::AssemblyIdentity, tables::TableId, token::Token,
@@ -96,12 +103,6 @@ use crate::{
     },
     Error, Result,
 };
-use dashmap::DashMap;
-use std::sync::{Arc, OnceLock};
-
-pub(crate) use context::ProjectContext;
-pub use loader::ProjectLoader;
-pub use result::{ProjectResult, VersionMismatch};
 
 /// Multi-assembly project container with dependency management and cross-assembly resolution.
 ///
@@ -545,9 +546,8 @@ impl std::fmt::Debug for CilProject {
 #[cfg(test)]
 #[cfg_attr(feature = "skip-expensive-tests", allow(unused_imports))]
 mod tests {
-    use crate::test::{verify_crafted_2, verify_windowsbasedll};
-
     use super::*;
+    use crate::test::{verify_crafted_2, verify_windowsbasedll};
 
     #[test]
     fn test_cilproject_creation() {

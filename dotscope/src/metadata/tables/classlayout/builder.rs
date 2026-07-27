@@ -314,12 +314,13 @@ impl ClassLayoutBuilder {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::{
         cilassembly::{ChangeRefKind, CilAssembly},
         metadata::cilassemblyview::CilAssemblyView,
     };
-    use std::path::PathBuf;
 
     #[test]
     fn test_class_layout_builder_basic() {

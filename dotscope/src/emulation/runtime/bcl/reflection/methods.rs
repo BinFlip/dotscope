@@ -1327,6 +1327,7 @@ fn il_generator_noop_pre(_ctx: &HookContext<'_>, _thread: &mut EmulationThread) 
 
 #[cfg(test)]
 mod tests {
+    use super::method_invoke_pre;
     use crate::{
         emulation::{
             runtime::hook::{HookContext, PreHookResult},
@@ -1335,8 +1336,6 @@ mod tests {
         metadata::{token::Token, typesystem::PointerSize},
         test::emulation::create_test_thread,
     };
-
-    use super::method_invoke_pre;
 
     #[test]
     fn test_method_invoke_hook() {

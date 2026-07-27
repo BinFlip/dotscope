@@ -41,6 +41,7 @@ use std::collections::{HashMap, HashSet};
 use crate::{
     analysis::{find_token_dependencies, CilTarget, ConstValue, MethodRef, SsaFunction, SsaOp},
     compiler::{CompilerContext, EventKind, SsaPass},
+    deobfuscation::utils::retain_removable,
     metadata::token::Token,
 };
 
@@ -249,11 +250,43 @@ impl<'a> NeutralizationPass<'a> {
             return 0;
         }
 
-        // Collect tainted sets for block analysis
-        let tainted_instrs: HashSet<(usize, usize)> =
-            taint.tainted_instructions().iter().copied().collect();
-        let tainted_phis_set: HashSet<(usize, usize)> =
+        // Collect tainted sets for block analysis. Never neutralize
+        // `DecryptedString` constants — they are recovered user data, not
+        // protection infrastructure. Bidirectional taint reaches them through
+        // shared data flow (e.g. a `String.Concat` over both a decrypted string
+        // and a value from a removed decryptor), but the string itself is
+        // legitimate. Excluding them here rather than at rewrite time keeps the
+        // candidate set equal to what is actually removed, which both the
+        // branch-target choice and the liveness closure below depend on.
+        let mut tainted_instrs: HashSet<(usize, usize)> = taint
+            .tainted_instructions()
+            .iter()
+            .copied()
+            .filter(|&(block_idx, instr_idx)| {
+                !ssa.block(block_idx)
+                    .and_then(|b| b.instructions().get(instr_idx))
+                    .is_some_and(|instr| {
+                        matches!(
+                            instr.op(),
+                            SsaOp::Const {
+                                value: ConstValue::DecryptedString(_),
+                                ..
+                            }
+                        )
+                    })
+            })
+            .collect();
+        let mut tainted_phis_set: HashSet<(usize, usize)> =
             taint.tainted_phis().iter().copied().collect();
+
+        // Refuse to destroy a definition something still reads. Dropping a phi
+        // makes its result undefined, and NOPing an instruction makes its
+        // destination undefined; either leaves a read the SSA verifier rejects,
+        // failing the whole method rather than the one rewrite.
+        retain_removable(ssa, &mut tainted_instrs, &mut tainted_phis_set);
+        if tainted_instrs.is_empty() && tainted_phis_set.is_empty() {
+            return 0;
+        }
 
         // Find blocks that can reach exit (for fallback target selection)
         let can_reach_exit = Self::find_blocks_reaching_exit(ssa);
@@ -263,7 +296,7 @@ impl<'a> NeutralizationPass<'a> {
         // 1. Remove tainted PHI nodes
         // Collect PHIs to remove (block_idx, phi_idx) sorted in reverse order
         // so we can remove them without invalidating indices
-        let mut tainted_phis: Vec<(usize, usize)> = taint.tainted_phis().iter().copied().collect();
+        let mut tainted_phis: Vec<(usize, usize)> = tainted_phis_set.iter().copied().collect();
         tainted_phis.sort_by(|a, b| b.cmp(a)); // Sort descending
 
         for (block_idx, phi_idx) in tainted_phis {
@@ -279,32 +312,13 @@ impl<'a> NeutralizationPass<'a> {
         // First pass: collect what operations to apply (to avoid borrow conflicts)
         let mut actions: Vec<(usize, usize, InstrAction)> = Vec::new();
 
-        for &(block_idx, instr_idx) in taint.tainted_instructions() {
+        // Sorted so the rewrite order does not depend on hash iteration order.
+        let mut removals: Vec<(usize, usize)> = tainted_instrs.iter().copied().collect();
+        removals.sort_unstable();
+
+        for &(block_idx, instr_idx) in &removals {
             if let Some(block) = ssa.block(block_idx) {
                 if let Some(instr) = block.instructions().get(instr_idx) {
-                    // Never neutralize DecryptedString constants — they are recovered
-                    // user data, not protection infrastructure. The taint may reach them
-                    // via bidirectional propagation through shared data flow (e.g., a
-                    // String.Concat that uses both a decrypted string and an undecrypted
-                    // value from a removed decryptor), but the string itself is legitimate.
-                    if matches!(
-                        instr.op(),
-                        SsaOp::Const {
-                            value: ConstValue::DecryptedString(_),
-                            ..
-                        }
-                    ) {
-                        continue;
-                    }
-
-                    // Also protect instructions whose ONLY tainted inputs are
-                    // DecryptedString variables — they're consumers of user data,
-                    // not protection code. For example, String.Concat(decrypted, tainted)
-                    // should not be neutralized if the decrypted side is legitimate.
-                    // We skip this for now and only protect the constants themselves,
-                    // since the second pipeline run (after neutralization) will re-run
-                    // DCE which correctly handles liveness.
-
                     let action = if instr.is_terminator() {
                         match instr.op() {
                             SsaOp::Branch {

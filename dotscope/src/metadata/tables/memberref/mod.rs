@@ -46,8 +46,9 @@
 //! - ECMA-335, Partition II, §22.25: `MemberRef` table specification
 //! - ECMA-335, Partition II, §23.2.6: `MemberRefParent` coded index encoding
 //! - ECMA-335, Partition II, §23.2: Method and field signature specifications
-use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
+
+use crossbeam_skiplist::SkipMap;
 
 use crate::metadata::{
     signatures::{SignatureField, SignatureMethod},

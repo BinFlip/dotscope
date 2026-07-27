@@ -40,12 +40,12 @@
 //! # Reference
 //! - [ECMA-335 II.24.2.4](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf)
 
+use widestring::U16Str;
+
 use crate::{
     utils::{read_compressed_int, read_compressed_int_at},
     Error, HeapKind, ParseFailure, Result,
 };
-
-use widestring::U16Str;
 
 /// The `UserStrings` object provides helper methods to access the data within the '#US' heap.
 ///

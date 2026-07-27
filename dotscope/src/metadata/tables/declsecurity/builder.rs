@@ -345,12 +345,13 @@ impl DeclSecurityBuilder {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::{
         cilassembly::{ChangeRefKind, CilAssembly},
         metadata::{cilassemblyview::CilAssemblyView, security::SecurityAction},
     };
-    use std::path::PathBuf;
 
     #[test]
     fn test_decl_security_builder_basic() {

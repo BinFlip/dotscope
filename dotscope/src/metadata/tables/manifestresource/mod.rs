@@ -37,8 +37,9 @@
 //! - ECMA-335, Partition II, §22.24: `ManifestResource` table specification
 //! - ECMA-335, Partition II, §23.2.7: Implementation coded index encoding
 //! - ECMA-335, Partition II, §6.2.2: Resources and resource management
-use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
+
+use crossbeam_skiplist::SkipMap;
 
 use crate::metadata::token::Token;
 

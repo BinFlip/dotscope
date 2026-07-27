@@ -70,11 +70,13 @@ impl RowWritable for PropertyMapRaw {
 mod tests {
     use std::sync::Arc;
 
-    use crate::metadata::tables::{
-        propertymap::PropertyMapRaw,
-        types::{RowReadable, RowWritable, TableId, TableInfo, TableRow},
+    use crate::metadata::{
+        tables::{
+            propertymap::PropertyMapRaw,
+            types::{RowReadable, RowWritable, TableId, TableInfo, TableRow},
+        },
+        token::Token,
     };
-    use crate::metadata::token::Token;
 
     #[test]
     fn test_propertymap_row_size() {

@@ -13,8 +13,7 @@
 //! native PE imports and exports to assemblies, writing them to disk,
 //! and ensuring they can be loaded back correctly with the modifications intact.
 
-use dotscope::prelude::*;
-use dotscope::DataDirectoryType;
+use dotscope::{prelude::*, DataDirectoryType};
 
 #[test]
 fn test_native_imports_with_minimal_changes() -> Result<()> {

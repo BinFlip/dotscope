@@ -74,6 +74,8 @@
 //! - [ECMA-335 II.22.37](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - TypeDef table
 //! - [ECMA-335 I.8.9](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Type definitions
 
+use rayon::prelude::*;
+
 use crate::{
     metadata::{
         tables::TypeAttributes,
@@ -85,7 +87,6 @@ use crate::{
     },
     Error, Result,
 };
-use rayon::prelude::*;
 
 /// Foundation validator for basic type definition structure, attributes, and metadata consistency.
 ///

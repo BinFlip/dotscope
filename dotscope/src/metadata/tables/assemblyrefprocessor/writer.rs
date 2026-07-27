@@ -81,10 +81,12 @@ impl RowWritable for AssemblyRefProcessorRaw {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        metadata::tables::types::{RowReadable, TableInfo},
-        metadata::tables::TableRow,
-        metadata::token::Token,
+    use crate::metadata::{
+        tables::{
+            types::{RowReadable, TableInfo},
+            TableRow,
+        },
+        token::Token,
     };
 
     #[test]

@@ -309,7 +309,6 @@ mod tests {
     use std::{sync::Arc, thread};
 
     use super::*;
-
     use crate::{
         analysis::{CallGraph, ConstValue, SsaVarId},
         compiler::CallSiteInfo,

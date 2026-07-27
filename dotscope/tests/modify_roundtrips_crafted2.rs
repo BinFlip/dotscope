@@ -16,8 +16,9 @@
 //! All tests use only the public API exported in the prelude to ensure they represent
 //! actual user usage patterns.
 
-use dotscope::prelude::*;
 use std::path::Path;
+
+use dotscope::prelude::*;
 
 const TEST_ASSEMBLY_PATH: &str = "tests/samples/mono_4.8/mscorlib.dll";
 

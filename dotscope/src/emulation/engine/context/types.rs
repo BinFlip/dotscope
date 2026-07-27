@@ -15,6 +15,9 @@ use crate::{
     Result,
 };
 
+/// Deepest inheritance chain the override lookup will follow.
+const MAX_BASE_WALK_DEPTH: usize = 256;
+
 impl EmulationContext {
     /// Converts a type token to a CilFlavor.
     ///
@@ -273,7 +276,7 @@ impl EmulationContext {
 
         // Search for an override in the runtime type
         if let Some(override_token) =
-            Self::find_method_override(&runtime_type_info, method_name, &method)
+            Self::find_method_override(0, &runtime_type_info, method_name, &method)
         {
             return override_token;
         }
@@ -288,10 +291,16 @@ impl EmulationContext {
     /// signature of the base method. This ensures proper override resolution
     /// and avoids matching methods that merely hide the base method.
     fn find_method_override(
+        depth: usize,
         type_info: &CilType,
         method_name: &str,
         base_method: &Method,
     ) -> Option<Token> {
+        // Tail-recurses down `base()`, which may be cyclic — `set_base` allows
+        // that by design so the circularity validator can report it.
+        if depth >= MAX_BASE_WALK_DEPTH {
+            return None;
+        }
         // First check the type itself for a matching override
         if let Some(method) = type_info
             .query_methods()
@@ -305,7 +314,12 @@ impl EmulationContext {
 
         // Check base types (inheritance chain)
         if let Some(base) = type_info.base() {
-            return Self::find_method_override(&base, method_name, base_method);
+            return Self::find_method_override(
+                depth.saturating_add(1),
+                &base,
+                method_name,
+                base_method,
+            );
         }
 
         None

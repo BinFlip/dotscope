@@ -911,8 +911,9 @@ fn is_redirect_stub_memberref(
 
 #[cfg(test)]
 mod tests {
-    use crate::test::helpers::load_sample;
-    use crate::{deobfuscation::techniques::Technique, metadata::token::Token};
+    use crate::{
+        deobfuscation::techniques::Technique, metadata::token::Token, test::helpers::load_sample,
+    };
 
     #[test]
     fn test_hook_mapping_token_extraction() {

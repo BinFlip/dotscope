@@ -5,9 +5,10 @@
 
 extern crate dotscope;
 
+use std::{fs, hint::black_box, path::PathBuf};
+
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use dotscope::metadata::security::PermissionSet;
-use std::{fs, hint::black_box, path::PathBuf};
 
 /// Benchmark parsing a real declarative security blob from WindowsBase.dll.
 ///

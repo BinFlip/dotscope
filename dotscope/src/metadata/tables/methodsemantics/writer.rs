@@ -88,13 +88,15 @@ impl RowWritable for MethodSemanticsRaw {
 mod tests {
     use std::sync::Arc;
 
-    use crate::metadata::tables::{
-        methodsemantics::MethodSemanticsRaw,
-        types::{
-            CodedIndex, CodedIndexType, RowReadable, RowWritable, TableId, TableInfo, TableRow,
+    use crate::metadata::{
+        tables::{
+            methodsemantics::MethodSemanticsRaw,
+            types::{
+                CodedIndex, CodedIndexType, RowReadable, RowWritable, TableId, TableInfo, TableRow,
+            },
         },
+        token::Token,
     };
-    use crate::metadata::token::Token;
 
     #[test]
     fn test_methodsemantics_row_size() {

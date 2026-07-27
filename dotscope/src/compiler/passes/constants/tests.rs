@@ -195,7 +195,8 @@ fn test_identity_add_zero() {
         flags: None,
     };
 
-    let result = ConstantPropagationPass::check_algebraic_identity(&op, &constants);
+    let result =
+        ConstantPropagationPass::check_algebraic_identity(&op, &constants, Some(&SsaType::I32));
     // Result should be a Copy to v0 (since v0 has value 42, not a zero)
     match result {
         Some(AlgebraicResult::Copy { dest, src }) => {
@@ -222,7 +223,8 @@ fn test_identity_mul_one() {
         flags: None,
     };
 
-    let result = ConstantPropagationPass::check_algebraic_identity(&op, &constants);
+    let result =
+        ConstantPropagationPass::check_algebraic_identity(&op, &constants, Some(&SsaType::I32));
     match result {
         Some(AlgebraicResult::Copy { dest, src }) => {
             assert_eq!(dest, v2);
@@ -248,7 +250,8 @@ fn test_identity_and_minus_one() {
         flags: None,
     };
 
-    let result = ConstantPropagationPass::check_algebraic_identity(&op, &constants);
+    let result =
+        ConstantPropagationPass::check_algebraic_identity(&op, &constants, Some(&SsaType::I32));
     match result {
         Some(AlgebraicResult::Copy { dest, src }) => {
             assert_eq!(dest, v2);
@@ -274,7 +277,8 @@ fn test_absorbing_mul_zero() {
         flags: None,
     };
 
-    let result = ConstantPropagationPass::check_algebraic_identity(&op, &constants);
+    let result =
+        ConstantPropagationPass::check_algebraic_identity(&op, &constants, Some(&SsaType::I32));
     match result {
         Some(AlgebraicResult::Constant { dest, value }) => {
             assert_eq!(dest, v2);
@@ -300,7 +304,8 @@ fn test_absorbing_and_zero() {
         flags: None,
     };
 
-    let result = ConstantPropagationPass::check_algebraic_identity(&op, &constants);
+    let result =
+        ConstantPropagationPass::check_algebraic_identity(&op, &constants, Some(&SsaType::I32));
     match result {
         Some(AlgebraicResult::Constant { dest, value }) => {
             assert_eq!(dest, v2);
@@ -326,7 +331,8 @@ fn test_absorbing_or_minus_one() {
         flags: None,
     };
 
-    let result = ConstantPropagationPass::check_algebraic_identity(&op, &constants);
+    let result =
+        ConstantPropagationPass::check_algebraic_identity(&op, &constants, Some(&SsaType::I32));
     match result {
         Some(AlgebraicResult::Constant { dest, value }) => {
             assert_eq!(dest, v2);
@@ -532,7 +538,8 @@ fn test_identity_shl_zero() {
         flags: None,
     };
 
-    let result = ConstantPropagationPass::check_algebraic_identity(&op, &constants);
+    let result =
+        ConstantPropagationPass::check_algebraic_identity(&op, &constants, Some(&SsaType::I32));
     match result {
         Some(AlgebraicResult::Copy { dest, src }) => {
             assert_eq!(dest, v2);
@@ -559,7 +566,8 @@ fn test_identity_shr_zero() {
         flags: None,
     };
 
-    let result = ConstantPropagationPass::check_algebraic_identity(&op, &constants);
+    let result =
+        ConstantPropagationPass::check_algebraic_identity(&op, &constants, Some(&SsaType::I32));
     match result {
         Some(AlgebraicResult::Copy { dest, src }) => {
             assert_eq!(dest, v2);
@@ -585,7 +593,8 @@ fn test_identity_xor_zero() {
         flags: None,
     };
 
-    let result = ConstantPropagationPass::check_algebraic_identity(&op, &constants);
+    let result =
+        ConstantPropagationPass::check_algebraic_identity(&op, &constants, Some(&SsaType::I32));
     match result {
         Some(AlgebraicResult::Copy { dest, src }) => {
             assert_eq!(dest, v2);
@@ -612,7 +621,8 @@ fn test_identity_div_one() {
         flags: None,
     };
 
-    let result = ConstantPropagationPass::check_algebraic_identity(&op, &constants);
+    let result =
+        ConstantPropagationPass::check_algebraic_identity(&op, &constants, Some(&SsaType::I32));
     match result {
         Some(AlgebraicResult::Copy { dest, src }) => {
             assert_eq!(dest, v2);
@@ -638,7 +648,8 @@ fn test_identity_sub_zero() {
         flags: None,
     };
 
-    let result = ConstantPropagationPass::check_algebraic_identity(&op, &constants);
+    let result =
+        ConstantPropagationPass::check_algebraic_identity(&op, &constants, Some(&SsaType::I32));
     match result {
         Some(AlgebraicResult::Copy { dest, src }) => {
             assert_eq!(dest, v2);

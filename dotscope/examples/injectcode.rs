@@ -22,6 +22,8 @@
 //! - Basic knowledge of CIL (Common Intermediate Language)
 //! - Familiarity with method signatures and calling conventions
 
+use std::{env, path::Path};
+
 use dotscope::{
     metadata::{
         signatures::{encode_method_signature, SignatureMethod, SignatureParameter, TypeSignature},
@@ -30,7 +32,6 @@ use dotscope::{
     },
     prelude::*,
 };
-use std::{env, path::Path};
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();

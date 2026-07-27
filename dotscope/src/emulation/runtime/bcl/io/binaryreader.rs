@@ -1118,13 +1118,12 @@ mod tests {
                 },
                 hook::{HookContext, HookManager, PreHookResult},
             },
+            thread::EmulationThread,
             EmValue, HeapRef,
         },
         metadata::{token::Token, typesystem::PointerSize},
         test::emulation::create_test_thread,
     };
-
-    use crate::emulation::thread::EmulationThread;
 
     /// Helper to create a BinaryReader backed by a stream with the given data.
     fn create_binary_reader(thread: &mut EmulationThread, data: Vec<u8>) -> HeapRef {

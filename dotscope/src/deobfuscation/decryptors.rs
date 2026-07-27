@@ -544,8 +544,12 @@ impl DecryptorContext {
 
     /// Checks if all calls to a decryptor were successfully handled.
     ///
-    /// Returns `true` if there are no failed calls for this decryptor,
-    /// meaning it's safe to remove.
+    /// Returns `true` if there are no failed calls for this decryptor.
+    ///
+    /// Note that this is not on its own sufficient to justify deleting the
+    /// method: a decryptor that was never exercised also has no failures.
+    /// Removal additionally requires that nothing still calls it — see
+    /// `decryptors_still_called` in the cleanup builder.
     ///
     /// # Arguments
     ///
@@ -553,7 +557,7 @@ impl DecryptorContext {
     ///
     /// # Returns
     ///
-    /// `true` if safe to remove (no failed calls).
+    /// `true` if no call site failed to decrypt.
     #[must_use]
     pub fn is_fully_decrypted(&self, decryptor: Token) -> bool {
         self.failed.get(&decryptor).is_none_or(|r| r.count() == 0)
@@ -626,8 +630,7 @@ impl DecryptorContext {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::thread;
+    use std::{sync::Arc, thread};
 
     use super::*;
 

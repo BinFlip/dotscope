@@ -4,6 +4,11 @@
 //! with automatic dependency resolution, graceful fallback to single-assembly mode, and
 //! progressive dependency addition.
 
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+
 use log::{debug, info, warn};
 
 use crate::{
@@ -14,10 +19,6 @@ use crate::{
     },
     project::{context::ProjectContext, ProjectResult},
     Error, Result,
-};
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
 };
 
 /// Builder for creating and loading CilProject instances with flexible dependency management.

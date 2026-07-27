@@ -26,9 +26,13 @@
 use std::iter::repeat_n;
 
 use aes::Aes128;
-use cbc::cipher::block_padding::{NoPadding, Pkcs7};
-use cbc::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyInit, KeyIvInit};
-use cbc::{Decryptor, Encryptor};
+use cbc::{
+    cipher::{
+        block_padding::{NoPadding, Pkcs7},
+        BlockModeDecrypt, BlockModeEncrypt, KeyInit, KeyIvInit,
+    },
+    Decryptor, Encryptor,
+};
 #[cfg(feature = "legacy-crypto")]
 use des::{Des, TdesEde3};
 use ecb::{Decryptor as EcbDecryptor, Encryptor as EcbEncryptor};
@@ -1071,8 +1075,9 @@ mod tests {
 #[cfg(test)]
 #[cfg(feature = "legacy-crypto")]
 mod legacy_tests {
-    use crate::utils::crypto::{derive_pbkdf1_key, derive_pbkdf2_key};
     use sha1::Digest;
+
+    use crate::utils::crypto::{derive_pbkdf1_key, derive_pbkdf2_key};
 
     #[test]
     fn test_pbkdf2_sha1_basic() {

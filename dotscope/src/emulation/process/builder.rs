@@ -75,12 +75,10 @@
 //!     .build()?;
 //! ```
 
-use std::path::Path;
-use std::sync::Arc;
-
-use log::debug;
+use std::{path::Path, sync::Arc};
 
 use cowfile::CowFile;
+use log::debug;
 
 use crate::{
     emulation::{

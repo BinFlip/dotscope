@@ -51,14 +51,15 @@ mod raw;
 mod reader;
 mod writer;
 
+use std::sync::Arc;
+
 pub use builder::*;
+use crossbeam_skiplist::SkipMap;
 pub(crate) use loader::*;
 pub use owned::*;
 pub use raw::*;
 
 use crate::metadata::token::Token;
-use crossbeam_skiplist::SkipMap;
-use std::sync::Arc;
 
 /// A map that holds the mapping of [`crate::metadata::token::Token`] to parsed [`StateMachineMethod`]
 ///

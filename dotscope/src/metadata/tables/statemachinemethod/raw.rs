@@ -5,6 +5,8 @@
 //! the metadata tables stream. This is the low-level representation used during
 //! the initial parsing phase, containing unresolved method indices.
 
+use std::sync::Arc;
+
 use crate::{
     metadata::{
         method::MethodMap,
@@ -14,7 +16,6 @@ use crate::{
     Error::TypeNotFound,
     Result,
 };
-use std::sync::Arc;
 
 /// Raw binary representation of a `StateMachineMethod` table entry
 ///

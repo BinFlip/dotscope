@@ -77,6 +77,8 @@
 
 use std::sync::Arc;
 
+use rustc_hash::{FxHashMap, FxHashSet};
+
 use crate::{
     metadata::{
         token::Token,
@@ -88,7 +90,6 @@ use crate::{
     },
     Error, Result,
 };
-use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Foundation validator for circular dependencies in type systems, methods, and references.
 ///

@@ -116,6 +116,8 @@
 //! - **Memory Safety**: Comprehensive bounds checking and nesting depth limiting
 //! - **Error Handling**: Detailed error messages for debugging malformed data
 
+use std::sync::Arc;
+
 use crate::{
     file::parser::Parser,
     metadata::{
@@ -131,7 +133,6 @@ use crate::{
     Error::DepthLimitExceeded,
     Result,
 };
-use std::sync::Arc;
 
 /// Maximum nesting depth for custom attribute parsing.
 ///
@@ -142,6 +143,12 @@ use std::sync::Arc;
 /// The limit is set generously to accommodate legitimate complex custom attributes
 /// while still protecting against malformed or malicious metadata.
 const MAX_NESTING_DEPTH: usize = 1000;
+
+/// Maximum **native** recursion depth for nested attribute arguments.
+///
+/// Separate from [`MAX_NESTING_DEPTH`], which bounds a heap work stack where
+/// 1000 entries are cheap. This bounds real stack frames, where they are not.
+const MAX_ARGUMENT_RECURSION: usize = 64;
 
 /// Maximum number of named arguments in a custom attribute.
 ///
@@ -391,6 +398,13 @@ pub struct CustomAttributeParser<'a> {
     parser: Parser<'a>,
     /// Optional TypeRegistry for cross-assembly type resolution
     type_registry: Option<Arc<TypeRegistry>>,
+    /// Current native-recursion depth, for stack-overflow prevention.
+    ///
+    /// `parse_fixed_argument` recurses into itself for array elements. The
+    /// `MAX_NESTING_DEPTH` defined in this file bounds a *heap* work stack
+    /// elsewhere and was never consulted here, so the recursion was unbounded
+    /// over an attacker-supplied attribute blob.
+    depth: usize,
 }
 
 impl<'a> CustomAttributeParser<'a> {
@@ -412,6 +426,7 @@ impl<'a> CustomAttributeParser<'a> {
         Self {
             parser: Parser::new(data),
             type_registry: None,
+            depth: 0,
         }
     }
 
@@ -440,6 +455,7 @@ impl<'a> CustomAttributeParser<'a> {
         Self {
             parser: Parser::new(data),
             type_registry: Some(type_registry),
+            depth: 0,
         }
     }
 
@@ -675,6 +691,21 @@ impl<'a> CustomAttributeParser<'a> {
     /// # Errors
     /// Returns [`crate::Error::Malformed`] for invalid data or unsupported types
     fn parse_fixed_argument(
+        &mut self,
+        cil_type: &CilTypeRef,
+    ) -> Result<Option<CustomAttributeArgument>> {
+        self.depth = self.depth.saturating_add(1);
+        if self.depth >= MAX_ARGUMENT_RECURSION {
+            self.depth = self.depth.saturating_sub(1);
+            return Err(DepthLimitExceeded(MAX_ARGUMENT_RECURSION));
+        }
+        let result = self.parse_fixed_argument_inner(cil_type);
+        self.depth = self.depth.saturating_sub(1);
+        result
+    }
+
+    /// Inner implementation of [`parse_fixed_argument`]; depth handled by caller.
+    fn parse_fixed_argument_inner(
         &mut self,
         cil_type: &CilTypeRef,
     ) -> Result<Option<CustomAttributeArgument>> {
@@ -1387,22 +1418,25 @@ impl<'a> CustomAttributeParser<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::metadata::{
-        identity::AssemblyIdentity,
-        tables::{Param, ParamAttributes},
-        token::Token,
-        typesystem::{CilFlavor, CilPrimitiveKind, CilTypeRef, TypeBuilder, TypeRegistry},
-    };
-    use crate::test::factories::metadata::customattributes::{
-        create_constructor_with_params, create_constructor_with_params_and_registry,
-        create_empty_constructor, get_test_type_registry,
-    };
     use std::{
         collections::HashMap,
         sync::{
             atomic::{AtomicU64, Ordering},
             Arc, Mutex, OnceLock,
+        },
+    };
+
+    use super::*;
+    use crate::{
+        metadata::{
+            identity::AssemblyIdentity,
+            tables::{Param, ParamAttributes},
+            token::Token,
+            typesystem::{CilFlavor, CilPrimitiveKind, CilTypeRef, TypeBuilder, TypeRegistry},
+        },
+        test::factories::metadata::customattributes::{
+            create_constructor_with_params, create_constructor_with_params_and_registry,
+            create_empty_constructor, get_test_type_registry,
         },
     };
 

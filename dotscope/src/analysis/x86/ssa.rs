@@ -63,6 +63,32 @@ use crate::{
 /// Number of registers tracked (0-15 GPRs for x64, 16-21 segment registers).
 const MAX_REGISTERS: usize = 22;
 
+/// Address space id for `gs:`-qualified accesses.
+///
+/// The numbering follows LLVM's x86 convention (256 = `gs`, 257 = `fs`) so a
+/// dump is readable against existing tooling. The values themselves are opaque
+/// to analyssa — it only ever compares them for equality.
+const ADDRESS_SPACE_GS: u16 = 256;
+
+/// Address space id for `fs:`-qualified accesses. See [`ADDRESS_SPACE_GS`].
+const ADDRESS_SPACE_FS: u16 = 257;
+
+/// Maps a memory operand's segment override to an SSA address space.
+///
+/// Only `fs:` and `gs:` produce one. In flat 32-bit and 64-bit user mode the
+/// remaining segments share a base with the unprefixed default, so reporting a
+/// distinct address space for an explicit `ss:` or `ds:` would let alias
+/// analysis prove two names for the *same* cell disjoint — the one direction
+/// that is unsound. `fs:`/`gs:` genuinely have their own bases (TEB/PEB access,
+/// stack cookies, TLS), which is exactly the distinction worth keeping.
+fn address_space_for(mem: &X86Memory) -> Option<u16> {
+    match mem.segment {
+        Some(X86Register::Fs) => Some(ADDRESS_SPACE_FS),
+        Some(X86Register::Gs) => Some(ADDRESS_SPACE_GS),
+        _ => None,
+    }
+}
+
 /// Tracks the current SSA variable for each x86 register.
 ///
 /// This is the core of register versioning - each time a register is written,
@@ -1606,6 +1632,7 @@ impl<'a> X86ToSsaTranslator<'a> {
             dest: result,
             addr,
             value_type,
+            address_space: address_space_for(mem),
         }));
 
         Ok(result)
@@ -1633,6 +1660,7 @@ impl<'a> X86ToSsaTranslator<'a> {
             addr,
             value,
             value_type,
+            address_space: address_space_for(mem),
         }));
 
         Ok(())
@@ -2538,8 +2566,57 @@ fn index_to_register(index: usize, bitness: u32) -> Option<X86Register> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use crate::{analysis::x86::decoder::x86_decode_all, compiler::SsaCodeGenerator};
+
+    /// `fs:`/`gs:` become distinct address spaces; every other segment stays in
+    /// the flat default. Marking `ss:`/`ds:` would let alias analysis prove two
+    /// names for one cell disjoint, which is the unsound direction.
+    #[test]
+    fn test_address_space_for_segment() {
+        let flat = X86Memory::base_disp(X86Register::Ebp, -4, 4);
+        assert_eq!(address_space_for(&flat), None);
+        assert_eq!(
+            address_space_for(&flat.clone().with_segment(X86Register::Fs)),
+            Some(ADDRESS_SPACE_FS)
+        );
+        assert_eq!(
+            address_space_for(&flat.clone().with_segment(X86Register::Gs)),
+            Some(ADDRESS_SPACE_GS)
+        );
+        for flat_segment in [
+            X86Register::Cs,
+            X86Register::Ds,
+            X86Register::Es,
+            X86Register::Ss,
+        ] {
+            assert_eq!(
+                address_space_for(&flat.clone().with_segment(flat_segment)),
+                None,
+                "{flat_segment:?} shares the flat address space"
+            );
+        }
+        assert_ne!(ADDRESS_SPACE_FS, ADDRESS_SPACE_GS);
+    }
+
+    /// The segment override must reach the emitted `LoadIndirect`, not just the
+    /// decoded operand.
+    #[test]
+    fn test_translate_segment_qualified_load() {
+        // mov eax, fs:[0x30]; ret
+        let bytes = [0x64, 0xa1, 0x30, 0x00, 0x00, 0x00, 0xc3];
+        let instructions = x86_decode_all(&bytes, 32, 0x1000).unwrap();
+        let cfg = X86Function::new(&instructions, 32, 0x1000);
+        let ssa = X86ToSsaTranslator::new(&cfg).translate().unwrap();
+
+        let spaces: Vec<Option<u16>> = ssa
+            .iter_instructions()
+            .filter_map(|(_, _, instr)| match instr.op() {
+                SsaOp::LoadIndirect { address_space, .. } => Some(*address_space),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(spaces, vec![Some(ADDRESS_SPACE_FS)]);
+    }
 
     #[test]
     fn test_translate_linear_code() {

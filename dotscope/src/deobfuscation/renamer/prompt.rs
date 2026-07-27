@@ -479,7 +479,6 @@ fn truncate_phases(phases: &[PhaseInfo], max_phases: usize) -> Vec<&PhaseInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use crate::deobfuscation::renamer::context::{
         ApiCallInfo, IdentifierKind, ParamInfo, PhaseInfo, RenameContext,
     };

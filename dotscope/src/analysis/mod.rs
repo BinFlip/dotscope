@@ -79,6 +79,8 @@ mod taint;
 mod x86;
 
 // Re-export primary public types at module level
+// Direct re-exports from analyssa for the formerly-shimmed analyses.
+pub use analyssa::analysis::{algebraic::simplify_op, defuse::Location};
 pub use callgraph::{
     CallGraph, CallGraphNode, CallGraphStats, CallResolver, CallSite, CallTarget, CallType,
     ResolverStats,
@@ -89,10 +91,6 @@ pub use dataflow::{
     LiveVariables, LivenessResult, ReachingDefinitions, ScalarValue, SccpResult,
 };
 
-// Direct re-exports from analyssa for the formerly-shimmed analyses.
-pub use analyssa::analysis::algebraic::simplify_op;
-pub use analyssa::analysis::defuse::Location;
-
 /// CIL-defaulted alias of [`analyssa::analysis::algebraic::SimplifyResult`].
 pub type SimplifyResult<T = ssa::CilTarget> = analyssa::analysis::algebraic::SimplifyResult<T>;
 /// CIL-defaulted alias of [`analyssa::analysis::defuse::DefUseIndex`].
@@ -100,30 +98,29 @@ pub type DefUseIndex<T = ssa::CilTarget> = analyssa::analysis::defuse::DefUseInd
 /// CIL-defaulted alias of [`analyssa::analysis::range::ValueRange`].
 pub type ValueRange = analyssa::analysis::range::ValueRange;
 pub use analyssa::graph::NodeId;
-#[cfg(feature = "z3")]
-pub use ssa::Z3Solver;
-pub use ssa::{
-    resolve_corelib_valuetype, AbstractValue, BinaryOpKind, CilTarget, CmpKind, ConstEvaluator,
-    ConstValue, ConstValueCilExt, ControlFlow, DefSite, FieldRef, MethodPurity, MethodRef,
-    PhiAnalyzer, PhiNode, PhiOperand, ReturnInfo, SsaBlock, SsaCfg, SsaConverter, SsaEvaluator,
-    SsaExceptionHandler, SsaExceptionHandlerCilExt, SsaFunction, SsaFunctionBuilder,
-    SsaInstruction, SsaOp, SsaOpCilExt, SsaType, SsaVarId, SsaVariable, SymbolicEvaluator,
-    SymbolicExpr, SymbolicOp, Target, TypeClass, TypeContext, TypeProvider, TypeRef, UnaryOpKind,
-    UseSite, ValueResolver, VariableOrigin,
-};
-pub use ssa::{SsaFunctionCilExt, SsaFunctionSemanticsExt};
-pub use taint::{
-    cff_taint_config, find_token_dependencies, PhiTaintMode, TaintAnalysis, TaintConfig,
-    TokenTaintBuilder,
-};
-
 // Re-export crate-internal types (used by other crate modules via crate::analysis::X)
 #[cfg(feature = "compiler")]
 #[allow(unused_imports)]
 pub(crate) use cfg::SsaLoopAnalysis;
 #[cfg(feature = "compiler")]
 pub(crate) use ssa::conv_op_for_target;
-
+#[cfg(feature = "z3")]
+pub use ssa::Z3Solver;
+pub use ssa::{
+    address, pointsto, resolve_corelib_valuetype, AbstractValue, AliasResult, ArrayIndex,
+    BinaryOpKind, CilTarget, CmpKind, ConstEvaluator, ConstValue, ConstValueCilExt, ControlFlow,
+    DefSite, EvaluatorMark, FieldRef, IndirectLocation, MemoryDefSite, MemoryLocation, MemoryOp,
+    MemoryPhi, MemoryPhiOperand, MemorySsa, MemorySsaStats, MemoryVersion, MethodPurity, MethodRef,
+    PhiAnalyzer, PhiNode, PhiOperand, ReturnInfo, SsaBlock, SsaCfg, SsaConverter, SsaEvaluator,
+    SsaExceptionHandler, SsaExceptionHandlerCilExt, SsaFunction, SsaFunctionBuilder,
+    SsaFunctionCilExt, SsaFunctionSemanticsExt, SsaInstruction, SsaOp, SsaOpCilExt, SsaType,
+    SsaVarId, SsaVariable, SymbolicEvaluator, SymbolicExpr, SymbolicOp, Target, TypeClass,
+    TypeContext, TypeProvider, TypeRef, UnaryOpKind, UseSite, ValueResolver, VariableOrigin,
+};
+pub use taint::{
+    cff_taint_config, find_token_dependencies, PhiTaintMode, TaintAnalysis, TaintConfig,
+    TokenTaintBuilder,
+};
 #[cfg(feature = "x86")]
 pub use x86::{
     x86_decode_all, x86_decode_single, x86_decode_traversal, x86_detect_epilogue,

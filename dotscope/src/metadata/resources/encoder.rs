@@ -99,12 +99,13 @@
 //! - [.NET Binary Format Data Structure](https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-nrbf/)
 //! - Microsoft .NET Framework Resource Management Documentation
 
+use std::collections::BTreeMap;
+
 use crate::{
     metadata::resources::{ResourceType, RESOURCE_MAGIC},
     utils::{compressed_uint_size, to_u32, write_7bit_encoded_int, write_compressed_uint},
     Error, Result,
 };
-use std::collections::BTreeMap;
 
 /// Computes the hash value for a resource name using the official .NET hash function.
 ///

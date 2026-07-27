@@ -97,9 +97,8 @@ impl RowReadable for TypeDefRaw {
 mod tests {
     use std::sync::Arc;
 
-    use crate::metadata::tables::{MetadataTable, TableId, TableInfo};
-
     use super::*;
+    use crate::metadata::tables::{MetadataTable, TableId, TableInfo};
 
     #[test]
     fn crafted_short() {

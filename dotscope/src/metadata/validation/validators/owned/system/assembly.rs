@@ -76,6 +76,8 @@
 //! - [ECMA-335 II.22.14](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - File table
 //! - [ECMA-335 I.6.3](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Application domains and assemblies
 
+use std::sync::Arc;
+
 use crate::{
     metadata::{
         identity::Identity,
@@ -87,7 +89,6 @@ use crate::{
     },
     Error, Result,
 };
-use std::sync::Arc;
 
 /// Foundation validator for assembly-level metadata, references, and integrity constraints.
 ///

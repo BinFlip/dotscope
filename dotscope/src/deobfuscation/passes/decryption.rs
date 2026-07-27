@@ -64,6 +64,13 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use analyssa::{
+    graph::{
+        algorithms::{compute_dominators, DominatorTree},
+        GraphBase, NodeId, RootedGraph,
+    },
+    ir::value::DecryptedArrayData,
+};
 use rayon::prelude::*;
 
 use crate::{
@@ -87,11 +94,6 @@ use crate::{
     },
     CilObject, Error, Result,
 };
-use analyssa::graph::{
-    algorithms::{compute_dominators, DominatorTree},
-    GraphBase, NodeId, RootedGraph,
-};
-use analyssa::ir::value::DecryptedArrayData;
 
 /// Decryption pass for obfuscated constants and strings.
 ///

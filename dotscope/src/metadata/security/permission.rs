@@ -224,10 +224,11 @@
 //!
 //! [`Permission`] instances are immutable after creation and safe to share across threads.
 
+use std::fmt;
+
 use crate::metadata::security::{
     security_classes, ArgumentValue, NamedArgument, SecurityPermissionFlags,
 };
-use std::fmt;
 
 /// Represents a .NET security permission within a permission set.
 ///

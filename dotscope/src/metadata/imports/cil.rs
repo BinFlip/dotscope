@@ -125,9 +125,10 @@
 //! - [`dashmap::DashMap`] for high-performance index lookups
 //! - Reference counting enables safe sharing across threads without contention
 
+use std::sync::Arc;
+
 use crossbeam_skiplist::SkipMap;
 use dashmap::DashMap;
-use std::sync::Arc;
 
 use crate::{
     metadata::{
@@ -1381,11 +1382,10 @@ pub trait ImportContainer {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::test::{
         create_assembly_ref, create_cil_type, create_file, create_method, create_module_ref,
     };
-
-    use super::*;
 
     #[test]
     fn test_add_method_import() {

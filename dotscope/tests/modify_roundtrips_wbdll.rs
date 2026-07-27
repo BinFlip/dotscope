@@ -16,8 +16,9 @@
 //! 4. Loading the written bytes again
 //! 5. Verifying changes are correctly persisted
 
-use dotscope::prelude::*;
 use std::path::PathBuf;
+
+use dotscope::prelude::*;
 
 const TEST_ASSEMBLY_PATH: &str = "tests/samples/WindowsBase.dll";
 

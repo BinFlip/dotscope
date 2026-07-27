@@ -4,6 +4,8 @@
 //! to invoke methods in dotscope-modified assemblies. This validates that methods
 //! added or modified by dotscope are correctly callable at runtime.
 
+use std::path::Path;
+
 use crate::{
     prelude::*,
     test::mono::{
@@ -12,7 +14,6 @@ use crate::{
         execution::{execute, ExecutionResult},
     },
 };
-use std::path::Path;
 
 /// Result of a reflection test
 #[derive(Debug)]
@@ -365,9 +366,10 @@ class Program
 
 #[cfg(test)]
 mod tests {
+    use tempfile::TempDir;
+
     use super::*;
     use crate::test::mono::compilation::templates;
-    use tempfile::TempDir;
 
     #[test]
     fn test_method_test_builder() {

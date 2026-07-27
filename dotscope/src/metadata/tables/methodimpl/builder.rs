@@ -452,12 +452,13 @@ impl MethodImplBuilder {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::{
         cilassembly::{ChangeRefKind, CilAssembly},
         metadata::cilassemblyview::CilAssemblyView,
     };
-    use std::path::PathBuf;
 
     #[test]
     fn test_methodimpl_builder_creation() {

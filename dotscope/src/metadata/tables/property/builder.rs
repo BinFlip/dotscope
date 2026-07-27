@@ -217,6 +217,8 @@ impl PropertyBuilder {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::{
         cilassembly::{ChangeRefKind, CilAssembly},
@@ -225,7 +227,6 @@ mod tests {
             tables::{PropertyAttributes, TableId},
         },
     };
-    use std::path::PathBuf;
 
     #[test]
     fn test_property_builder_basic() {

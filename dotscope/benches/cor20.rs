@@ -6,9 +6,10 @@
 
 extern crate dotscope;
 
+use std::{fs, hint::black_box, path::PathBuf};
+
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use dotscope::metadata::cor20header::Cor20Header;
-use std::{fs, hint::black_box, path::PathBuf};
 
 /// Benchmark parsing the CLI header from a real assembly.
 ///

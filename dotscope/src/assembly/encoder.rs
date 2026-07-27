@@ -51,16 +51,17 @@
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 
+use std::{
+    collections::{HashMap, HashSet},
+    sync::OnceLock,
+};
+
 use crate::{
     assembly::{
         instruction::{FlowType, Immediate, Instruction, Operand, OperandType},
         instructions::{CilInstruction, INSTRUCTIONS, INSTRUCTIONS_FE},
     },
     Error, Result,
-};
-use std::{
-    collections::{HashMap, HashSet},
-    sync::OnceLock,
 };
 
 /// Reverse lookup table mapping mnemonics to opcode information.

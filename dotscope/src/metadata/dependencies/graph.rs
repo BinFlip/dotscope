@@ -9,9 +9,8 @@ use std::sync::{
     Arc, RwLock,
 };
 
-use dashmap::DashMap;
-
 use analyssa::graph::{algorithms, DirectedGraph, IndexedGraph, NodeId};
+use dashmap::DashMap;
 
 use crate::{
     metadata::{dependencies::AssemblyDependency, identity::AssemblyIdentity},
@@ -242,22 +241,23 @@ impl AssemblyDependencyGraph {
 
     /// Detect circular dependencies in the assembly graph.
     ///
-    /// Uses a depth-first search algorithm to detect cycles in the dependency
-    /// graph. Returns the first cycle found, or None if the graph is acyclic.
-    /// Results are cached to improve performance on repeated calls.
+    /// Returns the members of one cyclic strongly connected component, or
+    /// `None` if the graph is acyclic. Results are cached to improve
+    /// performance on repeated calls.
     ///
     /// # Returns
-    /// * `Ok(Some(cycle))` - Circular dependency found, returns the cycle path
+    /// * `Ok(Some(cycle))` - Circular dependency found, returns the assemblies
+    ///   participating in it
     /// * `Ok(None)` - No circular dependencies detected
     /// * `Err(_)` - Error occurred during cycle detection
     ///
     /// # Algorithm
-    /// Uses a modified DFS with three-color marking:
-    /// - **White**: Unvisited nodes
-    /// - **Gray**: Currently being processed (in recursion stack)  
-    /// - **Black**: Completely processed
-    ///
-    /// A back edge from gray to gray indicates a cycle.
+    /// One Tarjan pass over the dependency graph, reporting the
+    /// lowest-numbered component that is cyclic. The result is a **set of
+    /// participants, not a closed walk**: each assembly appears once, so a
+    /// self-dependency reports a single entry rather than the same assembly
+    /// twice. Reporting by component (rather than the first back edge DFS
+    /// happens to find) keeps the answer deterministic across runs.
     ///
     /// # Examples
     ///
@@ -751,10 +751,9 @@ impl Default for AssemblyDependencyGraph {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use std::{collections::HashMap, thread};
 
+    use super::*;
     use crate::{
         metadata::dependencies::DependencyType,
         test::helpers::dependencies::{create_test_dependency, create_test_identity},
@@ -883,9 +882,10 @@ mod tests {
         assert!(cycles.is_some());
 
         let cycle = cycles.unwrap();
-        assert_eq!(cycle.len(), 2); // A -> A
+        // The reported cycle is the participating component, not a closed walk,
+        // so a self-dependency names "A" once rather than twice.
+        assert_eq!(cycle.len(), 1);
         assert_eq!(cycle[0].name, "A");
-        assert_eq!(cycle[1].name, "A");
     }
 
     #[test]

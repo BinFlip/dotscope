@@ -93,19 +93,34 @@ mod value;
 // shims that used to mediate via `mod cfg/consts/phi/...` collapsed into
 // the `pub use` block below.
 
+// `SsaFunction`/`ReturnInfo`/`MethodPurity` live in `analyssa::ir::function`.
+pub use analyssa::ir::function::MethodPurity;
 pub(crate) use builder::conv_op_for_target;
 pub use builder::SsaFunctionBuilder;
 pub use converter::SsaConverter;
 pub use exception::{SsaExceptionHandler, SsaExceptionHandlerCilExt};
 pub use function::{SsaFunctionCilExt, SsaFunctionSemanticsExt};
 pub use ops::{BinaryOpKind, CmpKind, SsaOp, SsaOpCilExt, UnaryOpKind};
-
-// `SsaFunction`/`ReturnInfo`/`MethodPurity` live in `analyssa::ir::function`.
-pub use analyssa::ir::function::MethodPurity;
 /// CIL-defaulted alias of [`analyssa::ir::function::SsaFunction`].
 pub type SsaFunction<T = CilTarget> = analyssa::ir::function::SsaFunction<T>;
 /// CIL-defaulted alias of [`analyssa::ir::function::ReturnInfo`].
 pub type ReturnInfo<T = CilTarget> = analyssa::ir::function::ReturnInfo<T>;
+#[allow(unused_imports)]
+pub use analyssa::analysis::consts::evaluate_const_op;
+pub use analyssa::{
+    analysis::{
+        address,
+        evaluator::ControlFlow,
+        memory::{AliasResult, ArrayIndex, IndirectLocation, MemoryDefSite, MemoryPhiOperand},
+        phis::{place_pruned_phis, PhiAnalyzer, PhiPlacementConfig},
+        pointsto,
+    },
+    ir::{
+        phi::{PhiNode, PhiOperand},
+        variable::{DefSite, FunctionVarAllocator, SsaVarId, UseSite, VariableOrigin},
+    },
+    Target,
+};
 pub use resolver::ValueResolver;
 pub use stack::{SimulationResult, StackSimulator, StackSlot, StackSlotSource};
 #[cfg(feature = "z3")]
@@ -117,19 +132,6 @@ pub use types::{
     TypeRef,
 };
 pub use value::{AbstractValue, ConstValue, ConstValueCilExt};
-
-// Direct re-exports from analyssa for the now-collapsed shim files. Each line
-// here used to be a one-line module file in `dotscope/src/analysis/ssa/`.
-pub use analyssa::ir::phi::{PhiNode, PhiOperand};
-pub use analyssa::ir::variable::{
-    DefSite, FunctionVarAllocator, SsaVarId, UseSite, VariableOrigin,
-};
-pub use analyssa::Target;
-
-#[allow(unused_imports)]
-pub use analyssa::analysis::consts::evaluate_const_op;
-pub use analyssa::analysis::evaluator::ControlFlow;
-pub use analyssa::analysis::phis::{place_pruned_phis, PhiAnalyzer, PhiPlacementConfig};
 
 /// CIL-defaulted alias of [`analyssa::ir::block::SsaBlock`].
 pub type SsaBlock<T = CilTarget> = analyssa::ir::block::SsaBlock<T>;
@@ -143,6 +145,8 @@ pub type SsaCfg<'a, T = CilTarget> = analyssa::analysis::cfg::SsaCfg<'a, T>;
 pub type ConstEvaluator<'a, T = CilTarget> = analyssa::analysis::consts::ConstEvaluator<'a, T>;
 /// CIL-defaulted alias of [`analyssa::analysis::evaluator::SsaEvaluator`].
 pub type SsaEvaluator<'a, T = CilTarget> = analyssa::analysis::evaluator::SsaEvaluator<'a, T>;
+/// CIL-defaulted alias of [`analyssa::analysis::evaluator::EvaluatorMark`].
+pub type EvaluatorMark<T = CilTarget> = analyssa::analysis::evaluator::EvaluatorMark<T>;
 /// CIL-defaulted alias of [`analyssa::analysis::evaluator::ExecutionTrace`].
 pub type ExecutionTrace<T = CilTarget> = analyssa::analysis::evaluator::ExecutionTrace<T>;
 /// CIL-defaulted alias of [`analyssa::analysis::patterns::PatternDetector`].
@@ -168,6 +172,10 @@ pub type MemoryOp<T = CilTarget> = analyssa::analysis::memory::MemoryOp<T>;
 pub type MemoryPhi<T = CilTarget> = analyssa::analysis::memory::MemoryPhi<T>;
 /// CIL-defaulted alias of [`analyssa::analysis::memory::MemoryVersion`].
 pub type MemoryVersion<T = CilTarget> = analyssa::analysis::memory::MemoryVersion<T>;
+/// CIL-defaulted alias of [`analyssa::analysis::memory::MemorySsa`].
+pub type MemorySsa<T = CilTarget> = analyssa::analysis::memory::MemorySsa<T>;
+/// CIL-defaulted alias of [`analyssa::analysis::memory::MemorySsaStats`].
+pub type MemorySsaStats = analyssa::analysis::memory::MemorySsaStats;
 /// CIL-defaulted alias of [`analyssa::analysis::verifier::SsaVerifier`].
 pub type SsaVerifier<'a, T = CilTarget> = analyssa::analysis::verifier::SsaVerifier<'a, T>;
 

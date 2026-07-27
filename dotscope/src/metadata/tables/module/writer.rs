@@ -100,12 +100,13 @@ impl RowWritable for ModuleRaw {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::metadata::{
         tables::types::{RowReadable, TableInfo, TableRow},
         token::Token,
     };
-    use std::sync::Arc;
 
     #[test]
     fn test_round_trip_serialization_small_heaps() {

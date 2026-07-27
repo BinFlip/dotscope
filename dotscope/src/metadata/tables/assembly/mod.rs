@@ -23,9 +23,9 @@
 //!
 //! # Reference
 //! - [ECMA-335 II.22.2](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Assembly table specification
+use std::{fmt, sync::Arc};
+
 use crossbeam_skiplist::SkipMap;
-use std::fmt;
-use std::sync::Arc;
 
 use crate::metadata::token::Token;
 

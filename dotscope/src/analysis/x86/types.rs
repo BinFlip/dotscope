@@ -294,6 +294,18 @@ pub struct X86Memory {
     pub displacement: i64,
     /// Size of the memory access in bytes (1, 2, 4, or 8).
     pub size: u8,
+    /// Explicit segment override prefix on the access, or `None` when the
+    /// instruction uses the default segment for its base register.
+    ///
+    /// Only the *prefix* is recorded, never the effective segment: in flat
+    /// 32-bit and 64-bit user mode `cs`/`ds`/`es`/`ss` all describe the same
+    /// address space, so treating an explicit `ss:` as distinct from an
+    /// unprefixed access would make two names for one cell look disjoint.
+    /// `fs:` and `gs:` do have their own bases, which is why they are carried
+    /// through to [`SsaOp::LoadIndirect`]'s address space.
+    ///
+    /// [`SsaOp::LoadIndirect`]: crate::analysis::SsaOp::LoadIndirect
+    pub segment: Option<X86Register>,
 }
 
 impl X86Memory {
@@ -306,6 +318,7 @@ impl X86Memory {
             scale: 1,
             displacement,
             size,
+            segment: None,
         }
     }
 
@@ -324,6 +337,7 @@ impl X86Memory {
             scale,
             displacement,
             size,
+            segment: None,
         }
     }
 
@@ -336,7 +350,15 @@ impl X86Memory {
             scale: 1,
             displacement,
             size,
+            segment: None,
         }
+    }
+
+    /// Returns this operand qualified by an explicit segment override prefix.
+    #[must_use]
+    pub fn with_segment(mut self, segment: X86Register) -> Self {
+        self.segment = Some(segment);
+        self
     }
 }
 

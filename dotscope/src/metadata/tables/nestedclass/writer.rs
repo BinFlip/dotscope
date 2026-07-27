@@ -74,11 +74,13 @@ impl RowWritable for NestedClassRaw {
 mod tests {
     use std::sync::Arc;
 
-    use crate::metadata::tables::{
-        nestedclass::NestedClassRaw,
-        types::{RowReadable, RowWritable, TableId, TableInfo, TableRow},
+    use crate::metadata::{
+        tables::{
+            nestedclass::NestedClassRaw,
+            types::{RowReadable, RowWritable, TableId, TableInfo, TableRow},
+        },
+        token::Token,
     };
-    use crate::metadata::token::Token;
 
     #[test]
     fn test_nestedclass_row_size() {

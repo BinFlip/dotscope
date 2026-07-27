@@ -16,5 +16,4 @@
 mod resolver;
 mod rewrite;
 
-pub use self::resolver::TokenResolverPass;
-pub use self::rewrite::ResourceShimRewritePass;
+pub use self::{resolver::TokenResolverPass, rewrite::ResourceShimRewritePass};

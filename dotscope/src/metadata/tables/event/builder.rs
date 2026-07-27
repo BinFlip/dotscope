@@ -222,12 +222,13 @@ impl EventBuilder {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::{
         cilassembly::{ChangeRefKind, CilAssembly},
         metadata::{cilassemblyview::CilAssemblyView, tables::EventAttributes},
     };
-    use std::path::PathBuf;
 
     #[test]
     fn test_event_builder_basic() {

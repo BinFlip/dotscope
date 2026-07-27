@@ -502,8 +502,10 @@ fn write_string(buffer: &mut Vec<u8>, value: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::customattributes::{CustomAttributeNamedArgument, CustomAttributeValue};
-    use crate::metadata::typesystem::CilTypeReference;
+    use crate::metadata::{
+        customattributes::{CustomAttributeNamedArgument, CustomAttributeValue},
+        typesystem::CilTypeReference,
+    };
 
     #[test]
     fn test_encode_simple_custom_attribute() {

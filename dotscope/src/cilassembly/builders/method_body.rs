@@ -902,10 +902,10 @@ impl Default for MethodBodyBuilder {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::cilassembly::CilAssembly;
-    use crate::metadata::cilassemblyview::CilAssemblyView;
     use std::path::PathBuf;
+
+    use super::*;
+    use crate::{cilassembly::CilAssembly, metadata::cilassemblyview::CilAssemblyView};
 
     fn get_test_assembly() -> Result<CilAssembly> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");

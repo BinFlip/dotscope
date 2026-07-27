@@ -2,9 +2,10 @@
 
 extern crate dotscope;
 
+use std::path::PathBuf;
+
 use criterion::{criterion_group, criterion_main, Criterion};
 use dotscope::{metadata::cilobject::CilObject, ValidationConfig};
-use std::path::PathBuf;
 
 /// Benchmark loading a `CilObject` with and without metadata validation.
 pub fn criterion_benchmark(c: &mut Criterion) {

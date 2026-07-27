@@ -15,8 +15,9 @@
 //! - Basic understanding of .NET assemblies
 //! - Familiarity with Rust error handling
 
-use dotscope::prelude::*;
 use std::{env, path::Path};
+
+use dotscope::prelude::*;
 
 fn main() -> Result<()> {
     // Get the path from command line arguments or use a default

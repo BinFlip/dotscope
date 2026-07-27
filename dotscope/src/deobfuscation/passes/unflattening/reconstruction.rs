@@ -49,13 +49,26 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use analyssa::BitSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
-    analysis::{SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaVarId},
+    analysis::{DefSite, PhiOperand, SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaVarId},
     deobfuscation::passes::unflattening::tracer::{TraceNode, TraceTerminator, TraceTree},
 };
 
+/// Maximum dispatcher-phi hops followed when recovering a redirected edge's value.
+///
+/// Chains longer than this are pathological; giving up is safe because the caller
+/// then leaves the operand absent rather than guessing.
+const MAX_PHI_RESOLUTION_HOPS: usize = 8;
+
 type PhiOperands = Vec<(usize, SsaVarId)>;
+
+/// Snapshot of every block's phi nodes: `block -> (phi result -> operands)`.
+///
+/// Captured before the CFG is rewired, so edges the patch removes can still be
+/// consulted when recovering values for the edges it creates.
+type PhiSnapshot = BTreeMap<usize, BTreeMap<SsaVarId, PhiOperands>>;
 type BlockPhiData = Vec<(usize, Vec<(SsaVarId, PhiOperands)>)>;
 
 /// Result of unflattening a CFG.
@@ -104,6 +117,21 @@ pub struct PatchPlan {
     /// Blocks in execution order (for debugging/verification).
     pub execution_order: Vec<usize>,
 
+    /// Membership index for [`execution_order`](Self::execution_order).
+    ///
+    /// The order itself has to stay a `Vec`, but it is appended to once per
+    /// block of every node in the trace tree — millions of times on a
+    /// flattened method — and each append asked whether the block was already
+    /// present by scanning the whole list.
+    execution_order_seen: FxHashSet<usize>,
+
+    /// Source block to redirect target, mirroring
+    /// [`redirects`](Self::redirects).
+    ///
+    /// Conflict detection looks up a source on every redirect, which is the
+    /// same per-node cost as the execution order above.
+    redirect_targets: FxHashMap<usize, usize>,
+
     /// Branch-collapse requests: `source_block -> new_target`.
     ///
     /// When a state transition's path enters the dispatcher through a
@@ -132,6 +160,8 @@ impl PatchPlan {
             state_transition_sources: BTreeSet::new(),
             clone_requests: BTreeMap::new(),
             execution_order: Vec::new(),
+            execution_order_seen: FxHashSet::default(),
+            redirect_targets: FxHashMap::default(),
             branch_collapses: BTreeMap::new(),
             state_transitions_removed: 0,
             user_branches_preserved: 0,
@@ -162,7 +192,7 @@ impl PatchPlan {
             return;
         }
         // Check for conflict: same source with different target
-        if let Some(&(_, existing_target)) = self.redirects.iter().find(|&&(s, _)| s == source) {
+        if let Some(&existing_target) = self.redirect_targets.get(&source) {
             if existing_target != target {
                 // Conflict! This source is a merge point needing cloning.
                 // Add both the existing and new paths to clone requests.
@@ -193,6 +223,7 @@ impl PatchPlan {
         }
 
         // First time seeing this source - record it and track predecessor for potential cloning
+        self.redirect_targets.insert(source, target);
         self.redirects.push((source, target));
 
         // Also record in clone_requests in case we need it later
@@ -224,7 +255,8 @@ impl PatchPlan {
     }
 
     fn add_to_execution_order(&mut self, block: usize) {
-        if !self.execution_order.contains(&block) && !self.is_dispatcher_block(block) {
+        if !self.execution_order_seen.contains(&block) && !self.is_dispatcher_block(block) {
+            self.execution_order_seen.insert(block);
             self.execution_order.push(block);
         }
     }
@@ -301,6 +333,8 @@ pub fn merge_patch_plans(plans: Vec<PatchPlan>) -> PatchPlan {
             state_transition_sources: BTreeSet::new(),
             clone_requests: BTreeMap::new(),
             execution_order: Vec::new(),
+            execution_order_seen: FxHashSet::default(),
+            redirect_targets: FxHashMap::default(),
             branch_collapses: BTreeMap::new(),
             state_transitions_removed: 0,
             user_branches_preserved: 0,
@@ -319,6 +353,8 @@ pub fn merge_patch_plans(plans: Vec<PatchPlan>) -> PatchPlan {
             state_transition_sources: BTreeSet::new(),
             clone_requests: BTreeMap::new(),
             execution_order: Vec::new(),
+            execution_order_seen: FxHashSet::default(),
+            redirect_targets: FxHashMap::default(),
             branch_collapses: BTreeMap::new(),
             state_transitions_removed: 0,
             user_branches_preserved: 0,
@@ -338,6 +374,8 @@ pub fn merge_patch_plans(plans: Vec<PatchPlan>) -> PatchPlan {
         state_transition_sources: BTreeSet::new(),
         clone_requests: BTreeMap::new(),
         execution_order: Vec::new(),
+        execution_order_seen: FxHashSet::default(),
+        redirect_targets: FxHashMap::default(),
         branch_collapses: BTreeMap::new(),
         state_transitions_removed: 0,
         user_branches_preserved: 0,
@@ -352,9 +390,7 @@ pub fn merge_patch_plans(plans: Vec<PatchPlan>) -> PatchPlan {
 
         // Merge redirects, checking for conflicts
         for (source, target) in plan.redirects {
-            if let Some(&(_, existing_target)) =
-                merged.redirects.iter().find(|&&(s, _)| s == source)
-            {
+            if let Some(&existing_target) = merged.redirect_targets.get(&source) {
                 if existing_target != target {
                     log::warn!(
                         "CFF merge: redirect conflict for block {} (target {} vs {}), keeping first",
@@ -367,6 +403,7 @@ pub fn merge_patch_plans(plans: Vec<PatchPlan>) -> PatchPlan {
                 // Duplicate (same source, same target) — skip
                 continue;
             }
+            merged.redirect_targets.insert(source, target);
             merged.redirects.push((source, target));
         }
 
@@ -381,7 +418,7 @@ pub fn merge_patch_plans(plans: Vec<PatchPlan>) -> PatchPlan {
 
         // Merge execution order (deduplicated)
         for block in plan.execution_order {
-            if !merged.execution_order.contains(&block) {
+            if merged.execution_order_seen.insert(block) {
                 merged.execution_order.push(block);
             }
         }
@@ -559,11 +596,19 @@ fn extract_redirects_from_node(
                                 .get(interior_start..end_idx)
                                 .map(|s| s.iter().copied().collect())
                                 .unwrap_or_default();
-                            for iwv in &node.instructions {
-                                if !intermediate_blocks.contains(&iwv.block_idx) {
-                                    continue;
-                                }
-                                if !is_pure_prep_op(iwv.instruction.op()) {
+                            // Purity is a property of the blocks themselves, so
+                            // read it from the SSA rather than from a per-node
+                            // instruction log. The tracer walks every
+                            // instruction of a block it passes through, and
+                            // these blocks lie strictly between `first` and
+                            // `last` in the visit order, so they were traversed
+                            // in full — the two formulations see the same
+                            // instructions.
+                            for &block_idx in &intermediate_blocks {
+                                let all_pure = ssa.block(block_idx).is_some_and(|block| {
+                                    block.instructions().iter().all(|i| is_pure_prep_op(i.op()))
+                                });
+                                if !all_pure {
                                     intermediates_are_pure = false;
                                     break;
                                 }
@@ -738,6 +783,31 @@ fn extract_redirects_from_node(
 /// - Number of user branches preserved
 /// - Final block count
 pub fn apply_patch_plan(ssa: &mut SsaFunction, plan: &PatchPlan) -> ReconstructionResult {
+    // Snapshot the phi graph before any rewiring. Redirects bypass the
+    // dispatcher, and the dispatcher's phis — which record what each case block
+    // contributed — are cleared later in this function. Recovering the value for
+    // a redirected edge means reading those phis, so they must be captured while
+    // they still exist.
+    let original_phis: PhiSnapshot = ssa
+        .blocks()
+        .iter()
+        .map(|block| {
+            let phis = block
+                .phi_nodes()
+                .iter()
+                .map(|phi| {
+                    let operands = phi
+                        .operands()
+                        .iter()
+                        .map(|op| (op.predecessor(), op.value()))
+                        .collect();
+                    (phi.result(), operands)
+                })
+                .collect();
+            (block.id(), phis)
+        })
+        .collect();
+
     // Apply only safe redirects (skip conflicting merge points that need cloning)
     let safe = plan.safe_redirects();
     let to_clone = plan.blocks_to_clone();
@@ -880,8 +950,62 @@ pub fn apply_patch_plan(ssa: &mut SsaFunction, plan: &PatchPlan) -> Reconstructi
             pred_block.redirect_target(original_merge, new_block_idx);
         }
 
-        // Filter state instructions from the clone
+        // Filter state instructions from the clone.
+        //
+        // This must happen before the clone's definitions are renamed below:
+        // taint is recorded against the original variable ids, so renaming
+        // first would stop every state instruction from matching.
         filter_state_instructions(&mut cloned, &plan.state_tainted, &plan.dispatcher_blocks);
+
+        // Give the clone its own definitions.
+        //
+        // Copying a block verbatim defines every one of its variables a second
+        // time, which breaks SSA's single-definition property. The original code
+        // relied on `rebuild_ssa()` to sort this out, but rebuild cannot recover
+        // from duplicate definitions — it produces a function whose uses resolve
+        // to neither definition, surfacing later as an undefined-variable
+        // verification failure in an unrelated block.
+        //
+        // Uses that refer to definitions *outside* this block are left alone:
+        // they still resolve to the original definition, which dominates both
+        // the original block and the clone.
+        let mut defs_to_rename: Vec<SsaVarId> = Vec::new();
+        for phi in cloned.phi_nodes() {
+            defs_to_rename.push(phi.result());
+        }
+        for instr in cloned.instructions() {
+            if let Some(dest) = instr.def() {
+                defs_to_rename.push(dest);
+            }
+        }
+
+        let mut renames: BTreeMap<SsaVarId, SsaVarId> = BTreeMap::new();
+        for old_var in defs_to_rename {
+            let Some(var) = ssa.variable(old_var) else {
+                continue;
+            };
+            let (origin, var_type) = (var.origin(), var.var_type().clone());
+            let new_var = ssa.create_variable(origin, 0, DefSite::phi(new_block_idx), var_type);
+            renames.insert(old_var, new_var);
+        }
+
+        if !renames.is_empty() {
+            for phi in cloned.phi_nodes_mut() {
+                if let Some(&new_var) = renames.get(&phi.result()) {
+                    phi.set_result(new_var);
+                }
+            }
+            for instr in cloned.instructions_mut() {
+                instr
+                    .op_mut()
+                    .replace_uses_with(|v| renames.get(&v).copied());
+                if let Some(dest) = instr.def() {
+                    if let Some(&new_var) = renames.get(&dest) {
+                        instr.op_mut().replace_def(dest, new_var);
+                    }
+                }
+            }
+        }
 
         // Add the clone to SSA
         ssa.blocks_mut().push(cloned);
@@ -982,6 +1106,100 @@ pub fn apply_patch_plan(ssa: &mut SsaFunction, plan: &PatchPlan) -> Reconstructi
         }
     }
 
+    // Drop phi operands whose value no longer has a definition.
+    //
+    // Clearing the dispatcher and dead case blocks, and filtering state
+    // instructions out of patched blocks, removes definitions that successor
+    // phis may still reference. `rebuild_ssa()` resolves phi operands into real
+    // values, so a stale operand becomes an undefined instruction operand and
+    // fails verification — reported far from here, as an undefined use in
+    // whichever block the value was propagated into.
+    //
+    // Pruning is safe because `rebuild_ssa()` reconstructs phi nodes from the
+    // patched CFG and the surviving definitions; a stale operand carries no
+    // information it could use.
+    {
+        let mut defined: BTreeSet<SsaVarId> = BTreeSet::new();
+        for block in ssa.blocks() {
+            for phi in block.phi_nodes() {
+                defined.insert(phi.result());
+            }
+            for instr in block.instructions() {
+                if let Some(dest) = instr.def() {
+                    defined.insert(dest);
+                }
+            }
+        }
+
+        // Predecessor sets for the *patched* CFG. Redirects, branch collapses
+        // and clone edges all rewire terminators without touching phi operands,
+        // so a phi can still carry an operand for a block that no longer reaches
+        // it — 53k such operands on a large NETReactor method. `rebuild_ssa()`
+        // resolves phi operands into concrete values, and a stale operand names
+        // a value that does not reach the block, so it propagates a definition
+        // that no longer dominates its uses.
+        let mut predecessors: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
+        for block in ssa.blocks() {
+            let id = block.id();
+            block.for_each_successor(|succ| {
+                predecessors.entry(succ).or_default().insert(id);
+            });
+        }
+
+        // Work out, per block, which phi operands survive and which edges need a
+        // value recovered. Done as a read-only pass first so `resolve_redirected_operand`
+        // can consult the snapshot without holding a mutable borrow of `ssa`.
+        let mut repairs: BTreeMap<usize, Vec<(SsaVarId, usize, SsaVarId)>> = BTreeMap::new();
+        for block in ssa.blocks() {
+            let block_id = block.id();
+            let Some(preds) = predecessors.get(&block_id) else {
+                continue;
+            };
+            for phi in block.phi_nodes() {
+                let result = phi.result();
+                for &pred in preds {
+                    if phi.operands().iter().any(|op| op.predecessor() == pred) {
+                        continue;
+                    }
+                    if let Some(value) = resolve_redirected_operand(
+                        &original_phis,
+                        &defined,
+                        block_id,
+                        result,
+                        pred,
+                        preds,
+                    ) {
+                        repairs
+                            .entry(block_id)
+                            .or_default()
+                            .push((result, pred, value));
+                    }
+                }
+            }
+        }
+
+        for block in ssa.blocks_mut() {
+            let block_id = block.id();
+            let preds = predecessors.remove(&block_id).unwrap_or_default();
+            let block_repairs = repairs.remove(&block_id).unwrap_or_default();
+            for phi in block.phi_nodes_mut() {
+                phi.operands_mut().retain(|op| {
+                    preds.contains(&op.predecessor()) && defined.contains(&op.value())
+                });
+                for &(result, pred, value) in &block_repairs {
+                    if result == phi.result()
+                        && !phi.operands().iter().any(|op| op.predecessor() == pred)
+                    {
+                        phi.add_operand(PhiOperand::new(value, pred));
+                    }
+                }
+            }
+            block
+                .phi_nodes_mut()
+                .retain(|phi| !phi.operands().is_empty());
+        }
+    }
+
     // NOTE: PHI propagation and variable definition cleanup is NOT done here.
     // After apply_patch_plan returns, the caller must call SsaFunction::rebuild_ssa()
     // to reconstruct proper SSA form with correct PHI nodes for the new CFG structure.
@@ -992,6 +1210,87 @@ pub fn apply_patch_plan(ssa: &mut SsaFunction, plan: &PatchPlan) -> Reconstructi
         block_count: ssa.block_count(),
         dispatcher_still_needed,
     }
+}
+
+/// Recovers the value a phi should take on an edge created by a redirect.
+///
+/// Unflattening rewires `source -> dispatcher -> target` into `source -> target`.
+/// The phi at `target` recorded its incoming value against the dispatcher, not
+/// against `source`, so after rewiring it has no operand for its new predecessor.
+/// The value is still recoverable: the dispatcher's own phi records what each
+/// case block contributed, so following `target`'s dispatcher-side operand back
+/// through the dispatcher's phi to its operand for `source` yields the value that
+/// was live when `source` finished executing.
+///
+/// Chains of dispatcher blocks are followed up to [`MAX_PHI_RESOLUTION_HOPS`]
+/// times. Returns `None` if the chain cannot be resolved to a value that still
+/// has a definition, in which case the caller leaves the operand absent rather
+/// than inventing one — a wrong value here would silently corrupt the recovered
+/// program, which is worse than a failed unflattening.
+fn resolve_redirected_operand(
+    original_phis: &PhiSnapshot,
+    defined: &BTreeSet<SsaVarId>,
+    block: usize,
+    phi_result: SsaVarId,
+    new_pred: usize,
+    live_preds: &BTreeSet<usize>,
+) -> Option<SsaVarId> {
+    // Operands of this phi that are no longer reachable: these are the edges the
+    // patch removed, and one of them is the dispatcher path from `new_pred`.
+    let operands = original_phis.get(&block)?.get(&phi_result)?;
+
+    for &(old_pred, value) in operands {
+        if live_preds.contains(&old_pred) {
+            continue;
+        }
+
+        // Walk back through the removed blocks' phis looking for what `new_pred`
+        // contributed.
+        let mut current_block = old_pred;
+        let mut current_value = value;
+        for _ in 0..MAX_PHI_RESOLUTION_HOPS {
+            let Some(block_phis) = original_phis.get(&current_block) else {
+                break;
+            };
+            let Some(chain_operands) = block_phis.get(&current_value) else {
+                // `current_value` is not defined by a phi here, so it is a plain
+                // definition that was already live before the dispatcher — usable
+                // only if it survived the patch.
+                break;
+            };
+
+            if let Some(&(_, from_source)) =
+                chain_operands.iter().find(|(pred, _)| *pred == new_pred)
+            {
+                if defined.contains(&from_source) {
+                    return Some(from_source);
+                }
+                current_value = from_source;
+                current_block = new_pred;
+                continue;
+            }
+
+            // Not contributed directly by `new_pred`; step through the single
+            // unreachable predecessor if there is exactly one candidate.
+            let mut candidates = chain_operands
+                .iter()
+                .filter(|(pred, _)| !live_preds.contains(pred));
+            let &(next_block, next_value) = candidates.next()?;
+            if candidates.next().is_some() {
+                // Ambiguous — several removed edges could supply this value, and
+                // guessing risks selecting one that does not dominate `new_pred`.
+                return None;
+            }
+            current_block = next_block;
+            current_value = next_value;
+        }
+
+        if defined.contains(&current_value) {
+            return Some(current_value);
+        }
+    }
+
+    None
 }
 
 /// Filters out state-tainted instructions from a block.

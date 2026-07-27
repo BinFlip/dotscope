@@ -5,13 +5,12 @@
 //! foreign types).
 
 use analyssa::ir::ops::SsaOp as AnalyssaSsaOp;
-
-use crate::{analysis::ssa::target::CilTarget, metadata::token::Token};
-
 // `BinaryOpInfo`/`UnaryOpInfo` aren't re-exported (the original dotscope
 // `ops.rs` didn't surface them either; direct callers go through
 // `analyssa::ir::ops` if they need them).
 pub use analyssa::ir::ops::{BinaryOpKind, CmpKind, UnaryOpKind};
+
+use crate::{analysis::ssa::target::CilTarget, metadata::token::Token};
 
 /// CIL-defaulted alias of `analyssa::ir::ops::SsaOp`.
 pub type SsaOp<T = CilTarget> = AnalyssaSsaOp<T>;

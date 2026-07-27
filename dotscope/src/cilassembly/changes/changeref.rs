@@ -49,13 +49,12 @@ use std::sync::{
     Arc,
 };
 
+// Re-export hash functions from utils for backwards compatibility
+pub use crate::utils::{hash_blob, hash_guid, hash_string};
 use crate::{
     metadata::{tables::TableId, token::Token},
     Error, Result,
 };
-
-// Re-export hash functions from utils for backwards compatibility
-pub use crate::utils::{hash_blob, hash_guid, hash_string};
 
 /// Counter for generating unique IDs
 static NEXT_CHANGE_ID: AtomicU64 = AtomicU64::new(1);
@@ -539,8 +538,9 @@ impl ChangeRef {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::thread;
+
+    use super::*;
 
     #[test]
     fn test_changeref_heap_creation() {

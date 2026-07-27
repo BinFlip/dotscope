@@ -135,6 +135,7 @@ mod matcher;
 mod types;
 
 pub use core::Hook;
+
 pub use manager::HookManager;
 pub use matcher::{
     HookMatcher, InternalMethodMatcher, NameMatcher, NativeMethodMatcher, RuntimeMatcher,

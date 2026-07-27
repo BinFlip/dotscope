@@ -15,6 +15,8 @@
 //! 3. Both original and injected methods can be disassembled
 //! 4. Method bodies are preserved correctly
 
+use std::path::Path;
+
 use dotscope::{
     metadata::{
         signatures::{encode_method_signature, SignatureMethod, SignatureParameter, TypeSignature},
@@ -24,7 +26,6 @@ use dotscope::{
     prelude::*,
     ChangeRefKind, ChangeRefRc,
 };
-use std::path::Path;
 
 const TEST_ASSEMBLY_PATH: &str = "tests/samples/mono_4.8/mscorlib.dll";
 

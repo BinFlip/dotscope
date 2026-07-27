@@ -62,11 +62,13 @@ impl RowWritable for StandAloneSigRaw {
 mod tests {
     use std::sync::Arc;
 
-    use crate::metadata::tables::{
-        standalonesig::StandAloneSigRaw,
-        types::{RowReadable, RowWritable, TableInfo, TableRow},
+    use crate::metadata::{
+        tables::{
+            standalonesig::StandAloneSigRaw,
+            types::{RowReadable, RowWritable, TableInfo, TableRow},
+        },
+        token::Token,
     };
-    use crate::metadata::token::Token;
 
     #[test]
     fn test_standalonesig_row_size() {

@@ -82,6 +82,11 @@
 //! - [ECMA-335 II.12.2](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Inheritance and overriding
 //! - [ECMA-335 II.22.37](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - TypeDef inheritance
 
+use std::{collections::HashSet, mem, sync::Arc};
+
+use rayon::prelude::*;
+use rustc_hash::FxHashSet;
+
 use crate::{
     metadata::{
         method::{Method, MethodAccessFlags, MethodModifiers},
@@ -94,9 +99,6 @@ use crate::{
     },
     Error, Result,
 };
-use rayon::prelude::*;
-use rustc_hash::FxHashSet;
-use std::{collections::HashSet, mem, sync::Arc};
 
 /// Foundation validator for inheritance hierarchies, circular dependencies, interface implementation, and method inheritance.
 ///

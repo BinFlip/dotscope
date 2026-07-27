@@ -103,15 +103,16 @@ impl RowWritable for MethodDefRaw {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
-    use crate::{
-        metadata::tables::{
+    use crate::metadata::{
+        tables::{
             types::{RowReadable, TableInfo, TableRow},
             TableId,
         },
-        metadata::token::Token,
+        token::Token,
     };
-    use std::sync::Arc;
 
     #[test]
     fn test_row_size() {

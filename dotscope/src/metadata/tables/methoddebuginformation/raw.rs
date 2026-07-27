@@ -60,6 +60,8 @@
 //! - [`crate::metadata::streams::Blob`] - Blob heap for sequence points data resolution
 //! - [`crate::metadata::method`] - Method definition association and debugging
 
+use std::sync::Arc;
+
 use crate::{
     metadata::{
         sequencepoints::parse_sequence_points,
@@ -71,7 +73,6 @@ use crate::{
     },
     Result,
 };
-use std::sync::Arc;
 
 /// Raw binary representation of a `MethodDebugInformation` table entry.
 ///

@@ -732,9 +732,8 @@ impl UnwindSequenceBuilder {
 
 #[cfg(test)]
 mod tests {
-    use crate::{emulation::HeapRef, metadata::typesystem::CilFlavor};
-
     use super::*;
+    use crate::{emulation::HeapRef, metadata::typesystem::CilFlavor};
 
     fn create_test_exception() -> ExceptionInfo {
         ExceptionInfo::new(

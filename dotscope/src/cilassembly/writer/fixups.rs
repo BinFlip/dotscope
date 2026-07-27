@@ -877,12 +877,15 @@ fn calculate_pe_checksum(output: &Output, checksum_offset: u64, actual_size: usi
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::cilassembly::writer::generator::PeGenerator;
-    use crate::cilassembly::CilAssembly;
-    use crate::CilAssemblyView;
     use std::path::Path;
+
     use tempfile::NamedTempFile;
+
+    use super::*;
+    use crate::{
+        cilassembly::{writer::generator::PeGenerator, CilAssembly},
+        CilAssemblyView,
+    };
 
     #[test]
     fn test_checksum_excludes_checksum_field() {

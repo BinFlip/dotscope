@@ -63,11 +63,13 @@ impl RowWritable for TypeSpecRaw {
 mod tests {
     use std::sync::Arc;
 
-    use crate::metadata::tables::{
-        types::{RowReadable, RowWritable, TableInfo, TableRow},
-        typespec::TypeSpecRaw,
+    use crate::metadata::{
+        tables::{
+            types::{RowReadable, RowWritable, TableInfo, TableRow},
+            typespec::TypeSpecRaw,
+        },
+        token::Token,
     };
-    use crate::metadata::token::Token;
 
     #[test]
     fn test_typespec_row_size() {

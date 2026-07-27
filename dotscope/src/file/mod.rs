@@ -125,6 +125,8 @@ pub mod repair;
 use std::path::Path;
 
 use cowfile::CowFile;
+use goblin::pe::PE;
+use pe::{DataDirectory, DataDirectoryType, Pe};
 
 use crate::{
     file::{
@@ -135,8 +137,6 @@ use crate::{
     Error::{self, Goblin, LayoutFailed, Other},
     ParseFailure, ParseStage, Result,
 };
-use goblin::pe::PE;
-use pe::{DataDirectory, DataDirectoryType, Pe};
 
 /// Represents a loaded PE file.
 ///

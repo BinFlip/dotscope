@@ -301,7 +301,18 @@ impl ConstantPropagationPass {
         for (block_idx, block) in ssa.iter_blocks() {
             for (instr_idx, instr) in block.instructions().iter().enumerate() {
                 let op = instr.op();
-                if let Some(result) = Self::check_algebraic_identity(op, constants) {
+                // The *operand* type decides whether a self-cancelling identity
+                // holds (`x - x` is NaN for a NaN float) and at what width its
+                // constant should be materialised. A comparison's destination is
+                // a boolean, so the destination type would answer neither.
+                let operand_type = op
+                    .uses()
+                    .first()
+                    .and_then(|operand| ssa.variable(*operand))
+                    .map(|var| var.var_type().clone());
+                if let Some(result) =
+                    Self::check_algebraic_identity(op, constants, operand_type.as_ref())
+                {
                     transformations.push((block_idx, instr_idx, result));
                 }
             }
@@ -359,9 +370,10 @@ impl ConstantPropagationPass {
     fn check_algebraic_identity(
         op: &SsaOp,
         constants: &BTreeMap<SsaVarId, ConstValue>,
+        operand_type: Option<&SsaType>,
     ) -> Option<AlgebraicResult> {
         let dest = op.dest()?;
-        match simplify_op(op, constants) {
+        match simplify_op(op, constants, operand_type) {
             SimplifyResult::Constant(value) => Some(AlgebraicResult::Constant { dest, value }),
             SimplifyResult::Copy(src) => Some(AlgebraicResult::Copy { dest, src }),
             SimplifyResult::None => None,

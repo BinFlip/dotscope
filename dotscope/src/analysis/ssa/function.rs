@@ -117,9 +117,20 @@ impl SsaFunctionCilExt for SsaFunction<CilTarget> {
                 }
             }
         }
+        // Renumbering a local moves its rename group too. `rebuild_ssa` groups
+        // variables by rename group but resolves argument/local representatives
+        // by origin, so leaving the group pointing at the old slot silently
+        // splits the value: the two views disagree about which names denote the
+        // same local, and the value ends up with no reaching definition. The
+        // group for a local is `num_args + index`, per the assignment rules
+        // documented on `SsaFunction::rename_groups`.
+        let num_args = u32::try_from(self.num_args()).unwrap_or(0);
         for (id, origin) in new_origins {
             if let Some(v) = self.variable_mut(id) {
                 v.set_origin(origin);
+            }
+            if let VariableOrigin::Local(new) = origin {
+                self.set_rename_group(id, num_args.saturating_add(u32::from(new)));
             }
         }
 

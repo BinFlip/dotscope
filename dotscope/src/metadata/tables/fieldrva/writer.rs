@@ -65,11 +65,13 @@ impl RowWritable for FieldRvaRaw {
 mod tests {
     use std::sync::Arc;
 
-    use crate::metadata::tables::{
-        fieldrva::FieldRvaRaw,
-        types::{RowReadable, RowWritable, TableId, TableInfo, TableRow},
+    use crate::metadata::{
+        tables::{
+            fieldrva::FieldRvaRaw,
+            types::{RowReadable, RowWritable, TableId, TableInfo, TableRow},
+        },
+        token::Token,
     };
-    use crate::metadata::token::Token;
 
     #[test]
     fn test_fieldrva_row_size() {

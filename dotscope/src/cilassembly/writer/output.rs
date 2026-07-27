@@ -1032,13 +1032,15 @@ impl Output {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::file::pe::DosHeader;
     use std::{
         fs::File,
         io::{Read, Write},
     };
+
     use tempfile::tempdir;
+
+    use super::*;
+    use crate::file::pe::DosHeader;
 
     #[test]
     fn test_mmap_file_creation() {

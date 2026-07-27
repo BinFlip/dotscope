@@ -943,18 +943,11 @@ impl Interpreter {
         let index = thread.pop()?;
         let array_ref = thread.pop()?;
 
-        let idx_i64 = match index {
-            EmValue::I32(v) => i64::from(v),
-            EmValue::NativeInt(v) => v,
-            _ => {
-                return Err(EmulationError::TypeMismatch {
-                    operation: "ldelema",
-                    expected: "integer index",
-                    found: index.cil_flavor().as_str(),
-                }
-                .into())
-            }
-        };
+        // Share the index extraction used by `ldelem`/`stelem` rather than
+        // matching a narrower set here. `native uint` is a legal array index and
+        // appears in ConfuserEx's constants `Initialize()`; accepting only
+        // `I32`/`NativeInt` rejected it and aborted the whole emulation.
+        let idx_i64 = Self::extract_array_index(thread, &index, "ldelema")?;
 
         let idx = usize::try_from(idx_i64).map_err(|_| {
             Error::from(EmulationError::ArrayIndexOutOfBounds {
@@ -1365,6 +1358,39 @@ impl Interpreter {
                                     thread.store_through_pointer(&ptr, value)?;
                                     Ok(StepResult::Continue)
                                 }
+                            }
+                            _ => {
+                                thread.store_through_pointer(&ptr, value)?;
+                                Ok(StepResult::Continue)
+                            }
+                        }
+                    }
+                    PointerTarget::ArrayElement { array, index } => {
+                        // `ldelema` on a value-type array yields a pointer to the
+                        // element itself, and `stfld` through it must update one
+                        // field *within* that element. Storing through the pointer
+                        // would replace the whole element with the field value, so
+                        // read-modify-write the struct instead. LZMA's bit-decoder
+                        // arrays in ConfuserEx's constants runtime take this path.
+                        let element = thread.heap().get_array_element(*array, *index).ok();
+                        match element {
+                            Some(vt @ EmValue::ValueType { .. }) => {
+                                if let Some(updated) =
+                                    store_into_valuetype(thread, vt, field_token, value.clone())
+                                {
+                                    thread
+                                        .heap_mut()
+                                        .set_array_element(*array, *index, updated)?;
+                                    return Ok(StepResult::Continue);
+                                }
+                                thread.store_through_pointer(&ptr, value)?;
+                                Ok(StepResult::Continue)
+                            }
+                            Some(EmValue::ObjectRef(href)) => {
+                                // Reference-type element: the field belongs to the
+                                // referenced object, not to the array slot.
+                                thread.heap_mut().set_field(href, field_token, value)?;
+                                Ok(StepResult::Continue)
                             }
                             _ => {
                                 thread.store_through_pointer(&ptr, value)?;
@@ -1964,19 +1990,21 @@ impl Interpreter {
         let value = thread.pop()?;
         let addr = thread.pop()?;
 
-        // Verify this is a value type operation (stobj is for value types)
+        // `stobj` is not restricted to value types. ECMA-335 III.4.29 defines it
+        // over any `typeTok`, and states that when `typeTok` is a reference type
+        // the instruction is equivalent to `stind.ref`. Generic code relies on
+        // this: a method with a `T&` destination emits `stobj !!T`, which stores
+        // a reference whenever `T` is instantiated with a reference type — the
+        // shape ConfuserEx's `T Get<T>(uint)` decryptor takes at `T = string`.
+        //
+        // `type_token` is not resolved here, so there is nothing meaningful to
+        // validate the value against; only `Void` is categorically unstorable.
         let value_type = value.cil_flavor();
-        let is_value_type = value_type == CilFlavor::ValueType
-            || value_type == CilFlavor::I4
-            || value_type == CilFlavor::I8
-            || value_type == CilFlavor::R4
-            || value_type == CilFlavor::R8
-            || value_type == CilFlavor::I;
-        if !is_value_type {
+        if value_type == CilFlavor::Void {
             let _ = type_token; // Token available for future type resolution
             return Err(EmulationError::TypeMismatch {
                 operation: "stobj",
-                expected: "value type",
+                expected: "storable value",
                 found: value_type.as_str(),
             }
             .into());

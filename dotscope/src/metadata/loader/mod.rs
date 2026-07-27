@@ -141,10 +141,12 @@ static LOADERS: [&'static dyn MetadataLoader; 54] = [
     &inheritance::InheritanceResolver,
 ];
 
-use crate::{metadata::tables::TableId, project::ProjectContext, Error, Result};
+use std::{sync::LazyLock, time::Instant};
+
 use log::debug;
 use rayon::prelude::*;
-use std::{sync::LazyLock, time::Instant};
+
+use crate::{metadata::tables::TableId, project::ProjectContext, Error, Result};
 
 /// Static cache of pre-computed execution levels for parallel loader execution.
 ///

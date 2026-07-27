@@ -1,5 +1,4 @@
-use std::fmt::Write;
-use std::path::Path;
+use std::{fmt::Write, path::Path};
 
 use serde::Serialize;
 

@@ -45,9 +45,11 @@
 //! # ECMA-335 Reference
 //! See ECMA-335, Partition II, §22.17 for the complete `FieldMarshal` table specification.
 
-use crate::metadata::token::Token;
-use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
+
+use crossbeam_skiplist::SkipMap;
+
+use crate::metadata::token::Token;
 
 mod builder;
 mod loader;

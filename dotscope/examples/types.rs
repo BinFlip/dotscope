@@ -18,8 +18,9 @@
 //! - Familiarity with generics and inheritance
 //! - Experience with metadata analysis
 
-use dotscope::prelude::*;
 use std::{collections::HashMap, env, path::Path};
+
+use dotscope::prelude::*;
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();

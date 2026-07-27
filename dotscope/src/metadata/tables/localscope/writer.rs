@@ -113,9 +113,9 @@ impl RowWritable for LocalScopeRaw {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        metadata::tables::types::{RowReadable, TableInfo, TableRow},
-        metadata::token::Token,
+    use crate::metadata::{
+        tables::types::{RowReadable, TableInfo, TableRow},
+        token::Token,
     };
 
     #[test]

@@ -93,13 +93,15 @@ impl RowWritable for ManifestResourceRaw {
 mod tests {
     use std::sync::Arc;
 
-    use crate::metadata::tables::{
-        manifestresource::ManifestResourceRaw,
-        types::{
-            CodedIndex, CodedIndexType, RowReadable, RowWritable, TableId, TableInfo, TableRow,
+    use crate::metadata::{
+        tables::{
+            manifestresource::ManifestResourceRaw,
+            types::{
+                CodedIndex, CodedIndexType, RowReadable, RowWritable, TableId, TableInfo, TableRow,
+            },
         },
+        token::Token,
     };
-    use crate::metadata::token::Token;
 
     #[test]
     fn test_manifestresource_row_size() {

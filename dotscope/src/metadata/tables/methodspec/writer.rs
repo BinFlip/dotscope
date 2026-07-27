@@ -81,13 +81,15 @@ impl RowWritable for MethodSpecRaw {
 mod tests {
     use std::sync::Arc;
 
-    use crate::metadata::tables::{
-        methodspec::MethodSpecRaw,
-        types::{
-            CodedIndex, CodedIndexType, RowReadable, RowWritable, TableId, TableInfo, TableRow,
+    use crate::metadata::{
+        tables::{
+            methodspec::MethodSpecRaw,
+            types::{
+                CodedIndex, CodedIndexType, RowReadable, RowWritable, TableId, TableInfo, TableRow,
+            },
         },
+        token::Token,
     };
-    use crate::metadata::token::Token;
 
     #[test]
     fn test_methodspec_row_size() {

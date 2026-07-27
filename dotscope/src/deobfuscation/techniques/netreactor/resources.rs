@@ -1129,14 +1129,13 @@ fn encrypted_resource_names(assembly: &CilObject, findings: &ResourceFindings) -
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use std::{
         env,
         path::{Path, PathBuf},
         sync::Arc,
     };
 
+    use super::*;
     use crate::{
         emulation::{EmulationOutcome, ProcessBuilder, TracingConfig},
         metadata::validation::ValidationConfig,

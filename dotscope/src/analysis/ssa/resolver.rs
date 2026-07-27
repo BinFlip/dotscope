@@ -148,11 +148,10 @@ impl<'a> ValueResolver<'a, CilTarget> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[cfg(feature = "compiler")]
     use std::sync::Arc;
 
+    use super::*;
     use crate::{
         analysis::ssa::{
             ConstValue, DefSite, PhiNode, PhiOperand, SsaBlock, SsaFunction, SsaInstruction, SsaOp,

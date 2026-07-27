@@ -15,10 +15,11 @@
 //! All types in this module are [`Send`] and [`Clone`], enabling safe sharing
 //! across threads and efficient copying when needed.
 
+use uguid::Guid;
+
 use crate::metadata::{
     customdebuginformation::CustomDebugInfo, token::Token, typesystem::CilTypeReference,
 };
-use uguid::Guid;
 
 /// Owned representation of a `CustomDebugInformation` table entry
 ///

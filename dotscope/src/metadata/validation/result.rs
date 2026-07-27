@@ -57,11 +57,12 @@
 //! - [`crate::metadata::validation::traits`] - Validators return [`crate::Result`] converted to outcomes
 //! - [`crate::Error`] - Error types used in failed validation outcomes
 
+use std::{fmt, sync::Arc, time::Duration};
+
 use crate::{
     metadata::diagnostics::{DiagnosticCategory, Diagnostics},
     Error, Result,
 };
-use std::{fmt, sync::Arc, time::Duration};
 
 /// Represents the outcome of a validation operation.
 ///
@@ -729,9 +730,10 @@ impl fmt::Display for TwoStageValidationResult {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use crate::Error;
-    use std::time::Duration;
 
     #[test]
     fn test_validation_result_success() {

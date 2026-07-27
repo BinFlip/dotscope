@@ -123,8 +123,10 @@ impl Technique for BitMonoJunk {
 
 #[cfg(test)]
 mod tests {
-    use crate::deobfuscation::techniques::{bitmono::BitMonoJunk, Technique};
-    use crate::test::helpers::load_sample;
+    use crate::{
+        deobfuscation::techniques::{bitmono::BitMonoJunk, Technique},
+        test::helpers::load_sample,
+    };
 
     #[test]
     fn test_detect_positive() {

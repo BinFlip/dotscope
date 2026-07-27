@@ -3,8 +3,9 @@
 //! Contains helper methods migrated from AssemblyRef table source files
 //! for creating test data related to assembly reference operations.
 
-use crate::{cilassembly::CilAssembly, metadata::cilassemblyview::CilAssemblyView, Result};
 use std::path::PathBuf;
+
+use crate::{cilassembly::CilAssembly, metadata::cilassemblyview::CilAssemblyView, Result};
 
 /// Helper function to get a test assembly for AssemblyRef operations
 ///

@@ -3,8 +3,7 @@
 //! This module provides the main test runner that compiles C# source,
 //! loads the resulting assembly, and verifies analysis results.
 
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use crate::{
     analysis::CallGraph,

@@ -5,8 +5,9 @@
 //! and resolved metadata, `CilAssemblyView` gives you raw access to the file
 //! structure - perfect for building editing tools.
 
-use dotscope::prelude::*;
 use std::env;
+
+use dotscope::prelude::*;
 
 fn main() -> Result<()> {
     // Get assembly path from command line or use default

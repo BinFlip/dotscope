@@ -237,8 +237,10 @@ impl CallSite {
 
 #[cfg(test)]
 mod tests {
-    use crate::analysis::callgraph::{CallSite, CallTarget, CallType};
-    use crate::metadata::token::Token;
+    use crate::{
+        analysis::callgraph::{CallSite, CallTarget, CallType},
+        metadata::token::Token,
+    };
 
     #[test]
     fn test_call_type_properties() {

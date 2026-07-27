@@ -72,9 +72,11 @@
 //!
 //! - [Portable PDB Format - LocalScope Table](https://github.com/dotnet/core/blob/main/Documentation/diagnostics/portable_pdb.md#localscope-table-0x32)
 
-use crate::metadata::token::Token;
-use crossbeam_skiplist::SkipMap;
 use std::sync::{Arc, Weak};
+
+use crossbeam_skiplist::SkipMap;
+
+use crate::metadata::token::Token;
 
 mod builder;
 mod loader;

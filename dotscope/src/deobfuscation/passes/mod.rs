@@ -48,12 +48,14 @@ mod reflection;
 mod staticfields;
 mod unflattening;
 
-pub use self::antidebug::{SentinelCondition, SentinelTaintRemovalPass};
-pub use self::decryption::DecryptionPass;
-pub use self::delegates::{DelegateProxyResolutionPass, DelegateTypeInfo};
-pub use self::native::NativeMethodConversionPass;
-pub use self::neutralize::NeutralizationPass;
-pub use self::opaquefields::OpaqueFieldPredicatePass;
-pub use self::reflection::{count_resolve_method_calli_sites, ReflectionDevirtualizationPass};
-pub use self::staticfields::{I32Extractor, StaticFieldResolutionPass, StringExtractor};
-pub use self::unflattening::{CffDetector, CffReconstructionPass, Dispatcher, UnflattenConfig};
+pub use self::{
+    antidebug::{SentinelCondition, SentinelTaintRemovalPass},
+    decryption::DecryptionPass,
+    delegates::{DelegateProxyResolutionPass, DelegateTypeInfo},
+    native::NativeMethodConversionPass,
+    neutralize::NeutralizationPass,
+    opaquefields::OpaqueFieldPredicatePass,
+    reflection::{count_resolve_method_calli_sites, ReflectionDevirtualizationPass},
+    staticfields::{I32Extractor, StaticFieldResolutionPass, StringExtractor},
+    unflattening::{CffDetector, CffReconstructionPass, Dispatcher, UnflattenConfig},
+};

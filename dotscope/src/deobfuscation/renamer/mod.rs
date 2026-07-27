@@ -26,20 +26,19 @@ mod prompt;
 mod providers;
 mod validate;
 
-pub use config::SmartRenameConfig;
-
 use std::collections::{HashMap, HashSet};
 
+pub use config::SmartRenameConfig;
+
+use self::{
+    cascade::CascadeRenamer,
+    providers::{SimpleNameGenerator, SimpleProvider},
+};
 use crate::{
     cilassembly::CilAssembly,
     deobfuscation::utils::{is_obfuscated_name, is_special_name},
     metadata::tables::{FieldRaw, MethodDefRaw, ParamRaw, TableDataOwned, TableId, TypeDefRaw},
     CilObject, Result,
-};
-
-use self::{
-    cascade::CascadeRenamer,
-    providers::{SimpleNameGenerator, SimpleProvider},
 };
 
 /// A provider that generates names from context.
@@ -395,6 +394,8 @@ fn update_row_name_field(
 
 #[cfg(test)]
 mod tests {
+    // Only the `smart-rename`-off equivalence test uses this.
+    #[cfg(not(feature = "smart-rename"))]
     use std::collections::HashSet;
     #[cfg(feature = "smart-rename")]
     use std::path::PathBuf;
@@ -692,6 +693,13 @@ mod tests {
 
     /// `renames_collect(_, None)` should produce identical results to
     /// `renames_collect(_, Some(&SmartRenameConfig::default()))` — both use SimpleProvider.
+    ///
+    /// Only with `smart-rename` off. With the feature on, `create_provider`
+    /// honours the `Some(..)` by building a `LocalProvider`, and
+    /// `SmartRenameConfig::default()` carries an empty `model_path` that
+    /// `LocalProvider::initialize` correctly rejects — so the two calls take
+    /// different providers by design and there is no equivalence to assert.
+    #[cfg(not(feature = "smart-rename"))]
     #[test]
     fn test_cascade_with_smart_config_none_matches_default() {
         let assembly_a = load_sample(RENAMER_SAMPLE);

@@ -19,9 +19,10 @@ use crate::{
     compiler::{
         AlgebraicSimplificationPass, BlockMergingPass, ConstantPropagationPass,
         ControlFlowSimplificationPass, CopyPropagationPass, DeadCodeEliminationPass,
-        GlobalValueNumberingPass, InliningPass, JumpThreadingPass, LicmPass, OpaquePredicatePass,
-        PassPhase, PassScheduler, ProxyDevirtualizationPass, ReassociationPass,
-        StrengthReductionPass, ValueRangePropagationPass,
+        GlobalValueNumberingPass, InliningPass, JumpThreadingPass, LicmPass,
+        MemoryOptimizationPass, OpaquePredicatePass, PassPhase, PassScheduler,
+        ProxyDevirtualizationPass, ReassociationPass, StrengthReductionPass,
+        ValueRangePropagationPass,
     },
     deobfuscation::{
         config::EngineConfig,
@@ -227,6 +228,13 @@ impl DeobfuscationEngine {
                 )),
                 PassPhase::Normalize,
             );
+        }
+        if self.config.passes.memory_optimization {
+            // Runs after copy propagation so the address expressions Memory SSA
+            // decodes are already canonicalised, and before strength reduction /
+            // algebraic simplification so the values it forwards out of memory
+            // get folded in the same fixpoint iteration.
+            scheduler.add(Box::new(MemoryOptimizationPass), PassPhase::Normalize);
         }
         if self.config.passes.strength_reduction {
             scheduler.add(Box::new(StrengthReductionPass::new()), PassPhase::Normalize);

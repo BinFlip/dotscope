@@ -3,6 +3,8 @@
 //! Contains helper methods migrated from Constant table source files
 //! for creating test data related to constant operations and field/property/parameter creation.
 
+use std::sync::Arc;
+
 use crate::{
     metadata::{
         signatures::TypeSignature,
@@ -10,7 +12,6 @@ use crate::{
     },
     test::builders::{FieldBuilder, ParamBuilder, PropertyBuilder},
 };
-use std::sync::Arc;
 
 /// Helper function to create a simple i4 field
 ///

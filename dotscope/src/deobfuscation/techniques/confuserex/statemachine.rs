@@ -33,6 +33,7 @@
 
 use std::collections::{hash_map::Entry, HashMap, HashSet, VecDeque};
 
+use analyssa::graph::NodeId;
 use dashmap::DashSet;
 
 use crate::{
@@ -52,7 +53,6 @@ use crate::{
     prelude::FlowType,
     CilObject,
 };
-use analyssa::graph::NodeId;
 
 /// Information about a call site to a decryptor method.
 pub struct DetectedCallSite {

@@ -32,8 +32,9 @@
 //! - [`crate::metadata::tables::types::read::traits`] - Core parsing traits
 //! - [`crate::metadata::tables::types::read::access`] - Low-level access utilities
 
-use rayon::iter::{plumbing, IndexedParallelIterator, ParallelIterator};
 use std::sync::{Arc, Mutex};
+
+use rayon::iter::{plumbing, IndexedParallelIterator, ParallelIterator};
 
 use crate::{
     metadata::tables::{MetadataTable, RowReadable},

@@ -284,10 +284,11 @@ pub fn rebuild_method_body(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::fs::File;
-    use std::io::Read;
+    use std::{fs::File, io::Read};
+
     use tempfile::tempdir;
+
+    use super::*;
 
     #[test]
     fn test_write_tiny_method() {

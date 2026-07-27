@@ -459,9 +459,26 @@ fn test_all_netreactor_samples() {
             continue;
         }
 
+        // Over-cleanup guard. Virtualized samples are not devirtualized by any
+        // technique, so the VM interpreter and its handler types remain live
+        // code — the stubs left in the virtualized methods still call into
+        // them. Cleanup reachability analysis must follow candidate-to-candidate
+        // call edges transitively to see that; a single-step version reads the
+        // handler cluster as isolated infrastructure and strips the assembly
+        // down to its application methods (854 -> 45 on reactor_virtualization).
+        if result.success && result.sample.expected_protections.has_virtualization {
+            assert!(
+                result.methods_after * 2 > result.methods_before,
+                "{}: cleanup removed {} of {} methods — the VM runtime is still \
+                 referenced by the virtualized method stubs and must survive",
+                result.sample.filename,
+                result.methods_before.saturating_sub(result.methods_after),
+                result.methods_before
+            );
+        }
+
         // Once detection is implemented, add assertions here:
         // - Verify correct technique detection per sample
-        // - Verify deobfuscation success
         // - Verify semantic preservation
     }
 }

@@ -167,13 +167,14 @@ impl TypeRefBuilder {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::{
         cilassembly::{ChangeRefKind, CilAssembly},
         metadata::cilassemblyview::CilAssemblyView,
         prelude::CodedIndexType,
     };
-    use std::path::PathBuf;
 
     #[test]
     fn test_typeref_builder_basic() {

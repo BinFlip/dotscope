@@ -57,11 +57,11 @@ mod scheduler;
 mod state;
 mod summary;
 
-use crate::analysis::CilTarget;
-
 pub use analyssa::events::{DerivedStats, EventKind, EventListener, NullListener};
 pub use codegen::{CompilationResult, SsaCodeGenerator};
 pub use context::CompilerContext;
+
+use crate::analysis::CilTarget;
 
 /// CIL-defaulted alias of [`analyssa::events::Event`].
 pub type Event = analyssa::events::Event<CilTarget>;
@@ -79,8 +79,8 @@ pub use passes::{
     AlgebraicSimplificationPass, BlockMergingPass, ConstantPropagationPass,
     ControlFlowSimplificationPass, CopyPropagationPass, DeadCodeEliminationPass,
     DeadMethodEliminationPass, GlobalValueNumberingPass, InliningPass, JumpThreadingPass, LicmPass,
-    LoopCanonicalizationPass, OpaquePredicatePass, PredicateResult, ProxyDevirtualizationPass,
-    ReassociationPass, StrengthReductionPass, ValueRangePropagationPass,
+    LoopCanonicalizationPass, MemoryOptimizationPass, OpaquePredicatePass, PredicateResult,
+    ProxyDevirtualizationPass, ReassociationPass, StrengthReductionPass, ValueRangePropagationPass,
 };
 pub use scheduler::PassScheduler;
 pub use state::ProcessingState;

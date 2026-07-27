@@ -21,6 +21,7 @@
 //! | [`ConstantPropagationPass`] | Propagates and folds constant values using SCCP |
 //! | [`GlobalValueNumberingPass`] | Eliminates redundant computations via value numbering |
 //! | [`CopyPropagationPass`] | Eliminates redundant copy operations and phi nodes |
+//! | [`MemoryOptimizationPass`] | Forwards stores to loads, drops redundant loads, removes dead stores |
 //! | [`StrengthReductionPass`] | Replaces expensive operations with cheaper equivalents |
 //! | [`AlgebraicSimplificationPass`] | Simplifies algebraic expressions (x + 0 → x, etc.) |
 //! | [`ReassociationPass`] | Reorders associative operations for optimization |
@@ -90,8 +91,8 @@ mod strength;
 pub use analyssa::passes::{
     AlgebraicSimplificationPass, BlockMergingPass, ControlFlowSimplificationPass,
     DeadCodeEliminationPass, GlobalValueNumberingPass, JumpThreadingPass, LicmPass,
-    LoopCanonicalizationPass, OpaquePredicatePass, PredicateResult, ReassociationPass,
-    ValueRangePropagationPass,
+    LoopCanonicalizationPass, MemoryOptimizationPass, OpaquePredicatePass, PredicateResult,
+    ReassociationPass, ValueRangePropagationPass,
 };
 
 // CIL-specific pass impls remain dotscope-side. `copying` and `strength`
@@ -100,8 +101,7 @@ pub use analyssa::passes::{
 // `DeadMethodEliminationPass`; `constants`, `inlining`, `proxy` are
 // CIL-specific in their entirety.
 pub use self::constants::ConstantPropagationPass;
-pub use self::copying::CopyPropagationPass;
-pub use self::deadcode::DeadMethodEliminationPass;
-pub use self::inlining::InliningPass;
-pub use self::proxy::ProxyDevirtualizationPass;
-pub use self::strength::StrengthReductionPass;
+pub use self::{
+    copying::CopyPropagationPass, deadcode::DeadMethodEliminationPass, inlining::InliningPass,
+    proxy::ProxyDevirtualizationPass, strength::StrengthReductionPass,
+};

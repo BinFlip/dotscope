@@ -62,6 +62,7 @@ fn test_pipeline_passes_selective() {
             dead_code_elimination: false,
             string_decryption: false,
             strength_reduction: false,
+            memory_optimization: false,
             ..Default::default()
         },
         ..Default::default()
@@ -74,6 +75,45 @@ fn test_pipeline_passes_selective() {
     assert_eq!(scheduler.normalize_count(), 4); // ProxyDevirtualizationPass + ReassociationPass + ConstantPropagationPass + GVN
                                                 // No opaque pred, CFG simplification, or inlining
     assert_eq!(scheduler.pass_count(), 0);
+}
+
+/// `memory_optimization` is the only toggle that differs between these two
+/// configs, so it must account for exactly one normalize pass.
+#[test]
+fn test_pipeline_memory_optimization_toggle() {
+    let base = PassConfig {
+        constant_propagation: false,
+        copy_propagation: false,
+        opaque_predicate_removal: false,
+        control_flow_simplification: false,
+        dead_code_elimination: false,
+        string_decryption: false,
+        strength_reduction: false,
+        memory_optimization: false,
+        ..Default::default()
+    };
+
+    let without = DeobfuscationEngine::new(EngineConfig {
+        passes: base.clone(),
+        ..Default::default()
+    })
+    .create_scheduler();
+
+    let with = DeobfuscationEngine::new(EngineConfig {
+        passes: PassConfig {
+            memory_optimization: true,
+            ..base
+        },
+        ..Default::default()
+    })
+    .create_scheduler();
+
+    assert_eq!(
+        with.normalize_count(),
+        without.normalize_count() + 1,
+        "enabling memory_optimization should register exactly one normalize pass"
+    );
+    assert_eq!(with.pass_count(), without.pass_count());
 }
 
 #[test]
