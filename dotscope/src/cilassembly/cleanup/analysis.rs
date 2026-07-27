@@ -212,6 +212,30 @@ pub fn find_unreferenced_types(
         }
     }
 
+    // A nested type cannot outlive its enclosing type: deleting an enclosing
+    // type cascades to its nested types via [`expand_type_tokens`]. Model that
+    // as an edge from nested to enclosing so a live nested type keeps its
+    // parent alive, rather than being silently dropped along with it.
+    for type_entry in registry.iter() {
+        let type_token = *type_entry.key();
+        if type_token.table() != 0x02 {
+            continue;
+        }
+        // A type already scheduled for deletion is not live and must never
+        // become a reachability root
+        if deleted_types.contains(&type_token) {
+            continue;
+        }
+        if let Some(enclosing) = type_entry.value().enclosing_type() {
+            if enclosing.token != type_token {
+                type_calls
+                    .entry(type_token)
+                    .or_default()
+                    .insert(enclosing.token);
+            }
+        }
+    }
+
     // Seed the roots: every live type that is not itself a candidate. Candidacy
     // is what reachability has to resolve, so a candidate cannot serve as proof
     // that another candidate is referenced.
