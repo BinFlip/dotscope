@@ -1964,19 +1964,21 @@ impl Interpreter {
         let value = thread.pop()?;
         let addr = thread.pop()?;
 
-        // Verify this is a value type operation (stobj is for value types)
+        // `stobj` is not restricted to value types. ECMA-335 III.4.29 defines it
+        // over any `typeTok`, and states that when `typeTok` is a reference type
+        // the instruction is equivalent to `stind.ref`. Generic code relies on
+        // this: a method with a `T&` destination emits `stobj !!T`, which stores
+        // a reference whenever `T` is instantiated with a reference type — the
+        // shape ConfuserEx's `T Get<T>(uint)` decryptor takes at `T = string`.
+        //
+        // `type_token` is not resolved here, so there is nothing meaningful to
+        // validate the value against; only `Void` is categorically unstorable.
         let value_type = value.cil_flavor();
-        let is_value_type = value_type == CilFlavor::ValueType
-            || value_type == CilFlavor::I4
-            || value_type == CilFlavor::I8
-            || value_type == CilFlavor::R4
-            || value_type == CilFlavor::R8
-            || value_type == CilFlavor::I;
-        if !is_value_type {
+        if value_type == CilFlavor::Void {
             let _ = type_token; // Token available for future type resolution
             return Err(EmulationError::TypeMismatch {
                 operation: "stobj",
-                expected: "value type",
+                expected: "storable value",
                 found: value_type.as_str(),
             }
             .into());
