@@ -5,7 +5,6 @@ updates:
   # Rust dependencies
   - package-ecosystem: "cargo"
     directory: "/"
-    target-branch: "develop"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -32,7 +31,6 @@ updates:
   # Fuzzing dependencies
   - package-ecosystem: "cargo"
     directory: "/fuzz"
-    target-branch: "develop"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -47,7 +45,6 @@ updates:
   # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"
-    target-branch: "develop"
     schedule:
       interval: "weekly"
       day: "monday"
