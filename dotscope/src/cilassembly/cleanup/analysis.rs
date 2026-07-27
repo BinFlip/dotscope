@@ -79,8 +79,12 @@ pub fn expand_type_tokens(request: &CleanupRequest, assembly: &CilObject) -> Has
 /// in the provided method call graph.
 ///
 /// These are self-contained infrastructure types that can be safely deleted.
-/// A type is considered unreferenced when no method outside the type (and
-/// not already scheduled for deletion) calls any of its methods.
+/// Reachability is computed transitively: candidate types are rooted at every
+/// live non-candidate type, and a candidate reached from a root is itself
+/// promoted to a root. A type is considered unreferenced only when no chain of
+/// calls from live code arrives at it. Stopping after a single step would
+/// delete clusters that are reachable solely through another candidate — a VM
+/// dispatcher or decryptor facade that turns out to be live.
 ///
 /// This handles two key scenarios:
 /// - **Proxy devirtualization**: wrapper types whose methods are
@@ -175,63 +179,60 @@ pub fn find_unreferenced_types(
         }
     }
 
-    // Compute which candidates have live external callers
-    let mut has_external_caller: HashSet<Token> = HashSet::new();
-    loop {
-        /* We need to loop here, because if one type has an external reference,
-           that type is no longer a candidate and can reference other candidate types.
-        */
-        let mut changed = false;
-        for (caller_token, callees) in method_call_graph {
-            // Skip callers that are deleted
-            if deleted_methods.contains(caller_token) {
-                continue;
-            }
-            let Some(caller_type) = method_to_type.get(caller_token).copied() else {
+    // Collapse the method call graph to type granularity, keeping only edges
+    // whose caller is still live. Doing this once lets reachability be answered
+    // with a single worklist drain instead of re-scanning every call edge per
+    // round.
+    let mut type_calls: HashMap<Token, HashSet<Token>> = HashMap::new();
+    for (caller_token, callees) in method_call_graph {
+        // Skip callers that are deleted
+        if deleted_methods.contains(caller_token) {
+            continue;
+        }
+        let Some(caller_type) = method_to_type.get(caller_token).copied() else {
+            continue;
+        };
+        // Skip callers whose type is deleted
+        if deleted_types.contains(&caller_type) {
+            continue;
+        }
+
+        for callee_token in callees {
+            let Some(callee_type) = method_to_type.get(callee_token).copied() else {
                 continue;
             };
-            // Skip callers whose type is deleted
-            if deleted_types.contains(&caller_type) {
+            // Intra-type calls say nothing about whether the type is reachable
+            if caller_type == callee_type {
                 continue;
             }
-            // Skip callers that are themselves candidates — their edges are
-            // intra-cluster and don't constitute external references
-            let caller_is_candidate = candidates.contains(&caller_type);
-
-            for callee_token in callees {
-                let Some(callee_type) = method_to_type.get(callee_token).copied() else {
-                    continue;
-                };
-                if caller_type == callee_type {
-                    continue;
-                }
-                // Only mark as externally referenced if the caller is NOT a candidate
-                if !caller_is_candidate && candidates.contains(&callee_type) {
-                    has_external_caller.insert(callee_type);
-                    candidates.remove(&callee_type);
-                    // Track changes to ensure any types that are no longer candidates are accounted for
-                    changed = true;
-                }
-            }
-        }
-
-        // Stop looping once theres no more candidate deletions, or no more candidates.
-        if !changed || candidates.is_empty() {
-            break;
+            type_calls
+                .entry(caller_type)
+                .or_default()
+                .insert(callee_type);
         }
     }
+
+    // Seed the roots: every live type that is not itself a candidate. Candidacy
+    // is what reachability has to resolve, so a candidate cannot serve as proof
+    // that another candidate is referenced.
+    let mut worklist: Vec<Token> = type_calls
+        .keys()
+        .filter(|type_token| !candidates.contains(type_token))
+        .copied()
+        .collect();
 
     // CustomAttribute constructors reference types that the call graph misses.
     // Types like EmbeddedAttribute and RefSafetyRulesAttribute are only referenced
     // from CustomAttribute rows (their .ctors are attribute constructors), never
     // from IL code. Without this check they appear unreferenced and get deleted.
+    // They join the roots so that whatever they call stays alive as well.
     if let Some(tables) = assembly.tables() {
         if let Some(attr_table) = tables.table::<CustomAttributeRaw>() {
             for row in attr_table {
                 if row.constructor.token.is_table(TableId::MethodDef) {
                     if let Some(&ctor_type) = method_to_type.get(&row.constructor.token) {
-                        if candidates.contains(&ctor_type) {
-                            has_external_caller.insert(ctor_type);
+                        if candidates.remove(&ctor_type) {
+                            worklist.push(ctor_type);
                         }
                     }
                 }
@@ -239,11 +240,24 @@ pub fn find_unreferenced_types(
         }
     }
 
-    // All candidates without external callers are unreferenced infrastructure
-    candidates
-        .into_iter()
-        .filter(|t| !has_external_caller.contains(t))
-        .collect()
+    // Propagate liveness transitively. A candidate rescued here becomes a root
+    // in turn — without that, a cluster reachable only through another candidate
+    // (a VM dispatcher, a decryptor facade) is misread as isolated infrastructure.
+    while let Some(live_type) = worklist.pop() {
+        let Some(callees) = type_calls.get(&live_type) else {
+            continue;
+        };
+        for callee_type in callees {
+            if candidates.remove(callee_type) {
+                worklist.push(*callee_type);
+            }
+        }
+    }
+
+    // Whatever is still a candidate is unreachable from live code
+    let mut unreferenced: Vec<Token> = candidates.into_iter().collect();
+    unreferenced.sort_unstable();
+    unreferenced
 }
 
 /// Pre-computes the set of entry-point method tokens that should not be removed.
