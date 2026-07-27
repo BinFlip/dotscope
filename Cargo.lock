@@ -1564,7 +1564,7 @@ dependencies = [
 
 [[package]]
 name = "dotscope"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "aes",
  "analyssa",
@@ -1610,7 +1610,7 @@ dependencies = [
 
 [[package]]
 name = "dotscope-cli"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "anyhow",
  "clap",
