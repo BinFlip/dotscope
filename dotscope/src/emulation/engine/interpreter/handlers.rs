@@ -1365,6 +1365,39 @@ impl Interpreter {
                             }
                         }
                     }
+                    PointerTarget::ArrayElement { array, index } => {
+                        // `ldelema` on a value-type array yields a pointer to the
+                        // element itself, and `stfld` through it must update one
+                        // field *within* that element. Storing through the pointer
+                        // would replace the whole element with the field value, so
+                        // read-modify-write the struct instead. LZMA's bit-decoder
+                        // arrays in ConfuserEx's constants runtime take this path.
+                        let element = thread.heap().get_array_element(*array, *index).ok();
+                        match element {
+                            Some(vt @ EmValue::ValueType { .. }) => {
+                                if let Some(updated) =
+                                    store_into_valuetype(thread, vt, field_token, value.clone())
+                                {
+                                    thread
+                                        .heap_mut()
+                                        .set_array_element(*array, *index, updated)?;
+                                    return Ok(StepResult::Continue);
+                                }
+                                thread.store_through_pointer(&ptr, value)?;
+                                Ok(StepResult::Continue)
+                            }
+                            Some(EmValue::ObjectRef(href)) => {
+                                // Reference-type element: the field belongs to the
+                                // referenced object, not to the array slot.
+                                thread.heap_mut().set_field(href, field_token, value)?;
+                                Ok(StepResult::Continue)
+                            }
+                            _ => {
+                                thread.store_through_pointer(&ptr, value)?;
+                                Ok(StepResult::Continue)
+                            }
+                        }
+                    }
                     _ => {
                         // For other pointer targets, store through the pointer
                         thread.store_through_pointer(&ptr, value)?;
