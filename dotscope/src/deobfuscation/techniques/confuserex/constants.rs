@@ -264,23 +264,40 @@ impl Technique for ConfuserExConstants {
 
                 let sig = &method.signature;
 
-                // Check for string(int32) signature
-                let first_param_is_i4 = sig
-                    .params
-                    .first()
-                    .is_some_and(|p| p.base == TypeSignature::I4);
+                // The single parameter is an index into the constant blob. Its
+                // declared width varies across ConfuserEx forks — stock 1.6.0
+                // emits `int32`, others emit `uint32` — so accept any integral
+                // type rather than pinning one. The surrounding constraints
+                // (static, <Module> or non-ASCII owner, arity 1, string or `!!0`
+                // return) carry the selectivity.
+                let first_param_is_integral = sig.params.first().is_some_and(|p| {
+                    matches!(
+                        p.base,
+                        TypeSignature::I1
+                            | TypeSignature::U1
+                            | TypeSignature::I2
+                            | TypeSignature::U2
+                            | TypeSignature::I4
+                            | TypeSignature::U4
+                            | TypeSignature::I8
+                            | TypeSignature::U8
+                            | TypeSignature::I
+                            | TypeSignature::U
+                    )
+                });
 
+                // Check for string(<integer>) signature
                 let is_string_decryptor = sig.param_count_generic == 0
                     && sig.return_type.base == TypeSignature::String
                     && sig.params.len() == 1
-                    && first_param_is_i4;
+                    && first_param_is_integral;
 
-                // Check for generic T(int32) signature (param_count_generic == 1,
+                // Check for generic T(<integer>) signature (param_count_generic == 1,
                 // return type is GenericParamMethod(0))
                 let is_generic_decryptor = sig.param_count_generic == 1
                     && matches!(sig.return_type.base, TypeSignature::GenericParamMethod(0))
                     && sig.params.len() == 1
-                    && first_param_is_i4;
+                    && first_param_is_integral;
 
                 if is_string_decryptor || is_generic_decryptor {
                     decryptor_tokens.push(method.token);
