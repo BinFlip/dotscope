@@ -96,6 +96,13 @@ jobs:
     name: Build CLI (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     needs: [version, test]
+
+    # Needed to attach the built binaries to the release. The default
+    # GITHUB_TOKEN permission is read-only, which makes the upload fail with
+    # "Resource not accessible by integration".
+    permissions:
+      contents: write
+
     strategy:
       fail-fast: false
       matrix:
