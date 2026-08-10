@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.5] - 2026-08-09
+
+### Fixed
+
+- **No licence text was shipped with the crate.** `LICENSE` and `NOTICE` live at the
+  workspace root, but the package root is `dotscope/`, and cargo only packages files
+  under the package directory — so every published version declared
+  `license = "Apache-2.0"` while shipping neither the licence nor the NOTICE.
+  Both files now exist inside the package and are included in the published crate.
+- `LICENSE` was a symlink to `LICENSE-APACHE`. Symlinks do not survive packaging
+  cleanly; `LICENSE` is now a regular file and the duplicate `LICENSE-APACHE` is gone,
+  with the README badge and the crate-level doc badge repointed at it.
+
+### Dependencies
+
+- Upgraded `analyssa` 0.4.1 → 0.5.0, which fixes SSA rebuild and phi-transform
+  correctness: on a 125 MB reference binary the upstream pass rollbacks went from
+  6,094 to 0 and verifier-reported undefined uses from ~28,960 to 0. No API changes
+  were needed here.
+- Upgraded `comfy-table` 7.2.2 → 8.0.0. The preset-string API was removed in v8;
+  `Table::load_preset(presets::NOTHING)` becomes `Table::load_style(presets::NOTHING)`,
+  where presets are now `TableStyle` constants. Rendering is unchanged.
+- Refreshed all remaining dependencies (`cargo update`), including `aes`, `clap`,
+  `thiserror`, and `smallvec`.
+
+### Changed
+
+- Recorded ATRAPS LLC as copyright holder in `LICENSE` and `NOTICE`.
+- Dropped the deprecated `authors` field from both workspace members and repointed
+  `repository` / `homepage` at the organisation.
+- Default branch renamed from `master` to `main`; CI triggers and the fuzzing and
+  security-audit job conditions were updated to match.
+- Publishing now uses crates.io trusted publishing instead of a stored registry token,
+  and refuses to publish a release whose commit is not contained in `main`.
+
 ## [0.8.4] - 2026-07-26
 
 ### Added
