@@ -6,8 +6,8 @@ resolver = "2"
 [workspace.package]
 edition = "2021"
 license = "Apache-2.0"
-repository = "https://github.com/BinFlip/dotscope"
-homepage = "https://github.com/BinFlip/dotscope"
+repository = "https://github.com/ATRAPSLLC/dotscope"
+homepage = "https://github.com/ATRAPSLLC/dotscope"
 
 [profile.bench]
 debug = true

@@ -40,7 +40,7 @@
 //!
 //! [![Crates.io](https://img.shields.io/crates/v/dotscope.svg)](https://crates.io/crates/dotscope)
 //! [![Documentation](https://docs.rs/dotscope/badge.svg)](https://docs.rs/dotscope)
-//! [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/BinFlip/dotscope/blob/main/LICENSE-APACHE)
+//! [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/ATRAPSLLC/dotscope/blob/main/LICENSE)
 //!
 //! A cross-platform framework for analyzing, deobfuscating, emulating, and modifying .NET PE executables.
 //! Built in pure Rust, `dotscope` provides comprehensive tooling for parsing CIL (Common Intermediate Language)
