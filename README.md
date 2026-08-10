@@ -2,9 +2,9 @@
 
 [![Crates.io](https://img.shields.io/crates/v/dotscope.svg)](https://crates.io/crates/dotscope)
 [![Documentation](https://docs.rs/dotscope/badge.svg)](https://docs.rs/dotscope)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE-APACHE)
-[![Build Status](https://github.com/BinFlip/dotscope/workflows/CI/badge.svg)](https://github.com/BinFlip/dotscope/actions)
-[![Coverage](https://codecov.io/gh/BinFlip/dotscope/branch/main/graph/badge.svg)](https://codecov.io/gh/BinFlip/dotscope)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Build Status](https://github.com/ATRAPSLLC/dotscope/workflows/CI/badge.svg)](https://github.com/ATRAPSLLC/dotscope/actions)
+[![Coverage](https://codecov.io/gh/ATRAPSLLC/dotscope/branch/main/graph/badge.svg)](https://codecov.io/gh/ATRAPSLLC/dotscope)
 
 A high-performance, cross-platform framework for analyzing, reverse engineering, and modifying .NET PE executables. Built in pure Rust, `dotscope` provides comprehensive tooling for parsing CIL (Common Intermediate Language) bytecode, metadata structures, disassembling .NET assemblies, and creating modified assemblies without requiring Windows or the .NET runtime.
 
@@ -422,9 +422,11 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 ## License
 
-This project is licensed under the Apache License, Version 2.0.
+Copyright 2025-2026 ATRAPS LLC. This project is licensed under the Apache
+License, Version 2.0.
 
-See [LICENSE-APACHE](LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0> for details.
+See [LICENSE](LICENSE), [NOTICE](NOTICE), or
+<http://www.apache.org/licenses/LICENSE-2.0> for details.
 
 ### Responsible Use Policy
 
@@ -447,7 +449,7 @@ See [LICENSE-APACHE](LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-
 
 ## Support
 
-- **Bug Reports**: [GitHub Issues](https://github.com/BinFlip/dotscope/issues)
-- **Feature Requests**: [GitHub Issues](https://github.com/BinFlip/dotscope/issues)
-- **Questions**: [GitHub Discussions](https://github.com/BinFlip/dotscope/discussions)
+- **Bug Reports**: [GitHub Issues](https://github.com/ATRAPSLLC/dotscope/issues)
+- **Feature Requests**: [GitHub Issues](https://github.com/ATRAPSLLC/dotscope/issues)
+- **Questions**: [GitHub Discussions](https://github.com/ATRAPSLLC/dotscope/discussions)
 - **Security Issues**: admin{at}binflip.rs
