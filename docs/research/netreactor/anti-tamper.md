@@ -4,6 +4,30 @@ Analysis of .NET Reactor 7.5.0 anti-tamper protection based on reverse engineeri
 `reactor_antitamp.exe` (48,640 bytes, 214 methods) against `original.exe`
 (14,336 bytes, 35 methods) using dotscope disassembly.
 
+## Status (2026-04-24) — Landed
+
+`netreactor.antitamp` technique is implemented and wired into
+`TechniqueRegistry::with_config`. `reactor_antitamp.exe` now executes
+end-to-end under mono (full `=== Test App === → === Done ===` output),
+taking NR mono executability to 9 / 17. The technique detects the
+anti-tamper init via `.cctor` fan-in (no hard-coded names), marks the
+init method + runtime container type + `<Module>{GUID}` marker + all
+purely-injected `.cctor`s for removal, and attaches a Value-phase SSA
+pass (`TokenResolverPass`) that folds the metadata-token resolver's
+`accessor(<const_int>)` calls back into `ldtoken X` — without the fold,
+user `typeof`/`is`/`typeof(List<>)` resolve to wrong types because the
+resolver's hard-coded metadata-token arguments don't survive token
+renumbering. The NR antitamp encrypted resource (256 B embedded
+payload) is also cleaned up via the new
+`CleanupRequest::add_manifest_resource(Token)` API: the technique
+scans every method on the runtime container (and its nested types) for
+`ldstr <name>` references, matches them against the assembly's
+`ManifestResource` names, and marks each matched row; the writer's
+existing resource-section compaction loop drops the embedded bytes and
+remaps `offset_field` on surviving rows during regeneration. Output
+now matches `original.exe` modulo only the known `.g.resources`
+orphan.
+
 ## File-Level Changes
 
 | Property | Original | Protected | Delta |
@@ -94,42 +118,72 @@ Uses **RijndaelManaged (AES-256)** with a 32-byte IV from embedded static field 
 and a key derived from string arguments.
 
 
-## Anti-Tamper Verification Type
+## Metadata-Token Resolver Type
 
-`YD8k0qML3PKMLfTJjJ.F46Ke0VXdMyeVlwqPE` — unique to anti-tamper, provides
-thread-safe tamper state tracking:
+`YD8k0qML3PKMLfTJjJ.F46Ke0VXdMyeVlwqPE` (TypeDef 0x02000023 in the
+current sample; name rotates between builds) — the NR metadata-token
+resolver. Caches a `ModuleHandle` in a static field (`nxXPZyx8Ok`) and
+exposes typed accessors that resolve raw metadata tokens to runtime
+handles at load time. NR's rewriter replaces every user `ldtoken X` in
+non-`.cctor` method bodies with `ldc.i4 <raw_metadata_token>; call
+accessor(int32)` — denying static analysis the direct type/field/method
+reference and gating resolution behind the cached module handle.
 
-### .cctor (token 0x060000d5)
-Resolves the module via reflection and stores to a static field:
+**⚠ Previous revisions of this doc incorrectly described the accessors
+as `Interlocked.{Exchange,CompareExchange}` tamper-state wrappers; that
+was a misreading of the first disassembly pass.** The actual bodies,
+verified against the current 7.5.0 sample on 2026-04-24, use the
+`ModuleHandle.GetRuntime{Type|Field|Method}HandleFromMetadataToken` BCL
+methods — ordinary runtime metadata resolution, not interlocked state.
+
+### .cctor (token 0x060000d5 in current sample)
+
+Resolves the module via reflection and stores it to the static field:
+
 ```
-ldtoken    TypeDef(row 35)
+ldtoken    TypeDef(this type)
 call       Type.GetTypeFromHandle()
-callvirt   Assembly.get_Assembly()
+callvirt   Type.get_Assembly()
 callvirt   Assembly.GetModules()
 ldc.i4.0 / ldelem.ref
-stsfld     field(row 71)
-```
-
-### Thread-Safe State Methods
-
-`RFfeRly7o` (token 0x060000d2): Atomic exchange
-```
-ldsflda    field(row 71)
-ldarg.0
-call       Interlocked.Exchange()
+callvirt   Module.get_ModuleHandle()
+stsfld     <static ModuleHandle field>
 ret
 ```
 
-`T8QzrqFRj` (token 0x060000d3): Atomic compare-and-exchange
+### Accessor methods (4-instruction shape each)
+
+`RFfeRly7o(int32) -> RuntimeTypeHandle` — type-handle accessor:
+
 ```
-ldsflda    field(row 71)
+ldsflda    <static ModuleHandle field>
 ldarg.0
-call       Interlocked.CompareExchange()
+call       instance ModuleHandle::GetRuntimeTypeHandleFromMetadataToken(int32)
 ret
 ```
 
-These provide thread-safe tamper state tracking — if tampering is detected during
-concurrent type initialization, the state is atomically updated.
+`T8QzrqFRj(int32) -> RuntimeFieldHandle` — field-handle accessor:
+
+```
+ldsflda    <static ModuleHandle field>
+ldarg.0
+call       instance ModuleHandle::GetRuntimeFieldHandleFromMetadataToken(int32)
+ret
+```
+
+A corresponding `GetRuntimeMethodHandleFromMetadataToken` accessor is
+not present in the current sample but the detector handles it for
+forward compatibility.
+
+Why the fold matters: the `int32` argument is the *raw metadata token
+value in the obfuscated assembly* (e.g. `0x01000003` = TypeRef row 3).
+After cleanup remaps TypeRef rows, those hard-coded tokens would point
+at different types. `TokenResolverPass` resolves each constant-argument
+accessor call at deob time by replacing the `Call` with
+`LoadToken(Token(raw_int))` — the generic token-remapping cleanup
+pipeline then rewrites the `LoadToken`'s token to the correct post-
+deobfuscation row, so user code keeps working and the resolver type
+itself becomes truly orphan for the cleanup sweep.
 
 
 ## GUID-Annotated Marker Types
@@ -147,27 +201,63 @@ the tamper verification hash.
 | Signal | Pattern |
 |--------|---------|
 | GUID types | `<Module>{GUID}` and `<PrivateImplementationDetails>{GUID}` types |
-| .cctor injection | Every type has `.cctor` calling the same target method |
-| Interlocked ops | `Interlocked.Exchange`/`CompareExchange` in injected types |
-| AES decryption | `RijndaelManaged` + 32-byte IV from `RuntimeHelpers.InitializeArray` |
-| Trial guard | `DateTime(year, month, day)` + `TimeSpan.get_Days()` + 14-day check |
+| `.cctor` fan-in | 5+ types' `.cctor`s converge on a single target method (implemented by `helpers::find_cctor_fan_in_target`) |
+| Token-resolver accessor | Static method signature `(int32) -> ValueType` whose body is `ldsflda; ldarg.0; call ModuleHandle.GetRuntime*HandleFromMetadataToken; ret` (implemented by `helpers::find_nr_token_resolver`) |
+| AES helper | `SymmetricAlgorithm`/`RijndaelManaged` + 32-byte IV loaded from an RVA field via `RuntimeHelpers.InitializeArray` (currently unused as a detection signal — left for future corroboration) |
+| Trial guard | `DateTime(year, month, day)` + `TimeSpan.get_Days()` + 14-day check (owned by `netreactor.antitrial`) |
+
+The landed `netreactor.antitamp` detection requires (all must hold):
+
+1. **Gate**: `<Module>` trial guard present (same NR-context gate as
+   `licensecheck` / `privateimpl`).
+2. **Primary**: `find_cctor_fan_in_target` returns `Some` (fan-in ≥ 5).
+3. **Corroboration**: at least one `<Module>{GUID}` marker type OR one
+   `<PrivateImplementationDetails>{GUID}` container is present.
 
 
-## Deobfuscation Strategy
+## Deobfuscation Strategy (as implemented)
 
-1. **Neutralize the .cctor chain**: Remove injected `.cctor` calls to the init method
-2. **Remove verification types**: Delete `YD8k0qML3PKMLfTJjJ.F46Ke0VXdMyeVlwqPE`,
-   GUID-annotated types, and the shared runtime infrastructure
-3. **Restore modified .cctors**: If a type originally had a `.cctor`, remove the
-   prepended `call` to the init method
+1. **Mark the init method** (`init_method_token`) for cleanup — this
+   causes `NeutralizationPass` to NOP every surviving `call <init>` in
+   other method bodies (notably `<Module>::.cctor` and any `.cctor`
+   that had the init call prepended to user code).
+2. **Mark the runtime container type** (`runtime_type_token` — the
+   init method's declaring type) — `expand_type_tokens` cascades to
+   its nested types (AES helper, CFF lookup tables, etc.), fields, and
+   methods.
+3. **Mark purely-injected `.cctor`s** — thin bodies whose *only*
+   instruction stream is `call init; ret` (`classify_injected_cctors`
+   returns these). Modified `.cctor`s (init call prepended to user
+   code) are left in place — the NOP'd call is harmless and the user
+   portion survives.
+4. **Mark `<Module>{GUID}` marker types** — the generic orphan sweep
+   refuses these (no non-cctor methods), so they need explicit
+   marking. `<PrivateImplementationDetails>{GUID}` containers are
+   already owned by `netreactor.privateimpl`.
+5. **Fold metadata-token resolver calls** — `TokenResolverPass`
+   (Value phase) rewrites `accessor(<const_int>)` → `LoadToken(Token)`
+   for every accessor of the detected resolver type. The resolver
+   type itself is marked for cleanup (detection gives its TypeDef
+   token) and becomes truly orphan after the fold.
 
-The NRS `AntiManipulationPatcher` (Stage 3) takes a different approach: it searches
-for string literals "is tampered" and "Debugger Detected", then replaces the entire
-method body with `ret`. Our approach can use the more reliable pattern of detecting
-the `.cctor` injection and GUID marker types.
+Compare to NRS's `AntiManipulationPatcher` (Stage 3), which searches
+for string literals `"is tampered"` / `"Debugger Detected"` and nukes
+the entire method body. That is name-fragile and, critically, drops
+the runtime metadata-token accessors whether or not the init code is
+removed — producing the same typeof-loss symptom we saw before landing
+`TokenResolverPass`.
 
 ### dotscope Infrastructure Leverage
 
-- **`NeutralizationPass`**: Can neutralize the anti-tamper check methods
-- **Cleanup pipeline**: Orphan type removal handles the injected infrastructure
-- **`.cctor` restoration**: Needs a pass to identify and remove prepended init calls
+- **`NeutralizationPass`** — NOPs `call <removed_token>` sites
+  (handles the init call in all surviving `.cctor`s and any user
+  method that happens to call the init).
+- **`expand_type_tokens`** — cascades type-level deletions to nested
+  types, methods, fields.
+- **`sweep_empty_module_cctor`** — picks up `<Module>::.cctor` once
+  the init (and trial) calls are NOP'd.
+- **`find_unreferenced_types`** — orphan-sweeps the resolver type
+  after `TokenResolverPass` eliminates its only callers.
+- **Token remapping / `RidRemapper`** — rewrites the `LoadToken`
+  tokens emitted by `TokenResolverPass` through the new TypeRef rows
+  during PE regeneration, keeping user `typeof`/`is` correct.

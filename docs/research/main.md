@@ -16,7 +16,7 @@ Research documentation for .NET obfuscators supported or investigated by dotscop
 | Obfuscator | Status | Documentation |
 |------------|--------|---------------|
 | [PureLogs](purelogs/main.md) | Active research (Phase 1 complete) | 10 analysis docs |
-| [.NET Reactor](netreactor.md) | Gap analysis complete | Tier-based implementation plan |
+| [.NET Reactor](netreactor/overview.md) | Sample analysis in progress (18 samples) | Per-protection reverse engineering + gap analysis |
 
 ## Obfuscator Comparison
 
