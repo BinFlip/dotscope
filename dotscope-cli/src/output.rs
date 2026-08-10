@@ -73,7 +73,7 @@ impl TabWriter {
     pub fn new(columns: &[(&str, Align)]) -> Self {
         let mut table = Table::new();
         table
-            .load_preset(presets::NOTHING)
+            .load_style(presets::NOTHING)
             .set_content_arrangement(ContentArrangement::Dynamic);
 
         let headers: Vec<&str> = columns.iter().map(|(name, _)| *name).collect();
