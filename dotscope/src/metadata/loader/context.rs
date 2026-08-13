@@ -73,13 +73,17 @@
 //! - [`crate::metadata::tables`] - All metadata table types and coded index resolution
 //! - [`crate::metadata::streams`] - Metadata stream access and heap operations
 
-use std::sync::{Arc, OnceLock};
+use std::{
+    fmt::Display,
+    result::Result as StdResult,
+    sync::{Arc, OnceLock},
+};
 
 use crate::{
     file::File,
     metadata::{
         cor20header::Cor20Header,
-        diagnostics::{DiagnosticCategory, Diagnostics},
+        diagnostics::{Diagnostic, DiagnosticCategory, DiagnosticSeverity, Diagnostics},
         exports::Exports,
         imports::Imports,
         method::MethodMap,
@@ -95,11 +99,12 @@ use crate::{
             ImportScopeMap, InterfaceImplMap, LocalConstantMap, LocalScopeMap, LocalVariableMap,
             MemberRefMap, MethodDebugInformationMap, MethodImplMap, MethodPtrMap,
             MethodSemanticsMap, MethodSpecMap, ModuleRc, ModuleRefMap, NestedClassMap, ParamMap,
-            ParamPtrMap, PropertyMap, PropertyMapEntryMap, PropertyPtrMap, StandAloneSigMap,
-            StateMachineMethodMap, TableId, TypeSpecMap,
+            ParamPtrMap, PropertyMap, PropertyMapEntryMap, PropertyPtrMap, RowReadable,
+            StandAloneSigMap, StateMachineMethodMap, TableId, TypeSpecMap,
         },
         typesystem::{CilTypeReference, TypeRegistry},
     },
+    Result,
 };
 
 /// Centralized context for metadata table maps during assembly loading.
@@ -569,12 +574,12 @@ impl LoaderContext<'_> {
     ///     // Use owned value
     /// }
     /// ```
-    pub fn handle_result<T, E: std::fmt::Display, F: FnOnce() -> String>(
+    pub fn handle_result<T, E: Display, F: FnOnce() -> String>(
         &self,
-        result: std::result::Result<T, E>,
+        result: StdResult<T, E>,
         category: DiagnosticCategory,
         context_msg: F,
-    ) -> crate::Result<Option<T>> {
+    ) -> Result<Option<T>> {
         match result {
             Ok(value) => Ok(Some(value)),
             Err(e) => {
@@ -585,6 +590,69 @@ impl LoaderContext<'_> {
                     Ok(None)
                 } else {
                     Err(malformed_error!("Failed to load {}: {}", msg, e))
+                }
+            }
+        }
+    }
+
+    /// Handles a *row-parse* failure according to the lenient/strict loading mode.
+    ///
+    /// The counterpart to [`handle_result`](Self::handle_result) for the one failure that
+    /// happens before there is anything to build a message from. Every loader routes the
+    /// failures it can describe — `to_owned`, reference resolution — through `handle_result`
+    /// with a message keyed on `row.token`. A row that failed to *parse* has no token, so it
+    /// cannot use that path, and the natural `let row = row?;` propagates straight out of
+    /// `load()` and aborts the whole [`CilObject`](crate::CilObject) load. That defeats
+    /// [`lenient`](Self::lenient) for exactly the malformed input the flag exists to tolerate:
+    /// one truncated row at the end of one table would take the file down.
+    ///
+    /// Identity comes from the table id and RID instead, recorded structurally on the
+    /// diagnostic via [`Diagnostic::with_table_row`] so consumers can locate the row without
+    /// parsing the message.
+    ///
+    /// # Arguments
+    ///
+    /// * `row` - The row-parse result, as yielded by the table iterators
+    /// * `index` - The row's 0-based position in the iteration. The table iterators are
+    ///   range-based and read each row at an offset derived from its own RID, so nothing is
+    ///   dropped on a parse failure and `index + 1` is the true RID — unlike a filtered
+    ///   sequence, where position stops tracking RID.
+    ///
+    /// The table is taken from [`RowReadable::TABLE_ID`], so it cannot drift from the row
+    /// type being loaded.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Some(row))` - The row parsed
+    /// * `Ok(None)` - The row did not parse and we are in lenient mode; skip it
+    /// * `Err(e)` - The row did not parse and we are in strict mode
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::Malformed`] when a row fails to parse in strict mode.
+    pub fn handle_row<T: RowReadable>(&self, row: Result<T>, index: usize) -> Result<Option<T>> {
+        match row {
+            Ok(row) => Ok(Some(row)),
+            Err(e) => {
+                let table = T::TABLE_ID;
+                let rid = u32::try_from(index).unwrap_or(u32::MAX).saturating_add(1);
+                if self.lenient {
+                    self.diagnostics.push(
+                        Diagnostic::new(
+                            DiagnosticSeverity::Warning,
+                            DiagnosticCategory::Table,
+                            format!("Failed to parse {table:?} row {rid}: {e}"),
+                        )
+                        .with_table_row(table as u8, rid),
+                    );
+                    Ok(None)
+                } else {
+                    Err(malformed_error!(
+                        "Failed to parse {:?} row {}: {}",
+                        table,
+                        rid,
+                        e
+                    ))
                 }
             }
         }
@@ -605,12 +673,12 @@ impl LoaderContext<'_> {
     ///
     /// * `Ok(())` - Operation succeeded or failed in lenient mode
     /// * `Err(e)` - Operation failed in strict mode
-    pub fn handle_error<E: std::fmt::Display, F: FnOnce() -> String>(
+    pub fn handle_error<E: Display, F: FnOnce() -> String>(
         &self,
-        result: std::result::Result<(), E>,
+        result: StdResult<(), E>,
         category: DiagnosticCategory,
         context_msg: F,
-    ) -> crate::Result<()> {
+    ) -> Result<()> {
         match result {
             Ok(()) => Ok(()),
             Err(e) => {

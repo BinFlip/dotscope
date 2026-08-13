@@ -29,6 +29,7 @@ use crate::{
         token::Token,
         typesystem::{CilType, CilTypeRc, CilTypeReference},
     },
+    utils::LazyList,
     Result,
 };
 
@@ -155,7 +156,7 @@ impl TypeRefRaw {
             None,
             TypeAttributes::ZERO,
             Arc::new(boxcar::Vec::new()),
-            Arc::new(boxcar::Vec::new()),
+            LazyList::new(),
             None,
         )))
     }

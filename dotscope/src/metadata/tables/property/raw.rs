@@ -12,6 +12,7 @@ use crate::{
         tables::{Property, PropertyAttributes, PropertyRc, TableInfoRef, TableRow},
         token::Token,
     },
+    utils::LazyList,
     Result,
 };
 
@@ -112,8 +113,8 @@ impl PropertyRaw {
     ///
     /// ## Errors
     ///
-    /// * [`crate::error::Error::OutOfBounds`] - Invalid string or blob heap index
-    /// * [`crate::error::Error::Malformed`] - Malformed property signature
+    /// * [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] - Invalid string or blob heap index
+    /// * [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`] - Malformed property signature
     pub fn to_owned(&self, strings: &Strings, blob: &Blob) -> Result<PropertyRc> {
         Ok(Arc::new(Property {
             token: self.token,
@@ -124,7 +125,7 @@ impl PropertyRaw {
             fn_setter: OnceLock::new(),
             fn_getter: OnceLock::new(),
             fn_other: OnceLock::new(),
-            custom_attributes: Arc::new(boxcar::Vec::new()),
+            custom_attributes: LazyList::new(),
         }))
     }
 

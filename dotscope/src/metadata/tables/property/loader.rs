@@ -24,6 +24,8 @@
 //! - [`crate::metadata::tables::PropertyRaw`] - Raw table entry structure
 //! - [`crate::metadata::tables::Property`] - Owned table entry type
 
+use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+
 use crate::{
     metadata::{
         diagnostics::DiagnosticCategory,
@@ -68,7 +70,10 @@ impl MetadataLoader for PropertyLoader {
             return Ok(());
         };
 
-        table.par_iter().try_for_each(|row| {
+        table.par_iter().enumerate().try_for_each(|(index, row)| {
+            let Some(row) = context.handle_row(row, index)? else {
+                return Ok(());
+            };
             let token_msg = || format!("property 0x{:08x}", row.token.value());
 
             let Some(res) = context.handle_result(

@@ -24,6 +24,8 @@
 //!
 //! * [ECMA-335 Partition II, Section 22.39](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `TypeSpec` Table
 
+use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+
 use crate::{
     metadata::{
         diagnostics::DiagnosticCategory,
@@ -58,7 +60,7 @@ impl MetadataLoader for TypeSpecLoader {
     ///
     /// ## Errors
     ///
-    /// - [`crate::Error::Malformed`] - Malformed type signature in blob heap
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`] - Malformed type signature in blob heap
     /// - [`crate::Error::TypeNotFound`] - Referenced type cannot be resolved
     /// - [`crate::Error::TypeError`] - Type specification violates semantic rules
     fn load(&self, context: &LoaderContext) -> Result<()> {
@@ -69,7 +71,10 @@ impl MetadataLoader for TypeSpecLoader {
             return Ok(());
         };
 
-        table.par_iter().try_for_each(|row| {
+        table.par_iter().enumerate().try_for_each(|(index, row)| {
+            let Some(row) = context.handle_row(row, index)? else {
+                return Ok(());
+            };
             let token_msg = || format!("type spec 0x{:08x}", row.token.value());
 
             let Some(owned) =

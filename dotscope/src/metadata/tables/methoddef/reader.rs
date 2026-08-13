@@ -64,12 +64,13 @@ mod tests {
 
         {
             for row in table.iter() {
+                let row = row.expect("row parses");
                 eval(row);
             }
         }
 
         {
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             eval(row);
         }
     }
@@ -91,7 +92,7 @@ mod tests {
             true,
             true,
         ));
-        let table = MetadataTable::<MethodDefRaw>::new(&data, u16::MAX as u32 + 2, sizes).unwrap();
+        let table = MetadataTable::<MethodDefRaw>::new(&data, 1, sizes).unwrap();
 
         let eval = |row: MethodDefRaw| {
             assert_eq!(row.rid, 1);
@@ -105,7 +106,7 @@ mod tests {
         };
 
         {
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             eval(row);
         }
     }

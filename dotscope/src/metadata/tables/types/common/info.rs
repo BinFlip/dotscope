@@ -172,6 +172,15 @@ pub struct TableInfo {
     /// Determined by bit 2 of the heap size flags in the metadata tables header.
     /// When `true`, all blob heap references use 4 bytes; when `false`, 2 bytes.
     is_large_index_blob: bool,
+
+    /// Bit mask of the tables this `TableInfo` actually describes.
+    ///
+    /// [`Self::row_count`] cannot answer this: it returns 0 both for a table that is present
+    /// and empty and for one this `TableInfo` says nothing about. Those are different facts,
+    /// and code that bounds a row against `row_count` needs the second one — a `TableInfo`
+    /// reconstructed for a writer round-trip or a unit test describes only the tables it was
+    /// given, so treating "not described" as "has no rows" rejects valid data.
+    declared: u64,
 }
 
 /// Shared reference to a [`TableInfo`] structure for efficient multi-threaded access.
@@ -182,6 +191,19 @@ pub struct TableInfo {
 pub type TableInfoRef = Arc<TableInfo>;
 
 impl TableInfo {
+    /// Bit mask of every table id that has a [`TableId`] variant.
+    ///
+    /// Derived from the enum itself rather than written out, so it cannot drift as tables are
+    /// added. The `#~` valid mask is checked against this before any row count is read; see
+    /// [`Self::new`].
+    fn known_table_mask() -> u64 {
+        TableId::iter().fold(0u64, |mask, table_id| {
+            // Every discriminant is below 64 (the mask is a `u64` by specification), so the
+            // shift is always defined.
+            mask | (1u64 << (table_id as usize))
+        })
+    }
+
     /// Constructs a new `TableInfo` from metadata tables header data.
     ///
     /// Parses the metadata tables header to extract table row counts and heap size flags,
@@ -214,12 +236,31 @@ impl TableInfo {
     ///
     /// ## Errors
     ///
-    /// - [`crate::Error::OutOfBounds`] - Insufficient data to read required header fields
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] - Insufficient data to read required header fields
     ///
     /// ## Reference
     ///
     /// * [ECMA-335 Partition II, Section 24.2.6](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - #~ Stream
     pub fn new(data: &[u8], valid_bitvec: u64) -> Result<Self> {
+        // Reject bits that name no table before reading a single row count.
+        //
+        // `TableId` covers 0x00-0x2C and 0x30-0x37; the gaps at 0x2D-0x2F and 0x38-0x3F have no
+        // variant. The loop below consumes a `u32` only for bits that map to a known `TableId`,
+        // but `TablesHeader::from` computes where table data starts as
+        // `24 + valid_bitvec.count_ones() * 4` — which counts them. A single gap bit therefore
+        // makes the two disagree about how many row-count words the header holds, shifting
+        // every subsequent row count onto the wrong table and mis-locating the table data.
+        // Rejecting the mask keeps them in agreement by construction, rather than requiring
+        // both to implement the same tolerance.
+        let unknown = valid_bitvec & !Self::known_table_mask();
+        if unknown != 0 {
+            return Err(malformed_error!(
+                "#~ valid mask names {} table(s) that do not exist (unknown bits 0x{:016X})",
+                unknown.count_ones(),
+                unknown
+            ));
+        }
+
         let table_info_len = (TableId::CustomDebugInformation as usize)
             .checked_add(1)
             .ok_or_else(|| malformed_error!("Table info size overflow"))?;
@@ -251,6 +292,9 @@ impl TableInfo {
         let heap_size_flags = read_le::<u8>(data.get(6..).ok_or(out_of_bounds_error!())?)?;
         let mut table_info = TableInfo {
             rows: table_info,
+            // Every bit survived the check above, so the mask is exactly the tables the
+            // header declares.
+            declared: valid_bitvec,
             coded_indexes: vec![0; CodedIndexType::COUNT],
             is_large_index_str: heap_size_flags & 1 == 1,
             is_large_index_guid: heap_size_flags & 2 == 2,
@@ -287,6 +331,7 @@ impl TableInfo {
     ) -> Self {
         let mut table_info = TableInfo {
             rows: vec![TableRowInfo::default(); TableId::CustomDebugInformation as usize + 1],
+            declared: 0,
             coded_indexes: vec![0; CodedIndexType::COUNT],
             is_large_index_str: large_str,
             is_large_index_guid: large_guid,
@@ -295,6 +340,7 @@ impl TableInfo {
 
         for valid_table in valid_tables {
             table_info.rows[valid_table.0 as usize] = TableRowInfo::new(valid_table.1);
+            table_info.declared |= 1u64 << (valid_table.0 as usize);
         }
 
         table_info.calculate_coded_index_bits();
@@ -333,7 +379,7 @@ impl TableInfo {
     ///
     /// ## Errors
     ///
-    /// - [`crate::Error::OutOfBounds`] - Tag value exceeds the number of tables in the coded index union
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] - Tag value exceeds the number of tables in the coded index union
     ///
     /// ## Reference
     ///
@@ -396,7 +442,7 @@ impl TableInfo {
     ///
     /// ## Errors
     ///
-    /// - [`crate::Error::OutOfBounds`] - Table ID is not valid for the specified coded index type
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] - Table ID is not valid for the specified coded index type
     ///
     /// ## Reference
     ///
@@ -420,8 +466,13 @@ impl TableInfo {
                 _ => return Err(out_of_bounds_error!()),
             };
             // CustomAttributeType uses 3 bits for the tag (5 entries -> ceil(log2(5)) = 3)
-            let encoded = (row << 3) | tag;
-            return Ok(encoded);
+            let encoded = row
+                .checked_shl(3)
+                .filter(|shifted| (shifted >> 3) == row)
+                .ok_or_else(|| {
+                    malformed_error!("Row {} does not fit a CustomAttributeType coded index", row)
+                })?;
+            return Ok(encoded | tag);
         }
 
         let tables = coded_index_type.tables();
@@ -441,11 +492,26 @@ impl TableInfo {
         let tag_bits = (tables.len() as f32).log2().ceil() as u8;
 
         // Encode: (row << tag_bits) | tag
+        //
+        // A row too large for the bits left after the tag would shift its high bits off the
+        // top and encode a *different* row, so it is rejected rather than silently truncated.
+        // Round-tripping the shift is the check.
+        let encoded = row
+            .checked_shl(u32::from(tag_bits))
+            .filter(|shifted| (shifted >> tag_bits) == row)
+            .ok_or_else(|| {
+                malformed_error!(
+                    "Row {} does not fit a {}-bit-tagged coded index",
+                    row,
+                    tag_bits
+                )
+            })?;
+
         // Tag cast is safe as table count is limited by metadata format
         #[allow(clippy::cast_possible_truncation)]
-        let encoded = (row << tag_bits) | (tag as u32);
+        let tag = tag as u32;
 
-        Ok(encoded)
+        Ok(encoded | tag)
     }
 
     /// Checks whether a specific table requires large (4-byte) indices due to size.
@@ -745,10 +811,24 @@ impl TableInfo {
     ///
     /// ## Returns
     ///
-    /// The number of rows in the specified table (0 if table is not present).
+    /// The number of rows in the specified table, or 0.
+    ///
+    /// **A 0 here is ambiguous**: it means either "this table is present and empty" or "this
+    /// `TableInfo` does not describe this table". Do not bound a row index against this value
+    /// without first asking [`Self::is_declared`] — a `TableInfo` built for a writer
+    /// round-trip or a test describes only some tables, and rejecting rows that reference the
+    /// others would reject valid metadata.
     #[must_use]
     pub fn row_count(&self, table_id: TableId) -> u32 {
         self.rows.get(table_id as usize).map_or(0, |info| info.rows)
+    }
+
+    /// Whether this `TableInfo` describes the given table at all.
+    ///
+    /// See [`Self::row_count`] for why the two questions are separate.
+    #[must_use]
+    pub fn is_declared(&self, table_id: TableId) -> bool {
+        self.declared & (1u64 << (table_id as usize)) != 0
     }
 
     /// Creates a new `TableInfo` with modified row counts for specified tables.
@@ -792,6 +872,8 @@ impl TableInfo {
 
         let mut new_info = TableInfo {
             rows,
+            // A row count changing does not change which tables are described.
+            declared: self.declared,
             coded_indexes: vec![0; CodedIndexType::COUNT],
             is_large_index_str: self.is_large_index_str,
             is_large_index_guid: self.is_large_index_guid,
@@ -800,5 +882,95 @@ impl TableInfo {
 
         new_info.calculate_coded_index_bits();
         new_info
+    }
+
+    /// Returns a copy with heap index widths derived from the given **output** heap sizes.
+    ///
+    /// ECMA-335 II.24.2.6 selects a 4-byte heap index once a heap exceeds 0xFFFF bytes. The
+    /// widths on `self` come from the *input* file's `HeapSizes` byte and are copied verbatim by
+    /// [`with_modified_row_counts`](Self::with_modified_row_counts), so a writer that appends
+    /// past the threshold — new type and method names, decrypted literals, rebuilt signatures —
+    /// keeps emitting 2-byte indices while resolving offsets that no longer fit them.
+    ///
+    /// Call this with the byte counts actually written for `#Strings`, `#GUID` and `#Blob`,
+    /// before the tables stream is laid out.
+    ///
+    /// # Arguments
+    ///
+    /// * `strings_bytes` - Size of the emitted `#Strings` heap.
+    /// * `guid_bytes` - Size of the emitted `#GUID` heap.
+    /// * `blob_bytes` - Size of the emitted `#Blob` heap.
+    #[must_use]
+    pub fn with_modified_heap_sizes(
+        &self,
+        strings_bytes: usize,
+        guid_bytes: usize,
+        blob_bytes: usize,
+    ) -> TableInfo {
+        /// Offsets are indices into the heap, so a heap of exactly 0x10000 bytes still needs a
+        /// 4-byte index to address its last entry.
+        const LARGE_HEAP_THRESHOLD: usize = 0xFFFF;
+
+        let mut new_info = TableInfo {
+            rows: self.rows.clone(),
+            declared: self.declared,
+            coded_indexes: vec![0; CodedIndexType::COUNT],
+            // Widths only ever widen here: an input that already declared 4-byte indices keeps
+            // them, because existing rows were read at that width.
+            is_large_index_str: self.is_large_index_str || strings_bytes > LARGE_HEAP_THRESHOLD,
+            is_large_index_guid: self.is_large_index_guid || guid_bytes > LARGE_HEAP_THRESHOLD,
+            is_large_index_blob: self.is_large_index_blob || blob_bytes > LARGE_HEAP_THRESHOLD,
+        };
+
+        new_info.calculate_coded_index_bits();
+        new_info
+    }
+}
+
+#[cfg(test)]
+mod heap_size_tests {
+    use super::*;
+
+    /// A heap that grew past 0xFFFF must promote its index to 4 bytes.
+    ///
+    /// Without this the emitted `HeapSizes` byte keeps the *input* file's widths, every
+    /// heap-reference field is written 2 bytes wide, and any offset at or above 0x10000 is
+    /// masked — producing a file that parses cleanly while its names and signatures point at
+    /// arbitrary earlier heap positions.
+    #[test]
+    fn heap_index_widens_past_the_threshold() {
+        let base = TableInfo::new_test(&[], false, false, false);
+
+        let widened = base.with_modified_heap_sizes(0x1_0000, 0, 0);
+        assert!(widened.is_large_str(), "#Strings must widen");
+        assert!(!widened.is_large_guid());
+        assert!(!widened.is_large_blob());
+
+        let widened = base.with_modified_heap_sizes(0, 0x20_0000, 0x1_0000);
+        assert!(!widened.is_large_str());
+        assert!(widened.is_large_guid(), "#GUID must widen");
+        assert!(widened.is_large_blob(), "#Blob must widen");
+    }
+
+    /// Exactly at the boundary the 2-byte index still addresses every offset.
+    #[test]
+    fn heap_index_stays_small_at_the_boundary() {
+        let base = TableInfo::new_test(&[], false, false, false);
+        let same = base.with_modified_heap_sizes(0xFFFF, 0xFFFF, 0xFFFF);
+
+        assert!(!same.is_large_str());
+        assert!(!same.is_large_guid());
+        assert!(!same.is_large_blob());
+    }
+
+    /// Widths never narrow: existing rows in the input were read at the declared width.
+    #[test]
+    fn heap_index_never_narrows() {
+        let base = TableInfo::new_test(&[], true, true, true);
+        let narrowed = base.with_modified_heap_sizes(16, 16, 16);
+
+        assert!(narrowed.is_large_str());
+        assert!(narrowed.is_large_guid());
+        assert!(narrowed.is_large_blob());
     }
 }

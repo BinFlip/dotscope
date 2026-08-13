@@ -60,7 +60,10 @@ use std::sync::Arc;
 
 use crossbeam_skiplist::SkipMap;
 
-use crate::metadata::{token::Token, typesystem::CilTypeReference};
+use crate::{
+    metadata::{token::Token, typesystem::CilTypeReference},
+    utils::LazyList,
+};
 
 mod builder;
 mod loader;
@@ -84,7 +87,7 @@ pub type MethodSpecMap = SkipMap<Token, MethodSpecRc>;
 ///
 /// Uses a lock-free vector implementation for efficient concurrent access to
 /// the collection of all method specification entries in the metadata.
-pub type MethodSpecList = Arc<boxcar::Vec<MethodSpecRc>>;
+pub type MethodSpecList = LazyList<MethodSpecRc>;
 
 /// Reference-counted pointer to a [`MethodSpec`] entry.
 ///

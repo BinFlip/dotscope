@@ -5,6 +5,8 @@
 //! The loader follows the established `MetadataLoader` pattern for consistent parallel
 //! processing and efficient memory utilization.
 
+use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+
 use crate::{
     metadata::{
         diagnostics::DiagnosticCategory,
@@ -53,7 +55,10 @@ impl MetadataLoader for StateMachineMethodLoader {
             return Ok(());
         };
 
-        table.par_iter().try_for_each(|row| {
+        table.par_iter().enumerate().try_for_each(|(index, row)| {
+            let Some(row) = context.handle_row(row, index)? else {
+                return Ok(());
+            };
             let token_msg = || format!("state machine method 0x{:08x}", row.token.value());
 
             let Some(state_machine_method) = context.handle_result(

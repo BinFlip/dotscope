@@ -598,4 +598,65 @@ mod tests {
         assert!(!null_token.is_table(TableId::MethodDef)); // Null token
         assert!(null_token.is_table(TableId::Module)); // Null token matches table 0
     }
+
+    // The `*Ptr` indirection tables are keyed by tokens built in their readers from literal
+    // prefixes, while the consumers that look rows up build the same tokens independently.
+    // These assert both halves agree, so a lookup key can never silently address the wrong
+    // table — a mismatch makes every lookup miss, which reads as "the assembly has no methods"
+    // rather than as an error.
+
+    #[test]
+    fn indirection_table_tokens_match_reader_prefixes() {
+        // Left side: what `Token::from_parts` produces for each indirection table.
+        // Right side: the literal prefix the corresponding reader keys its rows under.
+        assert_eq!(
+            Token::from_parts(TableId::FieldPtr, 1).value(),
+            0x0300_0001,
+            "FieldPtr"
+        );
+        assert_eq!(
+            Token::from_parts(TableId::MethodPtr, 1).value(),
+            0x0500_0001,
+            "MethodPtr"
+        );
+        assert_eq!(
+            Token::from_parts(TableId::EventPtr, 1).value(),
+            0x1300_0001,
+            "EventPtr"
+        );
+        assert_eq!(
+            Token::from_parts(TableId::PropertyPtr, 1).value(),
+            0x1600_0001,
+            "PropertyPtr"
+        );
+    }
+
+    #[test]
+    fn indirection_targets_use_their_own_table_ids() {
+        // The tables an indirection row resolves *to* are distinct from the indirection
+        // tables themselves; transposing the two is the mistake this guards against.
+        assert_eq!(Token::from_parts(TableId::Field, 1).value(), 0x0400_0001);
+        assert_eq!(
+            Token::from_parts(TableId::MethodDef, 1).value(),
+            0x0600_0001
+        );
+        assert_eq!(Token::from_parts(TableId::Event, 1).value(), 0x1400_0001);
+        assert_eq!(Token::from_parts(TableId::Property, 1).value(), 0x1700_0001);
+    }
+
+    #[test]
+    fn indirection_and_target_tables_are_distinct() {
+        for (ptr, target) in [
+            (TableId::FieldPtr, TableId::Field),
+            (TableId::MethodPtr, TableId::MethodDef),
+            (TableId::EventPtr, TableId::Event),
+            (TableId::PropertyPtr, TableId::Property),
+        ] {
+            assert_ne!(
+                Token::from_parts(ptr, 1).value(),
+                Token::from_parts(target, 1).value(),
+                "{ptr:?} and {target:?} must not share a token space"
+            );
+        }
+    }
 }

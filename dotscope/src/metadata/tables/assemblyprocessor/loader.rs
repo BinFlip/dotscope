@@ -86,7 +86,7 @@ impl MetadataLoader for AssemblyProcessorLoader {
         let Some(table) = header.table::<AssemblyProcessorRaw>() else {
             return Ok(());
         };
-        let Some(row) = table.get(1) else {
+        let Some(row) = table.get(1)? else {
             return Ok(());
         };
 

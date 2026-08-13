@@ -110,7 +110,7 @@ impl PropertyMapRaw {
         let end = if next_row_id > map.row_count {
             properties.len().saturating_add(1)
         } else {
-            match map.get(next_row_id) {
+            match map.get(next_row_id)? {
                 Some(next_row) => next_row.property_list as usize,
                 None => {
                     return Err(malformed_error!(
@@ -127,40 +127,23 @@ impl PropertyMapRaw {
 
         let property_list = Arc::new(boxcar::Vec::with_capacity(end.saturating_sub(start)));
         for counter in start..end {
+            let property_rid = u32::try_from(counter)
+                .map_err(|_| malformed_error!("Property row index out of range: {}", counter))?;
             let actual_property_token = if property_ptr.is_empty() {
-                let token_value = counter | 0x1700_0000;
-                Token::new(
-                    u32::try_from(token_value)
-                        .map_err(|_| malformed_error!("Property counter overflow"))?,
-                )
+                Token::from_parts(TableId::Property, property_rid)
             } else {
-                let property_ptr_token_value =
-                    u32::try_from(counter | 0x0E00_0000).map_err(|_| {
-                        malformed_error!(
-                            "PropertyPtr token value too large: {}",
-                            counter | 0x0E00_0000
-                        )
-                    })?;
-                let property_ptr_token = Token::new(property_ptr_token_value);
+                // Built from the TableId enum rather than a hand-written prefix so the table
+                // id cannot drift from the value `PropertyPtrReader` keys rows under.
+                let property_ptr_token = Token::from_parts(TableId::PropertyPtr, property_rid);
 
                 match property_ptr.get(&property_ptr_token) {
                     Some(property_ptr_entry) => {
-                        let actual_property_rid = property_ptr_entry.value().property;
-                        let actual_property_token_value = u32::try_from(
-                            actual_property_rid as usize | 0x1700_0000,
-                        )
-                        .map_err(|_| {
-                            malformed_error!(
-                                "Property token value too large: {}",
-                                actual_property_rid as usize | 0x1700_0000
-                            )
-                        })?;
-                        Token::new(actual_property_token_value)
+                        Token::from_parts(TableId::Property, property_ptr_entry.value().property)
                     }
                     None => {
                         return Err(malformed_error!(
                             "Failed to resolve PropertyPtr - {}",
-                            counter | 0x0E00_0000
+                            property_ptr_token.value()
                         ))
                     }
                 }

@@ -32,14 +32,59 @@
 //! - [`crate::metadata::tables::types::read::traits`] - Core parsing traits
 //! - [`crate::metadata::tables::types::read::access`] - Low-level access utilities
 
-use std::sync::{Arc, Mutex};
-
 use rayon::iter::{plumbing, IndexedParallelIterator, ParallelIterator};
 
 use crate::{
     metadata::tables::{MetadataTable, RowReadable},
-    Error, Result,
+    Result,
 };
+
+/// Discards a row that could not be parsed, after logging it.
+///
+/// For consumers that genuinely cannot propagate — an adapter chain inside a function
+/// returning `Option`, or a scan that has no error channel. Written as a named function
+/// rather than `.flatten()` or `.filter_map(Result::ok)` so that dropping a row is greppable
+/// and leaves a trace: a silently short table is how a malformed row turns into missing
+/// analysis output rather than an error.
+///
+/// Prefer `?` wherever the caller can carry an error.
+///
+/// # Position is not RID
+///
+/// Dropping a row shifts everything after it, so **the position of a row in a filtered
+/// sequence is not its RID**. Never derive a RID from `enumerate()`, an index into a
+/// collected `Vec`, `.first()`, or `.next()`:
+///
+/// ```rust,ignore
+/// // Wrong: one unreadable row ahead of the match names a different row entirely.
+/// for (index, row) in table.iter().filter_map(skip_unreadable).enumerate() {
+///     let rid = index as u32 + 1;
+/// }
+///
+/// // Right: the row carries its own RID.
+/// for row in table.iter().filter_map(skip_unreadable) {
+///     let rid = row.rid;
+/// }
+///
+/// // Right, when a specific RID is wanted: `get` derives each row's offset from its RID,
+/// // so an unreadable row cannot displace any other.
+/// let module = table.get(1).ok().flatten();
+/// ```
+///
+/// Every raw row struct carries a `rid` field, and
+/// [`MetadataTable::get`](super::MetadataTable::get) fetches by RID directly. This mattered
+/// most where a row was read positionally and written back under the original RID, which
+/// copied one row's contents onto a different row.
+#[must_use]
+pub fn skip_unreadable<T>(row: Result<T>) -> Option<T> {
+    match row {
+        Ok(row) => Some(row),
+        Err(e) => {
+            log::warn!("skipping unreadable metadata row: {e}");
+            None
+        }
+    }
+}
 
 /// Sequential iterator for metadata table rows.
 ///
@@ -51,39 +96,51 @@ use crate::{
 ///
 /// - **Lazy evaluation**: Rows are parsed only when accessed
 /// - **Memory efficient**: Constant memory usage regardless of table size
-/// - **Error resilient**: Parsing errors result in `None` rather than panics
+/// - **Honest about failure**: a row that does not parse is yielded as `Err`, not skipped
 /// - **Cache friendly**: Sequential access pattern optimizes memory locality
+///
+/// ## Why the item type is a `Result`
+///
+/// Yielding `None` on a parse error would end the iteration, silently dropping every
+/// remaining row — a row-hiding primitive on a hostile file, and one that reaches further
+/// than it looks: the writer rebuilds tables by iterating them, so a table truncated this way
+/// is re-emitted without the rows that were skipped. Every row is therefore reported, and the
+/// iterator always yields exactly `row_count` items.
 pub struct TableIterator<'a, T> {
     /// Reference to the table being iterated
     pub table: &'a MetadataTable<'a, T>,
     /// Current row number (0-based for internal tracking)
     pub current_row: u32,
-    /// Current byte offset in the table data
-    pub current_offset: usize,
 }
 
 impl<T: RowReadable> Iterator for TableIterator<'_, T> {
-    type Item = T;
+    type Item = Result<T>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.current_row >= self.table.row_count {
             return None;
         }
 
-        match T::row_read(
-            self.table.data,
-            &mut self.current_offset,
-            self.current_row.saturating_add(1),
-            &self.table.sizes,
-        ) {
-            Ok(row) => {
-                self.current_row = self.current_row.saturating_add(1);
-                Some(row)
-            }
-            Err(_) => None,
-        }
+        let rid = self.current_row.saturating_add(1);
+        self.current_row = rid;
+
+        // `get` derives each row's offset from its index, so a failure here costs this row
+        // and no other — which is what makes continuing after one sound.
+        self.table.get(rid).transpose()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self
+            .table
+            .row_count
+            .saturating_sub(self.current_row)
+            .try_into()
+            .unwrap_or(usize::MAX);
+        (remaining, Some(remaining))
     }
 }
+
+impl<T: RowReadable> ExactSizeIterator for TableIterator<'_, T> {}
 
 /// Parallel iterator for metadata table rows.
 ///
@@ -116,64 +173,8 @@ pub struct TableParIterator<'a, T> {
     pub range: std::ops::Range<u32>,
 }
 
-// Extension methods for more efficient parallel operations
-impl<'a, T: RowReadable + Send + Sync + 'a> TableParIterator<'a, T> {
-    /// Processes the iterator in parallel with early error detection and termination.
-    ///
-    /// This method provides a parallel equivalent to the standard iterator's `try_for_each`,
-    /// executing the provided operation on each row concurrently while monitoring for
-    /// errors. If any operation fails, processing stops and the first error encountered
-    /// is returned.
-    ///
-    /// ## Arguments
-    ///
-    /// * `op` - A closure that takes each row and returns a [`Result`]. Must be `Send + Sync`
-    ///   to enable safe parallel execution.
-    ///
-    /// ## Returns
-    ///
-    /// Returns `Ok(())` if all operations complete successfully, or the first error
-    /// encountered during parallel processing.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if any operation applied to an item returns an error. The first error encountered is returned.
-    pub fn try_for_each<F>(self, op: F) -> Result<()>
-    where
-        F: Fn(T) -> Result<()> + Send + Sync,
-    {
-        let error = Arc::new(Mutex::new(None));
-
-        self.for_each(|item| {
-            if let Ok(guard) = error.lock() {
-                if guard.is_some() {
-                    return;
-                }
-            }
-
-            if let Err(e) = op(item) {
-                if let Ok(mut guard) = error.lock() {
-                    if guard.is_none() {
-                        *guard = Some(e);
-                    }
-                }
-            }
-        });
-
-        let mutex = Arc::into_inner(error)
-            .ok_or_else(|| Error::LockError("Arc still has references".into()))?;
-        match mutex
-            .into_inner()
-            .map_err(|e| Error::LockError(format!("iterator error lock: {e}")))?
-        {
-            Some(e) => Err(e),
-            None => Ok(()),
-        }
-    }
-}
-
 impl<T: RowReadable + Send + Sync> ParallelIterator for TableParIterator<'_, T> {
-    type Item = T;
+    type Item = Result<T>;
 
     fn drive_unindexed<C>(self, consumer: C) -> C::Result
     where
@@ -233,7 +234,7 @@ struct TableProducer<'a, T> {
 }
 
 impl<'a, T: RowReadable + Send + Sync> rayon::iter::plumbing::Producer for TableProducer<'a, T> {
-    type Item = T;
+    type Item = Result<T>;
     type IntoIter = TableProducerIterator<'a, T>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -285,7 +286,7 @@ struct TableProducerIterator<'a, T> {
 }
 
 impl<T: RowReadable + Send + Sync> Iterator for TableProducerIterator<'_, T> {
-    type Item = T;
+    type Item = Result<T>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.range.start >= self.range.end {
@@ -297,7 +298,11 @@ impl<T: RowReadable + Send + Sync> Iterator for TableProducerIterator<'_, T> {
 
         // Get the row directly from the table
         // +1 because row indices start at 1
-        self.table.get(row_index.saturating_add(1))
+        //
+        // A failing row is yielded as `Err`, so this chunk still produces exactly
+        // `range.len()` items — which is what `ExactSizeIterator` below promises rayon, and
+        // what `IndexedParallelIterator::len` reports.
+        self.table.get(row_index.saturating_add(1)).transpose()
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -319,6 +324,6 @@ impl<T: RowReadable + Send + Sync> DoubleEndedIterator for TableProducerIterator
 
         // Get the row directly from the table
         // +1 because row indices start at 1
-        self.table.get(self.range.end.saturating_add(1))
+        self.table.get(self.range.end.saturating_add(1)).transpose()
     }
 }

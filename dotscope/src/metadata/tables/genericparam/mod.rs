@@ -68,7 +68,7 @@ use std::sync::Arc;
 
 use crossbeam_skiplist::SkipMap;
 
-use crate::metadata::token::Token;
+use crate::{metadata::token::Token, utils::LazyList};
 
 mod builder;
 mod loader;
@@ -94,7 +94,7 @@ pub type GenericParamMap = SkipMap<Token, GenericParamRc>;
 /// This collection provides ordered access to generic parameter entries, useful for
 /// sequential processing and bulk operations during generic type analysis and
 /// parameter enumeration.
-pub type GenericParamList = Arc<boxcar::Vec<GenericParamRc>>;
+pub type GenericParamList = LazyList<GenericParamRc>;
 
 /// Reference-counted generic parameter entry.
 ///

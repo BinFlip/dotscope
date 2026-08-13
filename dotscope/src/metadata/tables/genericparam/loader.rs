@@ -29,6 +29,8 @@
 //! # ECMA-335 Reference
 //! See ECMA-335, Partition II, §22.20 for the `GenericParam` table specification.
 
+use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+
 use crate::{
     metadata::{
         diagnostics::DiagnosticCategory,
@@ -83,22 +85,28 @@ impl MetadataLoader for GenericParamLoader {
             return Ok(());
         };
 
-        generics.par_iter().try_for_each(|row| {
-            let token_msg = || format!("generic param 0x{:08x}", row.token.value());
+        generics
+            .par_iter()
+            .enumerate()
+            .try_for_each(|(index, row)| {
+                let Some(row) = context.handle_row(row, index)? else {
+                    return Ok(());
+                };
+                let token_msg = || format!("generic param 0x{:08x}", row.token.value());
 
-            let Some(owned) = context.handle_result(
-                row.to_owned(|coded_index| context.get_ref(coded_index), strings),
-                DiagnosticCategory::Type,
-                token_msg,
-            )?
-            else {
-                return Ok(());
-            };
+                let Some(owned) = context.handle_result(
+                    row.to_owned(|coded_index| context.get_ref(coded_index), strings),
+                    DiagnosticCategory::Type,
+                    token_msg,
+                )?
+                else {
+                    return Ok(());
+                };
 
-            context.handle_error(owned.apply(), DiagnosticCategory::Type, token_msg)?;
-            context.generic_param.insert(row.token, owned.clone());
-            Ok(())
-        })
+                context.handle_error(owned.apply(), DiagnosticCategory::Type, token_msg)?;
+                context.generic_param.insert(row.token, owned.clone());
+                Ok(())
+            })
     }
 
     /// Returns the table identifier for the `GenericParam` table.

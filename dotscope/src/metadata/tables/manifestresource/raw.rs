@@ -160,7 +160,7 @@ impl ManifestResourceRaw {
                         self.rid
                     )
                 })?;
-                data_size = if let Some(next_res) = table.get(next_rid) {
+                data_size = if let Some(next_res) = table.get(next_rid)? {
                     (next_res.offset_field as usize)
                         .checked_sub(self.offset_field as usize)
                         .ok_or_else(|| {

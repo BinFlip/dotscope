@@ -57,7 +57,10 @@ impl MetadataLoader for TypeRefLoader {
         // ECMA-335 guarantees parent entries appear before children in the table.
         // Using parallel iteration could process children before parents,
         // causing resolution scope lookups to fail.
-        for row in table {
+        for (index, row) in table.into_iter().enumerate() {
+            let Some(row) = context.handle_row(row, index)? else {
+                continue;
+            };
             let token_msg = || format!("type ref 0x{:08x}", row.token.value());
 
             let Some(new_entry) = context.handle_result(

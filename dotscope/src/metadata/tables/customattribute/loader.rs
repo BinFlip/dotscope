@@ -55,6 +55,8 @@
 //!
 //! - [ECMA-335 II.22.10](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `CustomAttribute` table specification
 
+use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+
 use crate::{
     metadata::{
         diagnostics::DiagnosticCategory,
@@ -125,7 +127,10 @@ impl MetadataLoader for CustomAttributeLoader {
             return Ok(());
         };
 
-        table.par_iter().try_for_each(|row| {
+        table.par_iter().enumerate().try_for_each(|(index, row)| {
+            let Some(row) = context.handle_row(row, index)? else {
+                return Ok(());
+            };
             let token_msg = || format!("custom attribute 0x{:08x}", row.token.value());
 
             let Some(owned) = context.handle_result(

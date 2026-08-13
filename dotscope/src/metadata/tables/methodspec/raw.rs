@@ -13,6 +13,7 @@ use crate::{
         token::Token,
         typesystem::{CilTypeReference, TypeRegistry, TypeResolver},
     },
+    utils::LazyList,
     Result,
 };
 
@@ -141,7 +142,7 @@ impl MethodSpecRaw {
             offset: self.offset,
             method: method.clone(),
             instantiation,
-            custom_attributes: Arc::new(boxcar::Vec::new()),
+            custom_attributes: LazyList::new(),
             generic_args,
         });
 

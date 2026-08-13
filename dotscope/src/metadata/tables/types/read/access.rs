@@ -21,8 +21,10 @@ use crate::metadata::tables::{MetadataTable, RowReadable};
 /// # fn example(tables: &TablesHeader) -> dotscope::Result<()> {
 /// // Type-safe access - no table ID needed
 /// if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
-///     // Work with the table safely
+///     // Iteration yields `Result<TypeDefRaw>`: a row that fails to parse is reported
+///     // rather than silently ending the iteration.
 ///     for type_def in typedef_table.iter().take(5) {
+///         let type_def = type_def?;
 ///         println!("Type: {}", type_def.type_name);
 ///     }
 /// }

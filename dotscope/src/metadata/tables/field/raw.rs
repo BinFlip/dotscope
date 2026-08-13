@@ -22,6 +22,7 @@ use crate::{
         tables::{Field, FieldAttributes, FieldRc, TableInfoRef, TableRow},
         token::Token,
     },
+    utils::LazyList,
     Result,
 };
 
@@ -123,7 +124,7 @@ impl FieldRaw {
             rva: OnceLock::new(),
             layout: OnceLock::new(),
             marshal: OnceLock::new(),
-            custom_attributes: Arc::new(boxcar::Vec::new()),
+            custom_attributes: LazyList::new(),
             declaring_type: OnceLock::new(),
         }))
     }

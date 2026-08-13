@@ -141,7 +141,7 @@ impl EventMapRaw {
         let end = if next_row_id > map.row_count {
             events.len().saturating_add(1)
         } else {
-            match map.get(next_row_id) {
+            match map.get(next_row_id)? {
                 Some(next_row) => next_row.event_list as usize,
                 None => {
                     return Err(malformed_error!(
@@ -158,35 +158,23 @@ impl EventMapRaw {
 
         let event_list = Arc::new(boxcar::Vec::with_capacity(end.saturating_sub(start)));
         for counter in start..end {
+            let event_rid = u32::try_from(counter)
+                .map_err(|_| malformed_error!("Event row index out of range: {}", counter))?;
             let actual_event_token = if event_ptr.is_empty() {
-                let token_value = counter | 0x1400_0000;
-                Token::new(u32::try_from(token_value).map_err(|_| {
-                    malformed_error!("Token value {} exceeds u32 range", token_value)
-                })?)
+                Token::from_parts(TableId::Event, event_rid)
             } else {
-                let event_ptr_token_value = u32::try_from(counter | 0x0D00_0000).map_err(|_| {
-                    malformed_error!("EventPtr token value too large: {}", counter | 0x0D00_0000)
-                })?;
-                let event_ptr_token = Token::new(event_ptr_token_value);
+                // Built from the TableId enum rather than a hand-written prefix so the table
+                // id cannot drift from the value `EventPtrReader` keys rows under.
+                let event_ptr_token = Token::from_parts(TableId::EventPtr, event_rid);
 
                 match event_ptr.get(&event_ptr_token) {
                     Some(event_ptr_entry) => {
-                        let actual_event_rid = event_ptr_entry.value().event;
-                        let actual_event_token_value = u32::try_from(
-                            actual_event_rid as usize | 0x1400_0000,
-                        )
-                        .map_err(|_| {
-                            malformed_error!(
-                                "Event token value too large: {}",
-                                actual_event_rid as usize | 0x1400_0000
-                            )
-                        })?;
-                        Token::new(actual_event_token_value)
+                        Token::from_parts(TableId::Event, event_ptr_entry.value().event)
                     }
                     None => {
                         return Err(malformed_error!(
                             "Failed to resolve EventPtr - {}",
-                            counter | 0x0D00_0000
+                            event_ptr_token.value()
                         ))
                     }
                 }

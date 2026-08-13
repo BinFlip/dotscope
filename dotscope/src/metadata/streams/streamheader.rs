@@ -387,7 +387,7 @@ impl StreamHeader {
     /// # Errors
     ///
     /// Returns [`crate::Error`] in the following cases:
-    /// - **[`crate::Error::OutOfBounds`]**: Data slice too short (< 9 bytes)
+    /// - **[`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`]**: Data slice too short (< 9 bytes)
     /// - **Malformed data**: Stream size not 4-byte aligned (ECMA-335 violation)
     /// - **Range error**: Offset or size exceeds 0x7FFFFFFF (integer overflow protection)
     /// - **Invalid name**: Stream name doesn't match standard ECMA-335 identifiers

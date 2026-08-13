@@ -28,6 +28,7 @@ use crate::{
         token::Token,
         typesystem::{CilType, CilTypeRc, CilTypeRef, CilTypeReference},
     },
+    utils::LazyList,
     Result,
 };
 
@@ -164,7 +165,7 @@ impl TypeDefRaw {
                 .ok_or_else(|| malformed_error!("Method count overflow: {}", methods.len()))?;
             (fields_end, methods_end)
         } else {
-            match defs.get(next_rid) {
+            match defs.get(next_rid)? {
                 Some(next_row) => (next_row.field_list as usize, next_row.method_list as usize),
                 None => {
                     return Err(malformed_error!(
@@ -197,38 +198,21 @@ impl TypeDefRaw {
             })?;
             let type_fields = Arc::new(boxcar::Vec::with_capacity(capacity));
             for counter in start_fields..end_fields {
+                let field_rid = u32::try_from(counter)
+                    .map_err(|_| malformed_error!("Field row index out of range: {}", counter))?;
                 let actual_field_token = if field_ptr.is_empty() {
-                    Token::new(u32::try_from(counter | 0x0400_0000).map_err(|_| {
-                        malformed_error!("Field token overflow: {}", counter | 0x0400_0000)
-                    })?)
+                    Token::from_parts(TableId::Field, field_rid)
                 } else {
-                    let field_ptr_token_value =
-                        u32::try_from(counter | 0x0300_0000).map_err(|_| {
-                            malformed_error!(
-                                "FieldPtr token value too large: {}",
-                                counter | 0x0300_0000
-                            )
-                        })?;
-                    let field_ptr_token = Token::new(field_ptr_token_value);
+                    let field_ptr_token = Token::from_parts(TableId::FieldPtr, field_rid);
 
                     match field_ptr.get(&field_ptr_token) {
                         Some(field_ptr_entry) => {
-                            let actual_field_rid = field_ptr_entry.value().field;
-                            let actual_field_token_value = u32::try_from(
-                                actual_field_rid as usize | 0x0400_0000,
-                            )
-                            .map_err(|_| {
-                                malformed_error!(
-                                    "Field token value too large: {}",
-                                    actual_field_rid as usize | 0x0400_0000
-                                )
-                            })?;
-                            Token::new(actual_field_token_value)
+                            Token::from_parts(TableId::Field, field_ptr_entry.value().field)
                         }
                         None => {
                             return Err(malformed_error!(
                                 "Failed to resolve FieldPtr - {}",
-                                counter | 0x0300_0000
+                                field_ptr_token.value()
                             ))
                         }
                     }
@@ -259,7 +243,7 @@ impl TypeDefRaw {
             || start_methods > methods.len()
             || end_methods < start_methods
         {
-            Arc::new(boxcar::Vec::new())
+            LazyList::new()
         } else {
             let capacity = end_methods.checked_sub(start_methods).ok_or_else(|| {
                 malformed_error!(
@@ -268,40 +252,27 @@ impl TypeDefRaw {
                     start_methods
                 )
             })?;
-            let type_methods = Arc::new(boxcar::Vec::with_capacity(capacity));
+            // `LazyList` has no with_capacity: the point is to not allocate until first push.
+            let _ = capacity;
+            let type_methods = LazyList::new();
             for counter in start_methods..end_methods {
+                let method_rid = u32::try_from(counter)
+                    .map_err(|_| malformed_error!("Method row index out of range: {}", counter))?;
                 let actual_method_token = if method_ptr.is_empty() {
-                    Token::new(u32::try_from(counter | 0x0600_0000).map_err(|_| {
-                        malformed_error!("Method token overflow: {}", counter | 0x0600_0000)
-                    })?)
+                    Token::from_parts(TableId::MethodDef, method_rid)
                 } else {
-                    let method_ptr_token_value =
-                        u32::try_from(counter | 0x0900_0000).map_err(|_| {
-                            malformed_error!(
-                                "MethodPtr token value too large: {}",
-                                counter | 0x0900_0000
-                            )
-                        })?;
-                    let method_ptr_token = Token::new(method_ptr_token_value);
+                    // Built from the TableId enum rather than a hand-written prefix so the
+                    // table id cannot drift from the value `MethodPtrReader` keys rows under.
+                    let method_ptr_token = Token::from_parts(TableId::MethodPtr, method_rid);
 
                     match method_ptr.get(&method_ptr_token) {
                         Some(method_ptr_entry) => {
-                            let actual_method_rid = method_ptr_entry.value().method;
-                            let actual_method_token_value = u32::try_from(
-                                actual_method_rid as usize | 0x0600_0000,
-                            )
-                            .map_err(|_| {
-                                malformed_error!(
-                                    "Method token value too large: {}",
-                                    actual_method_rid as usize | 0x0600_0000
-                                )
-                            })?;
-                            Token::new(actual_method_token_value)
+                            Token::from_parts(TableId::MethodDef, method_ptr_entry.value().method)
                         }
                         None => {
                             return Err(malformed_error!(
                                 "Failed to resolve MethodPtr - {}",
-                                counter | 0x0900_0000
+                                method_ptr_token.value()
                             ))
                         }
                     }
