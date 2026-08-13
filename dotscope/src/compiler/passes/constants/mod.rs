@@ -72,6 +72,86 @@ fn is_method_on_type(assembly: &CilObject, token: Token, type_name: &str) -> boo
     }
 }
 
+/// An integer constant reduced to its CIL stack width and raw bit pattern.
+///
+/// Folding an operation whose meaning depends on operand width and signedness — `rem`/`rem.un`
+/// and `div`/`div.un` — cannot go through a single `as_i64` accessor. `as_i64` sign-extends,
+/// so reinterpreting its result as unsigned turns `rem.un` of `I32(-1)` into
+/// `0xFFFF_FFFF_FFFF_FFFF % r` rather than the `0xFFFF_FFFF % r` CIL specifies. `as_u64` is
+/// no better here: it refuses negative values outright, so it cannot express the
+/// reinterpretation at all.
+///
+/// Per ECMA-335 III.1.1 the stack holds `int32` and `int64`; anything narrower is widened to
+/// `int32` when loaded. This mirrors that: sub-word constants become 32-bit, and the bit
+/// pattern is kept unsigned so each operation can choose how to read it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IntOperand {
+    /// A 32-bit stack value, as raw bits.
+    W32(u32),
+    /// A 64-bit stack value, as raw bits.
+    W64(u64),
+}
+
+impl IntOperand {
+    /// Classifies an integer constant, or `None` for non-integer constants.
+    ///
+    /// `NativeInt`/`NativeUInt` are deliberately excluded rather than assumed 64-bit: their
+    /// width is the target's pointer size, so folding them here would bake a host assumption
+    /// into the output.
+    fn from_const(value: &ConstValue) -> Option<Self> {
+        #[allow(clippy::cast_sign_loss)]
+        Some(match value {
+            ConstValue::I8(v) => Self::W32(i32::from(*v) as u32),
+            ConstValue::I16(v) => Self::W32(i32::from(*v) as u32),
+            ConstValue::I32(v) => Self::W32(*v as u32),
+            ConstValue::U8(v) => Self::W32(u32::from(*v)),
+            ConstValue::U16(v) => Self::W32(u32::from(*v)),
+            ConstValue::U32(v) => Self::W32(*v),
+            ConstValue::I64(v) => Self::W64(*v as u64),
+            ConstValue::U64(v) => Self::W64(*v),
+            ConstValue::True => Self::W32(1),
+            ConstValue::False => Self::W32(0),
+            _ => return None,
+        })
+    }
+}
+
+/// Folds `rem`/`rem.un` over two constant operands, or `None` when it must not be folded.
+///
+/// Returns `None` — leaving the instruction in place — when:
+///
+/// - the divisor is zero, since the operation raises `DivideByZeroException` at runtime;
+/// - the division overflows (`i32::MIN % -1`), which raises `OverflowException`;
+/// - the operands have different widths, which is unverifiable IL. Inventing a promotion
+///   would mean choosing sign- or zero-extension on the crate's behalf and folding an input
+///   the runtime would reject.
+///
+/// The result keeps the operand width, so a 64-bit remainder stays [`ConstValue::I64`].
+/// Narrowing it to `I32` — as a single `ConstValue::I32(result as i32)` does — is worse than a
+/// wrong number: codegen then emits `ldc.i4` where the stack type requires `ldc.i8`, which is
+/// a verification failure rather than a miscomputation.
+fn fold_rem(left: IntOperand, right: IntOperand, unsigned: bool) -> Option<ConstValue> {
+    #[allow(clippy::cast_possible_wrap)]
+    match (left, right) {
+        (IntOperand::W32(l), IntOperand::W32(r)) => {
+            if unsigned {
+                Some(ConstValue::I32(l.checked_rem(r)? as i32))
+            } else {
+                Some(ConstValue::I32((l as i32).checked_rem(r as i32)?))
+            }
+        }
+        (IntOperand::W64(l), IntOperand::W64(r)) => {
+            if unsigned {
+                Some(ConstValue::I64(l.checked_rem(r)? as i64))
+            } else {
+                Some(ConstValue::I64((l as i64).checked_rem(r as i64)?))
+            }
+        }
+        // Mixed widths: see above.
+        _ => None,
+    }
+}
+
 /// Result of checking an algebraic identity.
 ///
 /// Either the operation simplifies to a constant value (absorbing elements)
@@ -805,13 +885,30 @@ impl ConstantPropagationPass {
     }
 
     /// Checks if an overflow-checked operation can be folded.
-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)] // Intentional bit reinterpretation for overflow checking
+    ///
+    /// `add.ovf`/`sub.ovf`/`mul.ovf` throw `OverflowException` when the result does not fit
+    /// the operand width, so folding one is only sound when the operation provably does *not*
+    /// overflow. Getting that test wrong turns a throwing path into a wrong constant, which is
+    /// worse than not folding at all.
+    ///
+    /// The width test must therefore happen at the *operand's* own width.
+    /// [`ConstValue::add_checked`] and its siblings do exactly that — `checked_*` per variant,
+    /// `None` on overflow, signed or unsigned per the instruction's flag — so the whole
+    /// decision is delegated rather than reimplemented here. The plain `add`/`sub`/`mul` are
+    /// deliberately *not* used: they wrap silently, so they cannot serve as their own overflow
+    /// oracle. Nor is `as_i64`, which sign-extends to 64 bits and so reports no overflow for
+    /// any pair of 32-bit operands — `i32::MAX + 1` folded to `i32::MIN` under it.
     fn check_overflow_op(
         op: &SsaOp,
         constants: &BTreeMap<SsaVarId, ConstValue>,
         ptr_size: PointerSize,
     ) -> Option<(SsaVarId, ConstValue)> {
-        match op {
+        // No `x * 0 == 0` short-circuit for `MulOvf`: a multiply by zero cannot overflow, so
+        // `mul_checked` already folds it. The short-circuit that used to sit here returned the
+        // *zero operand's own* variant, so `I32(0) * I64(5)` yielded `I32(0)` and
+        // `I64(0) * I32(5)` yielded `I64(0)` — the result width depended on which side
+        // happened to be zero.
+        let (dest, folded) = match op {
             SsaOp::AddOvf {
                 dest,
                 left,
@@ -819,22 +916,8 @@ impl ConstantPropagationPass {
                 unsigned,
                 ..
             } => {
-                let l = constants.get(left)?;
-                let r = constants.get(right)?;
-                let (lv, rv) = (l.as_i64()?, r.as_i64()?);
-
-                if *unsigned {
-                    let (result, overflow) = (lv as u64).overflowing_add(rv as u64);
-                    if !overflow {
-                        return Some((*dest, ConstValue::I64(result as i64)));
-                    }
-                } else {
-                    let (_, overflow) = lv.overflowing_add(rv);
-                    if !overflow {
-                        return Some((*dest, l.add(r, ptr_size)?));
-                    }
-                }
-                None
+                let (l, r) = (constants.get(left)?, constants.get(right)?);
+                (dest, l.add_checked(r, *unsigned, ptr_size))
             }
 
             SsaOp::SubOvf {
@@ -844,22 +927,8 @@ impl ConstantPropagationPass {
                 unsigned,
                 ..
             } => {
-                let l = constants.get(left)?;
-                let r = constants.get(right)?;
-                let (lv, rv) = (l.as_i64()?, r.as_i64()?);
-
-                if *unsigned {
-                    let (result, overflow) = (lv as u64).overflowing_sub(rv as u64);
-                    if !overflow {
-                        return Some((*dest, ConstValue::I64(result as i64)));
-                    }
-                } else {
-                    let (_, overflow) = lv.overflowing_sub(rv);
-                    if !overflow {
-                        return Some((*dest, l.sub(r, ptr_size)?));
-                    }
-                }
-                None
+                let (l, r) = (constants.get(left)?, constants.get(right)?);
+                (dest, l.sub_checked(r, *unsigned, ptr_size))
             }
 
             SsaOp::MulOvf {
@@ -869,35 +938,14 @@ impl ConstantPropagationPass {
                 unsigned,
                 ..
             } => {
-                let l = constants.get(left)?;
-                let r = constants.get(right)?;
-
-                // Special case: x * 0 = 0, even with overflow check
-                if l.is_zero() {
-                    return Some((*dest, l.clone()));
-                }
-                if r.is_zero() {
-                    return Some((*dest, r.clone()));
-                }
-
-                let (lv, rv) = (l.as_i64()?, r.as_i64()?);
-
-                if *unsigned {
-                    let (result, overflow) = (lv as u64).overflowing_mul(rv as u64);
-                    if !overflow {
-                        return Some((*dest, ConstValue::I64(result as i64)));
-                    }
-                } else {
-                    let (_, overflow) = lv.overflowing_mul(rv);
-                    if !overflow {
-                        return Some((*dest, l.mul(r, ptr_size)?));
-                    }
-                }
-                None
+                let (l, r) = (constants.get(left)?, constants.get(right)?);
+                (dest, l.mul_checked(r, *unsigned, ptr_size))
             }
 
-            _ => None,
-        }
+            _ => return None,
+        };
+
+        folded.map(|value| (*dest, value))
     }
 
     /// Folds calls to pure methods with all-constant arguments.
@@ -1015,25 +1063,17 @@ impl ConstantPropagationPass {
                             Some(SsaOp::Const { value, .. }) => Some(value),
                             _ => None,
                         })
-                        .and_then(ConstValue::as_i64);
+                        .and_then(IntOperand::from_const);
                     let rval = constants
                         .get(right)
                         .or_else(|| match ssa.get_definition(*right) {
                             Some(SsaOp::Const { value, .. }) => Some(value),
                             _ => None,
                         })
-                        .and_then(ConstValue::as_i64);
+                        .and_then(IntOperand::from_const);
 
                     if let (Some(l), Some(r)) = (lval, rval) {
-                        if r != 0 {
-                            #[allow(clippy::cast_sign_loss)]
-                            let result = if *unsigned {
-                                (l as u64).checked_rem(r as u64).unwrap_or(0) as i64
-                            } else {
-                                l.checked_rem(r).unwrap_or(0)
-                            };
-                            #[allow(clippy::cast_possible_truncation)]
-                            let value = ConstValue::I32(result as i32);
+                        if let Some(value) = fold_rem(l, r, *unsigned) {
                             new_constants.push((block_idx, instr_idx, *dest, value));
                         }
                     }

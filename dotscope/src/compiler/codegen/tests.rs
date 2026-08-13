@@ -2132,6 +2132,7 @@ fn test_fibonacci_deobfuscation_preserves_semantics() {
 
     let mut found = false;
     for row in method_table.iter() {
+        let row = row.expect("row parses");
         let name = strings.get(row.name as usize).unwrap_or("");
         if name != "Fibonacci" {
             continue;
@@ -2252,6 +2253,7 @@ fn test_fibonacci_pass_combinations() {
         let strings = output.strings().expect("strings");
 
         for row in method_table.iter() {
+            let row = row.expect("row parses");
             let method_name = strings.get(row.name as usize).unwrap_or("");
             if method_name != "Fibonacci" {
                 continue;
