@@ -306,7 +306,7 @@ fn collect_referenced_heap_entries(
                             }
 
                             // Get the row and serialize to bytes
-                            let Some(row) = table.get(rid) else {
+                            let Some(row) = table.get(rid).ok().flatten() else {
                                 continue;
                             };
 
@@ -371,7 +371,7 @@ fn collect_referenced_heap_entries(
 
                         for rid in 1..=row_count {
                             // Get the row and serialize to bytes
-                            let Some(row) = table.get(rid) else {
+                            let Some(row) = table.get(rid).ok().flatten() else {
                                 continue;
                             };
 

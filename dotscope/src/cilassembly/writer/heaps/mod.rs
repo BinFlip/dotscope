@@ -191,11 +191,41 @@ pub fn precompute_heap_offsets(
     let guid_data = view.guids().map_or(empty, crate::Guid::data);
     let us_data = view.userstrings().map_or(empty, crate::UserStrings::data);
 
-    // Pre-compute offsets for each heap (this resolves ChangeRefs)
-    let strings_result = compute_strings_heap_offsets(strings_data, &changes.string_heap_changes)?;
-    let blob_result = compute_blob_heap_offsets(blob_data, &changes.blob_heap_changes)?;
+    // Pre-compute offsets for each heap (this resolves ChangeRefs).
+    //
+    // These must be given exactly the inputs the real write pass will use. Running the pre-pass
+    // with empty remap sets makes the two passes disagree: RID remapping rewrites TypeDefOrRef
+    // tokens as compressed uints, so a RID crossing the 0x80/0x4000 compression boundary changes
+    // a blob's encoded length — and two distinct blobs can collapse into one, changing the dedup
+    // outcome. Either shifts `pos` for every later entry, so appended blobs land at different
+    // offsets in the two passes. The `#Strings` heap diverges the same way, because a non-empty
+    // `referenced_offsets` makes `emit_orphaned_substrings` allocate extra entries.
+    //
+    // The tables are serialised from the pre-pass values, so any disagreement is baked into the
+    // emitted file — silently, since generation still returns `Ok`.
+    let strings_result = compute_strings_heap_offsets(
+        strings_data,
+        &changes.string_heap_changes,
+        &changes.referenced_string_offsets,
+    )?;
+    let blob_result = compute_blob_heap_offsets(
+        blob_data,
+        &changes.blob_heap_changes,
+        &ctx.typedef_rid_remap,
+        &ctx.typeref_rid_remap,
+        &ctx.typespec_rid_remap,
+    )?;
     let guid_result = compute_guid_heap_offsets(guid_data, &changes.guid_heap_changes)?;
     let us_result = compute_userstring_heap_offsets(us_data, &changes.userstring_heap_changes)?;
+
+    // Record the emitted heap sizes so the tables stream can pick matching index widths.
+    // `usize::try_from` cannot fail for a heap that fits in memory; saturating keeps the
+    // failure direction safe (a larger value only widens the index).
+    ctx.output_heap_sizes = Some((
+        usize::try_from(strings_result.bytes_written).unwrap_or(usize::MAX),
+        usize::try_from(guid_result.bytes_written).unwrap_or(usize::MAX),
+        usize::try_from(blob_result.bytes_written).unwrap_or(usize::MAX),
+    ));
 
     // Store the remapping for later patching of existing table rows
     ctx.heap_remapping.strings = strings_result.remapping;

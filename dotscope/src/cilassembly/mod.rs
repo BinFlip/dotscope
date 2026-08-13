@@ -117,7 +117,7 @@
 //!
 //! ```rust,no_run
 //! use dotscope::{CilAssemblyView, CilAssembly};
-//! use std::path::Path;
+//! use std::{fmt, path::Path};
 //!
 //! // Load and convert to mutable assembly
 //! let view = CilAssemblyView::from_path(Path::new("assembly.dll"))?;
@@ -130,7 +130,7 @@
 //! assembly.to_file(Path::new("modified.dll"))?;
 //! # Ok::<(), dotscope::Error>(())
 //! ```
-use std::path::Path;
+use std::{fmt, path::Path};
 
 use crate::{
     file::File,
@@ -143,7 +143,9 @@ use crate::{
             encode_property_signature, encode_typespec_signature, SignatureField,
             SignatureLocalVariables, SignatureMethod, SignatureProperty, SignatureTypeSpec,
         },
-        tables::{AssemblyRefRaw, CodedIndex, CodedIndexType, TableDataOwned, TableId},
+        tables::{
+            skip_unreadable, AssemblyRefRaw, CodedIndex, CodedIndexType, TableDataOwned, TableId,
+        },
         token::Token,
     },
     CilObject, Error, Result, ValidationConfig,
@@ -1699,13 +1701,12 @@ impl CilAssembly {
             self.view.tables()?.table::<AssemblyRefRaw>(),
             self.view.strings(),
         ) {
-            for (index, assemblyref) in assembly_ref_table.iter().enumerate() {
+            for assemblyref in assembly_ref_table.iter().filter_map(skip_unreadable) {
                 if let Ok(assembly_name) = strings.get(assemblyref.name as usize) {
                     if assembly_name == name {
-                        // Convert 0-based index to 1-based RID
                         return Some(CodedIndex::new(
                             TableId::AssemblyRef,
-                            u32::try_from(index.saturating_add(1)).unwrap_or(u32::MAX),
+                            assemblyref.rid,
                             CodedIndexType::Implementation,
                         ));
                     }
@@ -1855,7 +1856,7 @@ impl From<CilAssemblyView> for CilAssembly {
     }
 }
 
-impl std::fmt::Debug for CilAssembly {
+impl fmt::Debug for CilAssembly {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CilAssembly")
             .field("original_view", &"<CilAssemblyView>")

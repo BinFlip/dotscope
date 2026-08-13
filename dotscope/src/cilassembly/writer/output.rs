@@ -66,11 +66,16 @@ use crate::{utils::write_compressed_uint, Error, Result};
 /// and in-memory operations without unnecessary copies.
 enum OutputBacking {
     /// File-backed memory mapping for efficient large file I/O.
+    ///
+    /// Writes go to a temporary file alongside the target; [`Output::finalize`] renames it into
+    /// place. The destination is not touched until generation has fully succeeded.
     File {
-        /// The memory mapping of the file
+        /// The memory mapping of the temporary file
         mmap: MmapMut,
-        /// The target file path
+        /// Where the finished file will be renamed to
         target_path: PathBuf,
+        /// The temporary file being written, adjacent to `target_path`
+        temp_path: PathBuf,
     },
     /// In-memory vector for zero-copy memory output.
     Memory {
@@ -128,9 +133,10 @@ pub struct Output {
 impl Output {
     /// Creates a new file-backed memory-mapped output.
     ///
-    /// This creates a file directly at the target path and maps it into memory
-    /// for efficient writing operations. If finalization fails or the output
-    /// is dropped without being finalized, the file will be automatically cleaned up.
+    /// Writes go to a temporary file alongside `target_path`, which [`finalize`](Self::finalize)
+    /// renames into place. The destination is therefore never modified until generation has
+    /// fully succeeded; if finalization fails or the output is dropped without being finalized,
+    /// only the temporary file is removed and any existing artefact at `target_path` survives.
     ///
     /// # Arguments
     ///
@@ -150,20 +156,48 @@ impl Output {
     pub fn create<P: AsRef<Path>>(target_path: P, size: u64) -> Result<Self> {
         let target_path = target_path.as_ref().to_path_buf();
 
-        // Create the file directly at the target location
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&target_path)
-            .map_err(|e| Error::MmapFailed(format!("Failed to create target file: {e}")))?;
+        // Write to a temporary file beside the target, renamed into place by `finalize`.
+        //
+        // Truncating the destination up front and deleting it on failure — the previous
+        // behaviour — destroys the existing artefact the moment generation starts, and leaves
+        // nothing behind if any later step fails. When the caller writes back over the file the
+        // assembly was loaded from, that is the input as well as the output.
+        //
+        // Same directory as the target so the final step is a rename within one filesystem,
+        // which is atomic; a temp file in the system temp dir could land on another mount and
+        // degrade to a copy.
+        let parent = target_path.parent().unwrap_or_else(|| Path::new("."));
+        std::fs::create_dir_all(parent)
+            .map_err(|e| Error::MmapFailed(format!("Failed to create output directory: {e}")))?;
+
+        let temp = tempfile::Builder::new()
+            .prefix(".dotscope-")
+            .suffix(".tmp")
+            .tempfile_in(parent)
+            .map_err(|e| Error::MmapFailed(format!("Failed to create temporary file: {e}")))?;
+
+        // Keep the path and hand back the `File`; the guard is dropped so it does not delete
+        // the file behind us. Cleanup on failure is `Output::drop`'s job.
+        let (file, temp_path) = temp
+            .keep()
+            .map_err(|e| Error::MmapFailed(format!("Failed to persist temporary file: {e}")))?;
 
         // Set the file size
         file.set_len(size)
             .map_err(|e| Error::MmapFailed(format!("Failed to set file size: {e}")))?;
 
-        // Create memory mapping
+        // Create memory mapping.
+        //
+        // SAFETY: `map_mut` is unsafe because the mapping aliases the file's contents, and Rust
+        // cannot rule out another process mutating or truncating the file underneath us — doing
+        // so would let safe code observe a torn value or take SIGBUS. The file here is one this
+        // function just created via `OpenOptions::create` at `target_path` and sized with
+        // `set_len` above; it is not handed to anything else before the mapping is established,
+        // and the `Mmap` is owned by the returned `Output`, so its lifetime cannot outlive the
+        // `File` it borrows. Concurrent external modification of a caller-chosen output path is
+        // outside the threat model this crate defends against — an attacker who can write that
+        // path can simply replace the artefact.
+        #[allow(unsafe_code)]
         let mmap = unsafe {
             MmapOptions::new()
                 .map_mut(&file)
@@ -171,7 +205,11 @@ impl Output {
         };
 
         Ok(Self {
-            backing: OutputBacking::File { mmap, target_path },
+            backing: OutputBacking::File {
+                mmap,
+                target_path,
+                temp_path,
+            },
             finalized: false,
         })
     }
@@ -763,21 +801,25 @@ impl Output {
         );
 
         match backing {
-            OutputBacking::File { mmap, target_path } => {
+            OutputBacking::File {
+                mmap,
+                target_path,
+                temp_path,
+            } => {
                 // Flush memory mapping
                 mmap.flush().map_err(|e| {
                     Error::FinalizationFailed(format!("Failed to flush memory mapping: {e}"))
                 })?;
 
+                // Release the mapping before touching the file through the filesystem: on
+                // Windows a mapped file cannot be renamed.
+                drop(mmap);
+
                 // Truncate if requested
                 if let Some(size) = actual_size {
-                    // Drop the mmap to release file handle
-                    drop(mmap);
-
-                    // Truncate the file
                     let file = std::fs::OpenOptions::new()
                         .write(true)
-                        .open(&target_path)
+                        .open(&temp_path)
                         .map_err(|e| {
                             Error::FinalizationFailed(format!(
                                 "Failed to reopen file for truncation: {e}"
@@ -790,6 +832,17 @@ impl Output {
                         ))
                     })?;
                 }
+
+                // Rename into place. This is the only point at which the destination changes,
+                // so a failure anywhere earlier leaves the previous artefact untouched.
+                std::fs::rename(&temp_path, &target_path).map_err(|e| {
+                    // Leave the temp file for inspection only if removing it also fails.
+                    let _ = std::fs::remove_file(&temp_path);
+                    Error::FinalizationFailed(format!(
+                        "Failed to move generated file into place at {}: {e}",
+                        target_path.display()
+                    ))
+                })?;
 
                 // Mark as finalized
                 self.finalized = true;
@@ -896,9 +949,11 @@ impl Drop for Output {
             // First try to flush any pending writes
             let _ = self.flush();
 
-            // For file-backed outputs, delete the incomplete file
-            if let OutputBacking::File { target_path, .. } = &self.backing {
-                let _ = std::fs::remove_file(target_path);
+            // For file-backed outputs, delete the incomplete *temporary* file. The target is
+            // deliberately left alone: it was never written to, so an abandoned generation
+            // leaves whatever was already there intact.
+            if let OutputBacking::File { temp_path, .. } = &self.backing {
+                let _ = std::fs::remove_file(temp_path);
             }
             // For in-memory outputs, the Vec will be dropped automatically
         }

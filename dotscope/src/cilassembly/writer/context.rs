@@ -67,8 +67,23 @@ pub struct SectionWriteInfo {
     pub data_offset: Option<u64>,
     /// RVA assigned to this section's data
     pub rva: Option<u32>,
-    /// Actual size of data written (virtual size)
+    /// The section's extent in address space — its `VirtualSize`, and what the next section's
+    /// RVA is placed after.
+    ///
+    /// For sections the writer regenerates (`.text`) this is the generated size. For sections
+    /// copied verbatim it is the input's `VirtualSize`, which may differ from the number of
+    /// bytes on disk in either direction.
     pub data_size: Option<u32>,
+    /// Number of bytes actually written to the file for this section.
+    ///
+    /// The source of truth for `SizeOfRawData`, which is otherwise derived from
+    /// [`data_size`](Self::data_size) — a different quantity. A section carrying uninitialised
+    /// data has `VirtualSize > SizeOfRawData`, so deriving one from the other emits a header
+    /// describing an extent that does not match the bytes present.
+    ///
+    /// Must not be conflated with `data_size`: that value also drives RVA placement, and
+    /// shrinking it to the written length overlaps the following section.
+    pub raw_size: Option<u32>,
     /// Whether this section should be removed (header zeroed, count decremented)
     pub removed: bool,
 }
@@ -228,6 +243,14 @@ pub struct WriteContext<'a> {
     pub import_data_offset: Option<u64>,
     /// RVA of native import table.
     pub import_data_rva: Option<u32>,
+
+    /// Byte sizes of the heaps as they will be emitted: `(#Strings, #GUID, #Blob)`.
+    ///
+    /// Recorded by the heap pre-pass so the tables stream can declare heap index widths that
+    /// match the heaps actually written. ECMA-335 II.24.2.6 selects a 4-byte index once a heap
+    /// exceeds 0xFFFF; inheriting the input's `HeapSizes` byte instead silently truncates every
+    /// offset past that point once the writer appends enough.
+    pub output_heap_sizes: Option<(usize, usize, usize)>,
     /// Size of native import table in bytes.
     pub import_data_size: Option<u32>,
 
@@ -474,6 +497,7 @@ impl<'a> WriteContext<'a> {
 
             import_data_offset: None,
             import_data_rva: None,
+            output_heap_sizes: None,
             import_data_size: None,
             pending_imports: None,
             native_entry_rva: None,
@@ -778,11 +802,19 @@ impl<'a> WriteContext<'a> {
     /// * `data_offset` - File offset where section data was written
     /// * `rva` - RVA assigned to the section
     /// * `data_size` - Size of data written
-    pub fn update_section(&mut self, index: usize, data_offset: u64, rva: u32, data_size: u32) {
+    pub fn update_section(
+        &mut self,
+        index: usize,
+        data_offset: u64,
+        rva: u32,
+        data_size: u32,
+        raw_size: u32,
+    ) {
         if let Some(section) = self.sections.get_mut(index) {
             section.data_offset = Some(data_offset);
             section.rva = Some(rva);
             section.data_size = Some(data_size);
+            section.raw_size = Some(raw_size);
         }
     }
 

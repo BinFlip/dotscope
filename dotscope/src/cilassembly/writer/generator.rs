@@ -73,14 +73,21 @@ use crate::{
         streams::{Blob, Guid, StreamHeader, Strings, UserStrings},
         tablefields::get_heap_fields,
         tables::{
-            ManifestResourceRaw, MethodDefRaw, RowWritable, StandAloneSigRaw, TableDataOwned,
-            TableId, TableInfoRef,
+            skip_unreadable, ManifestResourceRaw, MethodDefRaw, RowWritable, StandAloneSigRaw,
+            TableDataOwned, TableId, TableInfoRef,
         },
         token::Token,
     },
     utils::{align_to, calculate_table_row_size},
     Error, Result,
 };
+
+/// Upper bound on how far the native-stub decoder will scan for a function end.
+///
+/// The scan window is otherwise "this PE section", which for a small file can still be the
+/// bulk of it. A native stub in a mixed-mode assembly is kilobytes of code; anything past this
+/// is not a stub whose extent we failed to find, it is a region we should refuse to guess at.
+const MAX_NATIVE_BODY_SCAN_BYTES: usize = 64 * 1024;
 
 /// IAT (Import Address Table) size for .NET executables (8 bytes).
 const IAT_SIZE: u64 = 8;
@@ -384,16 +391,19 @@ impl<'a> PeGenerator<'a> {
         }
         self.write_cor20_header(&mut ctx)?;
 
-        // Pre-compute heap offsets early - needed for method bodies that reference
-        // newly added userstrings (ldstr instructions) and other heap entries.
-        // This resolves ChangeRefs to their final heap offsets.
-        precompute_heap_offsets(self.assembly.view(), &mut ctx, changes)?;
-
         // Resolve table ChangeRefs early - needed for method bodies that reference
         // newly added StandAloneSig entries (local variable signatures)
         Self::resolve_table_change_refs(changes);
 
-        // Build RID remapper early - needed to patch IL tokens when rows are deleted.
+        // Build RID remapper BEFORE the heap pre-pass.
+        //
+        // The pre-pass must see the same remap maps the real write pass will use, or the two
+        // disagree on every offset after the first remapped signature blob — and the tables are
+        // serialised from the pre-pass values. Building the remapper afterwards left the
+        // pre-pass with empty maps by construction.
+        //
+        // The remapper depends only on `changes` and the original table row counts, not on any
+        // heap offset, so it is safe to compute this early.
         // When TypeDef/MethodDef/etc rows are removed, subsequent rows shift down
         // and IL tokens must be updated accordingly.
         if let Some(tables) = self.assembly.view().tables() {
@@ -432,6 +442,11 @@ impl<'a> PeGenerator<'a> {
             // Build StandAloneSig deduplication mapping
             self.build_standalonesig_dedup(&mut ctx, changes);
         }
+
+        // Pre-compute heap offsets - needed for method bodies that reference newly added
+        // userstrings (ldstr instructions) and other heap entries. This resolves ChangeRefs to
+        // their final heap offsets, using the remap maps established above.
+        precompute_heap_offsets(self.assembly.view(), &mut ctx, changes)?;
 
         // Write method bodies
         ctx.align_to_4();
@@ -475,10 +490,13 @@ impl<'a> PeGenerator<'a> {
             .ok_or_else(|| Error::LayoutFailed(".text section size underflow".to_string()))?;
         let text_size_u32 = u32::try_from(ctx.text_section_size).unwrap_or(u32::MAX);
         if let Some(idx) = ctx.find_section_index(".text") {
+            // `.text` is regenerated, so its virtual extent and its written length are the
+            // same measured `pos()` delta.
             ctx.update_section(
                 idx,
                 ctx.text_section_offset,
                 ctx.text_section_rva,
+                text_size_u32,
                 text_size_u32,
             );
         }
@@ -794,6 +812,7 @@ impl<'a> PeGenerator<'a> {
                 data_offset: None,
                 rva: None,
                 data_size: None,
+                raw_size: None,
                 removed: false,
             });
         }
@@ -1070,6 +1089,7 @@ impl<'a> PeGenerator<'a> {
                     let mut written_rvas: HashSet<u32> = HashSet::new();
 
                     for row in method_table {
+                        let row = row?;
                         if deleted_method_rids.contains(&row.rid) {
                             continue;
                         }
@@ -1104,21 +1124,52 @@ impl<'a> PeGenerator<'a> {
                             #[cfg(feature = "x86")]
                             {
                                 let offset = file.rva_to_offset(original_rva as usize)?;
-                                let available = file.data().len().saturating_sub(offset);
+
+                                // Clamp the scan window to the PE section containing the stub,
+                                // and to an absolute ceiling. Handing the decoder "everything
+                                // from here to EOF" let a single native method absorb the rest
+                                // of the input file into the output as one body, and made the
+                                // decode cost proportional to file size rather than to the stub.
+                                let section_end = file
+                                    .sections()
+                                    .iter()
+                                    .find_map(|section| {
+                                        let start = section.pointer_to_raw_data as usize;
+                                        let end =
+                                            start.saturating_add(section.size_of_raw_data as usize);
+                                        (offset >= start && offset < end).then_some(end)
+                                    })
+                                    .unwrap_or_else(|| file.data().len())
+                                    .min(file.data().len());
+                                let available = section_end
+                                    .saturating_sub(offset)
+                                    .min(MAX_NATIVE_BODY_SCAN_BYTES);
                                 let scan_data = file.data_slice(offset, available)?;
 
                                 let body_size = x86_native_body_size(scan_data, file.pe().is_64bit);
 
-                                if body_size > 0 {
-                                    let body_data = file.data_slice(offset, body_size)?;
-
-                                    // Native code needs 4-byte alignment for consistency
-                                    ctx.align_to_4_with_padding()?;
-
-                                    let new_rva = ctx.current_rva();
-                                    ctx.method_body_rva_map.insert(original_rva, new_rva);
-                                    ctx.write(body_data)?;
+                                if body_size == 0 || body_size >= available {
+                                    // Either no function end was found, or the decode ran to the
+                                    // clamp — in both cases the extent is unknown. Emitting the
+                                    // row anyway leaves its RVA unmapped, and the fallback
+                                    // resolution maps an unmapped RVA to *itself*, so the
+                                    // method would point at whatever now occupies that offset in
+                                    // the relaid-out file.
+                                    return Err(Error::LayoutFailed(format!(
+                                        "native method body at RVA 0x{original_rva:08X} has no \
+                                         determinable extent (decoded {body_size} of {available} \
+                                         bytes); refusing to emit a row with an unresolvable RVA"
+                                    )));
                                 }
+
+                                let body_data = file.data_slice(offset, body_size)?;
+
+                                // Native code needs 4-byte alignment for consistency
+                                ctx.align_to_4_with_padding()?;
+
+                                let new_rva = ctx.current_rva();
+                                ctx.method_body_rva_map.insert(original_rva, new_rva);
+                                ctx.write(body_data)?;
                             }
                         } else {
                             // CIL method - parse, remap tokens, and rebuild
@@ -1226,7 +1277,7 @@ impl<'a> PeGenerator<'a> {
                 .tables()
                 .and_then(|t| t.table::<ManifestResourceRaw>())
                 .is_some_and(|table| {
-                    table.iter().any(|row| {
+                    table.iter().filter_map(skip_unreadable).any(|row| {
                         // Only embedded resources (implementation.row == 0) have data
                         // in this section.
                         row.implementation.row == 0
@@ -1239,6 +1290,7 @@ impl<'a> PeGenerator<'a> {
                 if let Some(table) = view.tables().and_then(|t| t.table::<ManifestResourceRaw>()) {
                     let mut new_offset = 0u32;
                     for row in table {
+                        let row = row?;
                         // External resources don't have data in this section
                         if row.implementation.row != 0 {
                             continue;
@@ -1529,11 +1581,21 @@ impl<'a> PeGenerator<'a> {
 
         // Create output table info with new row counts (same as in write_tables_stream)
         // This ensures we use the correct row sizes for reading the output
-        let output_table_info = Arc::new(
-            tables
+        // Row counts first, then heap index widths derived from the heaps actually written.
+        // Both must reflect the *output*: `with_modified_row_counts` copies the input's heap
+        // widths verbatim, so without the second step a writer that appends past 0xFFFF keeps
+        // emitting 2-byte indices and every offset beyond it is masked.
+        let output_table_info = {
+            let with_rows = tables
                 .info
-                .with_modified_row_counts(new_row_counts.iter().map(|(k, v)| (*k, *v))),
-        );
+                .with_modified_row_counts(new_row_counts.iter().map(|(k, v)| (*k, *v)));
+            Arc::new(match ctx.output_heap_sizes {
+                Some((strings, guids, blobs)) => {
+                    with_rows.with_modified_heap_sizes(strings, guids, blobs)
+                }
+                None => with_rows,
+            })
+        };
 
         // Calculate where table data starts (after tables stream header)
         let header_size = (valid.count_ones() as usize)
@@ -1579,7 +1641,7 @@ impl<'a> PeGenerator<'a> {
                     table_id,
                     &output_table_info,
                     changes,
-                );
+                )?;
 
                 // Second: apply old→new heap offset remapping (from deduplication)
                 // This applies to ALL rows, including updated ones. ChangeRef placeholders
@@ -1624,12 +1686,17 @@ impl<'a> PeGenerator<'a> {
     /// * `table_id` - The table type (determines which fields are heap references)
     /// * `table_info` - Table size information for field offset calculation
     /// * `changes` - The assembly changes for ChangeRef lookup
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::LayoutFailed`] if a resolved heap offset does not fit the index
+    /// width the emitted `HeapSizes` byte declares.
     fn patch_row_change_ref_placeholders(
         row_buffer: &mut [u8],
         table_id: TableId,
         table_info: &TableInfoRef,
         changes: &AssemblyChanges,
-    ) {
+    ) -> Result<()> {
         // Get heap field positions using the centralized schema
         let heap_fields = get_heap_fields(table_id, table_info);
 
@@ -1670,17 +1737,30 @@ impl<'a> PeGenerator<'a> {
                         if field.size == 4 {
                             field_slice_mut.copy_from_slice(&resolved.to_le_bytes());
                         } else {
-                            // Truncate to u16 - this is safe because heap offsets in small
-                            // metadata files fit in u16. Overflow would indicate a corrupted state.
-                            #[allow(clippy::cast_possible_truncation)]
-                            let small_value =
-                                u16::try_from(resolved).unwrap_or((resolved & 0xFFFF) as u16);
+                            // A 2-byte heap index cannot represent an offset past 0xFFFF.
+                            //
+                            // Masking to 16 bits would not produce a broken file — it would
+                            // produce a *valid-looking* one whose names, signatures and
+                            // attribute blobs point at arbitrary earlier heap positions,
+                            // deterministically modulo 0x10000, and an analyst consumes those
+                            // attributions as fact. Reaching this means the emitted HeapSizes
+                            // byte disagrees with the heap that was actually written, which is
+                            // a layout bug and must not be silently encoded into the output.
+                            let small_value = u16::try_from(resolved).map_err(|_| {
+                                Error::LayoutFailed(format!(
+                                    "heap offset 0x{resolved:X} exceeds the 2-byte index width \
+                                     declared by HeapSizes; the output heap grew past 0xFFFF but \
+                                     the index width was not promoted"
+                                ))
+                            })?;
                             field_slice_mut.copy_from_slice(&small_value.to_le_bytes());
                         }
                     }
                 }
             }
         }
+
+        Ok(())
     }
 
     /// Estimates the size of the metadata root header.
@@ -1920,11 +2000,21 @@ impl<'a> PeGenerator<'a> {
 
         // Create output table info with new row counts
         // This recalculates coded index sizes based on new row counts
-        let output_table_info = Arc::new(
-            tables
+        // Row counts first, then heap index widths derived from the heaps actually written.
+        // Both must reflect the *output*: `with_modified_row_counts` copies the input's heap
+        // widths verbatim, so without the second step a writer that appends past 0xFFFF keeps
+        // emitting 2-byte indices and every offset beyond it is masked.
+        let output_table_info = {
+            let with_rows = tables
                 .info
-                .with_modified_row_counts(new_row_counts.iter().map(|(k, v)| (*k, *v))),
-        );
+                .with_modified_row_counts(new_row_counts.iter().map(|(k, v)| (*k, *v)));
+            Arc::new(match ctx.output_heap_sizes {
+                Some((strings, guids, blobs)) => {
+                    with_rows.with_modified_heap_sizes(strings, guids, blobs)
+                }
+                None => with_rows,
+            })
+        };
 
         // Write tables stream header using OUTPUT table info
         let mut header_buffer = Vec::new();
@@ -2192,7 +2282,7 @@ impl<'a> PeGenerator<'a> {
                             rid,
                             output_table_info,
                         )?;
-                    } else if let Some(mut row) = table.get(rid) {
+                    } else if let Some(mut row) = table.get(rid)? {
                         // Use parsed original row
                         if needs_remapping {
                             row.remap_references(remapper);
@@ -2362,6 +2452,13 @@ impl<'a> PeGenerator<'a> {
         let mut dup_to_canonical: HashMap<u32, u32> = HashMap::new();
 
         for sig in sig_table {
+            let sig = match sig {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             if deleted_rids.contains(&sig.rid) {
                 continue;
             }
@@ -2382,6 +2479,13 @@ impl<'a> PeGenerator<'a> {
         let mut rid_to_output: HashMap<u32, u32> = HashMap::new();
 
         for sig in sig_table {
+            let sig = match sig {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             if deleted_rids.contains(&sig.rid) || ctx.standalonesig_skip.contains(&sig.rid) {
                 continue;
             }
@@ -2416,6 +2520,13 @@ impl<'a> PeGenerator<'a> {
 
         // Phase 3: Build token remapping for original rows
         for sig in sig_table {
+            let sig = match sig {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             if deleted_rids.contains(&sig.rid) {
                 continue;
             }
@@ -2829,9 +2940,10 @@ impl<'a> PeGenerator<'a> {
                 // Write resource section with relocation
                 let data_offset = ctx.pos();
                 let data_size = self.write_rsrc_data(ctx, original_section, section_rva)?;
+                let raw_size = Self::bytes_written_since(ctx, data_offset)?;
 
                 if data_size > 0 {
-                    ctx.update_section(section_idx, data_offset, section_rva, data_size);
+                    ctx.update_section(section_idx, data_offset, section_rva, data_size, raw_size);
                     current_end_rva = u64::from(section_rva)
                         .checked_add(u64::from(data_size))
                         .ok_or_else(|| {
@@ -2848,8 +2960,10 @@ impl<'a> PeGenerator<'a> {
                     original_text_end,
                 )?;
 
+                let raw_size = Self::bytes_written_since(ctx, data_offset)?;
+
                 if let Some(data_size) = result {
-                    ctx.update_section(section_idx, data_offset, section_rva, data_size);
+                    ctx.update_section(section_idx, data_offset, section_rva, data_size, raw_size);
                     current_end_rva = u64::from(section_rva)
                         .checked_add(u64::from(data_size))
                         .ok_or_else(|| {
@@ -2862,10 +2976,16 @@ impl<'a> PeGenerator<'a> {
             } else {
                 // Copy other sections as-is
                 let data_offset = ctx.pos();
+                // `data_size` is the section's virtual extent; `raw_size` is what actually
+                // reached the file. For a copied section these differ whenever the input's
+                // `VirtualSize` and `SizeOfRawData` differ — uninitialised data in one
+                // direction, file-alignment padding in the other — and `SizeOfRawData` must
+                // describe the bytes, not the extent.
                 let data_size = self.write_generic_section(ctx, original_section)?;
+                let raw_size = Self::bytes_written_since(ctx, data_offset)?;
 
                 if data_size > 0 {
-                    ctx.update_section(section_idx, data_offset, section_rva, data_size);
+                    ctx.update_section(section_idx, data_offset, section_rva, data_size, raw_size);
                     current_end_rva = u64::from(section_rva)
                         .checked_add(u64::from(data_size))
                         .ok_or_else(|| {
@@ -2979,6 +3099,23 @@ impl<'a> PeGenerator<'a> {
     /// Writes a generic section by copying data as-is.
     ///
     /// Returns the size of data written, or 0 if no data.
+    /// Returns how many bytes have been written since `start`.
+    ///
+    /// Measured from the output position rather than trusted from a return value, so
+    /// `SizeOfRawData` cannot drift from what the section writer actually emitted.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::LayoutFailed`] if the position moved backwards or the delta
+    /// exceeds `u32`.
+    fn bytes_written_since(ctx: &WriteContext, start: u64) -> Result<u32> {
+        let written = ctx.pos().checked_sub(start).ok_or_else(|| {
+            Error::LayoutFailed("Section write position moved backwards".to_string())
+        })?;
+        u32::try_from(written)
+            .map_err(|_| Error::LayoutFailed("Section written size exceeds u32 range".to_string()))
+    }
+
     fn write_generic_section(&self, ctx: &mut WriteContext, section: &SectionTable) -> Result<u32> {
         let view = self.assembly.view();
         let file = view.file();
