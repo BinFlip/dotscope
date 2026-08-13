@@ -269,8 +269,8 @@ impl OwnedInheritanceValidator {
                     let is_array_relationship = type_entry.is_array_of(&base_fullname);
 
                     let is_system_type = base_type.namespace.starts_with("System");
-                    let is_value_type_inheritance = base_type.fullname() == "System.ValueType"
-                        || base_type.fullname() == "System.Enum";
+                    let is_value_type_inheritance = &*base_type.fullname() == "System.ValueType"
+                        || &*base_type.fullname() == "System.Enum";
 
                     if !is_system_type
                         && !is_value_type_inheritance
@@ -473,7 +473,7 @@ impl OwnedInheritanceValidator {
             (CilFlavor::Array { .. }, CilFlavor::Class | CilFlavor::ValueType | CilFlavor::Interface) | // Arrays can inherit from their element types
             (CilFlavor::GenericInstance, _) => Ok(()), // Generic instances can inherit from any type
             (CilFlavor::ValueType, CilFlavor::Object) => {
-                if base_type.fullname() == "System.Object" {
+                if &*base_type.fullname() == "System.Object" {
                     Ok(())
                 } else {
                     Err(Error::ValidationOwnedFailed {

@@ -444,6 +444,7 @@ impl RawValidator for RawSignatureValidator {
 
         if let Some(table) = tables.table::<MethodDefRaw>() {
             for method in table {
+                let method = method?;
                 if let Some(blob_heap) = assembly_view.blobs() {
                     if let Ok(blob_data) = blob_heap.get(method.signature as usize) {
                         if let Some(&calling_convention) = blob_data.first() {
@@ -471,6 +472,7 @@ impl RawValidator for RawSignatureValidator {
 
         if let Some(table) = tables.table::<FieldRaw>() {
             for field in table {
+                let field = field?;
                 Self::validate_signature_blob_integrity(
                     assembly_view,
                     field.signature,
@@ -481,6 +483,7 @@ impl RawValidator for RawSignatureValidator {
 
         if let Some(table) = tables.table::<PropertyRaw>() {
             for property in table {
+                let property = property?;
                 Self::validate_signature_blob_integrity(
                     assembly_view,
                     property.signature,
@@ -491,6 +494,7 @@ impl RawValidator for RawSignatureValidator {
 
         if let Some(table) = tables.table::<StandAloneSigRaw>() {
             for standalone_sig in table {
+                let standalone_sig = standalone_sig?;
                 if let Some(blob_heap) = assembly_view.blobs() {
                     if let Ok(blob_data) = blob_heap.get(standalone_sig.signature as usize) {
                         if let Some(&calling_convention) = blob_data.first() {
@@ -513,6 +517,7 @@ impl RawValidator for RawSignatureValidator {
 
         if let Some(table) = tables.table::<TypeSpecRaw>() {
             for type_spec in table {
+                let type_spec = type_spec?;
                 Self::validate_signature_blob_integrity(
                     assembly_view,
                     type_spec.signature,
@@ -523,6 +528,7 @@ impl RawValidator for RawSignatureValidator {
 
         if let Some(table) = tables.table::<MemberRefRaw>() {
             for member_ref in table {
+                let member_ref = member_ref?;
                 if let Some(blob_heap) = assembly_view.blobs() {
                     if let Ok(blob_data) = blob_heap.get(member_ref.signature as usize) {
                         if let Some(&calling_convention) = blob_data.first() {

@@ -209,7 +209,7 @@ impl CilProject {
                 // Check if this assembly defines the type locally
                 for entry in assembly.types().iter() {
                     let type_instance = entry.value();
-                    if type_instance.fullname() == full_name {
+                    if &*type_instance.fullname() == full_name {
                         // Check if this is a TypeDef (0x02) or TypeRef (0x01)
                         if type_instance.token.is_table(TableId::TypeDef) {
                             // TypeDef - actual definition, return immediately
@@ -471,7 +471,7 @@ impl CilProject {
         for (identity, assembly) in self.iter() {
             for entry in assembly.types().iter() {
                 let type_instance = entry.value();
-                if type_instance.fullname() == type_name
+                if &*type_instance.fullname() == type_name
                     && type_instance.token.is_table(TableId::TypeDef)
                 {
                     results.push((identity.clone(), type_instance.clone()));

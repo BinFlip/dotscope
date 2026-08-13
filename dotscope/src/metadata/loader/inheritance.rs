@@ -8,6 +8,8 @@
 //! scattered across individual table loaders, providing a unified and more robust
 //! approach to handling circular dependencies.
 
+use rayon::iter::ParallelIterator;
+
 use crate::{
     metadata::{
         loader::{LoaderContext, MetadataLoader},
@@ -49,6 +51,7 @@ impl MetadataLoader for InheritanceResolver {
                 typedef_table
                     .par_iter()
                     .try_for_each(|raw_typedef| -> Result<()> {
+                        let raw_typedef = raw_typedef?;
                         if raw_typedef.extends.row == 0 {
                             return Ok(());
                         }
@@ -64,6 +67,37 @@ impl MetadataLoader for InheritanceResolver {
                                             type_def.fullname()
                                         ))
                                     })?;
+
+                                    // A type that extends itself is malformed, and it is the
+                                    // cheapest inheritance cycle for a hostile assembly to
+                                    // express. Leave the base unset rather than recording the
+                                    // self-edge: every base walk is bounded by
+                                    // `CilType::base_chain`, but keeping the trivial cycle out
+                                    // of the graph entirely means consumers never observe it.
+                                    //
+                                    // This deliberately does not fail the load. Analysing
+                                    // malformed and obfuscated binaries is the point of this
+                                    // library, so the condition is reported by validation
+                                    // rather than by refusing the file.
+                                    //
+                                    // Eliding the edge has a consequence that is easy to miss:
+                                    // any validator that looks for inheritance cycles by
+                                    // *walking the graph* can no longer see this one, because
+                                    // the edge it would follow was never recorded.
+                                    // `OwnedCircularityValidator` therefore re-reads the raw
+                                    // `extends` column specifically for the self-edge; see
+                                    // `validate_self_referential_bases`. Longer cycles
+                                    // (`A -> B -> A`) are not elided and are still found by the
+                                    // walk. If this elision is ever removed, that check becomes
+                                    // redundant rather than wrong.
+                                    if base_type_ref.token == type_def.token {
+                                        log::warn!(
+                                            "InheritanceResolver: type {} extends itself; \
+                                             ignoring the self-referential base",
+                                            type_def.token
+                                        );
+                                        return Ok(());
+                                    }
 
                                     // Use the resolved base type directly by its token.
                                     // Do NOT lookup by fullname as that can return the wrong type

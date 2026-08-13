@@ -194,6 +194,13 @@ impl DependencyAnalyzer {
                 let source_identity = Self::extract_current_assembly_identity(context)?;
 
                 for row in table {
+                    let row = match row {
+                        Ok(row) => row,
+                        Err(e) => {
+                            log::warn!("skipping unreadable metadata row: {e}");
+                            continue;
+                        }
+                    };
                     // Convert raw AssemblyRef to owned representation
                     let assembly_ref = row.to_owned(strings, blobs)?;
 
@@ -262,6 +269,13 @@ impl DependencyAnalyzer {
                 let source_identity = Self::extract_current_assembly_identity(context)?;
 
                 for row in table {
+                    let row = match row {
+                        Ok(row) => row,
+                        Err(e) => {
+                            log::warn!("skipping unreadable metadata row: {e}");
+                            continue;
+                        }
+                    };
                     // Convert raw ModuleRef to owned representation
                     let module_ref = row.to_owned(strings)?;
 
@@ -376,6 +390,13 @@ impl DependencyAnalyzer {
                 let source_identity = Self::extract_current_assembly_identity(context)?;
 
                 for row in table {
+                    let row = match row {
+                        Ok(row) => row,
+                        Err(e) => {
+                            log::warn!("skipping unreadable metadata row: {e}");
+                            continue;
+                        }
+                    };
                     // Convert raw File to owned representation
                     let file_ref = row.to_owned(blobs, strings)?;
 

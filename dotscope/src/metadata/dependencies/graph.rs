@@ -539,7 +539,7 @@ impl AssemblyDependencyGraph {
     ///     os_major_version: std::sync::atomic::AtomicU32::new(0),
     ///     os_minor_version: std::sync::atomic::AtomicU32::new(0),
     ///     processor: std::sync::atomic::AtomicU32::new(0),
-    ///     custom_attributes: Arc::new(boxcar::Vec::new()),
+    ///     custom_attributes: dotscope::metadata::customattributes::CustomAttributeValueList::new(),
     /// });
     ///
     /// let dep = AssemblyDependency {

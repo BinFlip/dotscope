@@ -309,6 +309,13 @@ impl ReferenceScanner {
             dispatch_table_type!(table_id, |RawType| {
                 if let Some(table) = tables.table::<RawType>() {
                     for row in table {
+                        let row = match row {
+                            Ok(row) => row,
+                            Err(e) => {
+                                log::warn!("skipping unreadable metadata row: {e}");
+                                continue;
+                            }
+                        };
                         let token = Token::new(table_token_base | row.rid);
                         self.valid_tokens.insert(token);
                     }
@@ -333,6 +340,13 @@ impl ReferenceScanner {
                 if let Some(table) = tables.table::<RawType>() {
                     let token_base = u32::from(table_id.token_type()) << 24;
                     for row in table {
+                        let row = match row {
+                            Ok(row) => row,
+                            Err(e) => {
+                                log::warn!("skipping unreadable metadata row: {e}");
+                                continue;
+                            }
+                        };
                         let from_token = Token::new(token_base | row.rid);
                         self.extract_row_references(table_id, from_token, &row);
                     }

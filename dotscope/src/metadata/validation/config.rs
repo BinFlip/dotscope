@@ -229,8 +229,14 @@ impl ValidationConfig {
     /// Creates a disabled validation configuration.
     ///
     /// **Warning**: This disables ALL validation checks, including basic structural
-    /// validation. Use only when you absolutely trust the assembly format. Malformed
-    /// assemblies may cause panics or undefined behavior.
+    /// validation. Use only when you already trust the assembly format.
+    ///
+    /// It does not disable bounds checking: parsers are individually bounds-checked and the
+    /// crate denies `panic`, `unwrap_used`, `expect_used`, `indexing_slicing` and
+    /// `arithmetic_side_effects`, so a malformed assembly still yields an `Err` rather than a
+    /// panic. What is lost is *semantic* rejection — a file with contradictory metadata is
+    /// accepted and analysed as if it were coherent, so anything derived from it (type
+    /// hierarchies, signatures, method bodies) may be wrong without any error being reported.
     ///
     /// # Returns
     ///
@@ -244,9 +250,9 @@ impl ValidationConfig {
     ///
     /// # Risks
     ///
-    /// - No protection against malformed metadata
-    /// - Potential for crashes on invalid data
+    /// - No protection against semantically malformed metadata
     /// - Silent acceptance of ECMA-335 violations
+    /// - Analysis results derived from incoherent metadata, with no diagnostic
     ///
     /// # Field values
     ///

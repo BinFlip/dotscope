@@ -261,8 +261,8 @@ impl OwnedTypeConstraintValidator {
                 // Allow System value types and enums
                 let type_name = constraint_type.fullname();
                 if type_name.starts_with("System.")
-                    || type_name == "System.ValueType"
-                    || type_name == "System.Enum"
+                    || &*type_name == "System.ValueType"
+                    || &*type_name == "System.Enum"
                 {
                     Ok(())
                 } else {
