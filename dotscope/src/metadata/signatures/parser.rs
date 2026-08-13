@@ -89,7 +89,8 @@
 //!
 //! ## Nesting Depth Protection
 //! The parser includes protection against stack overflow from malformed signatures:
-//! - Maximum nesting depth of 10,000 levels using iterative parsing
+//! - Bounded nesting: 1000 levels per parse plus a 10,000-node budget across the whole
+//!   signature, using iterative parsing
 //! - Explicit stack-based processing prevents call stack exhaustion
 //! - Early termination on depth limit exceeded
 //! - Clear error reporting for nesting depth limits
@@ -187,9 +188,34 @@ pub mod CALLING_CONVENTION {
 /// through circular type references or deeply nested generic types. The iterative parser
 /// uses an explicit stack which is tracked against this limit.
 ///
-/// The limit of 10,000 levels accommodates even the most complex real-world .NET assemblies
-/// with deep generic hierarchies while still preventing resource exhaustion.
+/// 1000 levels accommodates even the most complex real-world .NET assemblies with deep generic
+/// hierarchies while still preventing resource exhaustion.
+///
+/// This bound is **per invocation** of `parse_type_inner`, which is not sufficient on its own —
+/// see [`MAX_SIGNATURE_NODES`].
 const MAX_NESTING_DEPTH: usize = 1000;
+
+/// Maximum number of type nodes a single [`SignatureParser`] will construct, across every
+/// nested invocation.
+///
+/// [`MAX_NESTING_DEPTH`] bounds one invocation's heap work stack, and
+/// [`MAX_NATIVE_RECURSION_DEPTH`] bounds native re-entry — but the two **multiply** rather than
+/// compose. `work_stack` and `result_stack` are allocated fresh per `parse_type_inner` call
+/// while `self.depth` advances by only 1 per native re-entry, so at native depth *d* an
+/// invocation may still build `MAX_NESTING_DEPTH - d` levels. Summing over the permitted native
+/// depths yields roughly 61 000 nested `Box<TypeSignature>` levels in the *returned* value from
+/// a ~60 KB blob of `PTR` runs separated by `FNPTR` headers.
+///
+/// Construction survives that; the consumers do not. Drop glue, `Display` and the reference
+/// scanners all recurse over the finished structure, and signature blobs are parsed on rayon
+/// workers with the default 2 MiB stack. The result is a SIGSEGV while merely opening an
+/// assembly — not a catchable panic, since `deny(panic)` does not apply to drop glue.
+///
+/// This counter is never reset for the lifetime of a parser, so it bounds the total structure
+/// regardless of how native recursion and heap work stacks interleave. It is deliberately
+/// larger than [`MAX_NESTING_DEPTH`] because it counts *breadth* as well as depth: a method
+/// signature with many shallow parameters is legitimate and must not trip it.
+const MAX_SIGNATURE_NODES: usize = 10_000;
 
 /// Maximum depth of **native** (call-stack) recursion in this parser.
 ///
@@ -226,8 +252,16 @@ const MAX_GENERIC_ARGS: u32 = 256;
 
 /// Maximum number of local variables in a method.
 ///
-/// While some generated code may have many locals, 65536 is a reasonable upper bound
-/// that prevents allocation attacks while supporting legitimate complex methods.
+/// This is an early reject on the *declared* count, before any allocation is made against it,
+/// so a bogus length field costs nothing. It matches the ECMA-335 ceiling.
+///
+/// It is **not** the effective limit on a local-variable signature.
+/// [`MAX_SIGNATURE_NODES`] bounds the total type nodes a parser constructs and is an order of
+/// magnitude smaller, so it fires first for any signature declaring more than ~10 000 locals —
+/// each local contributes at least one node. That is deliberate: the node budget is the bound
+/// that actually protects against the recursive-drop stack overflow, and it counts breadth as
+/// well as depth precisely so a wide signature cannot evade it. A signature declaring 65 536
+/// locals is rejected, just by the other limit and with a different error.
 const MAX_LOCAL_VARIABLES: u32 = 65536;
 
 /// Binary signature parser for all .NET metadata signature types according to ECMA-335.
@@ -375,6 +409,13 @@ pub struct SignatureParser<'a> {
     /// Both are attacker-reachable: signature blobs come straight from the
     /// metadata heap of the .NET file being analyzed.
     depth: usize,
+
+    /// Total type nodes constructed by this parser, across every nested invocation.
+    ///
+    /// Never reset — see [`MAX_SIGNATURE_NODES`] for why a per-invocation bound cannot catch
+    /// the case this exists for. Parsers are single-use by contract, so this is a per-signature
+    /// total.
+    nodes: usize,
 }
 
 impl<'a> SignatureParser<'a> {
@@ -411,7 +452,22 @@ impl<'a> SignatureParser<'a> {
         SignatureParser {
             parser: Parser::new(data),
             depth: 0,
+            nodes: 0,
         }
+    }
+
+    /// Charges one constructed type node against [`MAX_SIGNATURE_NODES`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::DepthLimitExceeded`] once the parser has built more nodes than
+    /// the budget allows.
+    fn charge_node(&mut self) -> Result<()> {
+        self.nodes = self.nodes.saturating_add(1);
+        if self.nodes > MAX_SIGNATURE_NODES {
+            return Err(DepthLimitExceeded(MAX_SIGNATURE_NODES));
+        }
+        Ok(())
     }
 
     /// Parse a single type signature from the current position in the signature blob.
@@ -452,8 +508,8 @@ impl<'a> SignatureParser<'a> {
     ///
     /// # Errors
     /// - [`crate::error::Error::DepthLimitExceeded`]: Maximum nesting depth exceeded
-    /// - [`crate::Error::Malformed`]: Invalid element type or malformed signature data
-    /// - [`crate::error::Error::OutOfBounds`]: Truncated signature data
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`]: Invalid element type or malformed signature data
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`]: Truncated signature data
     ///
     /// # Implementation Notes
     ///
@@ -514,6 +570,11 @@ impl<'a> SignatureParser<'a> {
             {
                 return Err(DepthLimitExceeded(MAX_NESTING_DEPTH));
             }
+
+            // Global budget across every nested invocation. The check above is re-armed on each
+            // native re-entry because the work stacks are per-invocation, so it alone permits a
+            // structure tens of thousands of levels deep; this one does not reset.
+            self.charge_node()?;
 
             match work {
                 WorkItem::Seek(pos) => {
@@ -947,8 +1008,8 @@ impl<'a> SignatureParser<'a> {
     /// The vector is empty if no custom modifiers are present.
     ///
     /// # Errors
-    /// - [`crate::Error::Malformed`]: Invalid compressed token encoding
-    /// - [`crate::error::Error::OutOfBounds`]: Truncated modifier data
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`]: Invalid compressed token encoding
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`]: Truncated modifier data
     ///
     /// # Performance Notes
     /// - Modifiers are relatively uncommon in most .NET code
@@ -1030,9 +1091,9 @@ impl<'a> SignatureParser<'a> {
     /// - Complete type signature information
     ///
     /// # Errors
-    /// - [`crate::Error::Malformed`]: Invalid parameter encoding
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`]: Invalid parameter encoding
     /// - [`crate::Error::DepthLimitExceeded`]: Parameter type parsing exceeds nesting depth limit
-    /// - [`crate::error::Error::OutOfBounds`]: Truncated parameter data
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`]: Truncated parameter data
     ///
     /// # Usage Notes
     ///
@@ -1158,9 +1219,9 @@ impl<'a> SignatureParser<'a> {
     /// - Variable argument list (if applicable)
     ///
     /// # Errors
-    /// - [`crate::Error::Malformed`]: Invalid calling convention or parameter encoding
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`]: Invalid calling convention or parameter encoding
     /// - [`crate::Error::DepthLimitExceeded`]: Parameter type parsing exceeds nesting depth limit
-    /// - [`crate::error::Error::OutOfBounds`]: Truncated signature data
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`]: Truncated signature data
     ///
     /// # Performance Notes
     /// - Parameter vectors are pre-allocated based on parameter count
@@ -1382,9 +1443,9 @@ impl<'a> SignatureParser<'a> {
     /// - Type constraints and annotations
     ///
     /// # Errors
-    /// - [`crate::Error::Malformed`]: Invalid field signature header (not 0x06)
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`]: Invalid field signature header (not 0x06)
     /// - [`crate::Error::DepthLimitExceeded`]: Field type parsing exceeds nesting depth limit
-    /// - [`crate::error::Error::OutOfBounds`]: Truncated field signature data
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`]: Truncated field signature data
     ///
     /// # Custom Modifier Applications
     ///
@@ -1530,9 +1591,9 @@ impl<'a> SignatureParser<'a> {
     /// - Complete type and modifier information
     ///
     /// # Errors
-    /// - [`crate::Error::Malformed`]: Invalid property signature header (missing PROPERTY bit)
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`]: Invalid property signature header (missing PROPERTY bit)
     /// - [`crate::Error::DepthLimitExceeded`]: Property or parameter type parsing exceeds nesting depth limit
-    /// - [`crate::error::Error::OutOfBounds`]: Truncated property signature data
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`]: Truncated property signature data
     ///
     /// # Indexer Design Patterns
     ///
@@ -1723,9 +1784,9 @@ impl<'a> SignatureParser<'a> {
     /// - Custom modifier information
     ///
     /// # Errors
-    /// - [`crate::Error::Malformed`]: Invalid local variable signature header (not 0x07)
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`]: Invalid local variable signature header (not 0x07)
     /// - [`crate::Error::DepthLimitExceeded`]: Local variable type parsing exceeds nesting depth limit
-    /// - [`crate::error::Error::OutOfBounds`]: Truncated local variable signature data
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`]: Truncated local variable signature data
     ///
     /// # Memory Management Implications
     ///
@@ -1965,8 +2026,8 @@ impl<'a> SignatureParser<'a> {
     ///
     /// # Errors
     /// - [`crate::Error::DepthLimitExceeded`]: Type parsing exceeds maximum nesting depth
-    /// - [`crate::Error::Malformed`]: Invalid type encoding or format
-    /// - [`crate::error::Error::OutOfBounds`]: Truncated type specification data
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`]: Invalid type encoding or format
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`]: Truncated type specification data
     ///
     /// # Performance Notes
     /// - Type specifications often involve complex recursive parsing
@@ -1989,13 +2050,17 @@ impl<'a> SignatureParser<'a> {
         // Then parse the base type signature
         let base_type_sig = self.parse_type()?;
 
-        // If we got a ModifiedRequired/Optional from parse_type, we need to handle it specially
-        match base_type_sig {
+        // If we got a ModifiedRequired/Optional from parse_type, we need to handle it specially.
+        //
+        // Matched by reference and drained rather than moved out: `TypeSignature` implements
+        // `Drop` (for iterative teardown), which makes moving a field out of it illegal.
+        let mut base_type_sig = base_type_sig;
+        match &mut base_type_sig {
             TypeSignature::ModifiedRequired(mod_modifiers)
             | TypeSignature::ModifiedOptional(mod_modifiers) => {
                 // Combine the modifiers from parse_custom_mods() and from the ModifiedRequired
                 let mut all_modifiers = modifiers;
-                all_modifiers.extend(mod_modifiers);
+                all_modifiers.append(mod_modifiers);
 
                 // Parse the base type that follows the modifiers
                 let base_type = self.parse_type()?;
@@ -2145,10 +2210,10 @@ impl<'a> SignatureParser<'a> {
     /// - Ready for runtime method instantiation
     ///
     /// # Errors
-    /// - [`crate::Error::Malformed`]: Invalid method specification header (not 0x0A)
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`]: Invalid method specification header (not 0x0A)
     /// - [`crate::Error::DepthLimitExceeded`]: Type argument parsing exceeds nesting depth limit
-    /// - [`crate::error::Error::OutOfBounds`]: Truncated method specification data
-    /// - [`crate::error::Error::Malformed`]: Mismatched type argument count
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`]: Truncated method specification data
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`]: Mismatched type argument count
     ///
     /// # Performance Notes
     /// - Type argument parsing cost is linear in the number of arguments
@@ -2256,7 +2321,7 @@ mod tests {
         let result = parser.parse_type().unwrap();
 
         assert!(matches!(result, TypeSignature::SzArray(_)));
-        if let TypeSignature::SzArray(inner) = result {
+        if let TypeSignature::SzArray(inner) = &result {
             assert_eq!(*inner.base, TypeSignature::I4);
         }
 
@@ -2271,7 +2336,7 @@ mod tests {
 
         let result = parser.parse_type().unwrap();
         assert!(matches!(result, TypeSignature::Array(_)));
-        if let TypeSignature::Array(array) = result {
+        if let TypeSignature::Array(array) = &result {
             assert_eq!(*array.base, TypeSignature::I4);
             assert_eq!(array.rank, 2);
             assert_eq!(array.dimensions.len(), 0)
@@ -2290,7 +2355,7 @@ mod tests {
 
         let result = parser.parse_type().unwrap();
         assert!(matches!(result, TypeSignature::Array(_)));
-        if let TypeSignature::Array(array) = result {
+        if let TypeSignature::Array(array) = &result {
             assert_eq!(*array.base, TypeSignature::I4);
             assert_eq!(array.rank, 2);
             assert_eq!(array.dimensions.len(), 2);
@@ -2302,13 +2367,58 @@ mod tests {
     }
 
     #[test]
+    fn deeply_nested_signature_is_refused_not_built() {
+        // A long run of ELEMENT_TYPE_PTR (0x0F) terminated by I4. Each byte is one nesting
+        // level and consumes no other input, which is what makes this cheap to weaponise: a
+        // ~60 KB blob describes a ~61 000-level structure, deep enough that recursive drop
+        // glue overflows a 2 MiB rayon worker stack.
+        let mut blob = vec![0x0F_u8; MAX_SIGNATURE_NODES.saturating_mul(2)];
+        blob.push(0x08); // I4
+
+        let mut parser = SignatureParser::new(&blob);
+        assert!(
+            parser.parse_type().is_err(),
+            "a signature past the node budget must be refused during parsing"
+        );
+    }
+
+    /// Signatures of ordinary depth must still parse — the budget must not be so tight that it
+    /// rejects real assemblies.
+    #[test]
+    fn moderately_nested_signature_still_parses() {
+        // int**...* nested 100 levels: far beyond anything a real compiler emits, well inside
+        // the budget.
+        let mut blob = vec![0x0F_u8; 100];
+        blob.push(0x08); // I4
+
+        let mut parser = SignatureParser::new(&blob);
+        assert!(parser.parse_type().is_ok());
+    }
+
+    /// Dropping a deep signature must not recurse.
+    ///
+    /// Built by hand rather than parsed, because the parser now refuses to construct one this
+    /// deep; the `Drop` impl has to hold for any `TypeSignature` however it was produced.
+    #[test]
+    fn deep_signature_drops_without_recursing() {
+        let mut sig = TypeSignature::I4;
+        for _ in 0..200_000 {
+            sig = TypeSignature::Pinned(Box::new(sig));
+        }
+
+        // The assertion is simply that this returns: with drop glue recursing, 200 000 levels
+        // overflows the stack and takes the process down with SIGSEGV.
+        drop(sig);
+    }
+
+    #[test]
     fn test_parse_pointers_and_byrefs() {
         // Pointer to Int32 (int*)
         let mut parser = SignatureParser::new(&[0x0F, 0x08]);
         let result = parser.parse_type().unwrap();
 
         assert!(matches!(result, TypeSignature::Ptr(_)));
-        if let TypeSignature::Ptr(inner) = result {
+        if let TypeSignature::Ptr(inner) = &result {
             assert_eq!(*inner.base, TypeSignature::I4);
         }
 
@@ -2317,8 +2427,8 @@ mod tests {
         let result = parser.parse_type().unwrap();
 
         assert!(matches!(result, TypeSignature::ByRef(_)));
-        if let TypeSignature::ByRef(inner) = result {
-            assert_eq!(*inner, TypeSignature::I4);
+        if let TypeSignature::ByRef(inner) = &result {
+            assert_eq!(**inner, TypeSignature::I4);
         }
     }
 
@@ -2336,8 +2446,8 @@ mod tests {
         let result = parser.parse_type().unwrap();
 
         assert!(matches!(result, TypeSignature::GenericInst(_, _)));
-        if let TypeSignature::GenericInst(class, args) = result {
-            assert!(matches!(*class, TypeSignature::Class(_)));
+        if let TypeSignature::GenericInst(class, args) = &result {
+            assert!(matches!(**class, TypeSignature::Class(_)));
             assert_eq!(args.len(), 1);
             assert_eq!(args[0], TypeSignature::I4);
         }
@@ -2355,8 +2465,8 @@ mod tests {
         let result = parser.parse_type().unwrap();
 
         assert!(matches!(result, TypeSignature::GenericInst(_, _)));
-        if let TypeSignature::GenericInst(class, args) = result {
-            assert!(matches!(*class, TypeSignature::Class(_)));
+        if let TypeSignature::GenericInst(class, args) = &result {
+            assert!(matches!(**class, TypeSignature::Class(_)));
             assert_eq!(args.len(), 2);
             assert_eq!(args[0], TypeSignature::String);
             assert_eq!(args[1], TypeSignature::I4);

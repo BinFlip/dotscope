@@ -574,7 +574,7 @@ impl<'a> Strings<'a> {
     /// # Errors
     ///
     /// Returns [`crate::Error`] in the following cases:
-    /// - **[`crate::Error::OutOfBounds`]**: Index exceeds heap data length
+    /// - **[`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`]**: Index exceeds heap data length
     /// - **Malformed string**: No null terminator found within remaining heap data
     /// - **Invalid UTF-8**: String bytes do not form a valid UTF-8 sequence
     /// - **Encoding errors**: Non-ASCII bytes that violate UTF-8 encoding rules

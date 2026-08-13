@@ -400,7 +400,7 @@ impl<'a> Blob<'a> {
     ///
     /// // Access null blob (always empty)
     /// let null_blob = blob_heap.get(0)?;
-    /// assert_eq!(null_blob, &[]);
+    /// assert_eq!(null_blob, &[] as &[u8]);
     ///
     /// // Access first real blob
     /// let first_blob = blob_heap.get(1)?;

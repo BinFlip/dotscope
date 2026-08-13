@@ -284,8 +284,8 @@ impl PermissionSetBuilder {
     /// # Errors
     ///
     /// Returns [`crate::Error`] in the following cases:
-    /// - [`crate::Error::Malformed`] - When permission data contains unsupported types
-    /// - [`crate::Error::Malformed`] - When the target format is [`crate::metadata::security::PermissionSetFormat::Unknown`]
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`] - When permission data contains unsupported types
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`] - When the target format is [`crate::metadata::security::PermissionSetFormat::Unknown`]
     ///
     /// # Examples
     ///

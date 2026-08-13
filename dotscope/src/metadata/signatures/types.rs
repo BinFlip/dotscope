@@ -3350,6 +3350,63 @@ pub struct SignatureMethodSpec {
     pub generic_args: Vec<TypeSignature>,
 }
 
+impl Drop for TypeSignature {
+    /// Tears the signature down iteratively rather than letting drop glue recurse.
+    ///
+    /// A signature blob is attacker-supplied and can describe a type nested thousands of levels
+    /// deep (long runs of `ELEMENT_TYPE_PTR`). Compiler-generated drop glue walks that chain
+    /// with one stack frame per level, and signature blobs are parsed on rayon workers with the
+    /// default 2 MiB stack, so a deep enough signature exhausts the stack while the value is
+    /// merely going out of scope. That is a SIGSEGV, not a panic — `deny(panic)` and
+    /// `Result`-returning parsers offer no protection against drop glue.
+    ///
+    /// This moves each node's children onto a heap worklist before the node is dropped, so
+    /// every individual drop is shallow and stack usage stays constant regardless of depth.
+    /// It is defence in depth alongside the parser's node budget: the budget stops such a
+    /// signature being built here, but this holds for any `TypeSignature` however constructed.
+    fn drop(&mut self) {
+        let mut worklist: Vec<TypeSignature> = Vec::new();
+        take_children(self, &mut worklist);
+
+        while let Some(mut node) = worklist.pop() {
+            take_children(&mut node, &mut worklist);
+            // `node` is dropped here with its children already moved out, so its own drop
+            // glue — and the recursive call to this impl — bottoms out immediately.
+        }
+    }
+}
+
+/// Moves every nested [`TypeSignature`] out of `node` and onto `out`, leaving leaves behind.
+///
+/// Used by [`TypeSignature`]'s [`Drop`] to flatten a chain that drop glue would otherwise walk
+/// recursively. Replacing each child with [`TypeSignature::Void`] is what makes the subsequent
+/// drop shallow.
+fn take_children(node: &mut TypeSignature, out: &mut Vec<TypeSignature>) {
+    /// Takes a boxed child, leaving a leaf in its place.
+    fn take(slot: &mut TypeSignature) -> TypeSignature {
+        std::mem::replace(slot, TypeSignature::Void)
+    }
+
+    match node {
+        TypeSignature::Ptr(ptr) => out.push(take(&mut ptr.base)),
+        TypeSignature::SzArray(arr) => out.push(take(&mut arr.base)),
+        TypeSignature::Array(arr) => out.push(take(&mut arr.base)),
+        TypeSignature::ByRef(inner) | TypeSignature::Pinned(inner) => out.push(take(inner)),
+        TypeSignature::GenericInst(base, args) => {
+            out.push(take(base));
+            out.append(args);
+        }
+        TypeSignature::FnPtr(method) => {
+            out.push(take(&mut method.return_type.base));
+            out.extend(method.params.drain(..).map(|p| p.base));
+            out.extend(method.varargs.drain(..).map(|p| p.base));
+        }
+        // Remaining variants are leaves, or hold only tokens and flags. `ModifiedRequired` and
+        // `ModifiedOptional` carry `CustomModifier`s, which are a `Token` plus a `bool`.
+        _ => {}
+    }
+}
+
 impl TypeSignature {
     /// Check if a constant primitive value is compatible with this type signature
     ///

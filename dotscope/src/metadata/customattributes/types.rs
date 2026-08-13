@@ -134,7 +134,7 @@
 
 use std::{fmt, sync::Arc};
 
-use crate::metadata::typesystem::CilTypeReference;
+use crate::{metadata::typesystem::CilTypeReference, utils::LazyList};
 
 /// A reference-counted pointer to a [`CustomAttributeValue`] for efficient sharing.
 ///
@@ -148,7 +148,7 @@ pub type CustomAttributeValueRc = Arc<CustomAttributeValue>;
 /// Provides thread-safe storage for custom attribute collections on metadata objects.
 /// Uses [`boxcar::Vec`] for lock-free concurrent access and [`Arc`] for reference counting,
 /// enabling efficient metadata processing in multi-threaded scenarios.
-pub type CustomAttributeValueList = Arc<boxcar::Vec<CustomAttributeValueRc>>;
+pub type CustomAttributeValueList = LazyList<CustomAttributeValueRc>;
 
 /// Represents a complete parsed custom attribute with fixed and named arguments.
 ///

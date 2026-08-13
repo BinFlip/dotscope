@@ -832,7 +832,7 @@ mod tests {
         ])
         .unwrap();
         assert!(matches!(result.base, TypeSignature::SzArray(_)));
-        if let TypeSignature::SzArray(inner) = result.base {
+        if let TypeSignature::SzArray(inner) = &result.base {
             assert_eq!(*inner.base, TypeSignature::String);
         }
     }
@@ -908,8 +908,8 @@ mod tests {
         ])
         .unwrap();
         assert!(matches!(result.base, TypeSignature::GenericInst(_, _)));
-        if let TypeSignature::GenericInst(class, args) = result.base {
-            assert!(matches!(*class, TypeSignature::Class(_)));
+        if let TypeSignature::GenericInst(class, args) = &result.base {
+            assert!(matches!(**class, TypeSignature::Class(_)));
             assert_eq!(args.len(), 1);
             assert_eq!(args[0], TypeSignature::I4);
         }

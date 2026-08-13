@@ -129,7 +129,7 @@ use crate::{
 ///
 /// # Errors
 ///
-/// Returns [`crate::Error::Malformed`] in the following cases:
+/// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`] in the following cases:
 /// - Too many named arguments (exceeds u16 maximum of 65535)
 /// - Array length exceeds u32 maximum
 /// - String length exceeds compressed uint maximum (0x1FFFFFFF bytes)
@@ -273,7 +273,7 @@ fn encode_named_arguments(
 ///
 /// # Errors
 ///
-/// Returns [`crate::Error::Malformed`] in the following cases:
+/// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`] in the following cases:
 /// - `Char`: Character code point exceeds 0xFFFF (outside Basic Multilingual Plane)
 /// - `String`: String length exceeds compressed uint maximum (0x1FFFFFFF bytes)
 /// - `Array`: Array length exceeds u32 maximum (4,294,967,295 elements)
