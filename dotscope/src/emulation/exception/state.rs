@@ -36,6 +36,14 @@ use crate::{
     metadata::token::Token,
 };
 
+/// Maximum number of cleanup handlers that may be queued for execution at once.
+///
+/// A backstop, not a semantic limit: legitimate depth is bounded by try nesting times call
+/// depth, both of which are already capped elsewhere, so this is only reachable when entries are
+/// queued faster than they are drained. Without it the queue is an unbounded `Vec` free to
+/// grow for the lifetime of the emulation.
+const MAX_PENDING_FINALLY: usize = 4096;
+
 /// Information about a thrown exception.
 ///
 /// This structure captures all the information about an exception at the time
@@ -390,12 +398,32 @@ impl ThreadExceptionState {
     /// * `method` - The method containing the finally block
     /// * `handler_offset` - The IL offset of the finally handler
     /// * `leave_target` - Optional target offset for `leave` instructions
+    ///
+    /// Silently drops the entry once `MAX_PENDING_FINALLY` entries are queued. The queue is
+    /// bounded by real control flow — nesting depth times call depth — so reaching the cap means
+    /// entries are being queued faster than they are drained, which is a defect rather than a
+    /// deep program. Dropping is the conservative response: a skipped cleanup handler
+    /// mis-emulates one method, whereas an unbounded queue exhausts host memory.
     pub fn push_finally(&mut self, method: Token, handler_offset: u32, leave_target: Option<u32>) {
+        if self.pending_finally.len() >= MAX_PENDING_FINALLY {
+            return;
+        }
+
         self.pending_finally.push(PendingFinally {
             method,
             handler_offset,
             leave_target,
         });
+    }
+
+    /// Discards queued cleanup handlers belonging to `method`.
+    ///
+    /// Called when a frame is popped: entries scheduled against a frame that no longer exists
+    /// can never run correctly, since the handler IL would execute against whatever frame
+    /// happens to be current.
+    pub fn discard_finally_for_method(&mut self, method: Token) {
+        self.pending_finally
+            .retain(|pending| pending.method != method);
     }
 
     /// Pops and returns the next pending finally block.
@@ -790,5 +818,36 @@ mod tests {
         assert!(!state.has_exception());
         assert!(!state.has_pending_finally());
         assert!(!state.take_rethrow_request());
+    }
+
+    /// Leaving a filter destroys the handler offset, so every `endfilter` consumer must read
+    /// it *first*.
+    ///
+    /// This coupling is not obvious from either call site and it has already been got wrong
+    /// once: `set_in_filter(false)` was hoisted above the reads in the controller's
+    /// `EndFilter` arm, which made `filter_handler_offset` unconditionally `None` there. On
+    /// the accepting path that skipped the jump and returned without advancing the IP, so
+    /// `endfilter` re-executed forever; on the rejecting path it emptied the skip key, so the
+    /// handler search re-matched the filter that had just rejected. Every `catch (E) when
+    /// (...)` was broken in both directions.
+    ///
+    /// If this coupling is ever removed, the ordering comments in
+    /// `engine::controller`'s `EndFilter` arm and `resume_search_after_filter` become stale.
+    #[test]
+    fn leaving_a_filter_clears_the_handler_offset() {
+        let mut state = ThreadExceptionState::new();
+
+        state.enter_filter(0x42);
+        assert!(state.in_filter());
+        assert_eq!(state.filter_handler_offset(), Some(0x42));
+
+        state.set_in_filter(false);
+        assert!(!state.in_filter());
+        assert_eq!(
+            state.filter_handler_offset(),
+            None,
+            "leaving a filter must clear the handler offset; the ordering requirements \
+             documented in engine::controller depend on it"
+        );
     }
 }

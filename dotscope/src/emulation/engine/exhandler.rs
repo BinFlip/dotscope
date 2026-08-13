@@ -371,6 +371,21 @@ pub fn find_exception_handler(
         ExceptionClause::from_metadata_handlers(&body.exception_handlers)
     };
 
+    // Cleanup clauses encountered while scanning, held locally until the outcome is known.
+    //
+    // Committing these to `exception_state` as they are found is wrong: a cleanup clause that
+    // the exception never unwinds past must not run, and nothing would ever drain it, so it
+    // would accumulate across every search. But dropping them all when a handler matches is
+    // equally wrong — that was the defect this shape replaced. For
+    // `try { try { throw } finally { F } } catch { C }` both clauses cover the throw offset and
+    // the inner Finally comes first in the clause table, so the exception *does* unwind out of
+    // the inner try to reach `C`, and `F` has to run on the way.
+    //
+    // The rule is containment, not scan order: on a match, commit exactly those candidates
+    // whose try region is nested inside the matched clause's try region. The full clause is
+    // kept rather than just its handler offset so that test can be made.
+    let mut cleanup_candidates: Vec<&ExceptionClause> = Vec::new();
+
     // Search for a handler that covers the current offset
     // Handlers are processed in order - innermost handlers first (as per ECMA-335)
     for clause in &clauses {
@@ -397,6 +412,12 @@ pub fn find_exception_handler(
                 };
 
                 if is_compatible {
+                    commit_nested_cleanups(
+                        exception_state,
+                        method_token,
+                        clause,
+                        &cleanup_candidates,
+                    );
                     return Ok(Some(HandlerMatch::Catch {
                         method: method_token,
                         handler_offset: clause.handler_offset(),
@@ -409,6 +430,7 @@ pub fn find_exception_handler(
                 // Filter handler - need to execute filter code first
                 // Store the handler offset so EndFilter knows where to jump
                 let handler_offset = clause.handler_offset();
+                commit_nested_cleanups(exception_state, method_token, clause, &cleanup_candidates);
                 exception_state.enter_filter(handler_offset);
                 return Ok(Some(HandlerMatch::Filter {
                     method: method_token,
@@ -417,21 +439,49 @@ pub fn find_exception_handler(
                 }));
             }
 
-            ExceptionClause::Finally { handler_length, .. } => {
-                // Finally handler - schedule for execution during unwinding
-                exception_state.push_finally(method_token, clause.handler_offset(), None);
-                _ = handler_length;
-            }
-
-            ExceptionClause::Fault { handler_length, .. } => {
-                // Fault handler - like finally but only on exception path
-                exception_state.push_finally(method_token, clause.handler_offset(), None);
-                _ = handler_length;
+            ExceptionClause::Finally { .. } | ExceptionClause::Fault { .. } => {
+                // Runs during unwinding — whether it is reached depends on where the search
+                // ends up, so it is only a candidate until then.
+                cleanup_candidates.push(clause);
             }
         }
     }
 
+    // No handler matched, so the exception unwinds out of this frame entirely and every
+    // cleanup clause collected above really does run.
+    for clause in cleanup_candidates {
+        exception_state.push_finally(method_token, clause.handler_offset(), None);
+    }
+
     Ok(None)
+}
+
+/// Queues the cleanup clauses the exception unwinds past on its way to `matched`.
+///
+/// A `finally`/`fault` whose try region is nested inside the matched handler's try region sits
+/// between the throw site and that handler, so it must run before the handler is entered — the
+/// `try { try { throw } finally { F } } catch { C }` case. One that merely *encloses* the
+/// matched handler is not unwound past at all: the exception is caught inside it, and queueing
+/// it would run cleanup for a region still being executed and leave an entry nothing drains.
+fn commit_nested_cleanups(
+    exception_state: &mut ThreadExceptionState,
+    method_token: Token,
+    matched: &ExceptionClause,
+    candidates: &[&ExceptionClause],
+) {
+    let (outer_start, outer_end) = (matched.try_offset(), matched.try_end());
+
+    for clause in candidates {
+        let nested = clause.try_offset() >= outer_start && clause.try_end() <= outer_end
+            // An identical region is not nested — `try {} catch {} finally {}` compiles to two
+            // clauses over the same try, and per ECMA-335 the finally runs *after* the catch
+            // completes, not before it is entered. Leave it to the normal exit path.
+            && (clause.try_offset() != outer_start || clause.try_end() != outer_end);
+
+        if nested {
+            exception_state.push_finally(method_token, clause.handler_offset(), None);
+        }
+    }
 }
 
 /// Schedules finally blocks to execute when leaving a protected region.
@@ -487,18 +537,21 @@ pub fn schedule_finally_blocks(
         }
     }
 
-    // Sort by try_offset descending (innermost first)
-    finally_blocks.sort_by_key(|f| std::cmp::Reverse(f.1));
+    // ECMA-335 §12.4.2.5 runs finally handlers innermost-first when a `leave` exits nested try
+    // regions. `pending_finally` is a LIFO stack, so pop order is the reverse of push order:
+    // to pop innermost-first we must push **outermost-first**.
+    //
+    // For nested regions the inner try starts at or after the outer one, so ascending
+    // `try_offset` is outermost-first.
+    finally_blocks.sort_by_key(|f| f.1);
 
-    // Schedule finally blocks in order (innermost first)
-    // The last one scheduled will be popped first
+    // The leave target belongs on the entry popped **last** — the outermost, i.e. the first
+    // pushed. Only once every finally in the chain has run does control transfer to the leave
+    // target; attaching it to any earlier entry means `handle_end_finally` consumes it and then
+    // overwrites it with a later entry's `None`, leaving `endfinally` with neither a target nor
+    // an exception and nothing to advance the instruction pointer.
     for (i, (handler_offset, _)) in finally_blocks.iter().enumerate() {
-        // The last finally should have the actual leave target
-        let target = if i == finally_blocks.len().saturating_sub(1) {
-            Some(leave_target)
-        } else {
-            None
-        };
+        let target = if i == 0 { Some(leave_target) } else { None };
         exception_state.push_finally(method_token, *handler_offset, target);
     }
 
@@ -674,4 +727,87 @@ pub fn track_cctor_failure_if_needed(
 
     cctor_tracker.mark_type_failed(type_token, exception_ref)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn finally_clause(try_offset: u32, try_length: u32, handler_offset: u32) -> ExceptionClause {
+        ExceptionClause::Finally {
+            try_offset,
+            try_length,
+            handler_offset,
+            handler_length: 4,
+        }
+    }
+
+    fn catch_clause(try_offset: u32, try_length: u32, handler_offset: u32) -> ExceptionClause {
+        ExceptionClause::Catch {
+            try_offset,
+            try_length,
+            handler_offset,
+            handler_length: 4,
+            catch_type: Token::new(0x0100_0001),
+        }
+    }
+
+    /// `try { try { throw } finally { F } } catch { C }` must run `F`.
+    ///
+    /// Both clauses cover the throw offset, and the inner Finally precedes the outer Catch in
+    /// the clause table. The exception unwinds out of the inner try to reach `C`, so `F` sits
+    /// on that path. Dropping every candidate on a match — which is what committing them only
+    /// on the no-handler path amounts to — silently skipped it.
+    #[test]
+    fn a_finally_nested_inside_the_matched_try_is_queued() {
+        let mut state = ThreadExceptionState::new();
+        let inner_finally = finally_clause(10, 10, 30);
+        let outer_catch = catch_clause(0, 40, 50);
+
+        commit_nested_cleanups(
+            &mut state,
+            Token::new(0x0600_0001),
+            &outer_catch,
+            &[&inner_finally],
+        );
+
+        assert!(state.has_pending_finally(), "the inner finally must run");
+        assert_eq!(state.pop_finally().map(|p| p.handler_offset), Some(30));
+    }
+
+    /// A `finally` that *encloses* the matched handler is not unwound past.
+    ///
+    /// The exception is caught inside that region, so its cleanup has not been reached.
+    /// Queueing it would run cleanup for a region still executing and leave an entry that
+    /// nothing drains — the accumulation the local-candidate design exists to prevent.
+    #[test]
+    fn a_finally_enclosing_the_matched_try_is_not_queued() {
+        let mut state = ThreadExceptionState::new();
+        let outer_finally = finally_clause(0, 100, 80);
+        let inner_catch = catch_clause(10, 10, 30);
+
+        commit_nested_cleanups(
+            &mut state,
+            Token::new(0x0600_0001),
+            &inner_catch,
+            &[&outer_finally],
+        );
+
+        assert!(!state.has_pending_finally());
+    }
+
+    /// `try { } catch { } finally { }` shares one try region across both clauses.
+    ///
+    /// ECMA-335 runs the finally *after* the catch completes, via the normal exit path — not
+    /// before the catch is entered. An identical region is therefore not "nested".
+    #[test]
+    fn a_finally_over_the_same_try_region_is_not_queued() {
+        let mut state = ThreadExceptionState::new();
+        let finally = finally_clause(0, 20, 40);
+        let catch = catch_clause(0, 20, 20);
+
+        commit_nested_cleanups(&mut state, Token::new(0x0600_0001), &catch, &[&finally]);
+
+        assert!(!state.has_pending_finally());
+    }
 }

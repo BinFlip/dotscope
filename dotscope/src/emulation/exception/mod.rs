@@ -22,48 +22,31 @@
 //!   finally, fault)
 //! - [`ThreadExceptionState`] - Manages per-thread exception tracking, including the active
 //!   exception, pending finally blocks, and filter evaluation state
-//! - [`ExceptionHandler`] - Provides handler resolution logic for finding appropriate exception
-//!   handlers based on exception type and protected regions
-//! - [`StackUnwinder`] - Manages stack unwinding during exception propagation, ensuring proper
-//!   execution of cleanup handlers
-//!
 //! # Exception Handling Flow
+//!
+//! The search and unwind logic itself lives in
+//! [`engine::exhandler`](crate::emulation::engine), which is the only implementation the
+//! execution loop calls. This module provides the data it operates on.
 //!
 //! When an exception is thrown:
 //!
-//! 1. The [`ExceptionHandler`] searches for a matching catch or filter handler in the current
-//!    method's exception clauses
-//! 2. If no handler is found, the search continues up the call stack via [`StackUnwinder`]
-//! 3. Finally and fault handlers are queued for execution during unwinding
-//! 4. Once a handler is found, cleanup handlers execute in order before control transfers
-//!    to the catch handler
+//! 1. `find_exception_handler` scans the current method's clauses for a `catch` whose type
+//!    matches, or a `filter` to evaluate
+//! 2. Any `finally`/`fault` nested inside the matched clause's try region is queued, since the
+//!    exception unwinds past it on the way to the handler
+//! 3. If no handler matches, every cleanup clause is queued and the search continues up the
+//!    call stack
+//! 4. Queued cleanup handlers execute before control transfers to the handler
 //!
-//! # Example
-//!
-//! ```ignore
-//! use dotscope::emulation::exception::{ExceptionHandler, ExceptionClause, ThreadExceptionState};
-//! use dotscope::emulation::EmulationContext;
-//!
-//! // Create exception handler resolver
-//! let handler = ExceptionHandler::new();
-//!
-//! // Find handler for an exception at a given IL offset
-//! // Type checking is delegated to EmulationContext
-//! let result = handler.find_handler(
-//!     &clauses,
-//!     throw_offset,
-//!     exception_type,
-//!     method_token,
-//!     |exc, catch| ctx.is_type_compatible(exc, catch),
-//! );
-//! ```
+//! Two further implementations of this search — an `ExceptionHandler`/`HandlerSearchState`
+//! pair here and a `StackUnwinder` — used to sit alongside it. Neither was reachable from the
+//! engine, and they had diverged from it on exactly the point above: whether a `finally` found
+//! before a matching `catch` still runs. Three copies of one algorithm, two of them dead and
+//! silently disagreeing, is how that defect survived, so they were removed rather than
+//! resynchronised.
 
-mod handler;
 mod state;
 mod types;
-mod unwinder;
 
-pub use handler::{ExceptionHandler, FrameSearchInfo, HandlerSearchState, MethodHandlerResult};
 pub use state::{ExceptionInfo, PendingFinally, ThreadExceptionState};
 pub use types::{ExceptionClause, HandlerMatch, InstructionLocation};
-pub use unwinder::{StackUnwinder, UnwindSequenceBuilder, UnwindStepResult};

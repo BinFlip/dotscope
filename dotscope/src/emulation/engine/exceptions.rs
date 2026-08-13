@@ -76,6 +76,9 @@ pub fn parent(token: Token) -> Option<Token> {
         t if t == synthetic_exception::ARGUMENT_NULL => {
             Some(synthetic_exception::ARGUMENT_EXCEPTION)
         }
+        t if t == synthetic_exception::ARGUMENT_OUT_OF_RANGE => {
+            Some(synthetic_exception::ARGUMENT_EXCEPTION)
+        }
 
         // Intermediate types → SystemException
         t if t == synthetic_exception::ARITHMETIC => Some(synthetic_exception::SYSTEM_EXCEPTION),
@@ -110,6 +113,10 @@ pub fn parent(token: Token) -> Option<Token> {
         }
         t if t == synthetic_exception::MISSING_FIELD => Some(synthetic_exception::SYSTEM_EXCEPTION),
         t if t == synthetic_exception::NOT_IMPLEMENTED => {
+            Some(synthetic_exception::SYSTEM_EXCEPTION)
+        }
+        t if t == synthetic_exception::OUT_OF_MEMORY => Some(synthetic_exception::SYSTEM_EXCEPTION),
+        t if t == synthetic_exception::ACCESS_VIOLATION => {
             Some(synthetic_exception::SYSTEM_EXCEPTION)
         }
 
@@ -195,6 +202,8 @@ pub fn token_from_fullname(fullname: &str) -> Option<Token> {
         "System.FormatException" => Some(synthetic_exception::FORMAT_EXCEPTION),
         "System.ArgumentException" => Some(synthetic_exception::ARGUMENT_EXCEPTION),
         "System.ArgumentNullException" => Some(synthetic_exception::ARGUMENT_NULL),
+        "System.ArgumentOutOfRangeException" => Some(synthetic_exception::ARGUMENT_OUT_OF_RANGE),
+        "System.OutOfMemoryException" => Some(synthetic_exception::OUT_OF_MEMORY),
         "System.NotSupportedException" => Some(synthetic_exception::NOT_SUPPORTED),
         "System.Collections.Generic.KeyNotFoundException" => {
             Some(synthetic_exception::KEY_NOT_FOUND)
@@ -211,6 +220,7 @@ pub fn token_from_fullname(fullname: &str) -> Option<Token> {
         "System.MissingMethodException" => Some(synthetic_exception::MISSING_METHOD),
         "System.MissingFieldException" => Some(synthetic_exception::MISSING_FIELD),
         "System.NotImplementedException" => Some(synthetic_exception::NOT_IMPLEMENTED),
+        "System.AccessViolationException" => Some(synthetic_exception::ACCESS_VIOLATION),
         _ => None,
     }
 }
@@ -358,6 +368,7 @@ mod tests {
             synthetic_exception::MISSING_METHOD,
             synthetic_exception::MISSING_FIELD,
             synthetic_exception::NOT_IMPLEMENTED,
+            synthetic_exception::ACCESS_VIOLATION,
         ];
 
         for exc in &all_exceptions {
