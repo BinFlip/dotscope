@@ -59,10 +59,12 @@ pub fn register(manager: &HookManager) -> Result<()> {
     register_exception_type(manager, "System", "FormatException")?;
     register_exception_type(manager, "System", "NotSupportedException")?;
     register_exception_type(manager, "System", "NotImplementedException")?;
+    register_exception_type(manager, "System", "AccessViolationException")?;
     register_exception_type(manager, "System", "NullReferenceException")?;
     register_exception_type(manager, "System", "IndexOutOfRangeException")?;
     register_exception_type(manager, "System", "InvalidCastException")?;
     register_exception_type(manager, "System", "OverflowException")?;
+    register_exception_type(manager, "System", "OutOfMemoryException")?;
     register_exception_type(manager, "System", "ArithmeticException")?;
     register_exception_type(manager, "System", "TypeInitializationException")?;
     register_exception_type(manager, "System", "ObjectDisposedException")?;

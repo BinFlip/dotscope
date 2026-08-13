@@ -62,7 +62,7 @@ use crate::{
         thread::EmulationThread,
         EmValue, HeapObject,
     },
-    metadata::{token::Token, typesystem::CilFlavor},
+    metadata::{token::Token, typesystem::CilFlavor, validation::ValidationConfig},
     CilObject, Result,
 };
 
@@ -322,15 +322,48 @@ fn assembly_load_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> Pre
                 None,
             );
 
-            // Parse the loaded assembly for cross-assembly resolution
-            if let Ok(loaded_asm) = CilObject::from_mem(bytes) {
+            // Parse the loaded assembly for cross-assembly resolution.
+            //
+            // This is a full re-entry into the metadata parser on attacker-chosen bytes from
+            // inside a hook, so it runs outside the instruction and timeout budgets that bound
+            // ordinary execution. Both the payload size and the number of assemblies retained
+            // are therefore checked here rather than left to those budgets.
+            let limits = &thread.config().limits;
+            if bytes.len() > limits.max_loaded_assembly_bytes {
+                debug!(
+                    "Assembly.Load(byte[]): refusing {} byte payload, limit is {}",
+                    bytes.len(),
+                    limits.max_loaded_assembly_bytes
+                );
+            } else if thread.runtime_state().read().is_ok_and(|state| {
+                state.app_domain().parsed_assembly_count() >= limits.max_loaded_assemblies
+            }) {
+                debug!(
+                    "Assembly.Load(byte[]): refusing load, already at the {} assembly limit",
+                    limits.max_loaded_assemblies
+                );
+            } else if let Ok(loaded_asm) =
+                CilObject::from_mem_with_validation(bytes, ValidationConfig::minimal())
+            {
+                // `minimal()` rather than the production preset: this payload is being parsed
+                // for cross-assembly *resolution*, not accepted as trustworthy, and the full
+                // validation pipeline is a second unbudgeted walk over the same hostile bytes.
                 let asm_arc = Arc::new(loaded_asm);
                 if let Ok(mut state) = thread.runtime_state().write() {
-                    let index = state.app_domain_mut().register_parsed_assembly(asm_arc);
-                    debug!(
-                        "Assembly.Load(byte[]): parsed and registered as index {}",
-                        index
-                    );
+                    match state
+                        .app_domain_mut()
+                        .register_parsed_assembly(asm_arc, limits.max_loaded_assemblies)
+                    {
+                        Some(index) => debug!(
+                            "Assembly.Load(byte[]): parsed and registered as index {index}"
+                        ),
+                        // The count is re-checked under the write lock, so a concurrent fork
+                        // cannot push the domain past the cap between the check above and here.
+                        None => debug!(
+                            "Assembly.Load(byte[]): parsed but not retained, at the {} assembly limit",
+                            limits.max_loaded_assemblies
+                        ),
+                    }
                 }
             }
         }

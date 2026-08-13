@@ -29,7 +29,12 @@
 use crate::utils::derive_pbkdf1_key;
 use crate::{
     emulation::{
-        runtime::hook::{Hook, HookContext, HookManager, PreHookResult},
+        runtime::{
+            bcl::limits::{
+                negative_argument, oversized_argument, MAX_DERIVED_KEY_BYTES, MAX_KDF_ITERATIONS,
+            },
+            hook::{Hook, HookContext, HookManager, PreHookResult},
+        },
         thread::EmulationThread,
         EmValue,
     },
@@ -161,14 +166,23 @@ fn password_derive_bytes_get_bytes_pre(
     ctx: &HookContext<'_>,
     thread: &mut EmulationThread,
 ) -> PreHookResult {
-    let size = ctx
+    // `cb` is attacker-controlled and sizes both the derivation work and the output buffer.
+    // Derived keys are inherently small, so a tight ceiling costs nothing and stops a single
+    // call from allocating gigabytes inside one hook.
+    let size = match ctx
         .args
         .first()
         .map(usize::try_from)
         .transpose()
         .ok()
         .flatten()
-        .unwrap_or(16);
+    {
+        Some(n) if n > MAX_DERIVED_KEY_BYTES => {
+            return oversized_argument("DeriveBytes.GetBytes", "cb", n, MAX_DERIVED_KEY_BYTES)
+        }
+        Some(n) => n,
+        None => 16,
+    };
 
     let heap_ref = if let Some(EmValue::ObjectRef(hr)) = ctx.this {
         *hr
@@ -242,10 +256,26 @@ fn rfc2898_derive_bytes_ctor_pre(
         _ => Vec::new(),
     };
 
-    // Intentional cast: iteration count is always positive in crypto operations
-    #[allow(clippy::cast_sign_loss)]
+    // The comment this replaced asserted the iteration count "is always positive in crypto
+    // operations". It is not: the value comes from emulated code, and `as u32` turned a
+    // negative Int32 into roughly 4.3 billion rounds executed inside a single hook call, with
+    // no emulation budget evaluated in between. Reject negatives and clamp the magnitude —
+    // real obfuscator key schedules use values in the low thousands.
     let iterations: u32 = match ctx.args.get(2) {
-        Some(val) => i32::try_from(val).unwrap_or(1000) as u32,
+        Some(val) => match i32::try_from(val).ok().and_then(|v| u32::try_from(v).ok()) {
+            Some(n) if n > MAX_KDF_ITERATIONS => {
+                return oversized_argument(
+                    "Rfc2898DeriveBytes..ctor",
+                    "iterations",
+                    n as usize,
+                    MAX_KDF_ITERATIONS as usize,
+                )
+            }
+            Some(n) => n,
+            None => {
+                return negative_argument("Rfc2898DeriveBytes..ctor", "iterations");
+            }
+        },
         None => 1000,
     };
 
@@ -277,14 +307,23 @@ fn rfc2898_derive_bytes_get_bytes_pre(
     ctx: &HookContext<'_>,
     thread: &mut EmulationThread,
 ) -> PreHookResult {
-    let size = ctx
+    // `cb` is attacker-controlled and sizes both the derivation work and the output buffer.
+    // Derived keys are inherently small, so a tight ceiling costs nothing and stops a single
+    // call from allocating gigabytes inside one hook.
+    let size = match ctx
         .args
         .first()
         .map(usize::try_from)
         .transpose()
         .ok()
         .flatten()
-        .unwrap_or(16);
+    {
+        Some(n) if n > MAX_DERIVED_KEY_BYTES => {
+            return oversized_argument("DeriveBytes.GetBytes", "cb", n, MAX_DERIVED_KEY_BYTES)
+        }
+        Some(n) => n,
+        None => 16,
+    };
 
     let heap_ref = if let Some(EmValue::ObjectRef(hr)) = ctx.this {
         *hr
@@ -298,11 +337,25 @@ fn rfc2898_derive_bytes_get_bytes_pre(
 
     let params = thread.heap().get_key_derivation_params(heap_ref);
 
+    // A derivation that cannot be performed is reported, not papered over. Returning
+    // `vec![0u8; size]` here would hand back an all-zero key that decrypts to plausible
+    // garbage, and the analyst has no way to tell that apart from a real result.
     let derived_key = match params {
         Ok(Some((password, salt, iterations, hash_algorithm))) => {
-            derive_pbkdf2_key(&password, &salt, iterations, size, &hash_algorithm)
+            match derive_pbkdf2_key(&password, &salt, iterations, size, &hash_algorithm) {
+                Ok(key) => key,
+                Err(e) => return PreHookResult::Error(format!("PBKDF2 derivation failed: {e}")),
+            }
         }
-        _ => vec![0u8; size],
+        Ok(None) => {
+            return PreHookResult::Error(
+                "Rfc2898DeriveBytes.GetBytes called before the key derivation parameters were set"
+                    .to_string(),
+            )
+        }
+        Err(e) => {
+            return PreHookResult::Error(format!("failed to read key derivation parameters: {e}"))
+        }
     };
 
     match thread.heap().alloc_byte_array(&derived_key) {

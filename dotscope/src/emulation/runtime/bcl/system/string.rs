@@ -6,7 +6,10 @@
 use crate::{
     emulation::{
         memory::HeapObject,
-        runtime::hook::{Hook, HookContext, HookManager, PreHookResult},
+        runtime::{
+            bcl::limits::{oversized_argument, MAX_HOOK_STRING_CHARS},
+            hook::{Hook, HookContext, HookManager, PreHookResult},
+        },
         thread::EmulationThread,
         EmValue,
     },
@@ -713,12 +716,16 @@ fn string_pad_left_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> P
         Err(e) => return PreHookResult::Error(format!("heap allocation failed: {e}")),
     };
 
-    let total_width = ctx
-        .args
-        .first()
-        .map(usize::try_from)
-        .and_then(|r| r.ok())
-        .unwrap_or(0);
+    // `totalWidth` comes off the emulated stack; without a ceiling an `int.MaxValue` argument
+    // builds a multi-gigabyte string inside a single hook call, where no emulation budget is
+    // evaluated.
+    let total_width = match ctx.args.first().map(usize::try_from).and_then(|r| r.ok()) {
+        Some(w) if w > MAX_HOOK_STRING_CHARS => {
+            return oversized_argument("String.Pad", "totalWidth", w, MAX_HOOK_STRING_CHARS)
+        }
+        Some(w) => w,
+        None => 0,
+    };
     let pad_char = ctx
         .args
         .get(1)
@@ -731,12 +738,20 @@ fn string_pad_left_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> P
         })
         .unwrap_or(' ');
 
-    let result = if s.len() >= total_width {
+    // .NET measures `totalWidth` in characters, not UTF-8 bytes: comparing against `s.len()`
+    // under-pads any string containing a multi-byte scalar.
+    let char_count = s.chars().count();
+    let result = if char_count >= total_width {
         s
     } else {
-        let padding: String =
-            std::iter::repeat_n(pad_char, total_width.saturating_sub(s.len())).collect();
-        format!("{padding}{s}")
+        let pad_count = total_width.saturating_sub(char_count);
+        let mut padded = String::with_capacity(
+            s.len()
+                .saturating_add(pad_count.saturating_mul(pad_char.len_utf8())),
+        );
+        padded.extend(std::iter::repeat_n(pad_char, pad_count));
+        padded.push_str(&s);
+        padded
     };
 
     match thread.heap_mut().alloc_string(&result) {
@@ -770,12 +785,16 @@ fn string_pad_right_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> 
         Err(e) => return PreHookResult::Error(format!("heap allocation failed: {e}")),
     };
 
-    let total_width = ctx
-        .args
-        .first()
-        .map(usize::try_from)
-        .and_then(|r| r.ok())
-        .unwrap_or(0);
+    // `totalWidth` comes off the emulated stack; without a ceiling an `int.MaxValue` argument
+    // builds a multi-gigabyte string inside a single hook call, where no emulation budget is
+    // evaluated.
+    let total_width = match ctx.args.first().map(usize::try_from).and_then(|r| r.ok()) {
+        Some(w) if w > MAX_HOOK_STRING_CHARS => {
+            return oversized_argument("String.Pad", "totalWidth", w, MAX_HOOK_STRING_CHARS)
+        }
+        Some(w) => w,
+        None => 0,
+    };
     let pad_char = ctx
         .args
         .get(1)
@@ -788,12 +807,20 @@ fn string_pad_right_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> 
         })
         .unwrap_or(' ');
 
-    let result = if s.len() >= total_width {
+    // .NET measures `totalWidth` in characters, not UTF-8 bytes: comparing against `s.len()`
+    // under-pads any string containing a multi-byte scalar.
+    let char_count = s.chars().count();
+    let result = if char_count >= total_width {
         s
     } else {
-        let padding: String =
-            std::iter::repeat_n(pad_char, total_width.saturating_sub(s.len())).collect();
-        format!("{s}{padding}")
+        let pad_count = total_width.saturating_sub(char_count);
+        let mut padded = String::with_capacity(
+            s.len()
+                .saturating_add(pad_count.saturating_mul(pad_char.len_utf8())),
+        );
+        padded.push_str(&s);
+        padded.extend(std::iter::repeat_n(pad_char, pad_count));
+        padded
     };
 
     match thread.heap_mut().alloc_string(&result) {

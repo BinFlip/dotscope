@@ -36,7 +36,10 @@
 use crate::{
     emulation::{
         runtime::{
-            bcl::io::stream::{stream_close_pre, stream_dispose_pre},
+            bcl::{
+                io::stream::{stream_close_pre, stream_dispose_pre},
+                limits::{checked_len, MAX_HOOK_BUFFER},
+            },
             hook::{Hook, HookContext, HookManager, PreHookResult},
         },
         thread::EmulationThread,
@@ -311,10 +314,13 @@ fn binary_reader_read_bytes_pre(
     ctx: &HookContext<'_>,
     thread: &mut EmulationThread,
 ) -> PreHookResult {
-    // Safe: value validated as non-negative
-    #[allow(clippy::cast_sign_loss)]
     let count = match ctx.args.first() {
-        Some(EmValue::I32(v)) => *v as usize,
+        Some(EmValue::I32(v)) => {
+            match checked_len(*v, MAX_HOOK_BUFFER, "BinaryReader.ReadBytes", "count") {
+                Ok(n) => n,
+                Err(result) => return result,
+            }
+        }
         _ => 0,
     };
 
@@ -716,9 +722,13 @@ fn binary_reader_read_chars_pre(
     ctx: &HookContext<'_>,
     thread: &mut EmulationThread,
 ) -> PreHookResult {
-    #[allow(clippy::cast_sign_loss)]
     let count = match ctx.args.first() {
-        Some(EmValue::I32(v)) => *v as usize,
+        Some(EmValue::I32(v)) => {
+            match checked_len(*v, MAX_HOOK_BUFFER, "BinaryReader.ReadChars", "count") {
+                Ok(n) => n,
+                Err(result) => return result,
+            }
+        }
         _ => 0,
     };
 
@@ -732,8 +742,12 @@ fn binary_reader_read_chars_pre(
     };
 
     let Some(chars) = try_hook!(thread.heap().with_stream(stream_ref, |data, position| {
-        // Decode `count` UTF-8 characters
-        let mut chars = Vec::with_capacity(count);
+        // Reserve for what the stream can actually supply, not for what was asked. One char
+        // needs at least one byte, so the remaining byte count is a hard upper bound on the
+        // number of chars this call can return.
+        let available = data.len().saturating_sub(*position);
+        let mut chars = Vec::with_capacity(count.min(available));
+
         for _ in 0..count {
             let Some(remaining) = data.get(*position..) else {
                 break;
@@ -741,12 +755,36 @@ fn binary_reader_read_chars_pre(
             if remaining.is_empty() {
                 break;
             }
-            let s = String::from_utf8_lossy(remaining);
-            if let Some(ch) = s.chars().next() {
-                chars.push(ch);
-                *position = position.saturating_add(ch.len_utf8());
-            } else {
-                break;
+
+            // Decode a single scalar from the front of the slice. Running
+            // `String::from_utf8_lossy` over the whole remainder on each iteration would
+            // re-scan and re-allocate the entire stream tail per character, making this loop
+            // quadratic in stream length.
+            let mut decoded = None;
+            let window = remaining.len().min(4);
+            for take in 1..=window {
+                let Some(prefix) = remaining.get(..take) else {
+                    break;
+                };
+                if let Ok(valid) = std::str::from_utf8(prefix) {
+                    if let Some(ch) = valid.chars().next() {
+                        decoded = Some((ch, take));
+                        break;
+                    }
+                }
+            }
+
+            match decoded {
+                Some((ch, len)) => {
+                    chars.push(ch);
+                    *position = position.saturating_add(len);
+                }
+                // Not a valid scalar in any 1..=4 byte prefix: substitute and advance one
+                // byte, matching `from_utf8_lossy`'s behaviour without its cost.
+                None => {
+                    chars.push(char::REPLACEMENT_CHARACTER);
+                    *position = position.saturating_add(1);
+                }
             }
         }
         chars

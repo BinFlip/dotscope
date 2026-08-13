@@ -1000,17 +1000,16 @@ fn type_get_is_value_type_pre(
                     }
 
                     // Matches Mono: IsSubclassOf(typeof(ValueType))
-                    // Walk the base type chain looking for System.ValueType
-                    let mut current = cil_type.base();
-                    while let Some(ancestor) = current {
+                    // Walk the base type chain looking for System.ValueType.
+                    // `base_chain` bounds the walk against cyclic `extends` graphs.
+                    for ancestor in cil_type.base_chain() {
                         let name = ancestor.fullname();
-                        if name == "System.ValueType" {
+                        if &*name == "System.ValueType" {
                             return PreHookResult::Bypass(Some(EmValue::I32(1)));
                         }
-                        if name == "System.Object" {
+                        if &*name == "System.Object" {
                             break;
                         }
-                        current = ancestor.base();
                     }
 
                     // Fallback: check CilFlavor for value types whose base chain
@@ -1863,17 +1862,17 @@ fn type_is_assignable_from_pre(
                     if this_token == other_token {
                         return PreHookResult::Bypass(Some(EmValue::I32(1)));
                     }
-                    // Walk inheritance chain of 'other' looking for 'this'
+                    // Walk inheritance chain of 'other' looking for 'this'.
+                    // `base_chain` bounds the walk: a hostile assembly can describe a cyclic
+                    // `extends` graph, on which a hand-rolled token loop never terminates.
                     if let Some(asm) = thread.assembly().cloned() {
-                        let mut current = Some(other_token);
-                        while let Some(tok) = current {
-                            if tok == this_token {
+                        if let Some(other_type) = asm.types().resolve(&other_token) {
+                            if other_type
+                                .base_chain()
+                                .any(|ancestor| ancestor.token == this_token)
+                            {
                                 return PreHookResult::Bypass(Some(EmValue::I32(1)));
                             }
-                            current = asm
-                                .types()
-                                .get(&tok)
-                                .and_then(|t| t.base().map(|b| b.token));
                         }
                         // Check interfaces
                         if let Some(other_type) = asm.types().resolve(&other_token) {
@@ -1905,19 +1904,15 @@ fn type_is_subclass_of_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) 
                     try_hook!(thread.heap().get_reflection_type_token(*other_ref))
                 {
                     if let Some(asm) = thread.assembly().cloned() {
-                        // Walk inheritance chain of 'this' looking for 'other'
-                        let mut current = asm
-                            .types()
-                            .get(&this_token)
-                            .and_then(|t| t.base().map(|b| b.token));
-                        while let Some(tok) = current {
-                            if tok == other_token {
+                        // Walk inheritance chain of 'this' looking for 'other'.
+                        // `base_chain` bounds the walk against cyclic `extends` graphs.
+                        if let Some(this_type) = asm.types().resolve(&this_token) {
+                            if this_type
+                                .base_chain()
+                                .any(|ancestor| ancestor.token == other_token)
+                            {
                                 return PreHookResult::Bypass(Some(EmValue::I32(1)));
                             }
-                            current = asm
-                                .types()
-                                .get(&tok)
-                                .and_then(|t| t.base().map(|b| b.token));
                         }
                     }
                 }
@@ -2553,7 +2548,24 @@ fn type_get_interface_map_pre(
 
 /// Finds the implementation of an interface method on a concrete type.
 /// Used by GetInterfaceMap to map interface methods → concrete implementations.
+///
+/// Ancestors are visited via [`CilType::base_chain`], which bounds the walk against the cyclic
+/// `extends` graphs a hostile assembly can describe.
 fn find_interface_impl_for_map(
+    type_info: &CilType,
+    interface_method: Token,
+    base_method: &Method,
+) -> Option<Token> {
+    if let Some(token) = find_interface_impl_on_type(type_info, interface_method, base_method) {
+        return Some(token);
+    }
+    type_info
+        .base_chain()
+        .find_map(|ancestor| find_interface_impl_on_type(&ancestor, interface_method, base_method))
+}
+
+/// Finds an interface-method implementation declared directly on `type_info`.
+fn find_interface_impl_on_type(
     type_info: &CilType,
     interface_method: Token,
     base_method: &Method,
@@ -2588,11 +2600,7 @@ fn find_interface_impl_for_map(
         }
     }
 
-    // Step 3: Walk base type
-    if let Some(base) = type_info.base() {
-        return find_interface_impl_for_map(&base, interface_method, base_method);
-    }
-
+    // Step 3: base types are handled by the caller's `base_chain` walk.
     None
 }
 

@@ -66,7 +66,10 @@
 
 use crate::{
     emulation::{
-        runtime::hook::{Hook, HookContext, HookManager, PreHookResult},
+        runtime::{
+            bcl::limits::{checked_len, MAX_HOOK_BUFFER},
+            hook::{Hook, HookContext, HookManager, PreHookResult},
+        },
         thread::EmulationThread,
         EmValue,
     },
@@ -725,10 +728,19 @@ fn stream_set_length_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) ->
         _ => return PreHookResult::Bypass(None),
     };
 
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let new_length = match ctx.args.first() {
-        Some(EmValue::I64(v)) => *v as usize,
-        Some(EmValue::I32(v)) => *v as usize,
+        Some(EmValue::I64(v)) => {
+            match checked_len(*v, MAX_HOOK_BUFFER, "Stream.SetLength", "value") {
+                Ok(n) => n,
+                Err(result) => return result,
+            }
+        }
+        Some(EmValue::I32(v)) => {
+            match checked_len(*v, MAX_HOOK_BUFFER, "Stream.SetLength", "value") {
+                Ok(n) => n,
+                Err(result) => return result,
+            }
+        }
         _ => return PreHookResult::Bypass(None),
     };
 

@@ -99,7 +99,8 @@ fn process_get_current_process_pre(
             let tables = asm.tables()?;
             let strings = asm.strings()?;
             let module_table = tables.table::<ModuleRaw>()?;
-            let module_row = module_table.iter().next()?;
+            // Module is RID 1 by definition (ECMA-335 II.22.30); see `modules.rs`.
+            let module_row = module_table.get(1).ok().flatten()?;
             strings.get(module_row.name as usize).ok().map(String::from)
         })
         .unwrap_or_else(|| "module.exe".to_string());

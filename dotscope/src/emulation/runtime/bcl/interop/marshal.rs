@@ -64,9 +64,15 @@
 
 use crate::{
     emulation::{
-        runtime::hook::{Hook, HookContext, HookManager, PreHookResult},
+        engine::synthetic_exception,
+        runtime::{
+            bcl::limits::{checked_len, MAX_HOOK_BUFFER},
+            hook::{Hook, HookContext, HookManager, PreHookResult},
+        },
         thread::EmulationThread,
-        tokens, EmValue, HeapObject,
+        tokens,
+        value::{ManagedPointer, PointerTarget},
+        EmValue, HeapObject,
     },
     metadata::token::Token,
     Result,
@@ -117,11 +123,7 @@ fn resolve_address(arg: &EmValue, thread: &EmulationThread) -> Option<u64> {
 /// Reads the value that the pointer points to (local variable, argument, or field)
 /// and converts it to i64. Used by IntPtr hooks when the `this` argument is a
 /// `ldloca`-produced managed pointer instead of a direct value.
-fn resolve_managed_ptr_as_i64(
-    ptr: &crate::emulation::value::ManagedPointer,
-    thread: &EmulationThread,
-) -> Option<i64> {
-    use crate::emulation::value::PointerTarget;
+fn resolve_managed_ptr_as_i64(ptr: &ManagedPointer, thread: &EmulationThread) -> Option<i64> {
     let value = match &ptr.target {
         PointerTarget::Local(idx) => thread.get_local(*idx as usize).ok().cloned(),
         PointerTarget::StaticField(token) => {
@@ -342,26 +344,41 @@ pub fn register(manager: &HookManager) -> Result<()> {
     Ok(())
 }
 
+/// Size of the window materialised for a write to an unmapped address.
+const AUTO_ALLOC_SIZE: usize = 0x1_0000; // 64KB
+
 /// Writes bytes to a possibly-unmapped address, auto-allocating if needed.
 ///
-/// Some obfuscated code writes to addresses that don't exist in emulation
-/// (e.g., CLR method table addresses). Rather than aborting emulation, we
-/// silently allocate a page at the target address and proceed.
-fn write_with_auto_alloc(thread: &EmulationThread, addr: u64, data: &[u8]) {
-    if thread.address_space().write(addr, data).is_err() {
-        let page_base = addr & !0xFFFF;
-        let page_size = 0x1_0000usize; // 64KB
-        log::debug!(
-            "Auto-allocating 0x{page_size:X} bytes at 0x{page_base:X} for write to 0x{addr:X}"
-        );
-        if thread
-            .address_space()
-            .map_data(page_base, &vec![0u8; page_size], "auto-alloc")
-            .is_ok()
-        {
-            let _ = thread.address_space().write(addr, data);
-        }
+/// Some obfuscated code writes to addresses that don't exist in emulation (e.g. CLR method
+/// table addresses). Rather than aborting emulation, a window is materialised at the target
+/// and the write proceeds.
+///
+/// The address is attacker-chosen and this is reached from ordinary CIL, so the allocation is
+/// charged against the unmanaged memory budget. Past it the write is refused: a wild pointer
+/// then faults, as it would on a real process, instead of quietly becoming valid memory —
+/// which is both the containment property and what stops the analyst's picture of the
+/// program's memory from including regions the program never legitimately had.
+///
+/// # Errors
+///
+/// Returns the address space's own error when the window cannot be mapped — the unmanaged
+/// budget is exhausted, or the range collides with an existing mapping — or when the write
+/// itself fails.
+fn write_with_auto_alloc(thread: &EmulationThread, addr: u64, data: &[u8]) -> Result<()> {
+    if thread.address_space().write(addr, data).is_ok() {
+        return Ok(());
     }
+
+    let page_base = addr & !0xFFFF;
+    log::debug!(
+        "Auto-allocating 0x{AUTO_ALLOC_SIZE:X} bytes at 0x{page_base:X} for write to 0x{addr:X}"
+    );
+
+    thread
+        .address_space()
+        .alloc_unmanaged_at(page_base, AUTO_ALLOC_SIZE, "auto-alloc")?;
+
+    thread.address_space().write(addr, data)
 }
 
 /// Hook for `System.Runtime.InteropServices.Marshal.GetHINSTANCE` method.
@@ -435,14 +452,44 @@ fn marshal_copy_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreH
             EmValue::ObjectRef(r) => *r,
             _ => return PreHookResult::Bypass(None),
         };
+        // `cast_unsigned() as usize` turned a negative Int32 into a value near 4 GiB, which
+        // then drove both an address-space read and a per-byte loop taking the heap lock.
+        // .NET throws ArgumentOutOfRangeException for either argument being negative.
         let start_idx = match arg2 {
-            EmValue::I32(v) => (*v).cast_unsigned() as usize,
+            EmValue::I32(v) => match checked_len(*v, MAX_HOOK_BUFFER, "Marshal.Copy", "startIndex")
+            {
+                Ok(n) => n,
+                Err(result) => return result,
+            },
             _ => return PreHookResult::Bypass(None),
         };
         let length = match arg3 {
-            EmValue::I32(v) => (*v).cast_unsigned() as usize,
+            EmValue::I32(v) => match checked_len(*v, MAX_HOOK_BUFFER, "Marshal.Copy", "length") {
+                Ok(n) => n,
+                Err(result) => return result,
+            },
             _ => return PreHookResult::Bypass(None),
         };
+
+        // Validate the destination window before reading anything, so an overrun is reported
+        // as the managed exception rather than discovered part-way through the copy.
+        match thread.heap().get_array_length(dst_ref) {
+            Ok(dst_len) => {
+                if start_idx
+                    .checked_add(length)
+                    .is_none_or(|end| end > dst_len)
+                {
+                    return PreHookResult::Throw {
+                        exception_type: synthetic_exception::ARGUMENT_EXCEPTION,
+                        message: format!(
+                            "Marshal.Copy: destination range {start_idx}..+{length} exceeds \
+                             array length {dst_len}"
+                        ),
+                    };
+                }
+            }
+            Err(e) => return PreHookResult::Error(format!("Marshal.Copy: {e}")),
+        }
 
         if let Ok(bytes) = thread.address_space().read(src_addr, length) {
             for (i, &byte) in bytes.iter().enumerate() {
@@ -464,7 +511,10 @@ fn marshal_copy_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreH
         return PreHookResult::Bypass(None);
     };
     let start_idx = match arg1 {
-        EmValue::I32(v) => (*v).cast_unsigned() as usize,
+        EmValue::I32(v) => match checked_len(*v, MAX_HOOK_BUFFER, "Marshal.Copy", "startIndex") {
+            Ok(n) => n,
+            Err(result) => return result,
+        },
         _ => return PreHookResult::Bypass(None),
     };
     let dest_addr = match arg2 {
@@ -473,9 +523,32 @@ fn marshal_copy_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreH
         _ => return PreHookResult::Bypass(None),
     };
     let length = match arg3 {
-        EmValue::I32(v) => (*v).cast_unsigned() as usize,
+        EmValue::I32(v) => match checked_len(*v, MAX_HOOK_BUFFER, "Marshal.Copy", "length") {
+            Ok(n) => n,
+            Err(result) => return result,
+        },
         _ => return PreHookResult::Bypass(None),
     };
+
+    // Validate the source window up front rather than letting per-element read failures
+    // degrade into a silent run of zero bytes.
+    match thread.heap().get_array_length(*src_ref) {
+        Ok(src_len) => {
+            if start_idx
+                .checked_add(length)
+                .is_none_or(|end| end > src_len)
+            {
+                return PreHookResult::Throw {
+                    exception_type: synthetic_exception::ARGUMENT_EXCEPTION,
+                    message: format!(
+                        "Marshal.Copy: source range {start_idx}..+{length} exceeds array \
+                         length {src_len}"
+                    ),
+                };
+            }
+        }
+        Err(e) => return PreHookResult::Error(format!("Marshal.Copy: {e}")),
+    }
 
     let mut bytes = Vec::with_capacity(length);
     for i in 0..length {
@@ -494,7 +567,9 @@ fn marshal_copy_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreH
         bytes.push(byte_val);
     }
 
-    write_with_auto_alloc(thread, dest_addr, &bytes);
+    if let Err(e) = write_with_auto_alloc(thread, dest_addr, &bytes) {
+        return PreHookResult::throw_access_violation(&e.to_string());
+    }
     PreHookResult::Bypass(None)
 }
 
@@ -592,7 +667,9 @@ fn marshal_write_byte_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
         _ => return PreHookResult::Bypass(None),
     };
 
-    write_with_auto_alloc(thread, addr, &[value]);
+    if let Err(e) = write_with_auto_alloc(thread, addr, &[value]) {
+        return PreHookResult::throw_access_violation(&e.to_string());
+    }
     PreHookResult::Bypass(None)
 }
 
@@ -626,7 +703,9 @@ fn marshal_write_int32_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) 
         _ => return PreHookResult::Bypass(None),
     };
 
-    write_with_auto_alloc(thread, addr, &value.to_le_bytes());
+    if let Err(e) = write_with_auto_alloc(thread, addr, &value.to_le_bytes()) {
+        return PreHookResult::throw_access_violation(&e.to_string());
+    }
     PreHookResult::Bypass(None)
 }
 
@@ -773,7 +852,9 @@ fn marshal_write_int64_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) 
     };
 
     let final_addr = (addr as i64).wrapping_add(offset).cast_unsigned();
-    write_with_auto_alloc(thread, final_addr, &value.to_le_bytes());
+    if let Err(e) = write_with_auto_alloc(thread, final_addr, &value.to_le_bytes()) {
+        return PreHookResult::throw_access_violation(&e.to_string());
+    }
     PreHookResult::Bypass(None)
 }
 
@@ -813,7 +894,9 @@ fn marshal_write_int16_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) 
     };
 
     let final_addr = (addr as i64).wrapping_add(offset).cast_unsigned();
-    write_with_auto_alloc(thread, final_addr, &value.to_le_bytes());
+    if let Err(e) = write_with_auto_alloc(thread, final_addr, &value.to_le_bytes()) {
+        return PreHookResult::throw_access_violation(&e.to_string());
+    }
     PreHookResult::Bypass(None)
 }
 
@@ -858,11 +941,15 @@ fn marshal_write_intptr_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread)
     let final_addr = (addr as i64).wrapping_add(offset).cast_unsigned();
     let ptr_size = ctx.pointer_size.bytes();
     if ptr_size == 8 {
-        write_with_auto_alloc(thread, final_addr, &value.to_le_bytes());
+        if let Err(e) = write_with_auto_alloc(thread, final_addr, &value.to_le_bytes()) {
+            return PreHookResult::throw_access_violation(&e.to_string());
+        }
     } else {
         #[allow(clippy::cast_possible_truncation)]
         let val32 = value as i32;
-        write_with_auto_alloc(thread, final_addr, &val32.to_le_bytes());
+        if let Err(e) = write_with_auto_alloc(thread, final_addr, &val32.to_le_bytes()) {
+            return PreHookResult::throw_access_violation(&e.to_string());
+        }
     }
     PreHookResult::Bypass(None)
 }
@@ -878,31 +965,57 @@ fn marshal_alloc_cotaskmem_pre(
     ctx: &HookContext<'_>,
     thread: &mut EmulationThread,
 ) -> PreHookResult {
-    let size = ctx
-        .args
-        .first()
-        .and_then(EmValue::as_i32)
-        .unwrap_or(0)
-        .max(0) as usize;
+    let size = match checked_len(
+        ctx.args.first().and_then(EmValue::as_i32).unwrap_or(0),
+        MAX_HOOK_BUFFER,
+        "Marshal.AllocCoTaskMem",
+        "cb",
+    ) {
+        Ok(n) => n.max(1), // Minimum 1 byte allocation
+        Err(result) => return result,
+    };
 
-    let size = size.max(1); // Minimum 1 byte allocation
     match thread.address_space().alloc_unmanaged(size) {
         Ok(addr) => PreHookResult::Bypass(Some(EmValue::NativeInt(addr as i64))),
-        Err(_) => PreHookResult::Bypass(Some(EmValue::NativeInt(0))),
+        // .NET signals allocation failure by throwing, and returning a null IntPtr instead
+        // lets emulated code carry on writing through a pointer that was never allocated.
+        Err(e) => PreHookResult::Throw {
+            exception_type: synthetic_exception::OUT_OF_MEMORY,
+            message: format!("Marshal.AllocCoTaskMem: {e}"),
+        },
     }
 }
 
 /// Hook for `System.Runtime.InteropServices.Marshal.FreeCoTaskMem` method.
 ///
-/// No-op in emulation — memory is not individually freed.
+/// Releases the region and returns its bytes to the unmanaged allocation budget. Emulated
+/// code that allocates and frees in a loop would otherwise exhaust that budget, since the
+/// allocations are real but the frees were not.
 ///
 /// # Handled Overloads
 ///
 /// - `Marshal.FreeCoTaskMem(IntPtr) -> void`
 fn marshal_free_cotaskmem_pre(
-    _ctx: &HookContext<'_>,
-    _thread: &mut EmulationThread,
+    ctx: &HookContext<'_>,
+    thread: &mut EmulationThread,
 ) -> PreHookResult {
+    free_unmanaged_arg(ctx, thread)
+}
+
+/// Shared body for `FreeHGlobal` and `FreeCoTaskMem`.
+///
+/// A free of a null or unrecognised pointer is ignored rather than reported: .NET treats
+/// `Free*(IntPtr.Zero)` as a no-op, and emulated code frequently frees pointers this emulator
+/// never handed out (for instance when a paired allocation was bypassed by another hook).
+fn free_unmanaged_arg(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
+    let address = match ctx.args.first() {
+        Some(EmValue::UnmanagedPtr(a)) => *a,
+        Some(EmValue::NativeInt(a)) => (*a).cast_unsigned(),
+        _ => return PreHookResult::Bypass(None),
+    };
+    if address != 0 {
+        let _ = thread.address_space().free_unmanaged(address);
+    }
     PreHookResult::Bypass(None)
 }
 
@@ -916,30 +1029,35 @@ fn marshal_free_cotaskmem_pre(
 /// - `Marshal.AllocHGlobal(IntPtr) -> IntPtr`
 fn marshal_alloc_hglobal_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
     let size = match ctx.args.first() {
-        Some(EmValue::I32(v)) => (*v).max(0) as usize,
-        Some(EmValue::NativeInt(v)) => (*v).max(0) as usize,
-        _ => 0,
+        Some(EmValue::I32(v)) => checked_len(*v, MAX_HOOK_BUFFER, "Marshal.AllocHGlobal", "cb"),
+        Some(EmValue::NativeInt(v)) => {
+            checked_len(*v, MAX_HOOK_BUFFER, "Marshal.AllocHGlobal", "cb")
+        }
+        _ => Ok(0),
+    };
+    let size = match size {
+        Ok(n) => n.max(1),
+        Err(result) => return result,
     };
 
-    let size = size.max(1);
     match thread.address_space().alloc_unmanaged(size) {
         Ok(addr) => PreHookResult::Bypass(Some(EmValue::NativeInt(addr as i64))),
-        Err(_) => PreHookResult::Bypass(Some(EmValue::NativeInt(0))),
+        Err(e) => PreHookResult::Throw {
+            exception_type: synthetic_exception::OUT_OF_MEMORY,
+            message: format!("Marshal.AllocHGlobal: {e}"),
+        },
     }
 }
 
 /// Hook for `System.Runtime.InteropServices.Marshal.FreeHGlobal` method.
 ///
-/// No-op in emulation — memory is not individually freed.
+/// Releases the region and returns its bytes to the unmanaged allocation budget.
 ///
 /// # Handled Overloads
 ///
 /// - `Marshal.FreeHGlobal(IntPtr) -> void`
-fn marshal_free_hglobal_pre(
-    _ctx: &HookContext<'_>,
-    _thread: &mut EmulationThread,
-) -> PreHookResult {
-    PreHookResult::Bypass(None)
+fn marshal_free_hglobal_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
+    free_unmanaged_arg(ctx, thread)
 }
 
 /// Hook for `System.Runtime.InteropServices.Marshal.SizeOf` method.

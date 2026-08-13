@@ -72,6 +72,7 @@ mod collections;
 mod crypto;
 mod interop;
 mod io;
+mod limits;
 mod reflection;
 mod runtime;
 mod statics;

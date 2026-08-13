@@ -538,11 +538,9 @@ fn path_get_directory_name_pre(
         None => return PreHookResult::Bypass(Some(EmValue::Null)),
     };
 
-    let dir = if let Some(pos) = path.rfind(['\\', '/']) {
-        &path[..pos]
-    } else {
-        ""
-    };
+    let dir = path
+        .rsplit_once(['\\', '/'])
+        .map_or("", |(parent, _)| parent);
 
     alloc_string_result(thread, dir)
 }
@@ -593,11 +591,7 @@ fn path_get_file_name_without_extension_pre(
         None => return PreHookResult::Bypass(Some(EmValue::Null)),
     };
     let filename = path_filename(&path);
-    let without_ext = if let Some(pos) = filename.rfind('.') {
-        &filename[..pos]
-    } else {
-        filename
-    };
+    let without_ext = filename.rsplit_once('.').map_or(filename, |(stem, _)| stem);
     alloc_string_result(thread, without_ext)
 }
 
@@ -608,11 +602,12 @@ fn path_get_extension_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
         None => return PreHookResult::Bypass(Some(EmValue::Null)),
     };
     let filename = path_filename(&path);
-    let ext = if let Some(pos) = filename.rfind('.') {
-        &filename[pos..]
-    } else {
-        ""
-    };
+    // `split_at` rather than `&filename[pos..]`: `rfind` always returns a character boundary, so
+    // both are sound, but this keeps the crate free of `str` range indexing (`clippy::string_slice`).
+    // The extension keeps its leading dot, which `rsplit_once` would consume.
+    let ext = filename
+        .rfind('.')
+        .map_or("", |pos| filename.split_at(pos).1);
     alloc_string_result(thread, ext)
 }
 
@@ -656,16 +651,10 @@ fn path_change_extension_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread
     let new_ext = extract_nth_string_arg(ctx, thread, 1).unwrap_or_default();
 
     // Strip existing extension
-    let base = if let Some(pos) = path.rfind('.') {
-        // Only strip if the dot is in the filename portion
-        let last_sep = path.rfind(['\\', '/']).unwrap_or(0);
-        if pos > last_sep {
-            &path[..pos]
-        } else {
-            &path
-        }
-    } else {
-        &path
+    let base = match path.rfind('.') {
+        // Only strip if the dot is in the filename portion, not in a parent directory name.
+        Some(pos) if pos > path.rfind(['\\', '/']).unwrap_or(0) => path.split_at(pos).0,
+        _ => &path,
     };
 
     // Append new extension (ensure it starts with '.')
@@ -785,7 +774,10 @@ fn fileinfo_get_extension_pre(
         None => return PreHookResult::Bypass(Some(EmValue::Null)),
     };
     let filename = path_filename(&path);
-    let ext = filename.rfind('.').map_or("", |pos| &filename[pos..]);
+    // Extension keeps its leading dot; see the note in `path_get_extension_pre`.
+    let ext = filename
+        .rfind('.')
+        .map_or("", |pos| filename.split_at(pos).1);
     alloc_string_result(thread, ext)
 }
 
@@ -798,11 +790,9 @@ fn fileinfo_get_directory_name_pre(
         Some(p) => p,
         None => return PreHookResult::Bypass(Some(EmValue::Null)),
     };
-    let dir = if let Some(pos) = path.rfind(['\\', '/']) {
-        &path[..pos]
-    } else {
-        ""
-    };
+    let dir = path
+        .rsplit_once(['\\', '/'])
+        .map_or("", |(parent, _)| parent);
     alloc_string_result(thread, dir)
 }
 

@@ -374,6 +374,13 @@ fn runtime_helpers_initialize_array_pre(
     // Find the RVA for this field token
     let mut rva: Option<u32> = None;
     for row in fieldrva_table {
+        let row = match row {
+            Ok(row) => row,
+            Err(e) => {
+                log::warn!("skipping unreadable metadata row: {e}");
+                continue;
+            }
+        };
         // Convert field index to full token (table 0x04 = Field)
         let row_token = row.field | 0x0400_0000;
         if row_token == field_token && row.rva > 0 {

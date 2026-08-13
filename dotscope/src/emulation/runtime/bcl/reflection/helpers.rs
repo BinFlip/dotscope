@@ -9,7 +9,7 @@ use crate::{
     metadata::{
         method::MethodRc,
         token::Token,
-        typesystem::{CilFlavor, CilPrimitiveKind, CilTypeReference},
+        typesystem::{CilFlavor, CilPrimitiveKind, CilType, CilTypeReference},
     },
     CilObject,
 };
@@ -81,35 +81,40 @@ pub(crate) fn bcl_name_to_primitive_token(name: &str) -> Option<Token> {
     Some(kind.token())
 }
 
-/// Finds a method by name on a type, searching the inheritance chain.
+/// Finds the best-matching method declared directly on `cil_type`.
 ///
 /// If multiple overloads match, prefers the one with fewer parameters
-/// (common obfuscator pattern). Walks `cil_type.base()` if not found on
-/// the immediate type.
-pub(crate) fn find_method_by_name(asm: &CilObject, type_token: Token, name: &str) -> Option<Token> {
-    if let Some(cil_type) = asm.types().resolve(&type_token) {
-        // Search the type's own methods
-        let mut best: Option<(Token, usize)> = None;
-        for (_, method_weak) in cil_type.methods.iter() {
-            if let Some(method) = method_weak.upgrade() {
-                if method.name == name {
-                    let param_count = method.signature.params.len();
-                    if best.is_none_or(|(_, n)| param_count < n) {
-                        best = Some((method.token, param_count));
-                    }
+/// (common obfuscator pattern).
+fn find_method_on_type(cil_type: &CilType, name: &str) -> Option<Token> {
+    let mut best: Option<(Token, usize)> = None;
+    for (_, method_weak) in cil_type.methods.iter() {
+        if let Some(method) = method_weak.upgrade() {
+            if method.name == name {
+                let param_count = method.signature.params.len();
+                if best.is_none_or(|(_, n)| param_count < n) {
+                    best = Some((method.token, param_count));
                 }
             }
         }
-        if let Some((token, _)) = best {
-            return Some(token);
-        }
-
-        // Walk the inheritance chain
-        if let Some(base_rc) = cil_type.base() {
-            return find_method_by_name(asm, base_rc.token, name);
-        }
     }
-    None
+    best.map(|(token, _)| token)
+}
+
+/// Finds a method by name on a type, searching the inheritance chain.
+///
+/// If multiple overloads match, prefers the one with fewer parameters
+/// (common obfuscator pattern). Ancestors are visited via
+/// [`CilType::base_chain`](crate::metadata::typesystem::CilType::base_chain), which bounds the
+/// walk — a hostile assembly can describe an inheritance cycle, and searching for a name that
+/// appears nowhere in it would otherwise recurse until the native stack is exhausted.
+pub(crate) fn find_method_by_name(asm: &CilObject, type_token: Token, name: &str) -> Option<Token> {
+    let cil_type = asm.types().resolve(&type_token)?;
+    if let Some(token) = find_method_on_type(&cil_type, name) {
+        return Some(token);
+    }
+    cil_type
+        .base_chain()
+        .find_map(|ancestor| find_method_on_type(&ancestor, name))
 }
 
 /// Resolves a method token (MethodDef, MemberRef, or MethodSpec) to a [`MethodRc`].
