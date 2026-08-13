@@ -328,41 +328,23 @@ impl X86Function {
     ///
     /// A CFG is reducible if every back edge goes to a loop header that dominates
     /// the source of the back edge.
+    ///
+    /// # Implementation
+    ///
+    /// The depth-first search is iterative, with an explicit stack carrying an enter/exit
+    /// marker so `in_stack` is cleared when a node's successors are exhausted — the point a
+    /// recursive version does on return.
+    ///
+    /// Recursion is not an option here. Its depth equals the longest simple path, which for a
+    /// chain of basic blocks equals the block count, and the blocks come from decoding an
+    /// attacker-supplied native region. Exhausting the stack is a SIGSEGV, which neither
+    /// `deny(panic)` nor a caller's `catch_unwind` can do anything about. This function is
+    /// public API, so an embedder can reach it directly with such a region.
     pub fn is_reducible(&self) -> bool {
-        fn dfs_check(
-            node: NodeId,
-            func: &X86Function,
-            doms: &DominatorTree,
-            visited: &mut [bool],
-            in_stack: &mut [bool],
-        ) -> bool {
-            let idx = node.index();
-            if let Some(slot) = visited.get_mut(idx) {
-                *slot = true;
-            }
-            if let Some(slot) = in_stack.get_mut(idx) {
-                *slot = true;
-            }
-
-            for succ in func.graph.successors(node) {
-                let succ_idx = succ.index();
-                if in_stack.get(succ_idx).copied().unwrap_or(false) {
-                    // This is a back edge (n -> succ where succ is on the stack)
-                    // For reducibility, succ must dominate node
-                    if !doms.dominates(succ, node) {
-                        return false;
-                    }
-                } else if !visited.get(succ_idx).copied().unwrap_or(false)
-                    && !dfs_check(succ, func, doms, visited, in_stack)
-                {
-                    return false;
-                }
-            }
-
-            if let Some(slot) = in_stack.get_mut(idx) {
-                *slot = false;
-            }
-            true
+        /// One step of the iterative walk: visit a node's successors, or leave it.
+        enum Step {
+            Enter(NodeId),
+            Exit(NodeId),
         }
 
         if self.block_count() == 0 {
@@ -371,16 +353,49 @@ impl X86Function {
 
         let doms = self.dominators();
 
-        // A CFG is reducible if for every back edge (n -> h),
-        // h dominates n. A back edge is one where h dominates n.
-        // By definition, this is always true for back edges, so we check
-        // for edges that form cycles but aren't proper back edges.
-
-        // Use DFS to find back edges
+        // A CFG is reducible if for every back edge (n -> h), h dominates n. A back edge is
+        // an edge to a node currently on the DFS stack.
         let mut visited = vec![false; self.block_count()];
         let mut in_stack = vec![false; self.block_count()];
+        let mut work = vec![Step::Enter(self.entry)];
 
-        dfs_check(self.entry, self, doms, &mut visited, &mut in_stack)
+        while let Some(step) = work.pop() {
+            match step {
+                Step::Exit(node) => {
+                    if let Some(slot) = in_stack.get_mut(node.index()) {
+                        *slot = false;
+                    }
+                }
+                Step::Enter(node) => {
+                    let idx = node.index();
+                    if visited.get(idx).copied().unwrap_or(false) {
+                        continue;
+                    }
+                    if let Some(slot) = visited.get_mut(idx) {
+                        *slot = true;
+                    }
+                    if let Some(slot) = in_stack.get_mut(idx) {
+                        *slot = true;
+                    }
+
+                    // Popped only once every successor pushed below has been processed.
+                    work.push(Step::Exit(node));
+
+                    for succ in self.graph.successors(node) {
+                        let succ_idx = succ.index();
+                        if in_stack.get(succ_idx).copied().unwrap_or(false) {
+                            if !doms.dominates(succ, node) {
+                                return false;
+                            }
+                        } else if !visited.get(succ_idx).copied().unwrap_or(false) {
+                            work.push(Step::Enter(succ));
+                        }
+                    }
+                }
+            }
+        }
+
+        true
     }
 }
 

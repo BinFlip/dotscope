@@ -3,10 +3,21 @@
 //! This module provides a thin wrapper around iced-x86 that converts its
 //! instruction representation to our simplified [`X86Instruction`] types.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 
-use iced_x86::{Decoder, DecoderOptions, Instruction, Mnemonic, OpKind, Register};
+use iced_x86::{Decoder, DecoderOptions, FlowControl, Instruction, Mnemonic, OpKind, Register};
 use rustc_hash::FxHashSet;
+
+/// Maximum instructions a single x86 decode may produce.
+///
+/// The x86 subsystem is reached from mixed-mode assemblies, where the region handed to it is
+/// derived from attacker-controlled headers and can extend to end-of-file. Both
+/// the traversal and the SSA translation built on it scale super-linearly in instruction count,
+/// so an unbounded decode is a DoS primitive rather than merely slow.
+///
+/// A native stub in a real mixed-mode assembly is kilobytes of code — low tens of thousands of
+/// instructions at the very outside.
+pub const MAX_DECODED_INSTRUCTIONS: usize = 250_000;
 
 use crate::{
     analysis::x86::types::{
@@ -44,6 +55,25 @@ pub fn x86_decode_all(
     bitness: u32,
     base_address: u64,
 ) -> Result<Vec<X86DecodedInstruction>> {
+    x86_decode_all_limited(bytes, bitness, base_address, MAX_DECODED_INSTRUCTIONS)
+}
+
+/// Linear-sweep decode with an explicit instruction budget.
+///
+/// See [`MAX_DECODED_INSTRUCTIONS`]. Callers that hand over a region derived from file
+/// headers — rather than a stub whose extent they have already established — should use this
+/// and pass a bound appropriate to what they expect.
+///
+/// # Errors
+///
+/// Returns [`crate::Error::X86Error`] on empty input, invalid bitness, an invalid instruction,
+/// or when `max_instructions` is exhausted.
+pub fn x86_decode_all_limited(
+    bytes: &[u8],
+    bitness: u32,
+    base_address: u64,
+    max_instructions: usize,
+) -> Result<Vec<X86DecodedInstruction>> {
     if bytes.is_empty() {
         return Err(Error::X86Error("Empty input".to_string()));
     }
@@ -67,6 +97,14 @@ pub fn x86_decode_all(
         if instr.is_invalid() {
             return Err(Error::X86Error(format!(
                 "Invalid instruction at offset 0x{offset:x}"
+            )));
+        }
+
+        // A linear sweep runs to the end of whatever slice it was given, and that slice can be
+        // the entire remainder of the file.
+        if instructions.len() >= max_instructions {
+            return Err(Error::X86Error(format!(
+                "x86 linear sweep exceeded {max_instructions} instructions"
             )));
         }
 
@@ -167,6 +205,30 @@ pub fn x86_decode_traversal(
     base_address: u64,
     entry_offset: u64,
 ) -> Result<X86TraversalDecodeResult> {
+    x86_decode_traversal_limited(
+        bytes,
+        bitness,
+        base_address,
+        entry_offset,
+        MAX_DECODED_INSTRUCTIONS,
+    )
+}
+
+/// Recursive-traversal decode with an explicit instruction budget.
+///
+/// See [`MAX_DECODED_INSTRUCTIONS`] for why a budget is mandatory rather than advisory.
+///
+/// # Errors
+///
+/// Returns [`crate::Error::X86Error`] on empty input, invalid bitness, address overflow, or
+/// when `max_instructions` is exhausted.
+pub fn x86_decode_traversal_limited(
+    bytes: &[u8],
+    bitness: u32,
+    base_address: u64,
+    entry_offset: u64,
+    max_instructions: usize,
+) -> Result<X86TraversalDecodeResult> {
     if bytes.is_empty() {
         return Err(Error::X86Error("Empty input".to_string()));
     }
@@ -187,6 +249,8 @@ pub fn x86_decode_traversal(
     let mut visited: FxHashSet<u64> = FxHashSet::default();
     // Decoded instructions by offset
     let mut instructions: Vec<X86DecodedInstruction> = Vec::new();
+    // Byte spans already claimed, as `offset -> length`, for O(log n) overlap rejection.
+    let mut decoded_spans: BTreeMap<u64, usize> = BTreeMap::new();
     // Targets we couldn't resolve
     let mut unresolved_targets: Vec<u64> = Vec::new();
     let mut has_indirect = false;
@@ -226,20 +290,35 @@ pub fn x86_decode_traversal(
             let offset = addr.saturating_sub(base_address);
             let length = instr.len();
 
-            // Check if we've already decoded an instruction that overlaps
-            // (this can happen with certain obfuscation tricks)
-            let overlaps = instructions.iter().any(|existing| {
-                let existing_start = existing.offset;
-                let existing_end = existing.offset.saturating_add(existing.length as u64);
-                let new_start = offset;
-                let new_end = offset.saturating_add(length as u64);
-                // Check for overlap
-                new_start < existing_end && new_end > existing_start
-            });
+            // Reject overlapping decodes (overlapping instructions are a known obfuscation
+            // trick) using an interval map rather than a linear scan of everything decoded so
+            // far, which made traversal O(n²) in decoded instructions over a region that could
+            // run to end-of-file.
+            //
+            // Intervals do not overlap each other by construction, so only two candidates can
+            // intersect `[offset, new_end)`: the nearest interval starting at or before
+            // `offset`, and the nearest starting after it.
+            let new_end = offset.saturating_add(length as u64);
+            let overlaps_before = decoded_spans
+                .range(..=offset)
+                .next_back()
+                .is_some_and(|(start, len)| start.saturating_add(*len as u64) > offset);
+            let overlaps_after = decoded_spans
+                .range(offset..)
+                .next()
+                .is_some_and(|(start, _)| *start < new_end);
 
-            if overlaps {
+            if overlaps_before || overlaps_after {
                 continue;
             }
+
+            if instructions.len() >= max_instructions {
+                return Err(Error::X86Error(format!(
+                    "x86 traversal exceeded {max_instructions} instructions"
+                )));
+            }
+
+            decoded_spans.insert(offset, length);
 
             // Convert the instruction
             let converted = match convert_instruction(&instr, base_address) {
@@ -293,13 +372,40 @@ pub fn x86_decode_traversal(
                     }
                 }
                 X86Instruction::Unsupported { .. } => {
-                    // Check if this might be an indirect jump/call
-                    if instr.mnemonic() == Mnemonic::Jmp || instr.mnemonic() == Mnemonic::Call {
+                    // Classify by control flow, not by mnemonic.
+                    //
+                    // An unsupported *control transfer* is a path terminator: an indirect
+                    // `jmp` (a jump table, or a tail call) does not fall through, and neither
+                    // does `ret`/`retf`/`iret`. Enqueuing `next_addr` for them walks straight
+                    // off the end of the function into alignment padding and then into whatever
+                    // follows — which is why traversal never stopped at a function boundary.
+                    //
+                    // `flow_control()` classifies every transfer class, where a mnemonic match
+                    // only caught `Jmp`/`Call` and silently treated the rest as sequential.
+                    let flow = instr.flow_control();
+                    let is_indirect_transfer = matches!(
+                        flow,
+                        FlowControl::IndirectBranch | FlowControl::IndirectCall
+                    );
+
+                    if is_indirect_transfer {
                         has_indirect = true;
                         unresolved_targets.push(addr);
                     }
-                    // Try to continue to next instruction anyway
-                    if next_addr < code_end && visited.insert(next_addr) {
+
+                    let terminates_path = matches!(
+                        flow,
+                        FlowControl::Return
+                            | FlowControl::IndirectBranch
+                            | FlowControl::UnconditionalBranch
+                            | FlowControl::Interrupt
+                            | FlowControl::Exception
+                            | FlowControl::XbeginXabortXend
+                    );
+
+                    // Calls and conditional branches still fall through to the return address
+                    // or the not-taken edge.
+                    if !terminates_path && next_addr < code_end && visited.insert(next_addr) {
                         worklist.push_back(next_addr);
                     }
                 }

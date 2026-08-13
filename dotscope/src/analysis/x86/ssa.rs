@@ -60,6 +60,13 @@ use crate::{
     Error, Result,
 };
 
+/// Maximum basic blocks accepted for x86-to-SSA translation.
+///
+/// Real native stubs in mixed-mode assemblies have block counts in the tens. This bounds the
+/// per-block register state and the phi worklist against input whose block count is ultimately
+/// attacker-controlled.
+const MAX_TRANSLATABLE_BLOCKS: usize = 65_536;
+
 /// Number of registers tracked (0-15 GPRs for x64, 16-21 segment registers).
 const MAX_REGISTERS: usize = 22;
 
@@ -222,6 +229,18 @@ impl<'a> X86ToSsaTranslator<'a> {
             return Err(Error::X86Error("Empty function".to_string()));
         }
 
+        // Translation allocates per-block register state and runs a worklist per register, so
+        // cost grows with block count — and block count comes from decoding a region derived
+        // from attacker-controlled file headers. The decoder's instruction budget bounds this
+        // indirectly; this is the direct statement of the limit.
+        if self.func.block_count() > MAX_TRANSLATABLE_BLOCKS {
+            return Err(Error::X86Error(format!(
+                "x86 function has {} blocks, exceeding the {} block translation limit",
+                self.func.block_count(),
+                MAX_TRANSLATABLE_BLOCKS
+            )));
+        }
+
         // Step 1: Analyze which blocks define which registers
         self.analyze_definitions();
 
@@ -280,6 +299,43 @@ impl<'a> X86ToSsaTranslator<'a> {
             .ok_or_else(|| Error::SsaError("place_phi_nodes: block_exit_states is empty".into()))?
             .register_count();
 
+        // Precompute the dominance frontier once (Cytron et al.), rather than rediscovering it
+        // by scanning every block for every register on every worklist pop.
+        //
+        // The previous shape was O(registers × blocks² × in-degree) with two `dominates` queries
+        // per candidate, over input whose block count is attacker-controlled — the x86 subsystem
+        // decodes regions derived from file headers. This is one pass over the join points.
+        //
+        // DF[runner] gains `b` for every runner on the idom chain from each predecessor of a
+        // join point `b` up to (but excluding) idom(b).
+        let mut frontier: Vec<FxHashSet<usize>> = vec![FxHashSet::default(); block_count];
+        for block_idx in 0..block_count {
+            let node = NodeId::new(block_idx);
+            let preds: Vec<NodeId> = self.func.predecessors(node).collect();
+            if preds.len() < 2 {
+                continue;
+            }
+
+            let idom_of_node = doms.immediate_dominator(node);
+            for pred in preds {
+                let mut runner = pred;
+                while Some(runner) != idom_of_node {
+                    let Some(slot) = frontier.get_mut(runner.index()) else {
+                        break;
+                    };
+                    slot.insert(block_idx);
+
+                    let Some(next) = doms.immediate_dominator(runner) else {
+                        break;
+                    };
+                    if next == runner {
+                        break;
+                    }
+                    runner = next;
+                }
+            }
+        }
+
         // For each register that is defined somewhere
         for reg_idx in 0..register_count {
             // Clone the def_blocks to avoid borrow issues
@@ -299,33 +355,24 @@ impl<'a> X86ToSsaTranslator<'a> {
             let mut phi_blocks: FxHashSet<usize> = FxHashSet::default();
 
             while let Some(def_block) = worklist.pop() {
-                // For each block in the dominance frontier of def_block
-                for block_idx in 0..block_count {
-                    // Check if block_idx is in the dominance frontier of def_block
-                    // DF(X) = {Y : ∃ pred of Y s.t. X dominates pred but X doesn't strictly dominate Y}
-                    let node = NodeId::new(block_idx);
-                    let def_node = NodeId::new(def_block);
+                let Some(df) = frontier.get(def_block) else {
+                    continue;
+                };
 
-                    let in_frontier = self.func.predecessors(node).any(|pred| {
-                        doms.dominates(def_node, pred)
-                            && (def_node == node || !doms.dominates(def_node, node))
-                    });
+                for &block_idx in df {
+                    if phi_blocks.contains(&block_idx) {
+                        continue;
+                    }
+                    phi_blocks.insert(block_idx);
 
-                    if in_frontier && !phi_blocks.contains(&block_idx) {
-                        phi_blocks.insert(block_idx);
+                    // Create phi variable
+                    let phi_var =
+                        self.create_variable(VariableOrigin::Phi, DefSite::phi(block_idx), bitness);
+                    self.phi_placement.set(block_idx, reg_idx, phi_var);
 
-                        // Create phi variable
-                        let phi_var = self.create_variable(
-                            VariableOrigin::Phi,
-                            DefSite::phi(block_idx),
-                            bitness,
-                        );
-                        self.phi_placement.set(block_idx, reg_idx, phi_var);
-
-                        // Phi defines the register, so add to worklist
-                        if !def_blocks.contains(&block_idx) {
-                            worklist.push(block_idx);
-                        }
+                    // Phi defines the register, so add to worklist
+                    if !def_blocks.contains(&block_idx) {
+                        worklist.push(block_idx);
                     }
                 }
             }
