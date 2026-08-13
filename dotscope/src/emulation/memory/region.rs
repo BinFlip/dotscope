@@ -503,35 +503,74 @@ impl MemoryRegion {
             return Some(Vec::new());
         }
 
+        let mut result = vec![0u8; len];
+        if self.read_into(address, &mut result) {
+            Some(result)
+        } else {
+            None
+        }
+    }
+
+    /// Reads into a caller-supplied buffer, allocating nothing.
+    ///
+    /// This is the paging loop; [`Self::read`] is this plus a `Vec`. Fixed-size loads
+    /// (`ldind.i4` and friends) go through here with a stack array, which is why the loop
+    /// lives on this side of the allocation.
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - The address to read from
+    /// * `dest` - Buffer to fill; its length is the number of bytes read
+    ///
+    /// # Returns
+    ///
+    /// `true` if the whole buffer was filled, `false` if the range is outside this region or
+    /// a page read failed.
+    #[must_use]
+    pub fn read_into(&self, address: u64, dest: &mut [u8]) -> bool {
+        let len = dest.len();
+        if len == 0 {
+            return true;
+        }
+
         if !self.contains_range(address, len) {
-            return None;
+            return false;
         }
 
         // Safe: offset within a memory region always fits in usize
         #[allow(clippy::cast_possible_truncation)]
         let offset = address.saturating_sub(self.base) as usize;
-        let mut result = vec![0u8; len];
         let mut bytes_read = 0;
 
         while bytes_read < len {
-            let current_offset = offset.checked_add(bytes_read)?;
+            let Some(current_offset) = offset.checked_add(bytes_read) else {
+                return false;
+            };
             let page_index = current_offset / PAGE_SIZE;
             let page_offset = current_offset % PAGE_SIZE;
 
-            let page = self.pages.get(page_index)?;
+            let Some(page) = self.pages.get(page_index) else {
+                return false;
+            };
 
-            let remaining = len.checked_sub(bytes_read)?;
+            let Some(remaining) = len.checked_sub(bytes_read) else {
+                return false;
+            };
             let bytes_in_page = PAGE_SIZE.saturating_sub(page_offset).min(remaining);
-            let read_end = bytes_read.checked_add(bytes_in_page)?;
-            let dest = result.get_mut(bytes_read..read_end)?;
+            let Some(read_end) = bytes_read.checked_add(bytes_in_page) else {
+                return false;
+            };
+            let Some(slot) = dest.get_mut(bytes_read..read_end) else {
+                return false;
+            };
 
-            if page.read(page_offset, dest).is_err() {
-                return None;
+            if page.read(page_offset, slot).is_err() {
+                return false;
             }
             bytes_read = bytes_read.saturating_add(bytes_in_page);
         }
 
-        Some(result)
+        true
     }
 
     /// Writes bytes to this region.

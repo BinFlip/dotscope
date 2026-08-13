@@ -51,7 +51,12 @@
 //! // Strings, file ops, and network ops will not be captured
 //! ```
 
-use std::{ops::Range, sync::RwLock};
+use std::{
+    collections::{hash_map::DefaultHasher, HashSet as StdHashSet},
+    hash::{Hash, Hasher},
+    ops::Range,
+    sync::RwLock,
+};
 
 use crate::{
     emulation::{
@@ -126,6 +131,19 @@ pub struct CaptureContext {
     /// Includes data from `Marshal.Copy`, crypto transforms, and other buffer
     /// operations that may contain decrypted payloads or extracted data.
     buffers: RwLock<Vec<CapturedBuffer>>,
+
+    /// Total bytes retained across all capture collections.
+    ///
+    /// Charged by [`admit`](Self::admit) and compared against
+    /// [`CaptureConfig::max_total_bytes`]. Captured data lives outside the managed heap, so
+    /// this is the only thing bounding it.
+    retained_bytes: RwLock<usize>,
+
+    /// Content hashes of captured assemblies, for O(1) duplicate rejection.
+    ///
+    /// The previous duplicate check compared the candidate byte-for-byte against every
+    /// assembly already captured, making capture quadratic in capture count.
+    assembly_hashes: RwLock<StdHashSet<u64>>,
 
     /// Return values from monitored methods.
     ///
@@ -235,6 +253,9 @@ impl CaptureContext {
             strings: true,
             file_operations: true,
             network_operations: true,
+            // Explicitly on: this constructor means "capture what is useful".
+            // `CaptureConfig::default()` captures nothing, which is what that type documents.
+            buffers: true,
             ..Default::default()
         })
     }
@@ -269,6 +290,8 @@ impl CaptureContext {
             assemblies: RwLock::new(Vec::new()),
             strings: RwLock::new(Vec::new()),
             buffers: RwLock::new(Vec::new()),
+            retained_bytes: RwLock::new(0),
+            assembly_hashes: RwLock::new(StdHashSet::new()),
             method_returns: RwLock::new(Vec::new()),
             file_operations: RwLock::new(Vec::new()),
             network_operations: RwLock::new(Vec::new()),
@@ -350,13 +373,24 @@ impl CaptureContext {
             return;
         }
 
-        if let Ok(assemblies) = self.assemblies.read() {
-            if assemblies.iter().any(|a| a.data == data) {
+        // Duplicate rejection by content hash. The previous check compared the candidate
+        // byte-for-byte against every assembly already captured, so capture cost grew
+        // quadratically in capture count over multi-megabyte payloads.
+        let mut hasher = DefaultHasher::new();
+        data.hash(&mut hasher);
+        let digest = hasher.finish();
+
+        if let Ok(mut hashes) = self.assembly_hashes.write() {
+            if !hashes.insert(digest) {
                 return; // Already captured this exact assembly
             }
         }
 
         let len = data.len();
+        if !self.admit(len) {
+            return;
+        }
+
         let assembly = CapturedAssembly {
             data,
             source,
@@ -365,6 +399,9 @@ impl CaptureContext {
         };
 
         if let Ok(mut assemblies) = self.assemblies.write() {
+            if assemblies.len() >= self.config.max_items {
+                return;
+            }
             assemblies.push(assembly);
         }
 
@@ -438,6 +475,10 @@ impl CaptureContext {
             return;
         }
 
+        if !self.admit(value.len()) {
+            return;
+        }
+
         let string = CapturedString {
             value,
             source,
@@ -446,6 +487,9 @@ impl CaptureContext {
         };
 
         if let Ok(mut strings) = self.strings.write() {
+            if strings.len() >= self.config.max_items {
+                return;
+            }
             strings.push(string);
         }
 
@@ -518,8 +562,11 @@ impl CaptureContext {
     /// Captures a raw byte buffer.
     ///
     /// Records a byte buffer from memory operations, crypto transforms, or other
-    /// sources during emulation. Unlike assembly capture, buffer capture is always
-    /// enabled (no configuration check).
+    /// sources during emulation.
+    ///
+    /// Gated on [`CaptureConfig::buffers`] and bounded by
+    /// [`CaptureConfig::max_items`]/[`CaptureConfig::max_total_bytes`]. Captures past either
+    /// ceiling are dropped silently — emulation continues, it simply stops retaining more.
     ///
     /// # Arguments
     ///
@@ -534,7 +581,15 @@ impl CaptureContext {
         buffer_source: BufferSource,
         label: impl Into<String>,
     ) {
+        if !self.config.buffers {
+            return;
+        }
+
         let len = data.len();
+        if !self.admit(len) {
+            return;
+        }
+
         let buffer = CapturedBuffer {
             data,
             source,
@@ -543,12 +598,35 @@ impl CaptureContext {
         };
 
         if let Ok(mut buffers) = self.buffers.write() {
+            if buffers.len() >= self.config.max_items {
+                return;
+            }
             buffers.push(buffer);
         }
 
         if let Ok(mut stats) = self.stats.write() {
             stats.buffer_bytes = stats.buffer_bytes.saturating_add(len);
         }
+    }
+
+    /// Returns whether `len` more captured bytes fit within
+    /// [`CaptureConfig::max_total_bytes`], charging them if so.
+    ///
+    /// Captured data lives outside the managed heap, so the heap budget never sees it; this is
+    /// the only ceiling on it. The counter is monotonic — captures are never released during a
+    /// run — so charging on admission is sufficient.
+    fn admit(&self, len: usize) -> bool {
+        let Ok(mut retained) = self.retained_bytes.write() else {
+            return false;
+        };
+
+        let next = retained.saturating_add(len);
+        if next > self.config.max_total_bytes {
+            return false;
+        }
+
+        *retained = next;
+        true
     }
 
     /// Returns all captured buffers.
@@ -949,6 +1027,73 @@ impl Default for CaptureContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A default config must capture nothing, which is what `CaptureConfig` documents.
+    ///
+    /// Buffer capture is the kind most easily left running unconditionally, which would
+    /// charge an operator who disabled capture for it anyway.
+    #[test]
+    fn default_config_captures_no_buffers() {
+        let ctx = CaptureContext::with_config(CaptureConfig::default());
+
+        ctx.capture_buffer(
+            vec![0u8; 64],
+            CaptureSource::new(Token::new(0x0600_0001), ThreadId::new(1), 0, 0),
+            BufferSource::MarshalCopy { address: 0x1000 },
+            "test",
+        );
+
+        assert_eq!(ctx.buffer_count(), 0, "capture was not enabled");
+    }
+
+    /// The item ceiling stops the loop-and-append pattern: emulated code allocates one array,
+    /// then calls a crypto hook on it repeatedly, appending a full copy each time for a handful
+    /// of instructions.
+    #[test]
+    fn buffer_capture_stops_at_the_item_ceiling() {
+        let ctx = CaptureContext::with_config(CaptureConfig {
+            buffers: true,
+            max_items: 10,
+            ..Default::default()
+        });
+
+        for _ in 0..1000 {
+            ctx.capture_buffer(
+                vec![0u8; 8],
+                CaptureSource::new(Token::new(0x0600_0001), ThreadId::new(1), 0, 0),
+                BufferSource::MarshalCopy { address: 0x1000 },
+                "test",
+            );
+        }
+
+        assert_eq!(ctx.buffer_count(), 10);
+    }
+
+    /// A few very large buffers must be bounded as well as many small ones.
+    #[test]
+    fn buffer_capture_stops_at_the_byte_ceiling() {
+        let ctx = CaptureContext::with_config(CaptureConfig {
+            buffers: true,
+            max_items: usize::MAX,
+            max_total_bytes: 4096,
+            ..Default::default()
+        });
+
+        for _ in 0..100 {
+            ctx.capture_buffer(
+                vec![0u8; 1024],
+                CaptureSource::new(Token::new(0x0600_0001), ThreadId::new(1), 0, 0),
+                BufferSource::MarshalCopy { address: 0x1000 },
+                "test",
+            );
+        }
+
+        assert_eq!(
+            ctx.buffer_count(),
+            4,
+            "only what fits in the byte budget is retained"
+        );
+    }
 
     #[test]
     fn test_capture_context_creation() {

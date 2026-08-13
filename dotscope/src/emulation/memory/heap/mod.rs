@@ -55,8 +55,46 @@ use crate::{
     assembly::InstructionAssembler,
     emulation::{engine::EmulationError, tokens, EmValue, HeapRef},
     metadata::{signatures::TypeSignature, token::Token, typesystem::CilFlavor},
+    utils::truncate_chars,
     Result,
 };
+
+/// Host cost of one element in an emulated array or list.
+///
+/// Derived from the type rather than hard-coded, so the budget stays honest if [`EmValue`]
+/// changes width. A fixed per-element figure is easy to get badly wrong: `EmValue` is
+/// currently on the order of a couple of hundred bytes, so under-charging it would let an
+/// array sit nominally inside a 256 MB cap while really costing gigabytes.
+pub(crate) const EMVALUE_SIZE: usize = std::mem::size_of::<EmValue>();
+
+/// Object-header overhead charged for a single-dimensional array.
+const ARRAY_HEADER_BYTES: usize = 24;
+
+/// Object-header overhead charged for a multi-dimensional array.
+const MULTI_ARRAY_HEADER_BYTES: usize = 32;
+
+/// Object-header overhead charged for a `List<T>`.
+const LIST_HEADER_BYTES: usize = 32;
+
+/// Object-header overhead charged for a delegate.
+const DELEGATE_HEADER_BYTES: usize = 48;
+
+/// Host cost of one entry in a delegate's invocation list.
+///
+/// Derived from the type so it tracks [`DelegateEntry`] rather than drifting from it.
+const DELEGATE_ENTRY_BYTES: usize = std::mem::size_of::<DelegateEntry>();
+
+/// Maximum number of entries in a single delegate's invocation list.
+///
+/// `Delegate.Combine` concatenates two invocation lists and nothing stops both arguments from
+/// being the same delegate, so each call can double the length — exponential growth in a linear
+/// number of emulated instructions. Charging the list against the heap budget (see
+/// [`HeapObject::estimated_size`]) bounds the total, but a dedicated cap fails the operation at
+/// the point of the defect with a message that names it, instead of surfacing as a generic
+/// out-of-memory once the doubling happens to cross the budget.
+///
+/// Real multicast delegates hold a handful of entries; .NET itself has no fixed limit.
+const MAX_DELEGATE_INVOCATION_LIST: usize = 65_536;
 
 /// Info about a symmetric algorithm: (algorithm_type, key, iv, mode, padding).
 pub type SymmetricAlgorithmInfo = (Arc<str>, Option<Vec<u8>>, Option<Vec<u8>>, u8, u8);
@@ -628,12 +666,14 @@ impl HeapObject {
         // saturated `usize::MAX` correctly signals "huge" for limit checks.
         match self {
             HeapObject::String(s) => s.len().saturating_mul(2).saturating_add(24), // Object header + UTF-16
-            HeapObject::Array { elements, .. } => {
-                elements.len().saturating_mul(8).saturating_add(24)
-            }
-            HeapObject::MultiArray { elements, .. } => {
-                elements.len().saturating_mul(8).saturating_add(32)
-            }
+            HeapObject::Array { elements, .. } => elements
+                .len()
+                .saturating_mul(EMVALUE_SIZE)
+                .saturating_add(ARRAY_HEADER_BYTES),
+            HeapObject::MultiArray { elements, .. } => elements
+                .len()
+                .saturating_mul(EMVALUE_SIZE)
+                .saturating_add(MULTI_ARRAY_HEADER_BYTES),
             HeapObject::Object { fields, .. } => fields.len().saturating_mul(16).saturating_add(24),
             HeapObject::TypedReference { .. }
             | HeapObject::BoxedValue { .. }
@@ -648,7 +688,16 @@ impl HeapObject {
             HeapObject::CryptoTransform { key, iv, .. } => {
                 48usize.saturating_add(key.len()).saturating_add(iv.len())
             }
-            HeapObject::Delegate { .. } => 48,
+            // Charged by content, like every other variadic variant. A flat constant here was a
+            // hole in the memory limit rather than an inaccuracy: `Delegate.Combine(d, d)` is
+            // legal and doubles the invocation list, so ~30 emulated calls reach a billion
+            // entries while the heap accounts each result at the same 48 bytes.
+            HeapObject::Delegate {
+                invocation_list, ..
+            } => invocation_list
+                .len()
+                .saturating_mul(DELEGATE_ENTRY_BYTES)
+                .saturating_add(DELEGATE_HEADER_BYTES),
             HeapObject::Encoding { .. } => 24,
             HeapObject::SymmetricAlgorithm { key, iv, .. } => 32usize
                 .saturating_add(key.as_ref().map_or(0, Vec::len))
@@ -656,7 +705,10 @@ impl HeapObject {
             HeapObject::Dictionary { entries } => {
                 entries.len().saturating_mul(32).saturating_add(48)
             }
-            HeapObject::List { elements } => elements.len().saturating_mul(8).saturating_add(32),
+            HeapObject::List { elements } => elements
+                .len()
+                .saturating_mul(EMVALUE_SIZE)
+                .saturating_add(LIST_HEADER_BYTES),
             HeapObject::StringBuilder { buffer, .. } => 32usize.saturating_add(buffer.len()),
             HeapObject::Stack { elements } => elements.len().saturating_mul(8).saturating_add(32),
             HeapObject::Queue { elements } => elements.len().saturating_mul(8).saturating_add(32),
@@ -685,8 +737,8 @@ impl fmt::Display for HeapObject {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             HeapObject::String(s) => {
-                if s.len() > 50 {
-                    write!(f, "\"{}...\"", &s[..47])
+                if s.chars().count() > 50 {
+                    write!(f, "\"{}...\"", truncate_chars(s, 47))
                 } else {
                     write!(f, "\"{s}\"")
                 }
@@ -815,11 +867,11 @@ impl fmt::Display for HeapObject {
                 write!(f, "list({} elements)", elements.len())
             }
             HeapObject::StringBuilder { buffer, .. } => {
-                if buffer.len() > 50 {
+                if buffer.chars().count() > 50 {
                     write!(
                         f,
                         "stringbuilder({}... len={})",
-                        &buffer[..47],
+                        truncate_chars(buffer, 47),
                         buffer.len()
                     )
                 } else {
@@ -960,6 +1012,13 @@ pub struct ManagedHeap {
     pub(crate) current_size: AtomicUsize,
     /// Maximum allowed heap size in bytes.
     pub(crate) max_size: usize,
+    /// Maximum number of live heap objects, independent of their total size.
+    ///
+    /// A byte ceiling alone does not bound object *count*: a flood of tiny objects is charged
+    /// only its header estimate each while really costing an `imbl::HashMap` node plus an
+    /// `original_types` entry per object. Set from `EmulationLimits::max_heap_objects`;
+    /// `usize::MAX` means unlimited.
+    pub(crate) max_objects: AtomicUsize,
 }
 
 impl ManagedHeap {
@@ -978,7 +1037,17 @@ impl ManagedHeap {
             next_id: AtomicU64::new(1),
             current_size: AtomicUsize::new(0),
             max_size,
+            // Unlimited until a builder applies the configured ceiling, so constructing a heap
+            // directly keeps its previous behaviour.
+            max_objects: AtomicUsize::new(usize::MAX),
         }
+    }
+
+    /// Sets the maximum number of live heap objects.
+    ///
+    /// See `max_objects` for why a byte ceiling alone is insufficient.
+    pub fn set_max_objects(&self, max: usize) {
+        self.max_objects.store(max, Ordering::Relaxed);
     }
 
     /// Creates a managed heap with default size (64MB).
@@ -1002,6 +1071,41 @@ impl ManagedHeap {
             .into());
         }
         Ok(())
+    }
+
+    /// Reserves budget for `size` bytes *before* the caller commits any host memory.
+    ///
+    /// Hook and allocator code that builds a payload whose size is derived from emulated,
+    /// attacker-controlled values must call this first. Checking after the payload exists is
+    /// useless: the host allocator has already been asked for the memory, so the budget cannot
+    /// prevent the very exhaustion it exists to prevent.
+    ///
+    /// This performs no accounting of its own — the eventual
+    /// `alloc_object_internal` records the real size. It is a
+    /// gate, not a reservation ledger, so a caller that reserves and then does not allocate
+    /// leaks nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmulationError::HeapMemoryLimitExceeded`] if `size` would exceed the budget.
+    pub fn reserve(&self, size: usize) -> Result<()> {
+        self.check_allocation(size)
+    }
+
+    /// Reserves budget for an array of `count` [`EmValue`] elements.
+    ///
+    /// Charges the same per-element cost that [`HeapObject::estimated_size`] charges, so the
+    /// pre-flight gate and the post-allocation accounting cannot disagree.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmulationError::HeapMemoryLimitExceeded`] if the array would exceed the budget.
+    pub(crate) fn reserve_elements(&self, count: usize) -> Result<()> {
+        self.check_allocation(
+            count
+                .saturating_mul(EMVALUE_SIZE)
+                .saturating_add(ARRAY_HEADER_BYTES),
+        )
     }
 
     /// Internal helper to allocate an object on the heap.
@@ -1038,6 +1142,19 @@ impl ManagedHeap {
             .map_err(|_| EmulationError::LockPoisoned {
                 description: "managed heap",
             })?;
+
+        // Object-count ceiling, checked under the same lock that performs the insert so the
+        // count cannot drift. The byte budget above does not bound count: many small objects
+        // pay only their header estimate while each costs a map node plus an entry in
+        // `original_types`.
+        let max_objects = self.max_objects.load(Ordering::Relaxed);
+        if state.objects.len() >= max_objects {
+            return Err(EmulationError::ResourceLimitExceeded(format!(
+                "heap object count limit reached ({max_objects} objects)"
+            ))
+            .into());
+        }
+
         state.objects.insert(heap_ref.id(), obj);
         if let Some(token) = original_type {
             state.original_types.insert(heap_ref.id(), token);
@@ -1115,6 +1232,9 @@ impl ManagedHeap {
             next_id: AtomicU64::new(self.next_id.load(Ordering::SeqCst)),
             current_size: AtomicUsize::new(self.current_size.load(Ordering::Relaxed)),
             max_size: self.max_size,
+            // The fork must inherit the ceiling; otherwise forking would itself be an escape
+            // from it.
+            max_objects: AtomicUsize::new(self.max_objects.load(Ordering::Relaxed)),
         })
     }
 
@@ -1308,14 +1428,27 @@ impl ManagedHeap {
 
     /// Allocates a multicast delegate on the heap.
     ///
+    /// The invocation list is capped at `MAX_DELEGATE_INVOCATION_LIST`; see that constant for
+    /// why an unbounded list is reachable in a few dozen emulated instructions.
+    ///
     /// # Errors
     ///
-    /// Returns [`EmulationError::HeapMemoryLimitExceeded`] if heap is out of memory.
+    /// Returns [`EmulationError::HeapMemoryLimitExceeded`] if heap is out of memory, or
+    /// [`EmulationError::ResourceLimitExceeded`] if the invocation list is too long.
     pub fn alloc_multicast_delegate(
         &self,
         type_token: Token,
         entries: Vec<DelegateEntry>,
     ) -> Result<HeapRef> {
+        if entries.len() > MAX_DELEGATE_INVOCATION_LIST {
+            return Err(EmulationError::ResourceLimitExceeded(format!(
+                "delegate invocation list of {} entries exceeds maximum {}",
+                entries.len(),
+                MAX_DELEGATE_INVOCATION_LIST
+            ))
+            .into());
+        }
+
         self.alloc_object_internal(
             HeapObject::Delegate {
                 type_token,
@@ -1766,9 +1899,19 @@ impl ManagedHeap {
     ///
     /// Used by collection constructors and StringBuilder mutations.
     ///
+    /// The size difference between the outgoing and incoming object is charged against the heap
+    /// budget. This is the write-back path for `StringBuilder`, `List`, `Dictionary` and
+    /// `HashSet`, so without it every one of those could grow without bound after allocation:
+    /// the budget was consulted only when an object was first created, leaving in-place growth
+    /// both unchecked and invisible to `current_size`.
+    ///
+    /// A replacement that would exceed the budget is refused and the existing object is left
+    /// untouched.
+    ///
     /// # Errors
     ///
-    /// Returns [`EmulationError::LockPoisoned`] if the internal `RwLock` is poisoned.
+    /// Returns [`EmulationError::LockPoisoned`] if the internal `RwLock` is poisoned, or
+    /// [`EmulationError::HeapMemoryLimitExceeded`] if the growth would exceed the budget.
     pub fn replace_object(&self, heap_ref: HeapRef, obj: HeapObject) -> Result<()> {
         let mut state = self
             .state
@@ -1779,9 +1922,24 @@ impl ManagedHeap {
         let id = heap_ref.id();
         Self::preserve_original_type(&mut state, id);
 
-        if state.objects.contains_key(&id) {
-            state.objects.insert(id, obj);
+        let Some(existing) = state.objects.get(&id) else {
+            return Ok(());
+        };
+
+        let old_size = existing.estimated_size();
+        let new_size = obj.estimated_size();
+
+        // Charge before mutating, so a refused replacement leaves the heap as it was.
+        let growth = new_size.saturating_sub(old_size);
+        if growth > 0 {
+            self.check_allocation(growth)?;
+            self.current_size.fetch_add(growth, Ordering::Relaxed);
+        } else {
+            self.current_size
+                .fetch_sub(old_size.saturating_sub(new_size), Ordering::Relaxed);
         }
+
+        state.objects.insert(id, obj);
         Ok(())
     }
 }
@@ -1809,6 +1967,133 @@ impl fmt::Display for ManagedHeap {
 mod tests {
     use super::*;
     use crate::Error;
+
+    /// A delegate's accounted size must scale with its invocation list.
+    ///
+    /// While this was a flat constant, `Delegate.Combine(d, d)` — which is legal, since nothing
+    /// stops both arguments being the same handle — doubled the list on every call while the
+    /// heap charged the same 48 bytes each time. Roughly thirty calls reach a billion entries
+    /// with the memory limit offering no resistance at all.
+    #[test]
+    fn delegate_size_scales_with_invocation_list() {
+        let type_token = Token::new(0x0200_0001);
+        let entry = || DelegateEntry {
+            target: None,
+            method_token: Token::new(0x0600_0001),
+        };
+
+        let one = HeapObject::Delegate {
+            type_token,
+            invocation_list: vec![entry()],
+        };
+        let many = HeapObject::Delegate {
+            type_token,
+            invocation_list: (0..1000).map(|_| entry()).collect(),
+        };
+
+        assert!(
+            many.estimated_size() > one.estimated_size(),
+            "a longer invocation list must cost more"
+        );
+        assert!(
+            many.estimated_size() >= 1000usize.saturating_mul(DELEGATE_ENTRY_BYTES),
+            "every entry must be charged"
+        );
+    }
+
+    /// The invocation-list cap fails the doubling at its source.
+    #[test]
+    fn multicast_delegate_invocation_list_is_capped() {
+        let heap = ManagedHeap::new(usize::MAX);
+        let entries: Vec<DelegateEntry> = (0..MAX_DELEGATE_INVOCATION_LIST.saturating_add(1))
+            .map(|_| DelegateEntry {
+                target: None,
+                method_token: Token::new(0x0600_0001),
+            })
+            .collect();
+
+        assert!(heap
+            .alloc_multicast_delegate(Token::new(0x0200_0001), entries)
+            .is_err());
+    }
+
+    /// Growing an object in place must be charged, and refused when it does not fit.
+    ///
+    /// `replace_object` is the write-back path for `StringBuilder`, `List`, `Dictionary` and
+    /// `HashSet`. A budget consulted only at creation cannot see growth after allocation.
+    #[test]
+    fn replace_object_charges_growth_and_refuses_overflow() {
+        let heap = ManagedHeap::new(4096);
+        let heap_ref = heap.alloc_string("small").unwrap();
+        let before = heap.current_size.load(Ordering::Relaxed);
+
+        // A modest growth is charged.
+        heap.replace_object(heap_ref, HeapObject::String("a".repeat(100).into()))
+            .unwrap();
+        let after = heap.current_size.load(Ordering::Relaxed);
+        assert!(
+            after > before,
+            "in-place growth must increase the accounted size"
+        );
+
+        // A growth past the budget is refused, and leaves the object untouched.
+        let err = heap.replace_object(heap_ref, HeapObject::String("b".repeat(100_000).into()));
+        assert!(err.is_err(), "growth past the budget must be refused");
+        assert_eq!(
+            heap.get_string(heap_ref).unwrap().len(),
+            100,
+            "a refused replacement must not mutate the object"
+        );
+    }
+
+    /// Shrinking must give the budget back, or a long-lived object would ratchet the heap up.
+    #[test]
+    fn replace_object_credits_shrinkage() {
+        let heap = ManagedHeap::new(1024 * 1024);
+        let heap_ref = heap.alloc_string(&"a".repeat(1000)).unwrap();
+        let before = heap.current_size.load(Ordering::Relaxed);
+
+        heap.replace_object(heap_ref, HeapObject::String("x".into()))
+            .unwrap();
+
+        assert!(
+            heap.current_size.load(Ordering::Relaxed) < before,
+            "shrinking must return budget"
+        );
+    }
+
+    /// The object-count ceiling bounds a flood of tiny objects, which the byte budget does not:
+    /// each pays only its header estimate while costing a map node plus an `original_types` entry.
+    #[test]
+    fn heap_object_count_is_capped() {
+        let heap = ManagedHeap::new(usize::MAX);
+        heap.set_max_objects(8);
+
+        for _ in 0..8 {
+            heap.alloc_string("x").unwrap();
+        }
+
+        assert!(
+            heap.alloc_string("x").is_err(),
+            "allocation past the object ceiling must fail"
+        );
+    }
+
+    /// A fork must inherit the object ceiling, or forking would itself escape it.
+    #[test]
+    fn fork_inherits_object_ceiling() {
+        let heap = ManagedHeap::new(usize::MAX);
+        heap.set_max_objects(4);
+        heap.alloc_string("x").unwrap();
+
+        let forked = heap.fork().unwrap();
+        assert_eq!(forked.max_objects.load(Ordering::Relaxed), 4);
+
+        for _ in 0..3 {
+            forked.alloc_string("y").unwrap();
+        }
+        assert!(forked.alloc_string("z").is_err());
+    }
 
     #[test]
     fn test_heap_alloc_string() {
