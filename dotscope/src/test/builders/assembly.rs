@@ -5,9 +5,12 @@
 
 use std::sync::{atomic::AtomicU32, Arc};
 
-use crate::metadata::{
-    tables::{AssemblyFlags, AssemblyRef, AssemblyRefHash, AssemblyRefRc},
-    token::Token,
+use crate::{
+    metadata::{
+        tables::{AssemblyFlags, AssemblyRef, AssemblyRefHash, AssemblyRefRc},
+        token::Token,
+    },
+    utils::LazyList,
 };
 
 /// Builder for creating mock AssemblyRef instances with realistic metadata
@@ -97,7 +100,7 @@ impl AssemblyRefBuilder {
             os_major_version: AtomicU32::new(0),
             os_minor_version: AtomicU32::new(0),
             processor: AtomicU32::new(0),
-            custom_attributes: Arc::new(boxcar::Vec::new()),
+            custom_attributes: LazyList::new(),
         })
     }
 }

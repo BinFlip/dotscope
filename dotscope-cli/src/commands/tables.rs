@@ -220,6 +220,9 @@ macro_rules! table_formatter {
                 .collect();
             let mut rows = Vec::new();
             for row in table {
+                let Ok(row) = row else {
+                    continue;
+                };
                 let mut vals = vec![row.rid.to_string(), row.token.to_string()];
                 let extra: Vec<String> = ($row_fn)(&row);
                 vals.extend(extra);
@@ -246,6 +249,9 @@ macro_rules! table_formatter_with {
                 ["RID", "Token"].iter().chain($cols.iter()).map(ToString::to_string).collect();
             let mut rows = Vec::new();
             for row in table {
+                let Ok(row) = row else {
+                    continue;
+                };
                 let mut vals = vec![row.rid.to_string(), row.token.to_string()];
                 let extra: Vec<String> = ($row_fn)(&row, $($param),+);
                 vals.extend(extra);
@@ -285,6 +291,9 @@ fn format_module(
     .collect();
     let mut rows = Vec::new();
     for row in table {
+        let Ok(row) = row else {
+            continue;
+        };
         rows.push(vec![
             row.rid.to_string(),
             row.token.to_string(),
@@ -605,6 +614,9 @@ fn format_enclog(tables: &TablesHeader<'_>) -> anyhow::Result<TableDetailOutput>
         .collect();
     let mut rows = Vec::new();
     for row in table {
+        let Ok(row) = row else {
+            continue;
+        };
         rows.push(vec![
             row.rid.to_string(),
             row.token.to_string(),
@@ -630,6 +642,9 @@ fn format_encmap(tables: &TablesHeader<'_>) -> anyhow::Result<TableDetailOutput>
         .collect();
     let mut rows = Vec::new();
     for row in table {
+        let Ok(row) = row else {
+            continue;
+        };
         rows.push(vec![
             row.rid.to_string(),
             row.token.to_string(),
@@ -669,6 +684,9 @@ fn format_assembly(
     .collect();
     let mut rows = Vec::new();
     for row in table {
+        let Ok(row) = row else {
+            continue;
+        };
         rows.push(vec![
             row.rid.to_string(),
             row.token.to_string(),
@@ -736,6 +754,9 @@ fn format_assemblyref(
     .collect();
     let mut rows = Vec::new();
     for row in table {
+        let Ok(row) = row else {
+            continue;
+        };
         rows.push(vec![
             row.rid.to_string(),
             row.token.to_string(),
@@ -886,6 +907,9 @@ fn format_methoddebuginformation(
         .collect();
     let mut rows = Vec::new();
     for row in table {
+        let Ok(row) = row else {
+            continue;
+        };
         rows.push(vec![
             row.rid.to_string(),
             row.token.to_string(),
@@ -920,6 +944,9 @@ fn format_localscope(tables: &TablesHeader<'_>) -> anyhow::Result<TableDetailOut
     .collect();
     let mut rows = Vec::new();
     for row in table {
+        let Ok(row) = row else {
+            continue;
+        };
         rows.push(vec![
             row.rid.to_string(),
             row.token.to_string(),
@@ -952,6 +979,9 @@ fn format_localvariable(
         .collect();
     let mut rows = Vec::new();
     for row in table {
+        let Ok(row) = row else {
+            continue;
+        };
         rows.push(vec![
             row.rid.to_string(),
             row.token.to_string(),
@@ -982,6 +1012,9 @@ fn format_localconstant(
         .collect();
     let mut rows = Vec::new();
     for row in table {
+        let Ok(row) = row else {
+            continue;
+        };
         rows.push(vec![
             row.rid.to_string(),
             row.token.to_string(),
@@ -1010,6 +1043,9 @@ fn format_importscope(
         .collect();
     let mut rows = Vec::new();
     for row in table {
+        let Ok(row) = row else {
+            continue;
+        };
         rows.push(vec![
             row.rid.to_string(),
             row.token.to_string(),
@@ -1035,6 +1071,9 @@ fn format_statemachinemethod(tables: &TablesHeader<'_>) -> anyhow::Result<TableD
         .collect();
     let mut rows = Vec::new();
     for row in table {
+        let Ok(row) = row else {
+            continue;
+        };
         rows.push(vec![
             row.rid.to_string(),
             row.token.to_string(),

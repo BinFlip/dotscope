@@ -16,6 +16,7 @@ use crate::{
     },
     prelude::{CilPrimitiveData, CilPrimitiveKind, ParamAttributes},
     test::{builders::FieldBuilder, factories::metadata::customattributes::get_test_type_registry},
+    utils::LazyList,
 };
 
 /// Parameter attribute flags for various parameter characteristics
@@ -219,7 +220,7 @@ impl ParamBuilder {
             modifiers: Arc::new(boxcar::Vec::new()),
             base: OnceLock::new(),
             is_by_ref: AtomicBool::new(false),
-            custom_attributes: Arc::new(boxcar::Vec::new()),
+            custom_attributes: LazyList::new(),
         });
 
         // Set default value if provided

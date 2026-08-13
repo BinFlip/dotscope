@@ -96,15 +96,9 @@ impl DisassemblyResult {
                 // Extract method name from lines like:
                 // .method public static void Main() cil managed
                 // Find the last word before the parenthesis
-                if let Some(paren_pos) = line.find('(') {
-                    let before_paren = &line[..paren_pos];
-                    before_paren
-                        .split_whitespace()
-                        .last()
-                        .map(|s| s.to_string())
-                } else {
-                    None
-                }
+                line.split_once('(')
+                    .and_then(|(before_paren, _)| before_paren.split_whitespace().last())
+                    .map(ToString::to_string)
             })
             .collect()
     }

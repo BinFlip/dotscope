@@ -278,7 +278,8 @@ fn main() -> Result<()> {
     // Verify our new type was added
     if let Some(tables) = verify_view.tables() {
         if let Some(typedef_table) = tables.table::<dotscope::metadata::tables::TypeDefRaw>() {
-            let found_type = typedef_table.iter().any(|t| {
+            // A row that fails to parse is not a match; the iterator reports it as `Err`.
+            let found_type = typedef_table.iter().flatten().any(|t| {
                 verify_view.strings().is_some_and(|s| {
                     s.get(t.type_name as usize)
                         .is_ok_and(|name| name == "DotScopeModifiedClass")

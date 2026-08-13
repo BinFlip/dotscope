@@ -32,9 +32,19 @@
     )
 )]
 #![allow(dead_code)]
-//#![deny(unsafe_code)]
-// - 'userstring.rs' uses a transmute for converting a &[u8] to &[u16]
-// - 'file/physical.rs' uses mmap to map a file into memory
+// The crate's trusted computing base is exactly one `unsafe` block, and it carries a targeted
+// `#[allow(unsafe_code)]` with its own SAFETY note:
+//
+// - `cilassembly/writer/output.rs` — `Mmap::map_mut` over the output file.
+//
+// The deny lint does not reach through dependencies, so note the other mapping here: `cowfile`'s
+// `map_copy`, which the primary load path routes its mmap through.
+#![deny(unsafe_code)]
+// A broken intra-doc link renders as plain text on docs.rs, so a `# Errors` contract naming a
+// variant that no longer exists still reads as authoritative. Denying the lint is what keeps
+// the documented error taxonomy tied to the real one; CI sets `RUSTDOCFLAGS: -Dwarnings` so it
+// is enforced on the doc build too.
+#![deny(rustdoc::broken_intra_doc_links)]
 
 //! # dotscope
 //!
@@ -91,7 +101,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! dotscope = "0.7.0"
+//! dotscope = "0.9"
 //! ```
 //!
 //! ### Using the Prelude

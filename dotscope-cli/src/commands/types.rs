@@ -52,7 +52,7 @@ pub fn run(
                 token: cil_type.token.to_string(),
                 visibility: vis.to_string(),
                 kind: cil_type.flavor().to_string(),
-                name: cil_type.fullname(),
+                name: cil_type.fullname().to_string(),
             }
         })
         .collect();

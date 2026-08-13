@@ -135,7 +135,10 @@
 //! if let Some(tables) = assembly.tables() {
 //!     if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
 //!         let row_index = typedef_token.row();
-//!         if let Some(typedef) = typedef_table.get(row_index) {
+//!         // `get` reports a malformed row rather than hiding it as "absent", so the
+//!         // result is `Result<Option<_>>`: outer for parse failure, inner for a RID
+//!         // past the end of the table.
+//!         if let Ok(Some(typedef)) = typedef_table.get(row_index) {
 //!             println!("Type name index: {}", typedef.type_name);
 //!         }
 //!     }

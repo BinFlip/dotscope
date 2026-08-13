@@ -13,6 +13,7 @@ use crate::{
         typesystem::CilPrimitive,
     },
     prelude::SignatureParameter,
+    utils::LazyList,
 };
 
 /// Property constant value types for default values
@@ -138,7 +139,7 @@ impl PropertyBuilder {
             fn_setter: OnceLock::new(),
             fn_getter: OnceLock::new(),
             fn_other: OnceLock::new(),
-            custom_attributes: Arc::new(boxcar::Vec::new()),
+            custom_attributes: LazyList::new(),
         };
 
         let property_rc = Arc::new(property);

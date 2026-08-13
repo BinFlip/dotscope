@@ -598,7 +598,7 @@ pub(super) fn format_method_call_sig(
 pub(super) fn format_typespec_from_blob(asm: &CilObject, token: &Token) -> Option<String> {
     let tables = asm.tables()?;
     let table = tables.table::<TypeSpecRaw>()?;
-    let row = table.get(token.row())?;
+    let row = table.get(token.row()).ok().flatten()?;
     let blob = asm.blob()?;
     let sig_data = blob.get(row.signature as usize).ok()?;
     let parsed = parse_type_spec_signature(sig_data).ok()?;
