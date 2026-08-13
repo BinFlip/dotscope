@@ -138,7 +138,7 @@ pub struct EmulationController {
     ///
     /// Keeps each assembly's decoded-method cache alive across the execution
     /// loop instead of rebuilding it on every instruction.
-    assembly_contexts: DashMap<u8, Arc<EmulationContext>>,
+    assembly_contexts: DashMap<u32, Arc<EmulationContext>>,
 }
 
 impl EmulationController {
@@ -239,7 +239,7 @@ impl EmulationController {
         let typespec_row = assembly
             .tables()
             .and_then(|t| t.table::<TypeSpecRaw>())
-            .and_then(|table| table.get(token.row()))?;
+            .and_then(|table| table.get(token.row()).ok().flatten())?;
 
         let blob = assembly.blob()?;
         let parsed = typespec_row.to_owned(blob).ok()?;
@@ -312,7 +312,7 @@ impl EmulationController {
     /// Returns `None` if the assembly index doesn't exist in the `RuntimeState`.
     /// This is called per-iteration when executing a frame from a loaded assembly,
     /// but `EmulationContext::new` is trivial (wraps an `Arc`), so the cost is negligible.
-    fn loaded_assembly_context(&self, index: u8) -> Result<Option<Arc<EmulationContext>>> {
+    fn loaded_assembly_context(&self, index: u32) -> Result<Option<Arc<EmulationContext>>> {
         // The execution loop resolves the frame's context on every instruction.
         // Rebuilding the context each time meant taking the runtime lock and
         // discarding the assembly's decoded-method cache per step, so memoize it.
@@ -327,7 +327,10 @@ impl EmulationController {
             .map_err(|_| EmulationError::LockPoisoned {
                 description: "runtime state",
             })?;
-        let Some(asm) = state.app_domain().get_parsed_assembly(index as usize) else {
+        let Some(asm) = usize::try_from(index)
+            .ok()
+            .and_then(|index| state.app_domain().get_parsed_assembly(index))
+        else {
             return Ok(None);
         };
 
@@ -875,51 +878,83 @@ impl EmulationController {
                 }
 
                 StepResult::EndFilter { value } => {
-                    let should_handle = match value {
-                        EmValue::I32(v) => v != 0,
-                        _ => false,
+                    // ECMA-335 §12.4.2.5: `endfilter` takes an int32. 0 means "continue the
+                    // search", 1 means "this handler runs". Anything else is not a filter
+                    // result — treating a non-int32 as rejection silently mis-routes the
+                    // exception, so it is a program error.
+                    let EmValue::I32(filter_result) = value else {
+                        return Err(EmulationError::InternalError {
+                            description: format!(
+                                "endfilter expects an int32 result, found {}",
+                                value.type_name()
+                            ),
+                        }
+                        .into());
                     };
+                    let should_handle = filter_result != 0;
 
                     thread
                         .exception_state_mut()
                         .set_filter_result(Some(should_handle));
 
                     if should_handle {
-                        if let Some(handler_offset) =
-                            thread.exception_state_mut().filter_handler_offset()
-                        {
-                            let origin_offset = thread
-                                .exception_state_mut()
-                                .exception_origin_offset()
-                                .unwrap_or(interpreter.ip().offset());
+                        // Read the filter state *before* clearing it. `set_in_filter(false)`
+                        // also nulls `filter_handler_offset` (see
+                        // `ThreadExceptionState::set_in_filter`), so reading the offset
+                        // afterwards always yields `None` — and the resulting fall-through
+                        // returns `Continue` without advancing the IP, re-executing this same
+                        // `endfilter` forever. The rejecting path below has the same
+                        // constraint: it needs the offset as its skip key.
+                        let handler_offset = thread.exception_state_mut().filter_handler_offset();
+                        let origin_offset = self.exception_origin(thread, interpreter);
+                        thread.exception_state_mut().set_in_filter(false);
 
-                            thread.exception_state_mut().set_in_filter(false);
+                        let Some(handler_offset) = handler_offset else {
+                            // `enter_filter` records the offset on every path that dispatches a
+                            // filter, so its absence here means the filter body was entered
+                            // without going through exception dispatch. Continuing would spin.
+                            return Err(EmulationError::InternalError {
+                                description:
+                                    "endfilter accepted but no filter handler offset was recorded"
+                                        .to_string(),
+                            }
+                            .into());
+                        };
+
+                        {
+                            // `endfilter` consumed the exception object that
+                            // `apply_handler_match` pushed before entering the filter, so the
+                            // handler would otherwise start on whatever the filter left behind
+                            // — typically an underflow on its first `stloc`. Re-push it, as the
+                            // catch path does.
+                            if let Some(exception) =
+                                thread.exception_state_mut().get_exception_value()
+                            {
+                                thread.stack_mut().clear();
+                                thread.push(exception)?;
+                            }
+
                             thread.exception_state_mut().enter_catch_handler(
                                 current_method,
                                 origin_offset,
                                 handler_offset,
                             );
                             interpreter.set_offset(handler_offset);
-                        } else {
-                            thread.exception_state_mut().set_in_filter(false);
+                            LoopAction::Continue
                         }
                     } else {
-                        thread.exception_state_mut().set_in_filter(false);
-
-                        if thread.exception_state_mut().has_exception() {
-                            return Ok(EmulationOutcome::UnhandledException {
-                                exception: thread
-                                    .exception_state_mut()
-                                    .take_exception_as_value()
-                                    .unwrap_or_else(|| {
-                                        trace!("No pending exception for extraction");
-                                        EmValue::Null
-                                    }),
-                                instructions: interpreter.stats().instructions_executed,
-                            });
-                        }
+                        // Rejection means "keep searching", not "unhandled". Resume the scan
+                        // after the rejected Filter clause and fall into the normal unwind path
+                        // if nothing else matches; returning `UnhandledException` here reports a
+                        // genuinely-caught exception as unhandled and stops the run, which an
+                        // obfuscator can use to hide everything past a rejecting filter.
+                        self.resume_search_after_filter(
+                            interpreter,
+                            thread,
+                            context,
+                            current_method,
+                        )?
                     }
-                    LoopAction::Continue
                 }
 
                 StepResult::Rethrow => {
@@ -1261,6 +1296,29 @@ impl EmulationController {
                 }
             }
 
+            // Run any finally scheduled for the frame we are about to leave, *before* leaving
+            // it.
+            //
+            // `find_exception_handler` queues finallys against the frame it searched, and the
+            // handler's IL reads locals, arguments and the evaluation stack from
+            // `thread.current_frame()`. Popping first and then jumping to the handler — without
+            // pushing a frame — executes that IL against the grandparent's frame instead. It
+            // also skips the popped frame's own catch clauses, because the handler search below
+            // only examines the frame that survives the pop.
+            //
+            // Every other unwind path in the engine (`unwind_after_error`, `handle_throw`,
+            // `exhandler::route_clr_exception`) already drains the queue before popping; this
+            // one was the outlier.
+            if let Some(pending) = thread.exception_state_mut().pop_finally() {
+                thread.exception_state_mut().set_in_unwind_finally(true);
+                interpreter.set_method(pending.method);
+                interpreter.set_offset(pending.handler_offset);
+                thread
+                    .exception_state_mut()
+                    .set_leave_target(pending.leave_target);
+                return Ok(LoopAction::Continue);
+            }
+
             // Capture the return_offset from the frame being popped
             if let Some(frame) = thread.current_frame() {
                 call_site_in_caller = frame.return_offset();
@@ -1281,17 +1339,6 @@ impl EmulationController {
                         instructions: interpreter.stats().instructions_executed,
                     },
                 )));
-            }
-
-            // Check for finally blocks scheduled by find_exception_handler
-            if let Some(pending) = thread.exception_state_mut().pop_finally() {
-                thread.exception_state_mut().set_in_unwind_finally(true);
-                interpreter.set_method(pending.method);
-                interpreter.set_offset(pending.handler_offset);
-                thread
-                    .exception_state_mut()
-                    .set_leave_target(pending.leave_target);
-                return Ok(LoopAction::Continue);
             }
 
             // Search for handlers in the caller
@@ -1582,6 +1629,91 @@ impl EmulationController {
 
     /// Handles a `StepResult::Rethrow` — re-raises the current exception from
     /// within a catch handler, searching for another handler or unwinding.
+    /// Resumes the handler search after a filter returned zero.
+    ///
+    /// ECMA-335 §12.4.2.5: a filter returning 0 means "continue the search" — the method's
+    /// remaining clauses are examined, then the caller frames. It does **not** mean the
+    /// exception is unhandled.
+    ///
+    /// Mirrors [`handle_rethrow`](Self::handle_rethrow), differing only in what it skips: the
+    /// scan resumes past the rejected filter's own handler rather than past an enclosing catch.
+    ///
+    /// # Errors
+    ///
+    /// Propagates handler-search failures, and returns an error if the call stack is empty
+    /// while a frame is expected.
+    /// The IL offset a handler search should resume from.
+    ///
+    /// `exception_origin_offset` is only ever written by
+    /// [`ThreadExceptionState::enter_catch_handler`], so it is `None` for an exception that has
+    /// not yet entered a catch — which is precisely the case on the filter paths. Reading it
+    /// alone made the post-filter rescan skip the current method's remaining clauses entirely
+    /// and jump straight to unwinding the caller.
+    ///
+    /// The throw site is already recorded on the in-flight exception itself
+    /// ([`ExceptionInfo::throw_location`], set by `handle_throw`), so it serves as the fallback.
+    /// The interpreter's current offset is the last resort, for a filter evaluated with no
+    /// exception state at all.
+    fn exception_origin(&self, thread: &EmulationThread, interpreter: &Interpreter) -> u32 {
+        thread
+            .exception_state()
+            .exception_origin_offset()
+            .or_else(|| {
+                thread
+                    .exception_state()
+                    .exception()
+                    .map(|info| info.throw_location.offset)
+            })
+            .unwrap_or_else(|| interpreter.ip().offset())
+    }
+
+    fn resume_search_after_filter(
+        &self,
+        interpreter: &mut Interpreter,
+        thread: &mut EmulationThread,
+        context: &EmulationContext,
+        current_method: Token,
+    ) -> Result<LoopAction> {
+        let Some(exception) = thread.exception_state_mut().get_exception_value() else {
+            // No exception in flight: a filter evaluated outside exception dispatch. Nothing to
+            // route, so just carry on.
+            return Ok(LoopAction::Continue);
+        };
+
+        let exception_type = exhandler::resolve_exception_type(&exception, thread);
+        // Both reads must precede `set_in_filter(false)`, which nulls the handler offset.
+        // Without the skip key the rescan below re-matches the filter clause that just
+        // rejected, re-enters its body, and loops.
+        let skip_handler = thread.exception_state_mut().filter_handler_offset();
+        let origin = self.exception_origin(thread, interpreter);
+        thread.exception_state_mut().set_in_filter(false);
+
+        // Remaining clauses of the current method, past the rejected filter.
+        if let Some(handler_match) = exhandler::find_exception_handler(
+            context,
+            current_method,
+            origin,
+            exception_type,
+            thread.exception_state_mut(),
+            skip_handler,
+        )? {
+            thread.stack_mut().clear();
+            let target_offset = exhandler::apply_handler_match(
+                &handler_match,
+                exception,
+                origin,
+                current_method,
+                thread,
+            )?;
+            interpreter.set_offset(target_offset);
+            return Ok(LoopAction::Continue);
+        }
+
+        // Nothing left in this method — hand over to the normal unwind path, which drains
+        // pending finallys and searches each caller in turn.
+        self.unwind_propagating_exception(interpreter, thread, context, false)
+    }
+
     fn handle_rethrow(
         &self,
         interpreter: &mut Interpreter,
@@ -1844,7 +1976,7 @@ impl EmulationController {
         let constraint = initial_constraint;
         let mut pending_pre_push: Option<EmValue> = None;
         let mut pending_reflection_invoke = false;
-        let mut pending_assembly_index: Option<u8> = None;
+        let mut pending_assembly_index: Option<u32> = None;
         let mut pending_method_type_args: Option<Vec<Token>> = None;
 
         for _ in 0..MAX_REDIRECT_DEPTH {

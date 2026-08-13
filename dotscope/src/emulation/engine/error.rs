@@ -42,6 +42,7 @@ use crate::metadata::{token::Token, typesystem::CilFlavor};
 /// | 0x7F01_0016  | System.MissingMethodException                     |
 /// | 0x7F01_0017  | System.MissingFieldException                      |
 /// | 0x7F01_0018  | System.NotImplementedException                    |
+/// | 0x7F01_001B  | System.AccessViolationException                   |
 pub mod synthetic_exception {
     use crate::metadata::token::Token;
 
@@ -95,6 +96,25 @@ pub mod synthetic_exception {
     pub const MISSING_FIELD: Token = Token::new(0x7F01_0017);
     /// System.NotImplementedException
     pub const NOT_IMPLEMENTED: Token = Token::new(0x7F01_0018);
+    /// System.ArgumentOutOfRangeException — subtype of `ARGUMENT_EXCEPTION`.
+    ///
+    /// Thrown by BCL hooks that receive a negative or oversized count, index or length from
+    /// emulated code, so that the emulated program observes the same failure the real runtime
+    /// would produce and can catch it, instead of the emulator allocating on the bad value.
+    pub const ARGUMENT_OUT_OF_RANGE: Token = Token::new(0x7F01_0019);
+    /// System.OutOfMemoryException
+    ///
+    /// Thrown when a request would exceed the emulator's heap budget. This is deliberately a
+    /// catchable CLR exception rather than a hard emulation error: real .NET code that probes
+    /// allocation limits expects to catch it, and surfacing it as a Rust error instead would
+    /// abandon the emulation of samples that handle it.
+    pub const OUT_OF_MEMORY: Token = Token::new(0x7F01_001A);
+    /// System.AccessViolationException
+    ///
+    /// Thrown when emulated code reads or writes memory its protection does not permit, or
+    /// touches a guard page. Obfuscators probe for an emulator by writing where a real
+    /// process would fault, so silently permitting the access is itself a detection signal.
+    pub const ACCESS_VIOLATION: Token = Token::new(0x7F01_001B);
 }
 
 /// Errors that can occur during CIL emulation.
@@ -223,6 +243,12 @@ pub enum EmulationError {
         /// Maximum allowed.
         limit: u64,
     },
+    /// A configured resource ceiling other than memory, call depth or instruction count was
+    /// reached — for example the heap object count or a delegate's invocation-list length.
+    ///
+    /// Carries a description naming the limit and the value that breached it, because these
+    /// ceilings are varied enough that a shared structured shape would fit none of them well.
+    ResourceLimitExceeded(String),
     /// Execution timeout.
     Timeout {
         /// Time elapsed.
@@ -352,6 +378,18 @@ pub enum EmulationError {
         source_type: &'static str,
         /// The target type that was requested.
         target_type: &'static str,
+    },
+
+    /// Access rejected by the memory protection of the target page.
+    ///
+    /// Distinct from [`InvalidAddress`](Self::InvalidAddress): the address *is* mapped, but
+    /// the access is not permitted — a write to a read-only PE section, a read of a
+    /// PAGE_NOACCESS page, or any touch of a guard page.
+    AccessViolation {
+        /// The address whose page rejected the access.
+        address: u64,
+        /// Which protection rejected it.
+        reason: String,
     },
 
     /// Invalid memory address.
@@ -486,6 +524,9 @@ impl fmt::Display for EmulationError {
             EmulationError::InstructionLimitExceeded { executed, limit } => {
                 write!(f, "instruction limit exceeded: {executed} (limit: {limit})")
             }
+            EmulationError::ResourceLimitExceeded(description) => {
+                write!(f, "resource limit exceeded: {description}")
+            }
             EmulationError::Timeout { elapsed, limit } => {
                 write!(
                     f,
@@ -589,6 +630,9 @@ impl fmt::Display for EmulationError {
             } => {
                 write!(f, "cannot convert {source_type} to {target_type}")
             }
+            EmulationError::AccessViolation { address, reason } => {
+                write!(f, "access violation at 0x{address:08X}: {reason}")
+            }
             EmulationError::InvalidAddress { address, reason } => {
                 write!(f, "invalid address 0x{address:08X}: {reason}")
             }
@@ -661,6 +705,7 @@ impl EmulationError {
             EmulationError::DivisionByZero => synthetic_exception::DIVIDE_BY_ZERO,
             EmulationError::ArithmeticOverflow => synthetic_exception::OVERFLOW,
             EmulationError::InvalidCast { .. } => synthetic_exception::INVALID_CAST,
+            EmulationError::AccessViolation { .. } => synthetic_exception::ACCESS_VIOLATION,
             _ => synthetic_exception::BASE_EXCEPTION,
         }
     }
