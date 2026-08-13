@@ -1,0 +1,15 @@
+# Memory guard for test harnesses.
+#
+# Doc tests link one binary per fenced example, and `[profile.release]` sets `lto = "fat"`,
+# so every one of those links is a whole-crate LTO job costing gigabytes of RAM. libtest
+# defaults its concurrency to one thread per core, so a bare `cargo test --release --doc`
+# on a many-core machine starts dozens of them at once and takes the host out of memory
+# before any test reports.
+#
+# Capping here rather than only in the Makefile means the guard holds for anyone who runs
+# cargo directly. Cargo's `[env]` does not override a variable that is already set, so the
+# unit-test run — which is cheap per test and wants every core — opts back up to full
+# parallelism by exporting `RUST_TEST_THREADS` itself; see the `test` target in the Makefile.
+# An explicit `-- --test-threads=N` also still wins, which is what `make test-doc` and CI use.
+[env]
+RUST_TEST_THREADS = "8"

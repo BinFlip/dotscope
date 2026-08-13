@@ -94,17 +94,19 @@ jobs:
 
     - name: Run tests (Linux - full)
       if: runner.os == 'Linux'
-      run: cargo test --workspace --release --lib --features z3 --verbose
+      run: cargo test --workspace --release --features z3 --lib --bins --tests --verbose
 
     - name: Run tests (macOS/Windows - skip expensive tests)
       if: runner.os != 'Linux'
-      run: cargo test --workspace --release --lib --features z3,skip-expensive-tests --verbose
+      run: cargo test --workspace --release --features z3,skip-expensive-tests --lib --bins --tests --verbose
 
     - name: Run doc tests (Linux only)
       if: runner.os == 'Linux'
-      run: cargo test --workspace --release --doc --features z3
+      run: cargo test --workspace --release --doc --features z3 -- --test-threads=4
 
     - name: Check documentation
+      env:
+        RUSTDOCFLAGS: "-Dwarnings"
       run: cargo doc -p dotscope --all-features --no-deps
 
   # Ensures the crate compiles and tests pass without legacy-crypto feature (Linux only)
@@ -128,7 +130,7 @@ jobs:
       run: cargo check -p dotscope --no-default-features
 
     - name: Run tests (no default features)
-      run: cargo test -p dotscope --no-default-features --release --verbose
+      run: cargo test -p dotscope --no-default-features --release --lib --bins --tests --verbose
 
   # Fuzzing on pushes to main or PRs targeting main
   fuzzing:
@@ -154,19 +156,41 @@ jobs:
       with:
         key: fuzz-quick
         
-    - name: Build fuzz target
-      run: cargo +nightly fuzz build --release cilobject
+    - name: Build fuzz targets
+      run: cargo +nightly fuzz build --release
       working-directory: dotscope/fuzz
 
+    # Every target gets the committed crash corpus. The inputs are PE-shaped, so they are
+    # directly meaningful to `cilobject`/`assemblyview` and act as structured starting material
+    # for the blob and body targets rather than starting them from scratch.
+    - name: Seed corpora from committed regressions
+      run: |
+        for t in cilobject assemblyview signatures customattributes methodbody emulation; do
+          mkdir -p "dotscope/fuzz/corpus/$t"
+          cp dotscope/tests/samples/fuzz-regressions/* "dotscope/fuzz/corpus/$t/" || true
+        done
+
     - name: Run quick fuzz test
-      run: timeout 60 cargo +nightly fuzz run cilobject --release -- -max_total_time=50 || true
+      run: |
+        for t in cilobject assemblyview signatures customattributes methodbody emulation; do
+          echo "::group::fuzz $t"
+          timeout 60 cargo +nightly fuzz run "$t" --release -- \
+            -max_total_time=40 -timeout=25 -rss_limit_mb=2048 || true
+          echo "::endgroup::"
+        done
       working-directory: dotscope/fuzz
 
     - name: Check for crashes
       run: |
-        if [ -d "dotscope/fuzz/artifacts/cilobject" ] && [ "$(ls -A dotscope/fuzz/artifacts/cilobject)" ]; then
-          echo "Fuzzing found crashes!"
-          ls -la dotscope/fuzz/artifacts/cilobject/
+        found=0
+        for t in cilobject assemblyview signatures customattributes methodbody emulation; do
+          if [ -d "dotscope/fuzz/artifacts/$t" ] && [ "$(ls -A "dotscope/fuzz/artifacts/$t")" ]; then
+            echo "Fuzzing found crashes in $t:"
+            ls -la "dotscope/fuzz/artifacts/$t"
+            found=1
+          fi
+        done
+        if [ "$found" = "1" ]; then
           exit 1
         fi
 

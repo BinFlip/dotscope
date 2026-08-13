@@ -68,8 +68,8 @@ use crate::{
             TypeSignature,
         },
         tables::{
-            ClassLayoutRaw, CodedIndex, CodedIndexType, FieldRaw, FieldRvaRaw, MemberRefRaw,
-            NestedClassRaw, TableDataOwned, TableId, TypeDefRaw, TypeRefRaw,
+            skip_unreadable, ClassLayoutRaw, CodedIndex, CodedIndexType, FieldRaw, FieldRvaRaw,
+            MemberRefRaw, NestedClassRaw, TableDataOwned, TableId, TypeDefRaw, TypeRefRaw,
         },
         token::Token,
     },
@@ -133,6 +133,32 @@ impl TempPool {
     }
 }
 
+/// One entry in the emission order.
+///
+/// Out-of-SSA needs somewhere to put a phi copy for the edge `from → to`. When `from` has a
+/// single successor the copy can simply precede its branch, but a multi-way terminator
+/// (`Branch`, `BranchCmp`, `Switch`) has no such place: the copy belongs *on the edge*, and
+/// each edge needs its own.
+///
+/// Edge blocks are therefore ordinary entries in the emission order rather than labelled runs
+/// spliced into branch emission. That makes "does code sit between this block and its
+/// successor" a structural property the layout answers — whatever lands between two blocks is
+/// something the layout placed — rather than a condition each branch emitter has to maintain
+/// by predicting what will be emitted after it. Getting that prediction wrong is the class of
+/// unsound fall-through elision this pass removes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LayoutEntry {
+    /// A real SSA block, identified by its block id.
+    Block(usize),
+    /// A synthetic block carrying the phi copies for one CFG edge.
+    SplitEdge {
+        /// Block the edge leaves.
+        from: usize,
+        /// Block the edge enters.
+        to: usize,
+    },
+}
+
 /// SSA to CIL code generator.
 ///
 /// Converts SSA form back to executable CIL bytecode with optimizations.
@@ -143,6 +169,12 @@ pub struct SsaCodeGenerator {
     next_local: u16,
     /// Map from block index to label name
     block_labels: BTreeMap<usize, String>,
+    /// Label for each edge that was given its own block, keyed by `(from, to)`.
+    ///
+    /// Present only for edges leaving a multi-way terminator that carry phi copies. A
+    /// branch whose target appears here jumps to the edge block instead of the target
+    /// block; the edge block does the copies and then continues to the real target.
+    split_edge_labels: BTreeMap<(usize, usize), String>,
     /// Variables that are currently on the stack (for optimization)
     stack_vars: Vec<SsaVarId>,
     /// Cache of interned decrypted strings (string content -> heap index)
@@ -262,6 +294,7 @@ impl SsaCodeGenerator {
             var_storage: BTreeMap::new(),
             next_local: 0,
             block_labels: BTreeMap::new(),
+            split_edge_labels: BTreeMap::new(),
             stack_vars: Vec::new(),
             interned_strings: HashMap::new(),
             deferred_constants: BTreeMap::new(),
@@ -657,6 +690,7 @@ impl SsaCodeGenerator {
         self.var_storage.clear();
         self.next_local = 0;
         self.block_labels.clear();
+        self.split_edge_labels.clear();
         self.stack_vars.clear();
         self.interned_strings.clear();
         self.deferred_constants.clear();
@@ -787,15 +821,39 @@ impl SsaCodeGenerator {
         // Compute optimal block layout to minimize unnecessary branches.
         // This reorders blocks so that fall-through paths don't need explicit jumps.
         let block_ids = Self::compute_block_layout(ssa, &blocks_to_include);
-        let blocks_to_generate: Vec<_> = block_ids.iter().filter_map(|&id| ssa.block(id)).collect();
 
-        for (idx, block) in blocks_to_generate.iter().enumerate() {
-            // Record block start offset for exception handler remapping
-            let pos_before = encoder.current_position();
-            self.block_offsets.insert(block.id(), pos_before);
+        // Give every phi-carrying edge out of a multi-way terminator its own block, and
+        // register a label for it, so the copies are ordinary layout entries rather than
+        // runs spliced into branch emission.
+        let layout = self.expand_layout_with_edge_blocks(ssa, &block_ids)?;
 
-            let next_block_idx = block_ids.get(idx.saturating_add(1)).copied();
-            self.generate_block(&mut encoder, ssa, block, block.id(), next_block_idx)?;
+        for idx in 0..layout.len() {
+            let Some(&entry) = layout.get(idx) else {
+                continue;
+            };
+
+            // Fall-through is available only to whatever the *next entry* is. Naming the
+            // entry rather than a block id is what makes the elision safe by construction:
+            // an edge block between two blocks is itself an entry, so it suppresses the
+            // elision on its own instead of each branch helper having to predict that code
+            // will be emitted after it.
+            let next_entry = layout.get(idx.saturating_add(1)).copied();
+
+            match entry {
+                LayoutEntry::Block(block_id) => {
+                    let Some(block) = ssa.block(block_id) else {
+                        continue;
+                    };
+                    // Record block start offset for exception handler remapping
+                    let pos_before = encoder.current_position();
+                    self.block_offsets.insert(block_id, pos_before);
+
+                    self.generate_block(&mut encoder, ssa, block, block_id, next_entry)?;
+                }
+                LayoutEntry::SplitEdge { from, to } => {
+                    self.generate_edge_block(&mut encoder, ssa, from, to, next_entry)?;
+                }
+            }
         }
 
         // Phase 4: Finalize and resolve labels
@@ -1008,6 +1066,13 @@ impl SsaCodeGenerator {
         let typeref_table = tables.table::<TypeRefRaw>()?;
 
         for row in typeref_table.iter() {
+            let row = match row {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             let Ok(name) = strings.get(row.type_name as usize) else {
                 continue;
             };
@@ -1030,7 +1095,7 @@ impl SsaCodeGenerator {
         let tables = assembly.view().tables()?;
         let strings = assembly.view().strings()?;
         let member_refs = tables.table::<MemberRefRaw>()?;
-        for row in member_refs {
+        for row in member_refs.iter().filter_map(skip_unreadable) {
             if let Ok(name) = strings.get(row.name as usize) {
                 if name == "InitializeArray" {
                     return Some(row.token);
@@ -1159,6 +1224,13 @@ impl SsaCodeGenerator {
         let typeref_table = tables.table::<TypeRefRaw>()?;
 
         for row in typeref_table.iter() {
+            let row = match row {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             let Ok(name) = strings.get(row.type_name as usize) else {
                 continue;
             };
@@ -1522,6 +1594,89 @@ impl SsaCodeGenerator {
         }
 
         layout
+    }
+
+    /// Expands a block layout into the emission order, giving every phi-carrying edge out of
+    /// a multi-way terminator its own [`LayoutEntry::SplitEdge`] block.
+    ///
+    /// # Which edges get a block
+    ///
+    /// Only edges leaving `Branch`, `BranchCmp` and `Switch`. A block with a single
+    /// successor has a place for its copies already — immediately before its branch, where
+    /// `generate_branch_op` still emits them — and an edge out of a single-successor block
+    /// is never critical, so it cannot need one.
+    ///
+    /// # Where they go
+    ///
+    /// Directly after the block the edge leaves, preferred-successor edge first. That keeps
+    /// each edge block inside whatever EH region its source block is in (a protected region
+    /// can only be left by `leave`, so a two-way branch never crosses out of one), and lets
+    /// the source block fall through into the edge it most likely takes.
+    ///
+    /// The edges are registered in `split_edge_labels` as they are placed, which is what
+    /// makes [`Self::edge_label`] and [`Self::edge_destination`] agree with the layout: a
+    /// branch names the edge block exactly when the layout created one.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the storage lookup in [`Self::successor_has_phi_from`].
+    fn expand_layout_with_edge_blocks(
+        &mut self,
+        ssa: &SsaFunction,
+        block_ids: &[usize],
+    ) -> Result<Vec<LayoutEntry>> {
+        let mut layout: Vec<LayoutEntry> = Vec::with_capacity(block_ids.len());
+
+        for &block_id in block_ids {
+            layout.push(LayoutEntry::Block(block_id));
+
+            let Some(block) = ssa.block(block_id) else {
+                continue;
+            };
+
+            // Preferred successor first, matching `compute_block_layout::preferred_successor`,
+            // so the edge block that can be reached by fall-through is the adjacent one.
+            let edge_targets: Vec<usize> = match block.terminator_op() {
+                Some(
+                    SsaOp::Branch {
+                        true_target,
+                        false_target,
+                        ..
+                    }
+                    | SsaOp::BranchCmp {
+                        true_target,
+                        false_target,
+                        ..
+                    },
+                ) => vec![*false_target, *true_target],
+                Some(SsaOp::Switch {
+                    targets, default, ..
+                }) => {
+                    let mut all = Vec::with_capacity(targets.len().saturating_add(1));
+                    all.push(*default);
+                    all.extend(targets.iter().copied());
+                    all
+                }
+                _ => continue,
+            };
+
+            for to in edge_targets {
+                // A switch may name the same target more than once, and a two-way branch
+                // may name the same block on both edges. One edge, one block.
+                if self.split_edge_labels.contains_key(&(block_id, to)) {
+                    continue;
+                }
+                if !self.successor_has_phi_from(ssa, block_id, to)? {
+                    continue;
+                }
+
+                self.split_edge_labels
+                    .insert((block_id, to), format!("edge_{block_id}_{to}"));
+                layout.push(LayoutEntry::SplitEdge { from: block_id, to });
+            }
+        }
+
+        Ok(layout)
     }
 
     /// Allocates storage for all SSA variables using graph coloring.
@@ -2561,7 +2716,7 @@ impl SsaCodeGenerator {
         ssa: &SsaFunction,
         block: &SsaBlock,
         block_idx: usize,
-        next_block_idx: Option<usize>,
+        next_entry: Option<LayoutEntry>,
     ) -> Result<()> {
         // Exception handler entry blocks (catch, filter, finally, fault) are only
         // entered via CLR exception dispatch — never via fallthrough from the previous
@@ -2750,7 +2905,7 @@ impl SsaCodeGenerator {
             def_map: &def_map,
             current_block_idx: block_idx,
         };
-        self.generate_ops_iterative(encoder, &ctx, &roots, next_block_idx)?;
+        self.generate_ops_iterative(encoder, &ctx, &roots, next_entry)?;
 
         // Check if the block ends with a non-terminator (falls through to next block)
         // If so, spill remaining stack values and emit phi stores for the fallthrough
@@ -2759,7 +2914,11 @@ impl SsaCodeGenerator {
             // Spill any remaining stack values before fallthrough
             self.spill_stack(encoder, ssa)?;
 
-            if let Some(next_idx) = next_block_idx {
+            // A block with no terminator has exactly one successor, so its edge is never
+            // critical and never gets a block of its own — which is also why the next entry
+            // is always a `Block` here: edge blocks are only ever placed directly after a
+            // multi-way terminator.
+            if let Some(LayoutEntry::Block(next_idx)) = next_entry {
                 self.emit_phi_stores_for_successor(encoder, ssa, block_idx, next_idx)?;
             }
         }
@@ -2782,7 +2941,7 @@ impl SsaCodeGenerator {
         encoder: &mut InstructionEncoder,
         ctx: &BlockCodegenContext<'_>,
         roots: &[usize],
-        next_block_idx: Option<usize>,
+        next_entry: Option<LayoutEntry>,
     ) -> Result<()> {
         // Use global use counts to determine if variables need storage.
         // Variables used multiple times (across ANY blocks) must be stored to locals
@@ -3002,7 +3161,7 @@ impl SsaCodeGenerator {
                         ctx.ssa,
                         ctx.current_block_idx,
                         cur_op,
-                        next_block_idx,
+                        next_entry,
                     )?;
                     generated.insert(idx);
 
@@ -3089,7 +3248,7 @@ impl SsaCodeGenerator {
                         ctx.ssa,
                         ctx.current_block_idx,
                         root_op,
-                        next_block_idx,
+                        next_entry,
                     )?;
                     generated.insert(root_idx);
                 }
@@ -3357,7 +3516,7 @@ impl SsaCodeGenerator {
         ssa: &SsaFunction,
         current_block_idx: usize,
         op: &SsaOp,
-        next_block_idx: Option<usize>,
+        next_entry: Option<LayoutEntry>,
     ) -> Result<()> {
         // Clear last_load tracking - after any operation, the stack state changes
         // and the "last loaded" value may no longer be on top of the stack.
@@ -3458,7 +3617,7 @@ impl SsaCodeGenerator {
             | SsaOp::EndFilter { .. }
             | SsaOp::BranchCmp { .. }
             | SsaOp::BranchFlags { .. } => {
-                self.generate_branch_op(encoder, ssa, current_block_idx, op, next_block_idx)?;
+                self.generate_branch_op(encoder, ssa, current_block_idx, op, next_entry)?;
             }
 
             // Simple standalone operations
@@ -4043,7 +4202,7 @@ impl SsaCodeGenerator {
         ssa: &SsaFunction,
         current_block_idx: usize,
         op: &SsaOp,
-        next_block_idx: Option<usize>,
+        next_entry: Option<LayoutEntry>,
     ) -> Result<()> {
         match op {
             SsaOp::Return { .. } => {
@@ -4062,15 +4221,12 @@ impl SsaCodeGenerator {
                 // Spill remaining stack values before control flow transfer
                 self.spill_stack(encoder, ssa)?;
 
-                // Emit phi stores for the target block before jumping
+                // A jump has one successor, so its copies have a place already: right here,
+                // before the branch. No edge block is created for it.
                 self.emit_phi_stores_for_successor(encoder, ssa, current_block_idx, *target)?;
 
-                if Some(*target) != next_block_idx {
-                    let label = self
-                        .block_labels
-                        .get(target)
-                        .cloned()
-                        .unwrap_or_else(|| format!("block_{target}"));
+                if next_entry != Some(LayoutEntry::Block(*target)) {
+                    let label = self.block_label(*target);
                     // emit_branch validates stack depth at target
                     encoder.emit_branch("br", &label)?;
                 }
@@ -4085,14 +4241,12 @@ impl SsaCodeGenerator {
                 // The condition is already on the stack from operand loading.
                 self.spill_stack(encoder, ssa)?;
 
-                // Handle phi stores for both targets using intermediate blocks
-                self.emit_branch_with_phi_stores(
+                self.emit_conditional_branch(
                     encoder,
-                    ssa,
                     current_block_idx,
                     *true_target,
                     *false_target,
-                    next_block_idx,
+                    next_entry,
                 )?;
             }
 
@@ -4102,15 +4256,7 @@ impl SsaCodeGenerator {
                 // Spill any remaining stack values except the switch value.
                 self.spill_stack(encoder, ssa)?;
 
-                // Handle phi stores for switch targets using intermediate blocks
-                self.emit_switch_with_phi_stores(
-                    encoder,
-                    ssa,
-                    current_block_idx,
-                    targets,
-                    *default,
-                    next_block_idx,
-                )?;
+                self.emit_switch_branch(encoder, current_block_idx, targets, *default, next_entry)?;
             }
 
             SsaOp::Throw { .. } => {
@@ -4131,14 +4277,10 @@ impl SsaCodeGenerator {
                 // Spill any remaining stack values before leaving protected region.
                 self.spill_stack(encoder, ssa)?;
 
-                // Emit phi stores for the target block before leaving
+                // A leave has one successor, so its copies go here, before the transfer.
                 self.emit_phi_stores_for_successor(encoder, ssa, current_block_idx, *target)?;
 
-                let label = self
-                    .block_labels
-                    .get(target)
-                    .cloned()
-                    .unwrap_or_else(|| format!("block_{target}"));
+                let label = self.block_label(*target);
                 encoder.emit_branch("leave", &label)?;
             }
 
@@ -4166,16 +4308,15 @@ impl SsaCodeGenerator {
                 // Spill any remaining stack values except the comparison operands.
                 self.spill_stack(encoder, ssa)?;
 
-                // Emit comparison branch with phi stores - operands are already on the stack
-                self.emit_branch_cmp_with_phi_stores(
+                // Operands are already on the stack.
+                self.emit_comparison_branch(
                     encoder,
-                    ssa,
                     current_block_idx,
                     *cmp,
                     *unsigned,
                     *true_target,
                     *false_target,
-                    next_block_idx,
+                    next_entry,
                 )?;
             }
 
@@ -4777,317 +4918,213 @@ impl SsaCodeGenerator {
         Ok(false)
     }
 
-    /// Emits a conditional branch (brtrue/brfalse) with proper phi store handling.
+    /// Label of a real block.
+    fn block_label(&self, block_id: usize) -> String {
+        self.block_labels
+            .get(&block_id)
+            .cloned()
+            .unwrap_or_else(|| format!("block_{block_id}"))
+    }
+
+    /// The layout entry the edge `from → to` actually lands on.
     ///
-    /// When branch targets have phi nodes, we emit intermediate blocks that:
-    /// 1. Execute the phi stores for that specific edge
-    /// 2. Jump to the actual target
+    /// This is the whole of the fall-through question. A branch may elide its `br` exactly
+    /// when the entry it transfers to is the next one in the emission order — and because
+    /// edge blocks are entries, "is there code in between" is answered by looking at the
+    /// layout rather than by each emitter re-deriving what the others will emit after it.
+    fn edge_destination(&self, from: usize, to: usize) -> LayoutEntry {
+        if self.split_edge_labels.contains_key(&(from, to)) {
+            LayoutEntry::SplitEdge { from, to }
+        } else {
+            LayoutEntry::Block(to)
+        }
+    }
+
+    /// Label a branch along the edge `from → to` must name: the edge's own block when it has
+    /// one, otherwise the target block directly.
+    fn edge_label(&self, from: usize, to: usize) -> String {
+        self.split_edge_labels
+            .get(&(from, to))
+            .cloned()
+            .unwrap_or_else(|| self.block_label(to))
+    }
+
+    /// Generates the block holding the phi copies for one edge.
     ///
-    /// This handles the "critical edge splitting" problem where different predecessors
-    /// need to provide different values to phi nodes.
-    fn emit_branch_with_phi_stores(
+    /// The body is just the parallel copy for that edge followed by a transfer to the real
+    /// target, which is elided when the target is the next entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the edge has no registered label — which would mean the layout
+    /// and [`Self::edge_destination`] disagree — or if emission fails.
+    fn generate_edge_block(
         &mut self,
         encoder: &mut InstructionEncoder,
         ssa: &SsaFunction,
-        current_block_idx: usize,
-        true_target: usize,
-        false_target: usize,
-        next_block_idx: Option<usize>,
+        from: usize,
+        to: usize,
+        next_entry: Option<LayoutEntry>,
     ) -> Result<()> {
-        // Same-target: condition is irrelevant, discard it and emit unconditional branch
-        if true_target == false_target {
-            encoder.emit_instruction("pop", None)?;
-            if self.successor_has_phi_from(ssa, current_block_idx, true_target)? {
-                self.emit_phi_stores_for_successor(encoder, ssa, current_block_idx, true_target)?;
-            }
-            if Some(true_target) != next_block_idx {
-                let label = self
-                    .block_labels
-                    .get(&true_target)
-                    .cloned()
-                    .unwrap_or_else(|| format!("block_{true_target}"));
-                encoder.emit_branch("br", &label)?;
-            }
-            return Ok(());
-        }
-
-        let true_has_phi = self.successor_has_phi_from(ssa, current_block_idx, true_target)?;
-        let false_has_phi = self.successor_has_phi_from(ssa, current_block_idx, false_target)?;
-
-        let true_label = self
-            .block_labels
-            .get(&true_target)
+        let label = self
+            .split_edge_labels
+            .get(&(from, to))
             .cloned()
-            .unwrap_or_else(|| format!("block_{true_target}"));
-        let false_label = self
-            .block_labels
-            .get(&false_target)
-            .cloned()
-            .unwrap_or_else(|| format!("block_{false_target}"));
+            .ok_or_else(|| {
+                Error::CodegenFailed(format!("Missing split-edge label for edge {from} -> {to}"))
+            })?;
 
-        // Simple case: no phi stores needed for either target
-        if !true_has_phi && !false_has_phi {
-            if Some(false_target) == next_block_idx {
-                encoder.emit_branch("brtrue", &true_label)?;
-            } else if Some(true_target) == next_block_idx {
-                encoder.emit_branch("brfalse", &false_label)?;
-            } else {
-                encoder.emit_branch("brtrue", &true_label)?;
-                encoder.emit_branch("br", &false_label)?;
-            }
-            return Ok(());
-        }
+        encoder.define_label(&label)?;
 
-        // Generate unique intermediate label for false path (true path is inline)
-        let phi_false_label = format!("phi_false_{current_block_idx}_{false_target}");
+        // An edge block is reached by a branch or by falling out of its source block, and in
+        // both cases the source has already spilled: the evaluation stack is empty here, so
+        // nothing the source left in `stack_vars` is still on it.
+        self.stack_vars.clear();
 
-        // Emit the conditional branch
-        // Strategy: brfalse to false handling, then handle true path
-        if true_has_phi {
-            encoder.emit_branch(
-                "brfalse",
-                if false_has_phi {
-                    &phi_false_label
-                } else {
-                    &false_label
-                },
-            )?;
+        self.emit_phi_stores_for_successor(encoder, ssa, from, to)?;
 
-            // True path: emit phi stores then jump
-            self.emit_phi_stores_for_successor(encoder, ssa, current_block_idx, true_target)?;
-            if Some(true_target) != next_block_idx {
-                encoder.emit_branch("br", &true_label)?;
-            }
-        } else {
-            // No phi stores for true - just branch directly
-            encoder.emit_branch("brtrue", &true_label)?;
-        }
-
-        // False path handling
-        if false_has_phi {
-            // Define the intermediate label for false path
-            if true_has_phi {
-                encoder.define_label(&phi_false_label)?;
-            }
-            // Emit phi stores for false target
-            self.emit_phi_stores_for_successor(encoder, ssa, current_block_idx, false_target)?;
-            if Some(false_target) != next_block_idx {
-                encoder.emit_branch("br", &false_label)?;
-            }
-        } else if !true_has_phi {
-            // Neither has phi, but we need to handle fallthrough
-            if Some(false_target) != next_block_idx {
-                encoder.emit_branch("br", &false_label)?;
-            }
+        if next_entry != Some(LayoutEntry::Block(to)) {
+            let target_label = self.block_label(to);
+            encoder.emit_branch("br", &target_label)?;
         }
 
         Ok(())
     }
 
-    /// Emits a comparison branch (beq, blt, etc.) with proper phi store handling.
-    #[allow(clippy::too_many_arguments)] // Branch emission requires comparison type, targets, and context
-    fn emit_branch_cmp_with_phi_stores(
+    /// Emits a conditional branch (`brtrue`/`brfalse`).
+    ///
+    /// Phi copies are not this function's concern: any edge that carries them was given its
+    /// own block by [`Self::expand_layout_with_edge_blocks`], so all that is emitted here is
+    /// the branch, naming the edge block where there is one.
+    fn emit_conditional_branch(
         &mut self,
         encoder: &mut InstructionEncoder,
-        ssa: &SsaFunction,
         current_block_idx: usize,
-        cmp: CmpKind,
-        unsigned: bool,
         true_target: usize,
         false_target: usize,
-        next_block_idx: Option<usize>,
+        next_entry: Option<LayoutEntry>,
     ) -> Result<()> {
-        // Same-target: comparison is irrelevant, discard both operands
+        // Same-target: the condition cannot change where control goes, so discard it.
         if true_target == false_target {
             encoder.emit_instruction("pop", None)?;
-            encoder.emit_instruction("pop", None)?;
-            if self.successor_has_phi_from(ssa, current_block_idx, true_target)? {
-                self.emit_phi_stores_for_successor(encoder, ssa, current_block_idx, true_target)?;
-            }
-            if Some(true_target) != next_block_idx {
-                let label = self
-                    .block_labels
-                    .get(&true_target)
-                    .cloned()
-                    .unwrap_or_else(|| format!("block_{true_target}"));
+            if next_entry != Some(self.edge_destination(current_block_idx, true_target)) {
+                let label = self.edge_label(current_block_idx, true_target);
                 encoder.emit_branch("br", &label)?;
             }
             return Ok(());
         }
 
-        let true_has_phi = self.successor_has_phi_from(ssa, current_block_idx, true_target)?;
-        let false_has_phi = self.successor_has_phi_from(ssa, current_block_idx, false_target)?;
+        let true_label = self.edge_label(current_block_idx, true_target);
+        let false_label = self.edge_label(current_block_idx, false_target);
+        let true_dest = self.edge_destination(current_block_idx, true_target);
+        let false_dest = self.edge_destination(current_block_idx, false_target);
 
-        let true_label = self
-            .block_labels
-            .get(&true_target)
-            .cloned()
-            .unwrap_or_else(|| format!("block_{true_target}"));
-        let false_label = self
-            .block_labels
-            .get(&false_target)
-            .cloned()
-            .unwrap_or_else(|| format!("block_{false_target}"));
-
-        // Get the comparison mnemonic and its inverse
-        let (mnemonic, inverse_mnemonic) = match (cmp, unsigned) {
-            (CmpKind::Eq, _) => ("beq", "bne.un"),
-            (CmpKind::Ne, _) => ("bne.un", "beq"),
-            (CmpKind::Lt, false) => ("blt", "bge"),
-            (CmpKind::Lt, true) => ("blt.un", "bge.un"),
-            (CmpKind::Le, false) => ("ble", "bgt"),
-            (CmpKind::Le, true) => ("ble.un", "bgt.un"),
-            (CmpKind::Gt, false) => ("bgt", "ble"),
-            (CmpKind::Gt, true) => ("bgt.un", "ble.un"),
-            (CmpKind::Ge, false) => ("bge", "blt"),
-            (CmpKind::Ge, true) => ("bge.un", "blt.un"),
-        };
-
-        // Simple case: no phi stores needed for either target
-        if !true_has_phi && !false_has_phi {
-            encoder.emit_branch(mnemonic, &true_label)?;
-            if Some(false_target) != next_block_idx {
-                encoder.emit_branch("br", &false_label)?;
-            }
-            return Ok(());
-        }
-
-        // Generate unique intermediate labels
-        let phi_false_label = format!("phi_false_{current_block_idx}_{false_target}");
-
-        if true_has_phi {
-            // Use inverse condition to branch to false handling, then handle true inline
-            encoder.emit_branch(
-                inverse_mnemonic,
-                if false_has_phi {
-                    &phi_false_label
-                } else {
-                    &false_label
-                },
-            )?;
-
-            // True path: emit phi stores then jump
-            self.emit_phi_stores_for_successor(encoder, ssa, current_block_idx, true_target)?;
-            if Some(true_target) != next_block_idx {
-                encoder.emit_branch("br", &true_label)?;
-            }
+        if next_entry == Some(false_dest) {
+            encoder.emit_branch("brtrue", &true_label)?;
+        } else if next_entry == Some(true_dest) {
+            // `brfalse` is the exact complement of `brtrue`: both test one value against
+            // zero/null, so there is no third outcome to mishandle. That is what makes the
+            // inversion safe here and *not* safe for the comparison branches below.
+            encoder.emit_branch("brfalse", &false_label)?;
         } else {
-            // No phi stores for true - just branch directly
-            encoder.emit_branch(mnemonic, &true_label)?;
-        }
-
-        // False path handling
-        if false_has_phi {
-            if true_has_phi {
-                encoder.define_label(&phi_false_label)?;
-            }
-            self.emit_phi_stores_for_successor(encoder, ssa, current_block_idx, false_target)?;
-            if Some(false_target) != next_block_idx {
-                encoder.emit_branch("br", &false_label)?;
-            }
-        } else if !true_has_phi && Some(false_target) != next_block_idx {
+            encoder.emit_branch("brtrue", &true_label)?;
             encoder.emit_branch("br", &false_label)?;
         }
 
         Ok(())
     }
 
-    /// Emits a switch instruction with proper phi store handling.
+    /// Emits a comparison branch (`beq`, `blt`, …).
     ///
-    /// For each switch target that has phi nodes from the current block,
-    /// we create an intermediate block that executes the phi stores and
-    /// then jumps to the actual target.
-    fn emit_switch_with_phi_stores(
+    /// As with [`Self::emit_conditional_branch`], phi copies live in their own blocks and are
+    /// not emitted here.
+    // The comparison kind and its signedness select the mnemonic, and both edges are needed to
+    // decide which one can fall through; neither pair compresses into a type that would carry
+    // its own meaning.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_comparison_branch(
         &mut self,
         encoder: &mut InstructionEncoder,
-        ssa: &SsaFunction,
+        current_block_idx: usize,
+        cmp: CmpKind,
+        unsigned: bool,
+        true_target: usize,
+        false_target: usize,
+        next_entry: Option<LayoutEntry>,
+    ) -> Result<()> {
+        // Same-target: the comparison cannot change where control goes, so discard both
+        // operands rather than evaluating it.
+        if true_target == false_target {
+            encoder.emit_instruction("pop", None)?;
+            encoder.emit_instruction("pop", None)?;
+            if next_entry != Some(self.edge_destination(current_block_idx, true_target)) {
+                let label = self.edge_label(current_block_idx, true_target);
+                encoder.emit_branch("br", &label)?;
+            }
+            return Ok(());
+        }
+
+        let true_label = self.edge_label(current_block_idx, true_target);
+        let false_label = self.edge_label(current_block_idx, false_target);
+        let false_dest = self.edge_destination(current_block_idx, false_target);
+
+        // Only the comparison as written is needed; there is no inverse-mnemonic table
+        // because the branch below never inverts. See the note there for why ordered
+        // complements are wrong for floats.
+        let mnemonic = match (cmp, unsigned) {
+            (CmpKind::Eq, _) => "beq",
+            (CmpKind::Ne, _) => "bne.un",
+            (CmpKind::Lt, false) => "blt",
+            (CmpKind::Lt, true) => "blt.un",
+            (CmpKind::Le, false) => "ble",
+            (CmpKind::Le, true) => "ble.un",
+            (CmpKind::Gt, false) => "bgt",
+            (CmpKind::Gt, true) => "bgt.un",
+            (CmpKind::Ge, false) => "bge",
+            (CmpKind::Ge, true) => "bge.un",
+        };
+
+        // Always branch on the comparison as written, never on its complement.
+        //
+        // A complement table built from *ordered* opposites (`blt`/`bge`, `ble`/`bgt`, …) is
+        // wrong for floats: with a NaN operand every ordered comparison is false, so both
+        // `blt` and `bge` are false and the inverted branch sends the NaN case down the true
+        // edge — precisely the edge the comparison rejected. The complement can only be
+        // stated correctly once the operand type is known, since `.un` means *unordered* for
+        // floats but *unsigned* for integers. Emitting the original mnemonic sidesteps the
+        // question entirely: no inversion, no type dependence.
+        encoder.emit_branch(mnemonic, &true_label)?;
+        if next_entry != Some(false_dest) {
+            encoder.emit_branch("br", &false_label)?;
+        }
+
+        Ok(())
+    }
+
+    /// Emits a switch instruction and the transfer along its default edge.
+    ///
+    /// Each case edge names its own edge block where it has one, which keeps the switch a
+    /// plain jump table: nothing is woven between the instruction and the default branch.
+    fn emit_switch_branch(
+        &mut self,
+        encoder: &mut InstructionEncoder,
         current_block_idx: usize,
         targets: &[usize],
         default: usize,
-        next_block_idx: Option<usize>,
+        next_entry: Option<LayoutEntry>,
     ) -> Result<()> {
-        // Determine which targets need phi stores
-        let mut needs_intermediate: Vec<bool> = Vec::with_capacity(targets.len());
-        for &target in targets {
-            needs_intermediate.push(self.successor_has_phi_from(ssa, current_block_idx, target)?);
-        }
-        let default_needs_intermediate =
-            self.successor_has_phi_from(ssa, current_block_idx, default)?;
+        let switch_labels: Vec<String> = targets
+            .iter()
+            .map(|&target| self.edge_label(current_block_idx, target))
+            .collect();
 
-        // Build the label list for the switch instruction
-        // Use intermediate labels for targets that need phi stores
-        let mut switch_labels: Vec<String> = Vec::with_capacity(targets.len());
-        for (i, &target) in targets.iter().enumerate() {
-            if needs_intermediate.get(i).copied().unwrap_or(false) {
-                switch_labels.push(format!("phi_switch_{current_block_idx}_{i}"));
-            } else {
-                switch_labels.push(
-                    self.block_labels
-                        .get(&target)
-                        .cloned()
-                        .unwrap_or_else(|| format!("block_{target}")),
-                );
-            }
-        }
-
-        // Emit the switch instruction
         let label_refs: Vec<&str> = switch_labels.iter().map(String::as_str).collect();
         encoder.emit_switch(&label_refs)?;
 
-        // Emit jump to default (or intermediate for default)
-        let default_label = self
-            .block_labels
-            .get(&default)
-            .cloned()
-            .unwrap_or_else(|| format!("block_{default}"));
-
-        if default_needs_intermediate {
-            let default_intermediate = format!("phi_switch_{current_block_idx}_default");
-            if Some(default) != next_block_idx {
-                encoder.emit_branch("br", &default_intermediate)?;
-            }
-
-            // Emit intermediate blocks for targets that need phi stores
-            for (i, &target) in targets.iter().enumerate() {
-                if needs_intermediate.get(i).copied().unwrap_or(false) {
-                    let intermediate_label = format!("phi_switch_{current_block_idx}_{i}");
-                    encoder.define_label(&intermediate_label)?;
-                    self.emit_phi_stores_for_successor(encoder, ssa, current_block_idx, target)?;
-                    let target_label = self
-                        .block_labels
-                        .get(&target)
-                        .cloned()
-                        .unwrap_or_else(|| format!("block_{target}"));
-                    encoder.emit_branch("br", &target_label)?;
-                }
-            }
-
-            // Emit intermediate block for default
-            encoder.define_label(&default_intermediate)?;
-            self.emit_phi_stores_for_successor(encoder, ssa, current_block_idx, default)?;
-            if Some(default) != next_block_idx {
-                encoder.emit_branch("br", &default_label)?;
-            }
-        } else {
-            // Default doesn't need phi stores
-            if Some(default) != next_block_idx {
-                encoder.emit_branch("br", &default_label)?;
-            }
-
-            // Emit intermediate blocks for targets that need phi stores
-            for (i, &target) in targets.iter().enumerate() {
-                if needs_intermediate.get(i).copied().unwrap_or(false) {
-                    let intermediate_label = format!("phi_switch_{current_block_idx}_{i}");
-                    encoder.define_label(&intermediate_label)?;
-                    self.emit_phi_stores_for_successor(encoder, ssa, current_block_idx, target)?;
-                    let target_label = self
-                        .block_labels
-                        .get(&target)
-                        .cloned()
-                        .unwrap_or_else(|| format!("block_{target}"));
-                    encoder.emit_branch("br", &target_label)?;
-                }
-            }
+        // Falling out of a switch is the default edge.
+        if next_entry != Some(self.edge_destination(current_block_idx, default)) {
+            let default_label = self.edge_label(current_block_idx, default);
+            encoder.emit_branch("br", &default_label)?;
         }
 
         Ok(())

@@ -93,7 +93,7 @@
 //! propagation in concurrent parsing and analysis operations.
 //!
 
-use std::io;
+use std::{io, sync::Arc};
 
 use thiserror::Error;
 
@@ -117,9 +117,9 @@ impl std::fmt::Display for EmulationError {
 
 /// Helper macro for creating malformed data errors with source location information.
 ///
-/// This macro simplifies the creation of [`crate::Error::Malformed`] errors by automatically
-/// capturing the current file and line number. It supports both simple string messages
-/// and format string patterns with arguments.
+/// This macro simplifies the creation of malformed-data errors by automatically capturing the
+/// current file and line number. It supports both simple string messages and format string
+/// patterns with arguments.
 ///
 /// # Arguments
 ///
@@ -128,8 +128,9 @@ impl std::fmt::Display for EmulationError {
 ///
 /// # Returns
 ///
-/// Returns a [`crate::Error::Malformed`] variant with the provided message and
-/// automatically captured source location information.
+/// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`] at
+/// [`crate::ParseStage::Generic`], with the provided message and automatically captured
+/// source location information.
 ///
 /// # Examples
 ///
@@ -203,8 +204,9 @@ macro_rules! out_of_bounds_error {
 /// # Error Categories
 ///
 /// ## File Parsing Errors
-/// - [`crate::Error::Malformed`] - Corrupted or invalid file structure
-/// - [`crate::Error::OutOfBounds`] - Attempted to read beyond file boundaries
+/// - [`crate::Error::Parse`] - Corrupted structure, truncation, or a read past the end of the
+///   input; the [`crate::ParseFailure`] it carries says which, and its [`crate::ParseStage`]
+///   says where
 /// - [`crate::Error::NotSupported`] - Unsupported file format or feature
 ///
 /// ## I/O and External Errors
@@ -229,7 +231,8 @@ macro_rules! out_of_bounds_error {
 /// This error enum is [`std::marker::Send`] and [`std::marker::Sync`] as all variants contain thread-safe types.
 /// This includes owned strings, primitive values, and errors from external crates that are themselves
 /// thread-safe. Errors can be safely passed between threads and shared across thread boundaries.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
 pub enum Error {
     // File parsing Errors
     /// This file type is not supported.
@@ -243,8 +246,13 @@ pub enum Error {
     ///
     /// Wraps standard I/O errors that can occur during file operations
     /// such as reading from disk, permission issues, or filesystem errors.
+    ///
+    /// Held behind an `Arc` because [`io::Error`] is not [`Clone`], and this enum is. Without
+    /// it `Clone` cannot be derived, and a hand-written one has to decide what to do with
+    /// this variant — the answer being to flatten it into a string, which loses the
+    /// [`io::ErrorKind`] a caller matches on.
     #[error("{0}")]
-    Io(#[from] io::Error),
+    Io(Arc<io::Error>),
 
     /// Other errors that don't fit specific categories.
     ///
@@ -259,8 +267,10 @@ pub enum Error {
     ///
     /// The goblin crate is used for low-level PE format parsing.
     /// This error wraps any failures from that parsing layer.
+    ///
+    /// `Arc`-wrapped for the same reason as [`Io`](Self::Io).
     #[error("{0}")]
-    Goblin(#[from] goblin::error::Error),
+    Goblin(Arc<goblin::error::Error>),
 
     /// Failed to find type in `TypeSystem`.
     ///
@@ -285,8 +295,7 @@ pub enum Error {
     /// Wraps a [`ParseFailure`] so consumers can categorize parse failures
     /// (truncated headers, bad magic, unsupported schemas, heap corruption,
     /// invalid fields) without parsing string messages. Returned by every
-    /// parse-pipeline error site in [`crate::file`], [`crate::metadata::root`],
-    /// and [`crate::metadata::streams`].
+    /// parse-pipeline error site in the file, metadata-root and stream parsers.
     ///
     /// Match on `Error::Parse(_)` to recover the structured failure, or on a
     /// specific variant of [`ParseFailure`] to react to a particular failure
@@ -621,7 +630,7 @@ pub enum Error {
 /// Failure modes for method-by-token lookups.
 ///
 /// Returned by [`crate::CilObject::method`] and
-/// [`crate::CilObject::method_spec`]. Propagates into [`Error`] via the
+/// [`crate::CilObject::method_spec`]. Propagates into [`enum@Error`] via the
 /// [`Error::LookupMethod`] variant — call sites that already use
 /// `Result<_, Error>` can propagate with `?` without manual conversion.
 ///
@@ -640,7 +649,7 @@ pub enum MethodLookupError {
     /// inspect [`crate::metadata::method::Method::rva_kind`] to see why no IL
     /// is present.
     ///
-    /// [`MethodDef`]: crate::metadata::tables::MethodDef
+    /// [`MethodDef`]: crate::metadata::tables::MethodDefRaw
     #[error("MethodDef token {0} not found")]
     NotFound(Token),
 
@@ -823,13 +832,11 @@ impl std::fmt::Display for StreamKind {
 
 /// Structured parse-pipeline failure.
 ///
-/// Reported through [`Error::Parse`] for every error site in
-/// [`crate::file`], [`crate::metadata::root`], and
-/// [`crate::metadata::streams`], plus per-table parse paths that read raw
-/// PE/metadata bytes. Replaces the stringly-typed [`Error::Malformed`] /
-/// [`Error::OutOfBounds`] / [`Error::HeapBoundsError`] variants for parse
-/// sites — those remain valid for non-parse code (validation, lookups,
-/// emulation), but new parse code must use [`ParseFailure`].
+/// Reported through [`Error::Parse`] for every error site in the file, metadata-root and
+/// stream parsers, plus per-table parse paths that read raw
+/// PE/metadata bytes. This replaced the stringly-typed `Malformed` / `OutOfBounds` /
+/// `HeapBoundsError` variants, which no longer exist; every parse site reports through
+/// [`ParseFailure`].
 ///
 /// # Stability
 ///
@@ -933,47 +940,22 @@ pub enum ParseFailure {
     },
 }
 
-impl Clone for Error {
-    fn clone(&self) -> Self {
-        match self {
-            // Handle non-cloneable variants by converting to string representation
-            Error::Io(io_err) => Error::Other(io_err.to_string()),
-            Error::Goblin(goblin_err) => Error::Other(goblin_err.to_string()),
-            // For validation errors that have Box<Error> sources, clone them recursively
-            Error::ValidationStage1Failed { source, message } => Error::ValidationStage1Failed {
-                source: source.clone(),
-                message: message.clone(),
-            },
-            Error::ValidationRawFailed { validator, message } => Error::ValidationRawFailed {
-                validator: validator.clone(),
-                message: message.clone(),
-            },
-            Error::ValidationOwnedFailed { validator, message } => Error::ValidationOwnedFailed {
-                validator: validator.clone(),
-                message: message.clone(),
-            },
-            // Emulation errors are cloneable (boxed)
-            Error::Emulation(e) => Error::Emulation(e.clone()),
-            // Deobfuscation errors are cloneable
-            Error::Deobfuscation(s) => Error::Deobfuscation(s.clone()),
-            // X86 errors are cloneable
-            Error::X86Error(s) => Error::X86Error(s.clone()),
-            // Tracing errors are cloneable
-            Error::TracingError(s) => Error::TracingError(s.clone()),
-            // Method-lookup errors are pure data and Clone-derived.
-            Error::LookupMethod(e) => Error::LookupMethod(e.clone()),
-            // Parse failures are pure data and Clone-derived.
-            Error::Parse(e) => Error::Parse(e.clone()),
-            // For all other variants, convert to their string representation and use Other
-            other => Error::Other(other.to_string()),
-        }
+impl From<io::Error> for Error {
+    fn from(err: io::Error) -> Self {
+        Error::Io(Arc::new(err))
+    }
+}
+
+impl From<goblin::error::Error> for Error {
+    fn from(err: goblin::error::Error) -> Self {
+        Error::Goblin(Arc::new(err))
     }
 }
 
 impl From<cowfile::Error> for Error {
     fn from(err: cowfile::Error) -> Self {
         match err {
-            cowfile::Error::Io(io_err) => Error::Io(io_err),
+            cowfile::Error::Io(io_err) => Error::Io(Arc::new(io_err)),
             cowfile::Error::OutOfBounds { .. } => Error::Parse(ParseFailure::OutOfBounds {
                 stage: ParseStage::Generic,
             }),
@@ -998,5 +980,63 @@ impl From<analyssa::GraphError> for Error {
 impl From<Error> for analyssa::Error {
     fn from(err: Error) -> Self {
         analyssa::Error::new(err.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `Clone` must preserve the variant.
+    ///
+    /// A hand-written `Clone` with a wildcard arm flattens most variants into
+    /// `Error::Other(String)`, so `matches!(e, Error::NotSupported)` is true before the clone
+    /// and false after — a contract violation no compiler catches. Deriving `Clone` is what
+    /// makes that impossible; this pins the property rather than the derive.
+    #[test]
+    fn clone_preserves_the_variant() {
+        let cases = [
+            Error::NotSupported,
+            Error::TypeNotFound(Token::new(0x0200_0001)),
+            Error::RecursionLimit(32),
+            Error::Other("plain".to_string()),
+        ];
+
+        for error in cases {
+            let cloned = error.clone();
+            assert_eq!(
+                std::mem::discriminant(&error),
+                std::mem::discriminant(&cloned),
+                "clone changed the variant of {error:?}"
+            );
+            assert_eq!(error.to_string(), cloned.to_string());
+        }
+    }
+
+    /// The nested error list of a stage-2 failure must survive a clone; a wildcard arm keeps
+    /// only the one-line summary and discards every nested `Error`.
+    #[test]
+    fn clone_preserves_nested_validation_errors() {
+        let nested = Error::ValidationStage2Failed {
+            errors: vec![Error::NotSupported, Error::RecursionLimit(32)],
+            error_count: 2,
+            summary: "two failures".to_string(),
+        };
+
+        let Error::ValidationStage2Failed { errors, .. } = nested.clone() else {
+            panic!("clone changed the variant");
+        };
+        assert_eq!(errors.len(), 2);
+    }
+
+    /// An `io::Error`'s kind must survive a clone; stringifying it loses what callers match on.
+    #[test]
+    fn clone_preserves_the_io_error_kind() {
+        let error = Error::from(io::Error::new(io::ErrorKind::PermissionDenied, "denied"));
+
+        let Error::Io(cloned) = error.clone() else {
+            panic!("clone changed the variant");
+        };
+        assert_eq!(cloned.kind(), io::ErrorKind::PermissionDenied);
     }
 }

@@ -1,13 +1,31 @@
 # Makefile for dotscope development
 # Provides convenient commands for common development tasks
 
-.PHONY: help build test clean fmt clippy doc bench fuzz install coverage audit
+# Doc tests link one binary per fenced example, and `[profile.release]` uses
+# `lto = "fat"`, so each link is a whole-crate LTO job costing gigabytes of RAM. The
+# harness defaults to one thread per core, which on a many-core machine means dozens of
+# those at once and an out-of-memory freeze. Cap the concurrency instead; override with
+# `make test-doc DOC_TEST_THREADS=n`.
+#
+# `.cargo/config.toml` sets `RUST_TEST_THREADS = "8"` so that guard also holds for anyone
+# who runs cargo directly instead of going through this file. This default matches it:
+# a value above the config's guard would silently defeat it, since an explicit
+# `-- --test-threads=N` always wins over cargo's `[env]`.
+#
+# Unit tests are cheap per test and want every core, so the `test` target exports its own
+# `RUST_TEST_THREADS` to opt back out -- cargo's `[env]` deliberately does not override a
+# variable that is already set.
+DOC_TEST_THREADS ?= 8
+TEST_THREADS ?= $(shell nproc 2>/dev/null || echo 8)
+
+.PHONY: help build test test-doc clean fmt clippy doc bench fuzz install coverage audit
 
 # Default target
 help:
 	@echo "Available targets:"
 	@echo "  build     - Build the project"
 	@echo "  test      - Run all tests"
+	@echo "  test-doc  - Run doc tests (memory-bounded; see DOC_TEST_THREADS)"
 	@echo "  clean     - Clean build artifacts"
 	@echo "  fmt       - Format code"
 	@echo "  clippy    - Run clippy lints"
@@ -28,8 +46,20 @@ build-release:
 	cargo build --release --all-features
 
 # Run tests
+#
+# Release profile is mandatory, not a speed preference: the sample-driven integration tests
+# run the full detection -> SSA -> pass-pipeline -> codegen path over real packed binaries,
+# which takes hours unoptimised and tens of seconds optimised.
+# `--lib --bins --tests` excludes doc tests, which have their own target below because they
+# need a concurrency cap this run does not.
 test:
-	cargo test --workspace --all-features --verbose
+	RUST_TEST_THREADS=$(TEST_THREADS) cargo test --workspace --release --all-features --lib --bins --tests --verbose
+
+# Run doc tests
+#
+# Split out from `test` and concurrency-capped: see DOC_TEST_THREADS at the top of this file.
+test-doc:
+	cargo test --workspace --release --all-features --doc -- --test-threads=$(DOC_TEST_THREADS)
 
 # Run tests with coverage
 test-coverage:
@@ -67,8 +97,18 @@ bench:
 	cargo bench --all-features
 
 # Run fuzzing
+# Runs every target in turn, each seeded from the committed crash corpus. Override the target
+# with `make fuzz FUZZ_TARGETS=signatures`, or the duration with `FUZZ_TIME=300`.
+FUZZ_TARGETS ?= cilobject assemblyview signatures customattributes methodbody emulation
+FUZZ_TIME ?= 60
+
 fuzz:
-	cd fuzz && cargo +nightly fuzz run cilobject -- -max_total_time=60
+	@for t in $(FUZZ_TARGETS); do \
+		echo "=== fuzzing $$t ==="; \
+		mkdir -p dotscope/fuzz/corpus/$$t; \
+		cp dotscope/tests/samples/fuzz-regressions/* dotscope/fuzz/corpus/$$t/ 2>/dev/null || true; \
+		(cd dotscope/fuzz && cargo +nightly fuzz run $$t -- -max_total_time=$(FUZZ_TIME)) || exit 1; \
+	done
 
 # Install development tools
 install:
@@ -89,7 +129,7 @@ outdated:
 	cargo outdated
 
 # Run all checks
-check-all: fmt-check clippy test audit
+check-all: fmt-check clippy test test-doc audit
 	@echo "All checks passed!"
 
 # Prepare for release
@@ -102,5 +142,5 @@ dev: fmt clippy test
 	@echo "Development cycle completed"
 
 # CI simulation (run what CI runs)
-ci: fmt-check clippy test doc
+ci: fmt-check clippy test test-doc doc
 	@echo "CI simulation completed"

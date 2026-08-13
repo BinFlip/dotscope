@@ -65,6 +65,7 @@
 //!
 //! ```rust,no_run
 //! use dotscope::metadata::typesystem::{TypeRegistry, CilType, TypeSource};
+//! use dotscope::metadata::method::MethodRefList;
 //! use dotscope::metadata::tables::TypeAttributes;
 //! use dotscope::metadata::identity::AssemblyIdentity;
 //! use dotscope::metadata::token::Token;
@@ -83,7 +84,7 @@
 //!     None, // No base type yet
 //!     TypeAttributes::new(0x00100001), // Public class
 //!     Arc::new(boxcar::Vec::new()), // Empty fields
-//!     Arc::new(boxcar::Vec::new()), // Empty methods
+//!     MethodRefList::new(), // Empty methods, allocated on first push
 //!     None, // Flavor will be computed
 //! );
 //!
@@ -106,9 +107,12 @@
 //! - Generic type instantiations
 //! - Cross-assembly type resolution
 
-use std::sync::{
-    atomic::{AtomicU32, Ordering},
-    Arc,
+use std::{
+    collections::BTreeSet,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    },
 };
 
 use crossbeam_skiplist::SkipMap;
@@ -127,6 +131,7 @@ use crate::{
             CilTypeReference, PointerSize, TypeSignatureHash,
         },
     },
+    utils::LazyList,
     Error::TypeNotFound,
     Result,
 };
@@ -377,6 +382,12 @@ struct SourceRegistry {
     assembly_refs: DashMap<Token, AssemblyRefRc>,
     /// File references indexed by their metadata tokens
     files: DashMap<Token, FileRc>,
+    /// Memoised `TypeSource` per defining-assembly token.
+    ///
+    /// Deriving an `AssemblyIdentity` from an `Assembly` row rebuilds its name, culture and
+    /// public-key blob. Every locally-defined type resolves to the same one, so it is
+    /// derived once per assembly rather than once per type.
+    assembly_sources: DashMap<Token, TypeSource>,
 }
 
 impl SourceRegistry {
@@ -393,6 +404,7 @@ impl SourceRegistry {
             module_refs: DashMap::new(),
             assembly_refs: DashMap::new(),
             files: DashMap::new(),
+            assembly_sources: DashMap::new(),
         }
     }
 
@@ -429,7 +441,17 @@ impl SourceRegistry {
                 TypeSource::AssemblyRef(assembly_ref.token)
             }
             CilTypeReference::Assembly(assembly) => {
-                TypeSource::Assembly(AssemblyIdentity::from_assembly(assembly))
+                // Reached once per type that names the defining assembly as its source.
+                // `from_assembly` is worse than a clone — it re-clones the name and culture
+                // and rebuilds the public-key blob — and the result is identical for every
+                // one of them, so it is derived once and reused.
+                if let Some(cached) = self.assembly_sources.get(&assembly.token) {
+                    return cached.value().clone();
+                }
+
+                let source = TypeSource::Assembly(AssemblyIdentity::from_assembly(assembly));
+                self.assembly_sources.insert(assembly.token, source.clone());
+                source
             }
             CilTypeReference::File(file) => {
                 self.files.insert(file.token, file.clone());
@@ -559,16 +581,41 @@ pub struct TypeRegistry {
     /// Identity of the assembly this registry represents
     current_assembly: AssemblyIdentity,
     /// Secondary index: types grouped by their origin source
-    types_by_source: DashMap<TypeSource, Vec<Token>>,
+    ///
+    /// The four indices below hold `BTreeSet`s rather than `Vec`s because the TypeRef
+    /// redirect sweep removes a token from each of them per resolved TypeRef, and a linear
+    /// `retain` over lists that keep growing makes that sweep quadratic in TypeRef count.
+    /// Ordered rather than hashed so that iteration — which decides *which* type a
+    /// duplicated name resolves to — stays deterministic across runs.
+    types_by_source: DashMap<TypeSource, BTreeSet<Token>>,
     /// Secondary index: types indexed by full name (namespace.name)
-    types_by_fullname: DashMap<String, Vec<Token>>,
+    types_by_fullname: DashMap<Arc<str>, BTreeSet<Token>>,
     /// Secondary index: types indexed by simple name (may have duplicates)
-    types_by_name: DashMap<String, Vec<Token>>,
+    types_by_name: DashMap<String, BTreeSet<Token>>,
     /// Secondary index: types grouped by namespace
-    types_by_namespace: DashMap<String, Vec<Token>>,
+    types_by_namespace: DashMap<String, BTreeSet<Token>>,
+    /// Secondary index: nested types keyed by the last component of their fullname.
+    ///
+    /// A TypeRef may name a nested type by its inner name alone (`Enumerator`2`) while the
+    /// TypeDef carries the full path (`NS.Partitioner/Enumerator`2`). Resolving that without
+    /// an index means an `ends_with` scan of every registered fullname on *every* exact-name
+    /// miss, and the custom-attribute parser drives two such misses per fixed argument.
+    types_by_nested_suffix: DashMap<Arc<str>, BTreeSet<Token>>,
     /// Registered external TypeRegistries for cross-assembly type resolution
     /// Maps AssemblyIdentity to external TypeRegistry for cross-assembly lookups
     external_registries: DashMap<AssemblyIdentity, Arc<TypeRegistry>>,
+    /// Secondary index: MethodDef token to the token of its declaring type.
+    ///
+    /// Without this, `TypeResolver::declaring_type` answers the MethodDef case by scanning
+    /// every type and, inside that, every method — upgrading a `Weak` per candidate. That
+    /// lookup sits on the emulator's hottest paths (`call`/`callvirt`/`newobj`), so an O(1)
+    /// answer here is what keeps dispatch from degrading to O(total methods in assembly).
+    method_to_type: DashMap<Token, Token>,
+    /// Secondary index: FieldDef token to the token of its declaring type.
+    ///
+    /// Same rationale as [`method_to_type`](Self::method_to_type), for the `ldsfld`/`stsfld`
+    /// paths.
+    field_to_type: DashMap<Token, Token>,
 }
 
 impl TypeRegistry {
@@ -625,7 +672,10 @@ impl TypeRegistry {
             types_by_fullname: DashMap::new(),
             types_by_name: DashMap::new(),
             types_by_namespace: DashMap::new(),
+            types_by_nested_suffix: DashMap::new(),
             external_registries: DashMap::new(),
+            method_to_type: DashMap::new(),
+            field_to_type: DashMap::new(),
         };
 
         registry.initialize_primitives()?;
@@ -694,7 +744,7 @@ impl TypeRegistry {
                 None,
                 TypeAttributes::ZERO,
                 Arc::new(boxcar::Vec::new()),
-                Arc::new(boxcar::Vec::new()),
+                LazyList::new(),
                 Some(flavor),
             ));
 
@@ -780,24 +830,41 @@ impl TypeRegistry {
         self.types_by_source
             .entry(source)
             .or_default()
-            .push(type_rc.token);
+            .insert(type_rc.token);
 
         if !type_rc.namespace.is_empty() {
             self.types_by_namespace
                 .entry(type_rc.namespace.clone())
                 .or_default()
-                .push(type_rc.token);
+                .insert(type_rc.token);
         }
 
         self.types_by_name
             .entry(type_rc.name.clone())
             .or_default()
-            .push(type_rc.token);
+            .insert(type_rc.token);
 
+        let fullname = type_rc.fullname();
+        self.index_nested_suffix(&fullname, type_rc.token);
         self.types_by_fullname
-            .entry(type_rc.fullname())
+            .entry(fullname)
             .or_default()
-            .push(type_rc.token);
+            .insert(type_rc.token);
+    }
+
+    /// Indexes a nested type under the last component of its fullname.
+    ///
+    /// Non-nested names are skipped: they are already answered exactly by
+    /// `types_by_fullname`, and indexing them would make the suffix map a second copy of it.
+    fn index_nested_suffix(&self, fullname: &str, token: Token) {
+        if let Some(last) = fullname.rsplit('/').next() {
+            if last.len() != fullname.len() {
+                self.types_by_nested_suffix
+                    .entry(Arc::from(last))
+                    .or_default()
+                    .insert(token);
+            }
+        }
     }
 
     /// Insert a `CilType` into the registry
@@ -828,7 +895,7 @@ impl TypeRegistry {
             None,
             TypeAttributes::ZERO,
             Arc::new(boxcar::Vec::new()),
-            Arc::new(boxcar::Vec::new()),
+            LazyList::new(),
             None,
         ));
 
@@ -854,7 +921,7 @@ impl TypeRegistry {
             None,
             TypeAttributes::ZERO,
             Arc::new(boxcar::Vec::new()),
-            Arc::new(boxcar::Vec::new()),
+            LazyList::new(),
             Some(flavor),
         ));
 
@@ -1014,7 +1081,7 @@ impl TypeRegistry {
             }
         }
 
-        if let Some(tokens) = self.types_by_fullname.get(&fullname) {
+        if let Some(tokens) = self.types_by_fullname.get(fullname.as_str()) {
             if let Some(&token) = tokens.first() {
                 return self.types.get(&token).map(|res| res.value().clone());
             }
@@ -1157,37 +1224,33 @@ impl TypeRegistry {
                 }
             }
         } else {
-            // Fallback: try suffix matching for nested types
-            // This handles cases where TypeRef has incomplete name (e.g., "DynamicPartitionEnumerator_Abstract`2")
-            // but TypeDef has complete name (e.g., "Partitioner/DynamicPartitionEnumerator_Abstract`2")
-            let mut candidates = Vec::new();
-            for key_entry in &self.types_by_fullname {
-                let key = key_entry.key();
-                let tokens = key_entry.value();
+            // Fallback: suffix matching for nested types. A TypeRef may carry the inner name
+            // alone (`DynamicPartitionEnumerator_Abstract`2`) where the TypeDef carries the
+            // whole path (`Partitioner/DynamicPartitionEnumerator_Abstract`2`).
+            //
+            // `types_by_nested_suffix` narrows this to the types whose fullname ends in the
+            // same *component*; the `ends_with` below then confirms the full requested
+            // suffix, so a multi-component request still matches exactly as before. Only
+            // matches that cut a component in half — `Bar` against `A/FooBar` — are no
+            // longer accepted, and those were never nested-type resolutions.
+            let requested_suffix = fullname.rsplit('/').next().unwrap_or(fullname);
+            if let Some(tokens) = self.types_by_nested_suffix.get(requested_suffix) {
+                for token in tokens.value() {
+                    let Some(entry) = self.types.get(token) else {
+                        continue;
+                    };
+                    let type_rc = entry.value().clone();
+                    if !type_rc.token.is_table(TableId::TypeDef)
+                        && !type_rc.token.is_table(TableId::TypeSpec)
+                    {
+                        continue;
+                    }
 
-                // Check if this key ends with our target fullname (handling nested types)
-                if key.ends_with(fullname) && key != fullname {
-                    // Additional check: ensure it's a proper nested type match (contains '/')
-                    if key.contains('/') {
-                        // Check tokens for TypeDef or TypeSpec
-                        for token in tokens {
-                            if let Some(entry) = self.types.get(token) {
-                                let type_rc = entry.value().clone();
-                                if type_rc.token.is_table(TableId::TypeDef)
-                                    || type_rc.token.is_table(TableId::TypeSpec)
-                                {
-                                    candidates.push(type_rc);
-                                    break; // Take first TypeDef/TypeSpec found
-                                }
-                            }
-                        }
+                    let candidate = type_rc.fullname();
+                    if candidate.ends_with(fullname) && &*candidate != fullname {
+                        return Some(type_rc);
                     }
                 }
-            }
-
-            // Return first candidate (could be enhanced with disambiguation logic)
-            if let Some(candidate) = candidates.first() {
-                return Some(candidate.clone());
             }
         }
 
@@ -1467,7 +1530,7 @@ impl TypeRegistry {
             None,
             flags,
             Arc::new(boxcar::Vec::new()),
-            Arc::new(boxcar::Vec::new()),
+            LazyList::new(),
             Some(spec.flavor.clone()),
         ));
 
@@ -1555,7 +1618,7 @@ impl TypeRegistry {
                     instantiation: SignatureMethodSpec {
                         generic_args: vec![],
                     },
-                    custom_attributes: Arc::new(boxcar::Vec::new()),
+                    custom_attributes: LazyList::new(),
                     generic_args: {
                         let type_ref_list = Arc::new(boxcar::Vec::with_capacity(1));
                         type_ref_list.push(arg_type.clone().into());
@@ -1585,11 +1648,67 @@ impl TypeRegistry {
     }
 
     /// Get all types in the registry
+    ///
+    /// Prefer [`iter`](Self::iter) where a borrow suffices: this clones an `Arc` per type, so
+    /// each call is a heap allocation plus two atomic RMWs per type in the assembly.
     pub fn all_types(&self) -> Vec<CilTypeRc> {
         self.types
             .iter()
             .map(|entry| entry.value().clone())
             .collect()
+    }
+
+    /// Returns the token of the type declaring `method_token`, or `None` if no type claims it.
+    ///
+    /// The first lookup for a given token scans the registry; the answer is then memoised, so
+    /// repeated dispatch to the same method — the emulator's actual access pattern, since a hot
+    /// loop calls the same handful of methods — is O(1) thereafter.
+    ///
+    /// Memoisation is on demand rather than built once at load because a type's method list is
+    /// populated *after* the type itself is registered; an eagerly built index could be
+    /// permanently cached while incomplete.
+    #[must_use]
+    pub fn declaring_type_token_of_method(&self, method_token: Token) -> Option<Token> {
+        if let Some(cached) = self.method_to_type.get(&method_token) {
+            return Some(*cached);
+        }
+
+        for entry in self.types.iter() {
+            let type_token = *entry.key();
+            for (_, method_ref) in entry.value().methods.iter() {
+                if let Some(method) = method_ref.upgrade() {
+                    if method.token == method_token {
+                        self.method_to_type.insert(method_token, type_token);
+                        return Some(type_token);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Returns the token of the type declaring `field_token`, or `None` if no type claims it.
+    ///
+    /// Memoised on the same terms as
+    /// [`declaring_type_token_of_method`](Self::declaring_type_token_of_method).
+    #[must_use]
+    pub fn declaring_type_token_of_field(&self, field_token: Token) -> Option<Token> {
+        if let Some(cached) = self.field_to_type.get(&field_token) {
+            return Some(*cached);
+        }
+
+        for entry in self.types.iter() {
+            let type_token = *entry.key();
+            for (_, field) in entry.value().fields.iter() {
+                if field.token == field_token {
+                    self.field_to_type.insert(field_token, type_token);
+                    return Some(type_token);
+                }
+            }
+        }
+
+        None
     }
 
     /// Get types from a specific source
@@ -1755,28 +1874,32 @@ impl TypeRegistry {
         if let Some(external) = original_typeref.external() {
             let source = self.register_source(external);
             if let Some(mut list) = self.types_by_source.get_mut(&source) {
-                list.retain(|&token| token != typeref_token);
+                list.remove(&typeref_token);
             }
         } else {
             let current_source = self.current_assembly_source();
             if let Some(mut list) = self.types_by_source.get_mut(&current_source) {
-                list.retain(|&token| token != typeref_token);
+                list.remove(&typeref_token);
             }
         }
 
         if !original_typeref.namespace.is_empty() {
             if let Some(mut list) = self.types_by_namespace.get_mut(&original_typeref.namespace) {
-                list.retain(|&token| token != typeref_token);
+                list.remove(&typeref_token);
             }
         }
 
         if let Some(mut list) = self.types_by_name.get_mut(&original_typeref.name) {
-            list.retain(|&token| token != typeref_token);
+            list.remove(&typeref_token);
         }
 
         let old_fullname = original_typeref.fullname();
-        if let Some(mut list) = self.types_by_fullname.get_mut(&old_fullname) {
-            list.retain(|&token| token != typeref_token);
+        let old_suffix = old_fullname.rsplit('/').next().unwrap_or(&old_fullname);
+        if let Some(mut list) = self.types_by_nested_suffix.get_mut(old_suffix) {
+            list.remove(&typeref_token);
+        }
+        if let Some(mut list) = self.types_by_fullname.get_mut(&*old_fullname) {
+            list.remove(&typeref_token);
         }
 
         // Add TypeRef token to the TypeDef's indexes (new metadata)
@@ -1785,25 +1908,27 @@ impl TypeRegistry {
             self.types_by_source
                 .entry(source)
                 .or_default()
-                .push(typeref_token);
+                .insert(typeref_token);
         }
 
         if !resolved_typedef.namespace.is_empty() {
             self.types_by_namespace
                 .entry(resolved_typedef.namespace.clone())
                 .or_default()
-                .push(typeref_token);
+                .insert(typeref_token);
         }
 
         self.types_by_name
             .entry(resolved_typedef.name.clone())
             .or_default()
-            .push(typeref_token);
+            .insert(typeref_token);
 
+        let new_fullname = resolved_typedef.fullname();
+        self.index_nested_suffix(&new_fullname, typeref_token);
         self.types_by_fullname
-            .entry(resolved_typedef.fullname())
+            .entry(new_fullname)
             .or_default()
-            .push(typeref_token);
+            .insert(typeref_token);
 
         self.types.insert(typeref_token, resolved_typedef.clone());
         true
@@ -1823,15 +1948,17 @@ impl TypeRegistry {
     /// - Before InheritanceResolver runs (which needs to look up nested types)
     pub fn build_fullnames(&self) {
         self.types_by_fullname.clear();
+        self.types_by_nested_suffix.clear();
 
         for entry in &self.types {
             let type_rc = entry.value();
             let current_fullname = type_rc.fullname();
 
+            self.index_nested_suffix(&current_fullname, type_rc.token);
             self.types_by_fullname
                 .entry(current_fullname)
                 .or_default()
-                .push(type_rc.token);
+                .insert(type_rc.token);
         }
     }
 }
@@ -1853,6 +1980,79 @@ mod tests {
     use crate::metadata::tables::{
         AssemblyFlags, AssemblyRef, AssemblyRefHash, File, FileAttributes, Module, ModuleRef,
     };
+
+    /// Builds a type whose *name* already contains the nested path, which is the shape
+    /// `compute_fullname` produces for a type with an enclosing type.
+    fn nested_type(token: Token, namespace: &str, name: &str) -> CilTypeRc {
+        Arc::new(CilType::new(
+            token,
+            namespace.to_string(),
+            name.to_string(),
+            None,
+            None,
+            TypeAttributes::ZERO,
+            Arc::new(boxcar::Vec::new()),
+            LazyList::new(),
+            None,
+        ))
+    }
+
+    /// A TypeRef may name a nested type by its inner name alone while the TypeDef carries
+    /// the whole path. Resolving that is what the suffix index replaced a full scan of every
+    /// registered fullname with; the resolution itself must be unchanged.
+    #[test]
+    fn nested_types_resolve_by_their_inner_name() {
+        let identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = TypeRegistry::new(identity).unwrap();
+
+        let token = Token::new(0x0200_1234);
+        registry.insert(&nested_type(
+            token,
+            "NS",
+            "Partitioner/DynamicPartitionEnumerator`2",
+        ));
+
+        // The inner name alone resolves to the nested type...
+        let found = registry
+            .get_by_fullname("DynamicPartitionEnumerator`2", false)
+            .expect("nested type must resolve by its inner name");
+        assert_eq!(found.token, token);
+
+        // ...as does a multi-component suffix.
+        let found = registry
+            .get_by_fullname("Partitioner/DynamicPartitionEnumerator`2", false)
+            .expect("nested type must resolve by a multi-component suffix");
+        assert_eq!(found.token, token);
+
+        // The exact fullname still goes through the exact index, not the fallback.
+        assert!(registry
+            .get_by_fullname("NS.Partitioner/DynamicPartitionEnumerator`2", false)
+            .is_some());
+
+        // An unrelated name must not resolve.
+        assert!(registry.get_by_fullname("SomethingElse", false).is_none());
+    }
+
+    /// The fullname index is set-valued so the TypeRef redirect sweep can remove in `O(log n)`
+    /// instead of a linear `retain` over lists that keep growing. Registering the
+    /// same token twice must therefore not duplicate it.
+    #[test]
+    fn fullname_index_holds_each_token_once() {
+        let identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = TypeRegistry::new(identity).unwrap();
+
+        let token = Token::new(0x0200_4321);
+        let type_rc = nested_type(token, "NS", "Outer/Inner");
+        registry.insert(&type_rc);
+        registry.build_fullnames();
+        registry.build_fullnames();
+
+        let tokens = registry
+            .types_by_fullname
+            .get("NS.Outer/Inner")
+            .expect("fullname must be indexed");
+        assert_eq!(tokens.value().len(), 1);
+    }
 
     #[test]
     fn test_registry_primitives() {
@@ -2046,7 +2246,7 @@ mod tests {
             None,
             TypeAttributes::ZERO,
             Arc::new(boxcar::Vec::new()),
-            Arc::new(boxcar::Vec::new()),
+            LazyList::new(),
             Some(CilFlavor::Class),
         ));
 
@@ -2077,7 +2277,7 @@ mod tests {
             generation: 0,
             encbaseid: None,
             imports: Vec::new(),
-            custom_attributes: Arc::new(boxcar::Vec::new()),
+            custom_attributes: LazyList::new(),
         });
 
         let module_ref = Arc::new(ModuleRef {
@@ -2085,7 +2285,7 @@ mod tests {
             name: "ReferenceModule".to_string(),
             rid: 0,
             offset: 0,
-            custom_attributes: Arc::new(boxcar::Vec::new()),
+            custom_attributes: LazyList::new(),
         });
 
         let assembly_ref = Arc::new(AssemblyRef {
@@ -2105,7 +2305,7 @@ mod tests {
             os_major_version: AtomicU32::new(0),
             os_minor_version: AtomicU32::new(0),
             processor: AtomicU32::new(0),
-            custom_attributes: Arc::new(boxcar::Vec::new()),
+            custom_attributes: LazyList::new(),
         });
 
         let file = Arc::new(File {
@@ -2115,7 +2315,7 @@ mod tests {
             rid: 0,
             offset: 0,
             hash_value: AssemblyRefHash::new(&[0xCC, 0xCC]).unwrap(),
-            custom_attributes: Arc::new(boxcar::Vec::new()),
+            custom_attributes: LazyList::new(),
         });
 
         let module_source = registry.register_source(&CilTypeReference::Module(module.clone()));

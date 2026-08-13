@@ -339,7 +339,7 @@ See the [examples README](examples/README.md) for a recommended learning path.
 Security is a top priority:
 
 - **Memory Safety**: Built on Rust's memory safety guarantees
-- **Fuzzing**: Continuous fuzzing with cargo-fuzz
+- **Fuzzing**: `cargo-fuzz` targets run on demand (`make fuzz`), with a committed crash corpus replayed by the test suite
 - **Input Validation**: Strict validation of all inputs
 - **Audit Trail**: Regular dependency auditing
 
@@ -385,7 +385,7 @@ make coverage         # Generate coverage report
 make fuzz
 
 # Extended fuzzing (manual)
-cd fuzz && cargo +nightly fuzz run cilobject --release -- -max_total_time=1800
+cd dotscope/fuzz && cargo +nightly fuzz run cilobject --release -- -max_total_time=1800
 
 # All quality checks
 make check-all

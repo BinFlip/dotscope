@@ -28,7 +28,7 @@
 
 use std::{
     cmp::Reverse,
-    collections::{BTreeMap, BinaryHeap},
+    collections::{BTreeMap, BTreeSet, BinaryHeap},
 };
 
 use analyssa::BitSet;
@@ -463,19 +463,47 @@ impl LocalCoalescer {
 
     /// Computes live intervals for all variables in the SSA.
     ///
-    /// A live interval is the range [start, end) where a variable is live.
-    /// We use instruction indices within a linearized view of the CFG.
+    /// A live interval is the range [start, end) where a variable is live, in
+    /// instruction indices over a linearized view of the CFG.
+    ///
+    /// # Why this walks the CFG instead of scanning textually or running a dataflow solve
+    ///
+    /// A purely *textual* scan — `[first mention, last use + 1)` over blocks in `block_id`
+    /// order — under-approximates liveness across back edges. A value defined before a loop
+    /// and used inside it has its interval truncated at its last textual use, so its slot
+    /// returns to the free pool and can be handed to a variable defined later in the same
+    /// loop body; on the second iteration the earlier use reads a clobbered slot. Linear
+    /// scan only runs above [`LINEAR_SCAN_THRESHOLD`] variables, so that failure is
+    /// size-gated and invisible to small unit tests.
+    ///
+    /// The obvious fix — reuse the `LiveVariables` solve that [`Self::build_graph_coloring`]
+    /// runs — is the wrong tool *here*. That framework computes the live set of every
+    /// variable at every block simultaneously, storing a live-in and a live-out `BitSet` of
+    /// `var_capacity` bits per block: `2·B·V` bits. Graph colouring can afford that only
+    /// because it is gated to at most [`LINEAR_SCAN_THRESHOLD`] variables. Linear scan
+    /// exists precisely for the large, attacker-sized methods where `B·V` explodes, and the
+    /// CIL path has no method-size cap.
+    ///
+    /// Nothing here needs the full live sets. A [`LiveInterval`] is a single contiguous
+    /// range, so all that is required per variable is the earliest and latest point it is
+    /// live. SSA gives exactly one definition per variable, and it dominates every use, so
+    /// each variable's live range is found by the classic *up-and-mark* walk: start at each
+    /// use, walk up predecessors, stop at the defining block — no second definition can be
+    /// encountered on the way. Cost is `O(B)` memory for one reusable generation-stamp
+    /// array, and time proportional to the total live range, which is the size of the
+    /// answer rather than the size of a `B × V` matrix. Most SSA variables are block-local,
+    /// so their walk terminates immediately.
     fn compute_live_intervals(ssa: &SsaFunction) -> BTreeMap<SsaVarId, LiveInterval> {
+        let block_count = ssa.block_count();
         let mut intervals: BTreeMap<SsaVarId, LiveInterval> = BTreeMap::new();
 
-        // Phase 1: Build a map of block → end instruction index.
-        // PHI operands are semantically used at the END of the predecessor
-        // block (not at the PHI's block), so we need to know each block's
-        // end position to correctly extend operand intervals.
-        let mut block_end_idx: Vec<usize> = Vec::with_capacity(ssa.block_count());
+        // Phase 1: number instructions, recording each block's [start, end) span.
+        let mut block_start_idx: Vec<usize> = Vec::with_capacity(block_count);
+        let mut block_end_idx: Vec<usize> = Vec::with_capacity(block_count);
         {
             let mut idx = 0usize;
-            for block_id in 0..ssa.block_count() {
+            for block_id in 0..block_count {
+                block_start_idx.push(idx);
                 if let Some(block) = ssa.block(block_id) {
                     idx = idx.saturating_add(block.instructions().len());
                 }
@@ -483,61 +511,158 @@ impl LocalCoalescer {
             }
         }
 
-        // Phase 2: Assign instruction indices by walking blocks in order
-        let mut instr_idx = 0usize;
+        // Phase 2: locate every definition. This must complete before uses are processed,
+        // because a use can precede its definition in block order (that is what a back edge
+        // means) and the walk below keys its stop condition on the defining block.
+        let mut def_block: BTreeMap<SsaVarId, usize> = BTreeMap::new();
 
-        for block_id in 0..ssa.block_count() {
+        for block_id in 0..block_count {
             let Some(block) = ssa.block(block_id) else {
                 continue;
             };
+            let Some(&entry_pos) = block_start_idx.get(block_id) else {
+                continue;
+            };
 
-            // Phi nodes define at block entry
+            // Phi nodes define at block entry.
             for phi in block.phi_nodes() {
                 let def = phi.result();
-                intervals
+                def_block.insert(def, block_id);
+                let interval = intervals
                     .entry(def)
-                    .or_insert_with(|| LiveInterval::new(instr_idx))
-                    .extend_start(instr_idx);
+                    .or_insert_with(|| LiveInterval::new(entry_pos));
+                interval.extend_start(entry_pos);
+                interval.extend_end(entry_pos.saturating_add(1));
+            }
 
-                // PHI operands are used at the END of their predecessor block.
-                // A variable v in `v<-B_pred` must be live from its definition
-                // through the end of B_pred. If B_pred comes AFTER the PHI's
-                // block in the linearized layout, extending only to the PHI
-                // position would leave a gap where the local slot can be reused.
+            let mut pos = entry_pos;
+            for instr in block.instructions() {
+                if let Some(def) = instr.def() {
+                    def_block.insert(def, block_id);
+                    let interval = intervals
+                        .entry(def)
+                        .or_insert_with(|| LiveInterval::new(pos));
+                    interval.extend_start(pos);
+                    // Cover the definition point itself. `extend_start` is a min and
+                    // `extend_end` a max, so a variable used at 5 and defined at 10 would
+                    // otherwise hold [5, 6) — an interval that expires before the value it
+                    // describes even exists, freeing the slot while the def is still ahead.
+                    interval.extend_end(pos.saturating_add(1));
+                }
+                pos = pos.saturating_add(1);
+            }
+        }
+
+        // Phase 3: record uses, and seed the backward walk with the blocks each variable is
+        // live *out* of.
+        let cfg = SsaCfg::from_ssa(ssa);
+        let mut live_out_seeds: BTreeMap<SsaVarId, Vec<usize>> = BTreeMap::new();
+
+        for block_id in 0..block_count {
+            let Some(block) = ssa.block(block_id) else {
+                continue;
+            };
+            let Some(&entry_pos) = block_start_idx.get(block_id) else {
+                continue;
+            };
+
+            // A phi operand is used at the END of its predecessor block, not here, so the
+            // value must stay live through that predecessor even when it is laid out after
+            // the phi's own block.
+            for phi in block.phi_nodes() {
                 for operand in phi.operands() {
                     let pred = operand.predecessor();
-                    let pred_end = block_end_idx
-                        .get(pred)
-                        .copied()
-                        .unwrap_or_else(|| instr_idx.saturating_add(1));
-                    // Use the later of: PHI position or predecessor end
-                    let use_point = pred_end.max(instr_idx.saturating_add(1));
+                    let Some(&pred_end) = block_end_idx.get(pred) else {
+                        continue;
+                    };
+                    let value = operand.value();
                     intervals
-                        .entry(operand.value())
-                        .or_insert_with(|| LiveInterval::new(instr_idx))
-                        .extend_end(use_point);
+                        .entry(value)
+                        .or_insert_with(|| LiveInterval::new(pred_end))
+                        .extend_end(pred_end);
+                    live_out_seeds.entry(value).or_default().push(pred);
                 }
             }
 
-            // Process instructions
+            // Seeding is per (variable, block), not per use. The walk's generation stamps
+            // would dedupe the extra work anyway, but the seed vector itself would not:
+            // a variable used u times in a block with p predecessors would push u·p entries
+            // instead of p, and both factors are attacker-controlled.
+            let mut seeded_here: BTreeSet<SsaVarId> = BTreeSet::new();
+
+            let mut pos = entry_pos;
             for instr in block.instructions() {
-                // Uses extend the interval
                 for &use_var in &instr.uses() {
-                    intervals
+                    let interval = intervals
                         .entry(use_var)
-                        .or_insert_with(|| LiveInterval::new(instr_idx))
-                        .extend_end(instr_idx.saturating_add(1));
+                        .or_insert_with(|| LiveInterval::new(pos));
+                    interval.extend_end(pos.saturating_add(1));
+
+                    // A use in the defining block needs no walk — the value is live only
+                    // from the definition to this point. Otherwise the value is live-in
+                    // here, hence live-out of every predecessor.
+                    if def_block.get(&use_var) != Some(&block_id) {
+                        interval.extend_start(entry_pos);
+                        if seeded_here.insert(use_var) {
+                            live_out_seeds
+                                .entry(use_var)
+                                .or_default()
+                                .extend(cfg.block_predecessors(block_id).iter().copied());
+                        }
+                    }
+                }
+                pos = pos.saturating_add(1);
+            }
+        }
+
+        // Phase 4: up-and-mark. For each variable, walk up from every block it is live out
+        // of, covering whole blocks, and stop at its definition.
+        //
+        // `seen` holds a generation stamp per block rather than a boolean, so resetting
+        // between variables is a single counter bump instead of an O(B) clear. The counter
+        // is `u64`, which cannot wrap within one function's variable count.
+        let mut seen: Vec<u64> = vec![0; block_count];
+        let mut generation: u64 = 0;
+        let mut worklist: Vec<usize> = Vec::new();
+
+        for (var, seeds) in &live_out_seeds {
+            generation = generation.saturating_add(1);
+            let stop = def_block.get(var).copied();
+
+            worklist.clear();
+            worklist.extend(seeds.iter().copied());
+
+            while let Some(block_id) = worklist.pop() {
+                let Some(stamp) = seen.get_mut(block_id) else {
+                    continue;
+                };
+                if *stamp == generation {
+                    continue;
+                }
+                *stamp = generation;
+
+                if let (Some(&block_start), Some(&block_end), Some(interval)) = (
+                    block_start_idx.get(block_id),
+                    block_end_idx.get(block_id),
+                    intervals.get_mut(var),
+                ) {
+                    interval.extend_end(block_end.max(block_start.saturating_add(1)));
+                    // In the defining block the value is live only from its definition
+                    // onward, so the block's start must not pull the interval back.
+                    if stop != Some(block_id) {
+                        interval.extend_start(block_start);
+                    }
                 }
 
-                // Definitions start the interval
-                if let Some(def) = instr.def() {
-                    intervals
-                        .entry(def)
-                        .or_insert_with(|| LiveInterval::new(instr_idx))
-                        .extend_start(instr_idx);
+                // The definition dominates every use, so nothing above it is live. A
+                // variable with no recorded definition (an argument or entry live-in) has
+                // no stop block and correctly walks back to the entry, which has no
+                // predecessors.
+                if stop == Some(block_id) {
+                    continue;
                 }
 
-                instr_idx = instr_idx.saturating_add(1);
+                worklist.extend(cfg.block_predecessors(block_id).iter().copied());
             }
         }
 
@@ -1054,6 +1179,71 @@ mod tests {
         // vars[3] and vars[4] are isolated
         assert_eq!(graph.degree(vars[3]), 0);
         assert_eq!(graph.degree(vars[4]), 0);
+    }
+
+    /// A value defined before a loop and used inside it must stay live for the whole
+    /// loop, not just up to its last *textual* use.
+    ///
+    /// Under a textual interval scan `outer`'s interval ends at its single use
+    /// in the loop body, so the slot returns to the free pool and can be handed to `inner`,
+    /// which is defined later in that same body — and on the second iteration the read of
+    /// `outer` returns `inner`'s value.
+    #[test]
+    fn value_live_across_a_back_edge_keeps_its_slot() {
+        // block 0: outer = 7; jump 1
+        // block 1: header, branch to body (2) or exit (3)
+        // block 2: body, reads `outer`, then defines `inner`; jumps back to 1
+        // block 3: ret
+        let mut outer_id: Option<SsaVarId> = None;
+        let mut inner_id: Option<SsaVarId> = None;
+
+        let ssa = SsaFunctionBuilder::new(1, 0)
+            .build_with(|f| {
+                let cond = f.arg(0, SsaType::Bool);
+                f.block(0, |b| {
+                    outer_id = Some(b.const_i32(7));
+                    b.jump(1);
+                });
+                f.block(1, |b| {
+                    b.branch(cond, 2, 3);
+                });
+                let outer = outer_id.expect("block 0 is built first");
+                f.block(2, |b| {
+                    // `outer` is read here — its last textual mention.
+                    let _used = b.add(outer, outer);
+                    // ...and `inner` is defined after it, in the same block.
+                    let inner = b.const_i32(9);
+                    let _also = b.add(inner, inner);
+                    inner_id = Some(inner);
+                    b.jump(1);
+                });
+                f.block(3, |b| {
+                    b.ret();
+                });
+            })
+            .unwrap();
+
+        let outer = outer_id.expect("outer was defined");
+        let inner = inner_id.expect("inner was defined");
+
+        let intervals = LocalCoalescer::compute_live_intervals(&ssa);
+
+        let outer_interval = intervals.get(&outer).expect("outer must have an interval");
+        let inner_interval = intervals.get(&inner).expect("inner must have an interval");
+
+        // The two must overlap, which is what stops the allocator reusing one slot for
+        // both. Overlap is the property that matters; exact indices are not contractual.
+        assert!(
+            outer_interval.start < inner_interval.end
+                && inner_interval.start < outer_interval.end,
+            "outer {outer_interval:?} and inner {inner_interval:?} must overlap across the back edge"
+        );
+
+        // And `outer` must survive past the point where `inner` is defined.
+        assert!(
+            outer_interval.end > inner_interval.start,
+            "outer {outer_interval:?} expired before inner {inner_interval:?} was defined"
+        );
     }
 
     #[test]

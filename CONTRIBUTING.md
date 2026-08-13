@@ -151,7 +151,7 @@ cargo fmt --all -- --check
 cargo doc --all-features --no-deps
 
 # For extended fuzzing (do this locally, not in CI):
-cd fuzz && cargo +nightly fuzz run cilobject -- -max_total_time=1800  # 30 minutes
+cd dotscope/fuzz && cargo +nightly fuzz run cilobject -- -max_total_time=1800  # 30 minutes
 ```
 
 ### 4. Submit Pull Request
@@ -188,7 +188,7 @@ cd fuzz && cargo +nightly fuzz run cilobject -- -max_total_time=1800  # 30 minut
 3. **Fuzzing**: Test with random inputs
 
    ```bash
-   cd fuzz
+   cd dotscope/fuzz
    cargo +nightly fuzz run cilobject
    ```
 

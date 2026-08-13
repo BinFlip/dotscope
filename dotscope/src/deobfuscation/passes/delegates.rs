@@ -24,8 +24,13 @@
 //!
 //! # Safety
 //!
-//! If warmup fails or a delegate cannot be resolved, those call sites are
-//! silently skipped — no false positives are possible.
+//! If warmup fails or a delegate cannot be resolved, those call sites are skipped.
+//!
+//! A call site is also skipped unless the delegate is **open** (no bound receiver) and has
+//! **exactly one** invocation-list entry. Neither restriction is incidental: rewriting a
+//! multicast delegate to a single call deletes its other targets from the output, and
+//! inlining a closed delegate drops the receiver the callee's signature requires. Both
+//! skips are logged at debug level so the analyst can see the proxy was left intact.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -40,7 +45,7 @@ use crate::{
     assembly::{FlowType, Instruction, Operand},
     compiler::{CompilerContext, EventKind, ModificationScope, SsaPass},
     deobfuscation::{utils::build_def_map, EmulationTemplatePool, ProcessCell},
-    emulation::{tokens, EmValue, EmulationProcess, HeapObject},
+    emulation::{tokens, DelegateEntry, EmValue, EmulationProcess, HeapObject},
     metadata::token::Token,
     CilObject, Result,
 };
@@ -88,6 +93,53 @@ pub struct DelegateProxyResolutionPass {
     /// Methods already successfully processed. Prevents redundant re-processing
     /// across pipeline iterations when the same pass instance is reused.
     processed_methods: DashSet<Token>,
+}
+
+/// Why a delegate could not be inlined into a direct call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NotInlinable {
+    /// The invocation list is empty, so there is no target to call.
+    NoTarget,
+    /// More than one entry: invoking the delegate invokes all of them.
+    Multicast(usize),
+    /// The entry carries a bound receiver that a direct call would have to pass.
+    ClosedInstance,
+}
+
+impl std::fmt::Display for NotInlinable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoTarget => write!(f, "delegate has no invocation targets"),
+            Self::Multicast(n) => write!(f, "multicast with {n} entries"),
+            Self::ClosedInstance => write!(f, "closed delegate with a bound receiver"),
+        }
+    }
+}
+
+/// Returns the single entry a delegate can be inlined to, or why it cannot be.
+///
+/// Only an **open, single-target** delegate qualifies, and neither restriction is incidental:
+///
+/// - A multicast delegate invokes *every* entry. Rewriting the call site to one of them
+///   deletes the others from the output — precisely the primitive an obfuscator wants, since
+///   the surviving entry can be the benign one. (The emulator's own dispatcher starts at
+///   `first()`, so picking `last()` did not even agree with the entry that actually runs
+///   first.)
+/// - A closed delegate carries its receiver in `entry.target`. The rewrite drops the delegate
+///   operand and emits the remaining arguments, so inlining one yields a call with one fewer
+///   operand than the callee's signature requires — invalid IL, not merely wrong output.
+///
+/// Supporting the closed case later means materialising the receiver and prepending it to the
+/// argument list, not dropping it.
+pub(crate) fn inlinable_entry(
+    invocation_list: &[DelegateEntry],
+) -> std::result::Result<&DelegateEntry, NotInlinable> {
+    match invocation_list {
+        [] => Err(NotInlinable::NoTarget),
+        [entry] if entry.target.is_none() => Ok(entry),
+        [_] => Err(NotInlinable::ClosedInstance),
+        many => Err(NotInlinable::Multicast(many.len())),
+    }
 }
 
 impl DelegateProxyResolutionPass {
@@ -215,7 +267,17 @@ impl DelegateProxyResolutionPass {
                 invocation_list, ..
             } = obj
             {
-                if let Some(entry) = invocation_list.last() {
+                let entry = match inlinable_entry(&invocation_list) {
+                    Ok(entry) => entry,
+                    Err(reason) => {
+                        log::debug!(
+                            "Leaving delegate proxy for field {field_token} intact: {reason}"
+                        );
+                        continue;
+                    }
+                };
+
+                {
                     let method_token = entry.method_token;
 
                     // Resolve synthetic DynamicMethod tokens to real metadata tokens.
@@ -606,5 +668,67 @@ impl SsaPass<CilTarget, CompilerContext> for DelegateProxyResolutionPass {
     fn finalize(&mut self, _host: &CompilerContext) -> analyssa::Result<()> {
         // Clear the emulation process to release its Arc<CilObject> reference.
         self.lazy_process.clear().map_err(Into::into)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::emulation::HeapRef;
+
+    fn open_entry(token: u32) -> DelegateEntry {
+        DelegateEntry {
+            target: None,
+            method_token: Token::new(token),
+        }
+    }
+
+    fn closed_entry(token: u32) -> DelegateEntry {
+        DelegateEntry {
+            target: Some(HeapRef::new(1)),
+            method_token: Token::new(token),
+        }
+    }
+
+    /// The only shape that can be inlined into a direct call.
+    #[test]
+    fn a_single_open_target_is_inlinable() {
+        let list = vec![open_entry(0x0600_0001)];
+
+        assert_eq!(
+            inlinable_entry(&list).map(|e| e.method_token).ok(),
+            Some(Token::new(0x0600_0001))
+        );
+    }
+
+    /// Invoking a multicast delegate invokes every entry, so rewriting the site to one of
+    /// them deletes the others from the output — an anti-analysis primitive, since the
+    /// surviving entry can be the benign one.
+    #[test]
+    fn a_multicast_delegate_is_left_intact() {
+        let list = vec![open_entry(0x0600_0001), open_entry(0x0600_0002)];
+
+        assert_eq!(
+            inlinable_entry(&list).err(),
+            Some(NotInlinable::Multicast(2))
+        );
+    }
+
+    /// A closed delegate carries its receiver in `target`. The rewrite drops the delegate
+    /// operand, so inlining one emits a call with one fewer operand than the callee's
+    /// signature requires — invalid IL.
+    #[test]
+    fn a_closed_delegate_is_left_intact() {
+        let list = vec![closed_entry(0x0600_0001)];
+
+        assert_eq!(
+            inlinable_entry(&list).err(),
+            Some(NotInlinable::ClosedInstance)
+        );
+    }
+
+    #[test]
+    fn an_empty_invocation_list_has_nothing_to_inline() {
+        assert_eq!(inlinable_entry(&[]).err(), Some(NotInlinable::NoTarget));
     }
 }

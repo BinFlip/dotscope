@@ -52,7 +52,10 @@
 //! }
 //! ```
 
-use std::collections::HashSet;
+use std::{
+    collections::HashSet,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use dashmap::{DashMap, DashSet};
 
@@ -99,6 +102,16 @@ pub struct DecryptorContext {
 
     /// Secondary index for O(1) successful decryption lookups, keyed by (caller, location).
     decrypted_index: DashSet<(Token, usize)>,
+
+    /// Emulations performed so far in this run.
+    ///
+    /// The per-emulation instruction and wall-clock budgets bound one call; nothing bounds
+    /// how many calls a run makes. The decryption pass emulates once per distinct call site
+    /// with constant arguments, and [`Self::cache`] is keyed on `(decryptor, args)`, so
+    /// distinct arguments always miss — a method that calls a decryptor in a loop with a
+    /// varying key produces one emulation per iteration. This counter is what gives the run
+    /// as a whole a ceiling.
+    emulations_performed: AtomicUsize,
 }
 
 /// Record of a successfully decrypted call.
@@ -130,6 +143,8 @@ pub enum FailureReason {
     NonConstantArgs,
     /// Emulation failed or timed out.
     EmulationFailed(String),
+    /// The run's total emulation budget was exhausted before this site was reached.
+    EmulationBudgetExhausted,
     /// Couldn't resolve the method target.
     UnresolvedTarget,
     /// Return value couldn't be converted to a constant.
@@ -151,7 +166,9 @@ impl FailureReason {
     /// - `NonConstantArgs` - the arguments might become constant in later passes
     #[must_use]
     pub fn is_permanent(&self) -> bool {
-        !matches!(self, Self::NonConstantArgs)
+        // Budget exhaustion is a property of the run, not of the call site: with a larger
+        // budget the same site could succeed, so it must not be cached as permanent.
+        !matches!(self, Self::NonConstantArgs | Self::EmulationBudgetExhausted)
     }
 }
 
@@ -163,6 +180,7 @@ impl std::fmt::Display for FailureReason {
             Self::UnresolvedTarget => write!(f, "unresolved call target"),
             Self::InvalidReturnValue => write!(f, "invalid return value"),
             Self::MethodNotFound => write!(f, "method not found"),
+            Self::EmulationBudgetExhausted => write!(f, "run emulation budget exhausted"),
         }
     }
 }
@@ -210,6 +228,35 @@ impl DecryptorContext {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Reserves one emulation against the run budget.
+    ///
+    /// Returns `false` once `max` emulations have been performed, at which point callers
+    /// should stop emulating and report the remaining sites as failures rather than
+    /// continuing. A `max` of 0 means unlimited.
+    ///
+    /// The reservation is taken before the emulation runs, so a concurrent pair of callers
+    /// cannot both pass the check at the limit.
+    pub fn try_reserve_emulation(&self, max: usize) -> bool {
+        if max == 0 {
+            return true;
+        }
+        self.emulations_performed
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                if n >= max {
+                    None
+                } else {
+                    Some(n.saturating_add(1))
+                }
+            })
+            .is_ok()
+    }
+
+    /// Returns how many emulations this run has performed.
+    #[must_use]
+    pub fn emulations_performed(&self) -> usize {
+        self.emulations_performed.load(Ordering::Relaxed)
     }
 
     /// Registers a method as a known decryptor.
@@ -937,5 +984,65 @@ mod tests {
         // All 200 decryptors should be registered
         assert_eq!(ctx.decryptor_count(), 200);
         assert_eq!(ctx.total_decrypted(), 200);
+    }
+
+    /// The per-emulation instruction and wall-clock budgets bound one call; nothing bounded
+    /// how many calls a run makes, and the value cache is keyed on `(decryptor, args)` so a
+    /// varying key misses it every time. This is that ceiling.
+    #[test]
+    fn emulation_budget_stops_the_run_at_the_limit() {
+        let ctx = DecryptorContext::new();
+
+        assert!(ctx.try_reserve_emulation(2));
+        assert!(ctx.try_reserve_emulation(2));
+        assert!(
+            !ctx.try_reserve_emulation(2),
+            "third reservation must be refused"
+        );
+        assert_eq!(ctx.emulations_performed(), 2);
+    }
+
+    /// A limit of zero means unlimited, matching the config's documented encoding.
+    #[test]
+    fn emulation_budget_of_zero_is_unlimited() {
+        let ctx = DecryptorContext::new();
+
+        for _ in 0..1000 {
+            assert!(ctx.try_reserve_emulation(0));
+        }
+    }
+
+    /// Reservations must not race: with N threads competing for M slots, exactly M succeed.
+    #[test]
+    fn emulation_budget_is_not_oversubscribed_under_contention() {
+        let ctx = Arc::new(DecryptorContext::new());
+        let granted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let ctx = Arc::clone(&ctx);
+                let granted = Arc::clone(&granted);
+                thread::spawn(move || {
+                    for _ in 0..50 {
+                        if ctx.try_reserve_emulation(100) {
+                            granted.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        assert_eq!(granted.load(Ordering::Relaxed), 100);
+    }
+
+    /// Budget exhaustion is a property of the run, not the call site, so it must not be
+    /// cached as a permanent failure — a larger budget would let the same site succeed.
+    #[test]
+    fn budget_exhaustion_is_not_a_permanent_failure() {
+        assert!(!FailureReason::EmulationBudgetExhausted.is_permanent());
+        assert!(FailureReason::MethodNotFound.is_permanent());
     }
 }
