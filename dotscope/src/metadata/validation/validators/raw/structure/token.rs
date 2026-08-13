@@ -142,6 +142,7 @@ impl RawTokenValidator {
         if let Some(tables) = assembly_view.tables() {
             if let Some(table) = tables.table::<TypeDefRaw>() {
                 for typedef in table {
+                    let typedef = typedef?;
                     if typedef.extends.row != 0 {
                         referenced_tokens.push(typedef.extends.token);
                     }
@@ -150,6 +151,7 @@ impl RawTokenValidator {
 
             if let Some(table) = tables.table::<InterfaceImplRaw>() {
                 for interface_impl in table {
+                    let interface_impl = interface_impl?;
                     token_validator.validate_table_row(TableId::TypeDef, interface_impl.class)?;
                     referenced_tokens.push(interface_impl.interface.token);
                 }
@@ -157,12 +159,14 @@ impl RawTokenValidator {
 
             if let Some(table) = tables.table::<MemberRefRaw>() {
                 for memberref in table {
+                    let memberref = memberref?;
                     referenced_tokens.push(memberref.class.token);
                 }
             }
 
             if let Some(table) = tables.table::<CustomAttributeRaw>() {
                 for attr in table {
+                    let attr = attr?;
                     referenced_tokens.push(attr.parent.token);
                     referenced_tokens.push(attr.constructor.token);
                 }
@@ -170,6 +174,7 @@ impl RawTokenValidator {
 
             if let Some(table) = tables.table::<NestedClassRaw>() {
                 for nested in table {
+                    let nested = nested?;
                     token_validator.validate_table_row(TableId::TypeDef, nested.nested_class)?;
                     token_validator.validate_table_row(TableId::TypeDef, nested.enclosing_class)?;
                 }
@@ -177,18 +182,21 @@ impl RawTokenValidator {
 
             if let Some(table) = tables.table::<GenericParamRaw>() {
                 for genparam in table {
+                    let genparam = genparam?;
                     referenced_tokens.push(genparam.owner.token);
                 }
             }
 
             if let Some(table) = tables.table::<MethodSpecRaw>() {
                 for methodspec in table {
+                    let methodspec = methodspec?;
                     referenced_tokens.push(methodspec.method.token);
                 }
             }
 
             if let Some(table) = tables.table::<GenericParamConstraintRaw>() {
                 for constraint in table {
+                    let constraint = constraint?;
                     token_validator.validate_table_row(TableId::GenericParam, constraint.owner)?;
                     referenced_tokens.push(constraint.constraint.token);
                 }
@@ -196,6 +204,7 @@ impl RawTokenValidator {
 
             if let Some(table) = tables.table::<MethodImplRaw>() {
                 for method_impl in table {
+                    let method_impl = method_impl?;
                     token_validator.validate_table_row(TableId::TypeDef, method_impl.class)?;
                     referenced_tokens.push(method_impl.method_body.token);
                     referenced_tokens.push(method_impl.method_declaration.token);
@@ -204,18 +213,21 @@ impl RawTokenValidator {
 
             if let Some(table) = tables.table::<ConstantRaw>() {
                 for constant in table {
+                    let constant = constant?;
                     referenced_tokens.push(constant.parent.token);
                 }
             }
 
             if let Some(table) = tables.table::<FieldMarshalRaw>() {
                 for marshal in table {
+                    let marshal = marshal?;
                     referenced_tokens.push(marshal.parent.token);
                 }
             }
 
             if let Some(table) = tables.table::<DeclSecurityRaw>() {
                 for security in table {
+                    let security = security?;
                     referenced_tokens.push(security.parent.token);
                 }
             }
@@ -359,6 +371,7 @@ impl RawTokenValidator {
         if let Some(tables) = assembly_view.tables() {
             if let Some(table) = tables.table::<TypeDefRaw>() {
                 for typedef in table {
+                    let typedef = typedef?;
                     Self::validate_coded_index_field(
                         &typedef.extends,
                         &token_validator,
@@ -369,6 +382,7 @@ impl RawTokenValidator {
 
             if let Some(table) = tables.table::<InterfaceImplRaw>() {
                 for interface_impl in table {
+                    let interface_impl = interface_impl?;
                     Self::validate_coded_index_field(
                         &interface_impl.interface,
                         &token_validator,
@@ -379,6 +393,7 @@ impl RawTokenValidator {
 
             if let Some(table) = tables.table::<MemberRefRaw>() {
                 for memberref in table {
+                    let memberref = memberref?;
                     Self::validate_coded_index_field(
                         &memberref.class,
                         &token_validator,
@@ -389,6 +404,7 @@ impl RawTokenValidator {
 
             if let Some(table) = tables.table::<CustomAttributeRaw>() {
                 for attr in table {
+                    let attr = attr?;
                     Self::validate_coded_index_field(
                         &attr.parent,
                         &token_validator,
@@ -404,6 +420,7 @@ impl RawTokenValidator {
 
             if let Some(table) = tables.table::<GenericParamRaw>() {
                 for genparam in table {
+                    let genparam = genparam?;
                     Self::validate_coded_index_field(
                         &genparam.owner,
                         &token_validator,
@@ -414,6 +431,7 @@ impl RawTokenValidator {
 
             if let Some(table) = tables.table::<MethodSpecRaw>() {
                 for methodspec in table {
+                    let methodspec = methodspec?;
                     Self::validate_coded_index_field(
                         &methodspec.method,
                         &token_validator,
@@ -424,6 +442,7 @@ impl RawTokenValidator {
 
             if let Some(table) = tables.table::<GenericParamConstraintRaw>() {
                 for constraint in table {
+                    let constraint = constraint?;
                     Self::validate_coded_index_field(
                         &constraint.constraint,
                         &token_validator,
@@ -434,6 +453,7 @@ impl RawTokenValidator {
 
             if let Some(table) = tables.table::<ConstantRaw>() {
                 for constant in table {
+                    let constant = constant?;
                     Self::validate_coded_index_field(
                         &constant.parent,
                         &token_validator,
@@ -444,6 +464,7 @@ impl RawTokenValidator {
 
             if let Some(table) = tables.table::<FieldMarshalRaw>() {
                 for marshal in table {
+                    let marshal = marshal?;
                     Self::validate_coded_index_field(
                         &marshal.parent,
                         &token_validator,
@@ -454,6 +475,7 @@ impl RawTokenValidator {
 
             if let Some(table) = tables.table::<DeclSecurityRaw>() {
                 for security in table {
+                    let security = security?;
                     Self::validate_coded_index_field(
                         &security.parent,
                         &token_validator,
@@ -472,6 +494,7 @@ impl RawTokenValidator {
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
         for interface_impl in table {
+            let interface_impl = interface_impl?;
             token_validator.validate_table_row(TableId::TypeDef, interface_impl.class)?;
 
             let interface_token = interface_impl.interface.token;
@@ -490,6 +513,7 @@ impl RawTokenValidator {
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
         for memberref in table {
+            let memberref = memberref?;
             let class_token = memberref.class.token;
             let allowed_tables = memberref.class.ci_type.tables();
             token_validator.validate_typed_token(class_token, allowed_tables)?;
@@ -506,6 +530,7 @@ impl RawTokenValidator {
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
         for attr in table {
+            let attr = attr?;
             let parent_token = attr.parent.token;
             token_validator.validate_token_bounds(parent_token)?;
             reference_validator.validate_token_integrity(parent_token)?;
@@ -525,6 +550,7 @@ impl RawTokenValidator {
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
         for nested in table {
+            let nested = nested?;
             token_validator.validate_table_row(TableId::TypeDef, nested.nested_class)?;
 
             token_validator.validate_table_row(TableId::TypeDef, nested.enclosing_class)?;
@@ -547,6 +573,7 @@ impl RawTokenValidator {
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
         for genparam in table {
+            let genparam = genparam?;
             let owner_token = genparam.owner.token;
             let allowed_tables = genparam.owner.ci_type.tables();
             token_validator.validate_typed_token(owner_token, allowed_tables)?;
@@ -562,6 +589,7 @@ impl RawTokenValidator {
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
         for methodspec in table {
+            let methodspec = methodspec?;
             let method_token = methodspec.method.token;
             let allowed_tables = methodspec.method.ci_type.tables();
             token_validator.validate_typed_token(method_token, allowed_tables)?;
@@ -577,6 +605,7 @@ impl RawTokenValidator {
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
         for constraint in table {
+            let constraint = constraint?;
             token_validator.validate_table_row(TableId::GenericParam, constraint.owner)?;
 
             let constraint_token = constraint.constraint.token;
@@ -594,6 +623,7 @@ impl RawTokenValidator {
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
         for method_impl in table {
+            let method_impl = method_impl?;
             token_validator.validate_table_row(TableId::TypeDef, method_impl.class)?;
 
             let body_token = method_impl.method_body.token;
@@ -616,6 +646,7 @@ impl RawTokenValidator {
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
         for constant in table {
+            let constant = constant?;
             let parent_token = constant.parent.token;
             token_validator.validate_token_bounds(parent_token)?;
             reference_validator.validate_token_integrity(parent_token)?;
@@ -630,6 +661,7 @@ impl RawTokenValidator {
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
         for marshal in table {
+            let marshal = marshal?;
             let parent_token = marshal.parent.token;
             let allowed_tables = marshal.parent.ci_type.tables();
             token_validator.validate_typed_token(parent_token, allowed_tables)?;
@@ -645,6 +677,7 @@ impl RawTokenValidator {
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
         for security in table {
+            let security = security?;
             let parent_token = security.parent.token;
             let allowed_tables = security.parent.ci_type.tables();
             token_validator.validate_typed_token(parent_token, allowed_tables)?;

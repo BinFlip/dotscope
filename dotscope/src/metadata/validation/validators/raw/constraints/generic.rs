@@ -150,6 +150,7 @@ impl RawGenericConstraintValidator {
 
         if let Some(generic_param_table) = tables.table::<GenericParamRaw>() {
             for generic_param in generic_param_table {
+                let generic_param = generic_param?;
                 if generic_param.flags > 0xFFFF {
                     return Err(malformed_error!(
                         "GenericParam RID {} has invalid flags value {} exceeding maximum",
@@ -205,6 +206,7 @@ impl RawGenericConstraintValidator {
             let generic_param_table = tables.table::<GenericParamRaw>();
 
             for constraint in constraint_table {
+                let constraint = constraint?;
                 if constraint.owner == 0 {
                     return Err(malformed_error!(
                         "GenericParamConstraint RID {} has null owner reference",
@@ -263,9 +265,14 @@ impl RawGenericConstraintValidator {
             tables.table::<GenericParamConstraintRaw>(),
         ) {
             for constraint in constraint_table {
-                let param_found = generic_param_table
-                    .iter()
-                    .any(|param| param.rid == constraint.owner);
+                let constraint = constraint?;
+                let mut param_found = false;
+                for param in generic_param_table.iter() {
+                    if param?.rid == constraint.owner {
+                        param_found = true;
+                        break;
+                    }
+                }
 
                 if !param_found {
                     return Err(malformed_error!(
@@ -307,6 +314,7 @@ impl RawGenericConstraintValidator {
 
         if let Some(constraint_table) = tables.table::<GenericParamConstraintRaw>() {
             for constraint in constraint_table {
+                let constraint = constraint?;
                 let constraint_tables = constraint.constraint.ci_type.tables();
                 let constraint_table_type = match constraint_tables {
                     [single] if constraint_tables.len() == 1 => *single,
@@ -405,6 +413,7 @@ impl RawGenericConstraintValidator {
 
         if let Some(generic_param_table) = tables.table::<GenericParamRaw>() {
             for generic_param in generic_param_table {
+                let generic_param = generic_param?;
                 let flags = GenericParamAttributes::new(generic_param.flags);
 
                 if flags.contains(GenericParamAttributes::COVARIANT)

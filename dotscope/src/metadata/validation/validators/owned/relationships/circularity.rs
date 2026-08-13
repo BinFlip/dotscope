@@ -74,6 +74,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     metadata::{
+        tables::{skip_unreadable, TypeDefRaw},
         typesystem::CilType,
         validation::{
             context::{OwnedValidationContext, ValidationContext},
@@ -117,6 +118,64 @@ impl OwnedCircularityValidator {
     #[must_use]
     pub fn new() -> Self {
         Self
+    }
+
+    /// Detects a TypeDef whose `extends` names the row itself.
+    ///
+    /// This reads the raw `extends` column rather than walking `base()`, and it has to:
+    /// [`InheritanceResolver`] deliberately **elides** a self-referential base instead of
+    /// recording it, so that no consumer can ever observe the trivial inheritance cycle. An
+    /// edge that was never recorded is structurally invisible to
+    /// [`validate_inheritance_cycles`](Self::validate_inheritance_cycles), which walks the
+    /// resolved graph — so without this check the most easily forged inheritance cycle in the
+    /// format would load silently and be reported by nothing.
+    ///
+    /// Longer cycles (`A -> B -> A`) are *not* elided and are caught by the graph walk. Only
+    /// the self-edge needs reading back from the metadata.
+    ///
+    /// The two halves are a matched pair: if the elision in [`InheritanceResolver`] is ever
+    /// removed, this becomes redundant rather than wrong, and the graph walk will report the
+    /// same condition.
+    ///
+    /// # Arguments
+    ///
+    /// * `context` - Owned validation context, used here for its raw metadata tables
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - No TypeDef extends itself
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - A self-referential base was found
+    ///
+    /// [`InheritanceResolver`]: crate::metadata::loader
+    fn validate_self_referential_bases(&self, context: &OwnedValidationContext) -> Result<()> {
+        let Some(tables) = context.object().tables() else {
+            return Ok(());
+        };
+        let Some(typedefs) = tables.table::<TypeDefRaw>() else {
+            return Ok(());
+        };
+
+        for row in typedefs.iter().filter_map(skip_unreadable) {
+            // `extends` is a TypeDefOrRef coded index; row 0 means "no base type".
+            if row.extends.token.row() == 0 {
+                continue;
+            }
+
+            // A self-extends is only expressible as a TypeDef pointing at its own row. The
+            // table byte is part of the token, so a TypeRef or TypeSpec can never compare
+            // equal here even when it resolves to this same type.
+            if row.extends.token == row.token {
+                return Err(Error::ValidationOwnedFailed {
+                    validator: self.name().to_string(),
+                    message: format!(
+                        "Circular inheritance relationship detected: type (token 0x{:08X}) extends itself",
+                        row.token.value()
+                    ),
+                });
+            }
+        }
+
+        Ok(())
     }
 
     /// Validates inheritance cycles across type relationships.
@@ -432,6 +491,8 @@ impl OwnedCircularityValidator {
 
 impl OwnedValidator for OwnedCircularityValidator {
     fn validate_owned(&self, context: &OwnedValidationContext) -> Result<()> {
+        // First, because it is the one inheritance cycle the graph walk below cannot see.
+        self.validate_self_referential_bases(context)?;
         self.validate_inheritance_cycles(context)?;
         self.validate_interface_implementation_cycles(context)?;
         self.validate_cross_reference_cycles(context)?;
@@ -465,9 +526,13 @@ mod tests {
     use crate::{
         metadata::validation::ValidationConfig,
         test::{
-            factories::validation::circularity::owned_circularity_validator_file_factory,
-            owned_validator_test,
+            factories::validation::circularity::{
+                create_assembly_with_self_referential_type,
+                owned_circularity_validator_file_factory,
+            },
+            owned_validator_test, TestAssemblySource,
         },
+        CilObject,
     };
 
     #[test]
@@ -486,5 +551,64 @@ mod tests {
             config,
             |context| validator.validate_owned(context),
         )
+    }
+
+    /// The self-edge really is absent from the resolved graph.
+    ///
+    /// This is the half of the contract that `test_owned_circularity_validator` cannot see.
+    /// That test only asserts the validator *rejects* the assembly — which it would also do if
+    /// the edge were present and the ordinary graph walk caught it. Pinning `base() == None`
+    /// here is what makes the raw-column check in
+    /// [`validate_self_referential_bases`](OwnedCircularityValidator::validate_self_referential_bases)
+    /// demonstrably necessary rather than merely redundant, and it pins
+    /// `InheritanceResolver`'s two other claims at the same time: that a self-extends does not
+    /// fail the load, and that the cycle never reaches a consumer.
+    ///
+    /// Without this, deleting the elision and deleting the raw check would cancel out and no
+    /// test would notice.
+    #[test]
+    #[cfg(not(feature = "skip-expensive-tests"))]
+    fn self_referential_base_is_elided_from_the_resolved_graph() -> Result<()> {
+        let assembly = create_assembly_with_self_referential_type()?;
+        let TestAssemblySource::Memory(data) = &assembly.source else {
+            return Err(Error::Other(
+                "factory is expected to produce an in-memory assembly".to_string(),
+            ));
+        };
+
+        // Claim 1: a self-referential `extends` does not fail the load.
+        let object = CilObject::from_mem_with_validation(data.clone(), ValidationConfig::minimal())
+            .map_err(|e| {
+                Error::Other(format!("a self-extends assembly must still load, got: {e}"))
+            })?;
+
+        // Claim 2: the type exists, and its base was left unset rather than pointing at itself.
+        let self_ref = object
+            .types()
+            .iter()
+            .find(|entry| entry.value().name == "SelfReferentialType")
+            .map(|entry| entry.value().clone())
+            .ok_or_else(|| Error::Other("SelfReferentialType was not registered".to_string()))?;
+
+        assert!(
+            self_ref.base().is_none(),
+            "the self-referential base must be elided, not recorded; found a base of {:?}",
+            self_ref.base().map(|b| b.token)
+        );
+
+        // Claim 3: and because it is elided, walking the graph finds nothing — which is
+        // exactly why the raw-column check has to exist.
+        let validator = OwnedCircularityValidator::new();
+        let mut visited = FxHashSet::default();
+        let mut visiting = FxHashSet::default();
+        validator
+            .check_inheritance_cycle_relationships(&self_ref, &mut visited, &mut visiting)
+            .map_err(|e| {
+                Error::Other(format!(
+                    "the graph walk unexpectedly saw the elided self-edge: {e}"
+                ))
+            })?;
+
+        Ok(())
     }
 }

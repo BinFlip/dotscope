@@ -76,7 +76,7 @@ use rustc_hash::FxHashMap;
 use crate::{
     metadata::{
         cilassemblyview::CilAssemblyView,
-        tables::{ClassLayoutRaw, FieldLayoutRaw, FieldRaw, TypeDefRaw},
+        tables::{skip_unreadable, ClassLayoutRaw, FieldLayoutRaw, FieldRaw, TypeDefRaw},
         validation::{
             context::{RawValidationContext, ValidationContext},
             shared::err_no_metadata_tables,
@@ -152,6 +152,7 @@ impl RawLayoutConstraintValidator {
             let mut field_offsets: FxHashMap<usize, Vec<(u32, u32)>> = FxHashMap::default();
 
             for field_layout in field_layout_table {
+                let field_layout = field_layout?;
                 if field_layout.field == 0 {
                     return Err(malformed_error!(
                         "FieldLayout RID {} has null field reference",
@@ -231,6 +232,7 @@ impl RawLayoutConstraintValidator {
             let typedef_table = tables.table::<TypeDefRaw>();
 
             for class_layout in class_layout_table {
+                let class_layout = class_layout?;
                 let packing_size = class_layout.packing_size;
                 if packing_size != 0 && !packing_size.is_power_of_two() {
                     return Err(malformed_error!(
@@ -311,10 +313,12 @@ impl RawLayoutConstraintValidator {
         ) {
             let mut class_layouts: FxHashMap<u32, u32> = FxHashMap::default();
             for class_layout in class_layout_table {
+                let class_layout = class_layout?;
                 class_layouts.insert(class_layout.parent, class_layout.rid);
             }
 
             for field_layout in field_layout_table {
+                let field_layout = field_layout?;
                 if field_layout.field_offset == 0x7FFF_FFFF {
                     return Err(malformed_error!(
                         "FieldLayout RID {} has field offset at maximum boundary - potential overflow",
@@ -327,19 +331,23 @@ impl RawLayoutConstraintValidator {
                         continue;
                     }
 
-                    let typedef_rows: Vec<_> = typedef_table.iter().collect();
+                    // A TypeDef owns fields `[self.field_list, next_row.field_list)`, where
+                    // "next row" means the next *RID* — so both ends are fetched by RID rather
+                    // than read off a filtered `Vec`. `skip_unreadable` drops unparseable rows,
+                    // and in a collected vector that silently makes one type's field range
+                    // swallow the following type's fields, mis-attributing the parent.
                     let mut parent_typedef_rid = None;
 
-                    for (index, typedef_entry) in typedef_rows.iter().enumerate() {
+                    for rid in 1..=typedef_table.row_count {
+                        let Ok(Some(typedef_entry)) = typedef_table.get(rid) else {
+                            continue;
+                        };
                         let start_field = typedef_entry.field_list;
-                        let next_index = index.saturating_add(1);
-                        let end_field = if next_index < typedef_rows.len() {
-                            typedef_rows
-                                .get(next_index)
-                                .ok_or(out_of_bounds_error!())?
-                                .field_list
-                        } else {
-                            u32::MAX
+                        let end_field = match typedef_table.get(rid.saturating_add(1)) {
+                            Ok(Some(next)) => next.field_list,
+                            // Last row, or the next row is unreadable: leave the range open
+                            // rather than guessing an end that could exclude a real field.
+                            _ => u32::MAX,
                         };
 
                         if field_layout.field >= start_field && field_layout.field < end_field {
@@ -352,10 +360,12 @@ impl RawLayoutConstraintValidator {
                     if let Some(parent_rid) = parent_typedef_rid {
                         if let Some(&class_layout_rid) = class_layouts.get(&parent_rid) {
                             // Find the actual class layout to validate field offset against class size
-                            if let Some(parent_class_layout) = class_layout_table
+                            let parent_class_layout = class_layout_table
                                 .iter()
-                                .find(|cl| cl.rid == class_layout_rid)
-                            {
+                                .collect::<Result<Vec<_>>>()?
+                                .into_iter()
+                                .find(|cl| cl.rid == class_layout_rid);
+                            if let Some(parent_class_layout) = parent_class_layout {
                                 // Validate field offset is reasonable (but allow flexibility for legitimate .NET patterns)
                                 // Note: In legitimate .NET assemblies, field offsets can exceed declared class size
                                 // due to explicit layout, union types, interop scenarios, inheritance, etc.
@@ -376,9 +386,14 @@ impl RawLayoutConstraintValidator {
             }
 
             for class_layout in class_layout_table {
-                let typedef_found = typedef_table
-                    .iter()
-                    .any(|typedef| typedef.rid == class_layout.parent);
+                let class_layout = class_layout?;
+                let mut typedef_found = false;
+                for typedef in typedef_table.iter() {
+                    if typedef?.rid == class_layout.parent {
+                        typedef_found = true;
+                        break;
+                    }
+                }
 
                 if !typedef_found {
                     return Err(malformed_error!(
@@ -421,6 +436,7 @@ impl RawLayoutConstraintValidator {
             (tables.table::<FieldLayoutRaw>(), tables.table::<FieldRaw>())
         {
             for field_layout in field_layout_table {
+                let field_layout = field_layout?;
                 let field_offset = field_layout.field_offset;
 
                 if (field_offset % 4 == 1 || field_offset % 4 == 3) && field_offset > 65536 {
@@ -481,10 +497,13 @@ impl RawLayoutConstraintValidator {
             tables.table::<TypeDefRaw>(),
         ) {
             for class_layout in class_layout_table {
-                if let Some(typedef_entry) = typedef_table
+                let class_layout = class_layout?;
+                let typedef_entry = typedef_table
                     .iter()
-                    .find(|td| td.rid == class_layout.parent)
-                {
+                    .collect::<Result<Vec<_>>>()?
+                    .into_iter()
+                    .find(|td| td.rid == class_layout.parent);
+                if let Some(typedef_entry) = typedef_entry {
                     const SEALED_FLAG: u32 = 0x0100;
                     const SERIALIZABLE_FLAG: u32 = 0x2000;
 
@@ -535,7 +554,10 @@ impl RawLayoutConstraintValidator {
         let tables = assembly_view.tables().ok_or_else(err_no_metadata_tables)?;
 
         if let Some(field_layout_table) = tables.table::<FieldLayoutRaw>() {
-            let field_layouts: Vec<_> = field_layout_table.iter().collect();
+            let field_layouts: Vec<_> = field_layout_table
+                .iter()
+                .filter_map(skip_unreadable)
+                .collect();
             let mut type_field_layouts: FxHashMap<u32, Vec<FieldLayoutRaw>> = FxHashMap::default();
 
             for field_layout in field_layouts {

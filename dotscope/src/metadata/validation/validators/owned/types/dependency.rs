@@ -421,7 +421,7 @@ impl OwnedTypeDependencyValidator {
                 .find(|t| Arc::as_ptr(t) as usize == type_key)
                 .map_or_else(
                     || format!("Unknown type at address 0x{type_key:X}"),
-                    |t| t.fullname(),
+                    |t| t.fullname().to_string(),
                 );
 
             return Err(Error::ValidationOwnedFailed {

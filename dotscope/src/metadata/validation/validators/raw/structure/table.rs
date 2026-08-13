@@ -242,6 +242,7 @@ impl RawTableValidator {
             (tables.table::<TypeDefRaw>(), tables.table::<FieldRaw>())
         {
             for typedef_row in typedef_table {
+                let typedef_row = typedef_row?;
                 if typedef_row.field_list != 0
                     && typedef_row.field_list > field_table.row_count.saturating_add(1)
                 {
@@ -259,6 +260,7 @@ impl RawTableValidator {
             (tables.table::<TypeDefRaw>(), tables.table::<MethodDefRaw>())
         {
             for typedef_row in typedef_table {
+                let typedef_row = typedef_row?;
                 if typedef_row.method_list != 0
                     && typedef_row.method_list > method_table.row_count.saturating_add(1)
                 {

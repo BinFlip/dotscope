@@ -321,7 +321,16 @@ impl OwnedDependencyValidator {
         for type_entry in context.target_assembly_types() {
             // Validate inheritance ordering
             if let Some(base_type) = type_entry.base() {
-                // Check for self-referential inheritance
+                // Backstop for a self-referential base reached through some path other than
+                // the TypeDef `extends` column — a synthetic type built by
+                // `typesystem::resolver`, say.
+                //
+                // It does *not* catch the metadata condition. `InheritanceResolver` elides a
+                // self-referential `extends` rather than recording it, so for a type loaded
+                // from metadata `base()` is `None` here and this comparison cannot fire.
+                // `OwnedCircularityValidator::validate_self_referential_bases` reads the raw
+                // column and is what actually reports that case.
+                //
                 // IMPORTANT: Only flag self-reference if both types are from the same assembly.
                 // Tokens are only unique within an assembly, so we need to check assembly context.
                 // A type is local (from target assembly) if get_external() returns None.
