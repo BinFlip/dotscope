@@ -13,6 +13,8 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4.13"
+# The custom-attribute parser takes the constructor parameter list as `Arc<boxcar::Vec<_>>`.
+boxcar = "0.2.14"
 
 [dependencies.dotscope]
 path = ".."
@@ -20,6 +22,41 @@ path = ".."
 [[bin]]
 name = "cilobject"
 path = "fuzz_targets/cilobject.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "assemblyview"
+path = "fuzz_targets/assemblyview.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "signatures"
+path = "fuzz_targets/signatures.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "customattributes"
+path = "fuzz_targets/customattributes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "methodbody"
+path = "fuzz_targets/methodbody.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "emulation"
+path = "fuzz_targets/emulation.rs"
 test = false
 doc = false
 bench = false
