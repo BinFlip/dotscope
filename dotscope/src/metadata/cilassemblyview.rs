@@ -121,7 +121,7 @@ use crate::{
         identity::{AssemblyIdentity, AssemblyVersion, Identity, ProcessorArchitecture},
         root::Root,
         streams::{Blob, Guid, StreamHeader, Strings, TablesHeader, UserStrings},
-        tables::{AssemblyProcessorRaw, AssemblyRaw, AssemblyRefRaw, ModuleRaw},
+        tables::{skip_unreadable, AssemblyProcessorRaw, AssemblyRaw, AssemblyRefRaw, ModuleRaw},
         validation::ValidationEngine,
     },
     Error, Result, ValidationConfig,
@@ -198,7 +198,7 @@ impl<'a> CilAssemblyViewData<'a> {
     /// # Errors
     ///
     /// Returns [`crate::Error::NotSupported`] if the file is not a .NET assembly (missing CLR header).
-    /// Returns [`crate::Error::OutOfBounds`] if the file data is truncated or corrupted.
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if the file data is truncated or corrupted.
     pub fn from_dotscope_file(file: Arc<File>, data: &'a [u8]) -> Result<Self> {
         let (clr_rva, clr_size) = file.clr().ok_or(Error::NotSupported)?;
 
@@ -431,7 +431,7 @@ impl CilAssemblyView {
     ///
     /// Returns [`crate::Error::Io`] if the file cannot be read.
     /// Returns [`crate::Error::NotSupported`] if the file is not a .NET assembly.
-    /// Returns [`crate::Error::OutOfBounds`] if the file data is corrupted.
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if the file data is corrupted.
     ///
     /// # Examples
     ///
@@ -475,7 +475,7 @@ impl CilAssemblyView {
     ///
     /// Returns [`crate::Error::Io`] if the file cannot be read.
     /// Returns [`crate::Error::NotSupported`] if the file is not a .NET assembly.
-    /// Returns [`crate::Error::OutOfBounds`] if the file data is corrupted.
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if the file data is corrupted.
     /// Returns validation errors if validation checks fail.
     ///
     /// # Examples
@@ -518,7 +518,7 @@ impl CilAssemblyView {
     /// # Errors
     ///
     /// Returns [`crate::Error::NotSupported`] if the data is not a .NET assembly.
-    /// Returns [`crate::Error::OutOfBounds`] if the data is corrupted or truncated.
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if the data is corrupted or truncated.
     ///
     /// # Examples
     ///
@@ -551,7 +551,7 @@ impl CilAssemblyView {
     /// # Errors
     ///
     /// Returns [`crate::Error::NotSupported`] if the data is not a .NET assembly.
-    /// Returns [`crate::Error::OutOfBounds`] if the data is corrupted or truncated.
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if the data is corrupted or truncated.
     /// Returns validation errors if validation checks fail.
     ///
     /// # Examples
@@ -1064,6 +1064,7 @@ impl CilAssemblyView {
 
         assembly_ref_table
             .into_iter()
+            .filter_map(skip_unreadable)
             .filter_map(|row| row.to_owned(strings, blobs).ok())
             .map(|assembly_ref| AssemblyIdentity::from_assembly_ref(&assembly_ref))
             .collect()
@@ -1119,7 +1120,10 @@ impl CilAssemblyView {
             return Ok(None);
         };
 
-        let Some(assembly_row) = assembly_table.iter().next() else {
+        // The Assembly table holds at most one row, at RID 1 (ECMA-335 II.22.2), so it is
+        // fetched by RID. Taking the first row that *parses* would silently promote a later
+        // row when RID 1 is malformed, and report another row's identity as the assembly's.
+        let Some(assembly_row) = assembly_table.get(1).ok().flatten() else {
             // Empty Assembly table - also a netmodule
             return Ok(None);
         };
@@ -1152,7 +1156,7 @@ impl CilAssemblyView {
 
         let processor_architecture = tables
             .table::<AssemblyProcessorRaw>()
-            .and_then(|proc_table| proc_table.iter().next())
+            .and_then(|proc_table| proc_table.get(1).ok().flatten())
             .and_then(|proc| ProcessorArchitecture::try_from(proc.processor).ok());
 
         #[allow(clippy::cast_possible_truncation)]
@@ -1184,7 +1188,8 @@ impl CilAssemblyView {
         let strings = self.strings()?;
 
         let module_table = tables.table::<ModuleRaw>()?;
-        let module_row = module_table.iter().next()?;
+        // Module is RID 1 by definition (ECMA-335 II.22.30).
+        let module_row = module_table.get(1).ok().flatten()?;
 
         strings.get(module_row.name as usize).ok().map(String::from)
     }

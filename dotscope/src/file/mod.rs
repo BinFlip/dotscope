@@ -134,7 +134,7 @@ use crate::{
         repair::{repair_pe_cow, RepairAction},
     },
     utils::align_to,
-    Error::{self, Goblin, LayoutFailed, Other},
+    Error::{self, LayoutFailed, Other},
     ParseFailure, ParseStage, Result,
 };
 
@@ -395,7 +395,7 @@ impl File {
             cowfile.commit()?;
         }
 
-        let goblin_pe = PE::parse(cowfile.data()).map_err(Goblin)?;
+        let goblin_pe = PE::parse(cowfile.data()).map_err(Error::from)?;
         let pe = Pe::from_goblin_pe(&goblin_pe)?;
 
         Ok(File {

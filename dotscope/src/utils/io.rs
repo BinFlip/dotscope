@@ -144,7 +144,7 @@
 //!
 //! # Error Handling
 //!
-//! All reading and writing functions return [`crate::Result<T>`] and will return [`crate::Error::OutOfBounds`]
+//! All reading and writing functions return [`crate::Result<T>`] and will return [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`]
 //! if there are insufficient bytes in the buffer to complete the operation. This ensures
 //! memory safety and prevents buffer overruns during parsing and generation.
 //!
@@ -485,7 +485,7 @@ impl CilIO for isize {
 ///
 /// # Returns
 ///
-/// Returns the decoded value or [`crate::Error::OutOfBounds`] if there are insufficient bytes.
+/// Returns the decoded value or [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if there are insufficient bytes.
 ///
 /// # Examples
 ///
@@ -518,7 +518,7 @@ pub fn read_le<T: CilIO>(data: &[u8]) -> Result<T> {
 ///
 /// # Returns
 ///
-/// Returns the decoded value or [`crate::Error::OutOfBounds`] if there are insufficient bytes.
+/// Returns the decoded value or [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if there are insufficient bytes.
 ///
 /// # Examples
 ///
@@ -569,7 +569,7 @@ pub fn read_le_at<T: CilIO>(data: &[u8], offset: &mut usize) -> Result<T> {
 ///
 /// # Returns
 ///
-/// Returns the decoded value as u32, or [`crate::Error::OutOfBounds`] if there are insufficient bytes.
+/// Returns the decoded value as u32, or [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if there are insufficient bytes.
 ///
 /// # Examples
 ///
@@ -617,7 +617,7 @@ pub fn read_le_at_dyn(data: &[u8], offset: &mut usize, is_large: bool) -> Result
 ///
 /// # Returns
 ///
-/// Returns the decoded value or [`crate::Error::OutOfBounds`] if there are insufficient bytes.
+/// Returns the decoded value or [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if there are insufficient bytes.
 ///
 /// # Examples
 ///
@@ -651,7 +651,7 @@ pub fn read_be<T: CilIO>(data: &[u8]) -> Result<T> {
 ///
 /// # Returns
 ///
-/// Returns the decoded value or [`crate::Error::OutOfBounds`] if there are insufficient bytes.
+/// Returns the decoded value or [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if there are insufficient bytes.
 ///
 /// # Examples
 ///
@@ -703,7 +703,7 @@ pub fn read_be_at<T: CilIO>(data: &[u8], offset: &mut usize) -> Result<T> {
 ///
 /// # Returns
 ///
-/// Returns the decoded value as u32, or [`crate::Error::OutOfBounds`] if there are insufficient bytes.
+/// Returns the decoded value as u32, or [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if there are insufficient bytes.
 ///
 /// # Examples
 ///
@@ -751,7 +751,7 @@ pub fn read_be_at_dyn(data: &[u8], offset: &mut usize, is_large: bool) -> Result
 ///
 /// # Returns
 ///
-/// Returns `Ok(())` on success or [`crate::Error::OutOfBounds`] if there are insufficient bytes.
+/// Returns `Ok(())` on success or [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if there are insufficient bytes.
 ///
 /// # Examples
 ///
@@ -786,7 +786,7 @@ pub fn write_le<T: CilIO>(data: &mut [u8], value: T) -> Result<()> {
 ///
 /// # Returns
 ///
-/// Returns `Ok(())` on success or [`crate::Error::OutOfBounds`] if there are insufficient bytes.
+/// Returns `Ok(())` on success or [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if there are insufficient bytes.
 ///
 /// # Examples
 ///
@@ -837,7 +837,7 @@ pub fn write_le_at<T: CilIO>(data: &mut [u8], offset: &mut usize, value: T) -> R
 ///
 /// # Returns
 ///
-/// Returns `Ok(())` on success or [`crate::Error::OutOfBounds`] if there are insufficient bytes.
+/// Returns `Ok(())` on success or [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if there are insufficient bytes.
 ///
 /// # Examples
 ///
@@ -891,7 +891,7 @@ pub fn write_le_at_dyn(
 ///
 /// # Returns
 ///
-/// Returns `Ok(())` on success or [`crate::Error::OutOfBounds`] if there are insufficient bytes.
+/// Returns `Ok(())` on success or [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if there are insufficient bytes.
 ///
 /// # Examples
 ///
@@ -927,7 +927,7 @@ pub fn write_be<T: CilIO>(data: &mut [u8], value: T) -> Result<()> {
 ///
 /// # Returns
 ///
-/// Returns `Ok(())` on success or [`crate::Error::OutOfBounds`] if there are insufficient bytes.
+/// Returns `Ok(())` on success or [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if there are insufficient bytes.
 ///
 /// # Examples
 ///
@@ -979,7 +979,7 @@ pub fn write_be_at<T: CilIO>(data: &mut [u8], offset: &mut usize, value: T) -> R
 ///
 /// # Returns
 ///
-/// Returns `Ok(())` on success or [`crate::Error::OutOfBounds`] if there are insufficient bytes.
+/// Returns `Ok(())` on success or [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if there are insufficient bytes.
 ///
 /// # Examples
 ///

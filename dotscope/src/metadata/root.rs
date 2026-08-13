@@ -342,8 +342,8 @@ impl Root {
     ///
     /// # Errors
     ///
-    /// - [`crate::Error::OutOfBounds`]: If the data slice is too short for the required fields
-    /// - [`crate::Error::Malformed`]: If the magic signature is invalid, version string is malformed,
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`]: If the data slice is too short for the required fields
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`]: If the magic signature is invalid, version string is malformed,
     ///   or stream directory is inconsistent
     /// - [`crate::Error::TypeError`]: If integer overflow occurs during parsing
     ///

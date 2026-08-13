@@ -52,7 +52,7 @@
 //! - [`crate::metadata::method`] - Supports method-level disassembly and caching
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
 };
 
@@ -95,6 +95,27 @@ struct Decoder<'a> {
     offset_start: usize,
     /// Starting relative virtual address
     rva_start: usize,
+    /// Index from each block's start RVA to its index in `blocks`.
+    ///
+    /// `find_block_containing_rva` is called once per branch target. A scan over every block
+    /// would make block construction quadratic in a method whose branches are dense, and block
+    /// count is bounded only by the size of the method body. This `BTreeMap` answers the
+    /// containment query in O(log B) via `range(..=rva).next_back()`.
+    ///
+    /// Indices stay valid because blocks are only ever *appended*: `split_block_at` pushes the
+    /// tail as a new block rather than inserting it, so no existing index shifts.
+    block_starts: BTreeMap<u64, usize>,
+    /// Exclusive upper bound on offsets this decoder may read.
+    ///
+    /// The parser spans the whole file image so that offsets stay file-absolute — the
+    /// `VisitedMap` is shared across methods and keyed by those offsets, so a per-method
+    /// window would make different methods collide at the same relative offset. Decoding is
+    /// instead bounded here, at the end of *this* method's declared `size_code`.
+    ///
+    /// Without it every bound in this decoder was the file length, so a method whose last
+    /// in-range instruction is not a terminator kept decoding into the next method, into the
+    /// metadata streams and into resources.
+    max_offset: usize,
 }
 
 impl<'a> Decoder<'a> {
@@ -119,7 +140,7 @@ impl<'a> Decoder<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::OutOfBounds`] if the offset exceeds the parser's data length.
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if the offset exceeds the parser's data length.
     ///
     /// # Thread Safety
     ///
@@ -130,10 +151,13 @@ impl<'a> Decoder<'a> {
         rva: usize,
         exceptions: Option<&'a [ExceptionHandler]>,
         visited: Arc<VisitedMap>,
+        max_offset: usize,
     ) -> Result<Self> {
         if offset > parser.len() {
             return Err(out_of_bounds_error!());
         }
+
+        let max_offset = max_offset.min(parser.len());
 
         Ok(Decoder {
             blocks: Vec::new(),
@@ -143,6 +167,8 @@ impl<'a> Decoder<'a> {
             block_id: 0,
             offset_start: offset,
             rva_start: rva,
+            block_starts: BTreeMap::new(),
+            max_offset,
         })
     }
 
@@ -246,6 +272,7 @@ impl<'a> Decoder<'a> {
         let mut entry_points: HashSet<u64> = HashSet::new();
 
         // Create the first block at method entry
+        self.block_starts.insert(self.rva_start as u64, 0);
         self.blocks
             .push(BasicBlock::new(0, self.rva_start as u64, self.offset_start));
         entry_points.insert(self.rva_start as u64);
@@ -283,7 +310,8 @@ impl<'a> Decoder<'a> {
                     .offset_start
                     .checked_add(entry_offset_u32 as usize)
                     .ok_or(out_of_bounds_error!())?;
-                if entry_offset < self.parser.len() && !self.visited.get(entry_offset) {
+                if entry_offset < self.max_offset && !self.visited.get(entry_offset) {
+                    self.block_starts.insert(entry_rva, self.blocks.len());
                     self.blocks
                         .push(BasicBlock::new(self.blocks.len(), entry_rva, entry_offset));
                     entry_points.insert(entry_rva);
@@ -350,7 +378,7 @@ impl<'a> Decoder<'a> {
             (block.offset, block.rva)
         };
 
-        if block_offset > self.parser.len() {
+        if block_offset > self.max_offset {
             return Err(out_of_bounds_error!());
         }
 
@@ -364,7 +392,7 @@ impl<'a> Decoder<'a> {
         let mut current_rva = block_rva;
 
         loop {
-            if current_offset >= self.parser.len() {
+            if current_offset >= self.max_offset {
                 break;
             }
 
@@ -489,7 +517,7 @@ impl<'a> Decoder<'a> {
         let Some(offset) = self.offset_start.checked_add(relative_offset) else {
             return;
         };
-        if offset >= self.parser.len() {
+        if offset >= self.max_offset {
             return;
         }
 
@@ -497,6 +525,7 @@ impl<'a> Decoder<'a> {
             self.split_block_at(block_idx, split_instr_idx, rva, offset);
         } else {
             let new_block = BasicBlock::new(self.blocks.len(), rva, offset);
+            self.block_starts.insert(rva, self.blocks.len());
             self.blocks.push(new_block);
         }
 
@@ -521,20 +550,25 @@ impl<'a> Decoder<'a> {
     ///
     /// * `rva` - The relative virtual address to search for
     fn find_block_containing_rva(&self, rva: u64) -> Option<(usize, usize)> {
-        for (block_idx, block) in self.blocks.iter().enumerate() {
-            if block.rva == rva {
-                return None;
-            }
+        // Already a block boundary — nothing to split.
+        if self.block_starts.contains_key(&rva) {
+            return None;
+        }
 
-            let block_end_rva = block.rva.checked_add(block.size as u64)?;
-            if rva > block.rva && rva < block_end_rva {
-                for (instr_idx, instr) in block.instructions.iter().enumerate() {
-                    if instr.rva == rva {
-                        return Some((block_idx, instr_idx));
-                    }
+        // The only block that can contain `rva` in its interior is the one with the greatest
+        // start below it, since blocks do not overlap.
+        let (_, &block_idx) = self.block_starts.range(..rva).next_back()?;
+        let block = self.blocks.get(block_idx)?;
+
+        let block_end_rva = block.rva.checked_add(block.size as u64)?;
+        if rva > block.rva && rva < block_end_rva {
+            for (instr_idx, instr) in block.instructions.iter().enumerate() {
+                if instr.rva == rva {
+                    return Some((block_idx, instr_idx));
                 }
             }
         }
+
         None
     }
 
@@ -574,6 +608,7 @@ impl<'a> Decoder<'a> {
         }
 
         // Create new block with instructions from split point onwards
+        self.block_starts.insert(rva, self.blocks.len());
         let mut new_block = BasicBlock::new(self.blocks.len(), rva, offset);
         let Some(orig) = self.blocks.get(block_idx) else {
             return;
@@ -665,9 +700,15 @@ impl<'a> Decoder<'a> {
                 .checked_add(u64::from(handler.try_length))
                 .ok_or_else(|| malformed_error!("try region end RVA overflow"))?;
 
-            // Mark blocks in the try region
-            for block in &mut self.blocks {
-                if block.rva >= try_start && block.rva < try_end {
+            // Mark blocks in the try region.
+            //
+            // `self.blocks` is sorted by RVA, so binary-search the covered range instead of
+            // scanning every block per handler: with H handlers whose try ranges span the
+            // method, the scan was O(H·B), and B is bounded only by the method body's size.
+            let lo = self.blocks.partition_point(|b| b.rva < try_start);
+            let hi = self.blocks.partition_point(|b| b.rva < try_end);
+            if let Some(covered) = self.blocks.get_mut(lo..hi) {
+                for block in covered {
                     block.exceptions.push(handler_idx);
                 }
             }
@@ -745,15 +786,26 @@ impl<'a> Decoder<'a> {
                 .checked_add(u64::from(handler.try_length))
                 .ok_or_else(|| malformed_error!("try region end RVA overflow"))?;
 
-            for block in &mut self.blocks {
-                if block.rva >= try_start && block.rva < try_end {
-                    // Add exception successor if not already present
-                    if !block.exception_successors.contains(&handler_block_idx) {
-                        block.exception_successors.push(handler_block_idx);
-                    }
+            // Same binary-searched range as `process_exception_handlers`. Duplicates are
+            // removed in one pass afterwards rather than by a linear `contains` per push,
+            // which made this O(B·H²) — each push scanned successors already accumulated.
+            let lo = self.blocks.partition_point(|b| b.rva < try_start);
+            let hi = self.blocks.partition_point(|b| b.rva < try_end);
+            if let Some(covered) = self.blocks.get_mut(lo..hi) {
+                for block in covered {
+                    block.exception_successors.push(handler_block_idx);
                 }
             }
         }
+
+        // Deduplicate while preserving first-occurrence order, which encodes handler priority —
+        // sorting would reorder the handler search.
+        let mut seen: HashSet<usize> = HashSet::new();
+        for block in &mut self.blocks {
+            seen.clear();
+            block.exception_successors.retain(|idx| seen.insert(*idx));
+        }
+
         Ok(())
     }
 
@@ -994,6 +1046,16 @@ pub(crate) fn decode_method(
             return Ok(());
         }
 
+        // Bound decoding to this method's declared code window.
+        //
+        // The parser deliberately still spans the whole file image: offsets must stay
+        // file-absolute because `shared_visited` is shared across every method and keyed by
+        // them. Slicing to a per-method window would restart every method's offsets at 0, so
+        // methods would collide in that map and all but the first would decode nothing.
+        let code_end = code_start
+            .checked_add(body.size_code)
+            .ok_or_else(|| malformed_error!("code_start + size_code overflow"))?;
+
         let mut parser = Parser::new(file.data());
         let rva_start = rva
             .checked_add(body.size_header)
@@ -1004,6 +1066,7 @@ pub(crate) fn decode_method(
             rva_start,
             Some(&body.exception_handlers),
             shared_visited,
+            code_end,
         )?;
 
         decoder.decode_blocks()?;
@@ -1092,7 +1155,10 @@ pub fn decode_blocks(
 
     let mut parser = Parser::new(effective_data);
     let visited = Arc::new(VisitedMap::new(effective_data.len()));
-    let mut decoder = Decoder::new(&mut parser, 0, rva, None, visited)?;
+    // This entry point already slices `data` to the requested window and builds a private
+    // `VisitedMap` over it, so the whole buffer is in bounds.
+    let max_offset = effective_data.len();
+    let mut decoder = Decoder::new(&mut parser, 0, rva, None, visited, max_offset)?;
 
     decoder.decode_blocks()?;
 
@@ -1296,10 +1362,24 @@ pub fn decode_instruction(parser: &mut Parser, rva: u64) -> Result<Instruction> 
         OperandType::Float64 => Operand::Immediate(Immediate::Float64(parser.read_le::<f64>()?)),
         OperandType::Token => Operand::Token(Token::new(parser.read_le::<u32>()?)),
         OperandType::Switch => {
-            let case_count = parser.read_le::<u32>()?;
+            let case_count = parser.read_le::<u32>()? as usize;
 
-            let mut targets = Vec::with_capacity(case_count as usize);
-            for _ in 0..case_count as usize {
+            // Each case is a 4-byte target that must actually be present, so the remaining
+            // input is a hard upper bound on the count. Without this check the raw `u32` sizes
+            // the reservation directly: five bytes (`0x45` plus `0xFFFFFFFF`) request ~16 GiB,
+            // and a failed allocation *aborts* rather than unwinding, so it escapes the
+            // crate's no-panic policy entirely.
+            let available_targets = parser.len().saturating_sub(parser.pos()) / 4;
+            if case_count > available_targets {
+                return Err(malformed_error!(
+                    "switch declares {} cases but only {} target slots remain in the method body",
+                    case_count,
+                    available_targets
+                ));
+            }
+
+            let mut targets = Vec::with_capacity(case_count);
+            for _ in 0..case_count {
                 // Switch offsets are SIGNED 32-bit integers (can be negative for backward jumps)
                 targets.push(parser.read_le::<i32>()?);
             }

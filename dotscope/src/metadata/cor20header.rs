@@ -257,8 +257,8 @@ impl Cor20Header {
     /// Returns a parsed and validated [`Cor20Header`] on success.
     ///
     /// # Errors
-    /// Returns [`crate::Error::OutOfBounds`] if the data is too short, or
-    /// [`crate::Error::Malformed`] if any field validation fails per ECMA-335 requirements:
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if the data is too short, or
+    /// [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`] if any field validation fails per ECMA-335 requirements:
     /// - Invalid header size (not 72 bytes)
     /// - Invalid runtime version (0 or > 10)
     /// - Zero metadata RVA or size

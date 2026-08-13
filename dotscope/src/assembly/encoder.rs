@@ -1084,7 +1084,7 @@ impl InstructionEncoder {
     /// Returns an error if:
     /// - [`crate::Error::UndefinedLabel`] - Any referenced labels are undefined
     /// - [`crate::Error::InvalidBranch`] - Branch offsets exceed the allowed range for their instruction type
-    /// - [`crate::Error::Malformed`] - Stack underflow occurred during encoding (negative stack depth)
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`] - Stack underflow occurred during encoding (negative stack depth)
     ///
     /// # Examples
     ///
