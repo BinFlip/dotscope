@@ -28,8 +28,8 @@ use crate::{
     },
     metadata::{
         tables::{
-            CustomAttributeRaw, FieldRaw, InterfaceImplRaw, MethodDefRaw, MethodImplRaw,
-            MethodSemanticsRaw, MethodSpecRaw, TableId, TypeDefRaw,
+            skip_unreadable, CustomAttributeRaw, FieldRaw, InterfaceImplRaw, MethodDefRaw,
+            MethodImplRaw, MethodSemanticsRaw, MethodSpecRaw, TableId, TypeDefRaw,
         },
         token::Token,
     },
@@ -121,7 +121,7 @@ pub fn execute_cleanup(
         if let Some(tables) = view.tables() {
             if let Some(attr_table) = tables.table::<CustomAttributeRaw>() {
                 for attr_token in request.attributes() {
-                    if let Some(attr) = attr_table.get(attr_token.row()) {
+                    if let Some(attr) = attr_table.get(attr_token.row())? {
                         pre_refs.il_tokens.insert(attr.constructor.token);
                     }
                 }
@@ -475,13 +475,13 @@ fn expand_type_members(
     for type_token in request.types() {
         let type_rid = type_token.row();
 
-        let Some(typedef) = typedef_table.get(type_rid) else {
+        let Some(typedef) = typedef_table.get(type_rid).ok().flatten() else {
             continue;
         };
 
         // Get method range for this type
         let method_range = list_range(type_rid, type_count, methoddef_count, |rid| {
-            typedef_table.get(rid).map(|t| t.method_list)
+            typedef_table.get(rid).ok().flatten().map(|t| t.method_list)
         });
         // Override start with actual typedef's method_list
         for method_rid in typedef.method_list..method_range.end {
@@ -490,7 +490,7 @@ fn expand_type_members(
 
         // Get field range for this type
         let field_range = list_range(type_rid, type_count, field_count, |rid| {
-            typedef_table.get(rid).map(|t| t.field_list)
+            typedef_table.get(rid).ok().flatten().map(|t| t.field_list)
         });
         // Override start with actual typedef's field_list
         for field_rid in typedef.field_list..field_range.end {
@@ -560,7 +560,7 @@ fn remove_empty_types(
         let mut empty = Vec::new();
 
         for type_rid in 1..=type_count {
-            let Some(typedef) = typedef_table.get(type_rid) else {
+            let Some(typedef) = typedef_table.get(type_rid).ok().flatten() else {
                 continue;
             };
 
@@ -591,7 +591,7 @@ fn remove_empty_types(
             // incorrect after deletions: a type whose methods were all deleted still
             // has a non-zero range, so we must check each row individually.
             let method_range = list_range(type_rid, type_count, methoddef_count, |rid| {
-                typedef_table.get(rid).map(|t| t.method_list)
+                typedef_table.get(rid).ok().flatten().map(|t| t.method_list)
             });
             let live_method_count = (typedef.method_list..method_range.end)
                 .filter(|&rid| !assembly.changes().is_row_deleted(TableId::MethodDef, rid))
@@ -599,7 +599,7 @@ fn remove_empty_types(
 
             // Calculate field count for this type — same logic.
             let field_range = list_range(type_rid, type_count, field_count, |rid| {
-                typedef_table.get(rid).map(|t| t.field_list)
+                typedef_table.get(rid).ok().flatten().map(|t| t.field_list)
             });
             let live_field_count = (typedef.field_list..field_range.end)
                 .filter(|&rid| !assembly.changes().is_row_deleted(TableId::Field, rid))
@@ -618,19 +618,22 @@ fn remove_empty_types(
                 // Skip types that are base classes of other surviving types.
                 // Abstract base classes may have no direct members but provide
                 // type hierarchy structure that must be preserved.
-                let is_base_class = typedef_table.iter().any(|other| {
-                    other.rid != type_rid
-                        && !empty.contains(&other.rid)
-                        && other.extends.tag == TableId::TypeDef
-                        && other.extends.row == type_rid
-                });
+                let is_base_class = typedef_table
+                    .iter()
+                    .filter_map(skip_unreadable)
+                    .any(|other| {
+                        other.rid != type_rid
+                            && !empty.contains(&other.rid)
+                            && other.extends.tag == TableId::TypeDef
+                            && other.extends.row == type_rid
+                    });
                 if is_base_class {
                     continue;
                 }
 
                 // Skip types that appear in InterfaceImpl as the interface being implemented.
                 if let Some(iface_impl) = tables.table::<InterfaceImplRaw>() {
-                    let is_implemented = iface_impl.iter().any(|row| {
+                    let is_implemented = iface_impl.iter().filter_map(skip_unreadable).any(|row| {
                         row.interface.tag == TableId::TypeDef && row.interface.row == type_rid
                     });
                     if is_implemented {
@@ -692,6 +695,13 @@ fn collect_alive_method_tokens(assembly: &CilAssembly) -> HashSet<Token> {
     // the underlying MethodDef is alive.
     if let Some(methodspec_table) = tables.table::<MethodSpecRaw>() {
         for row in methodspec_table {
+            let row = match row {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             if assembly
                 .changes()
                 .is_row_deleted(TableId::MethodSpec, row.rid)
@@ -709,6 +719,13 @@ fn collect_alive_method_tokens(assembly: &CilAssembly) -> HashSet<Token> {
     // its constructor method is alive.
     if let Some(attr_table) = tables.table::<CustomAttributeRaw>() {
         for row in attr_table {
+            let row = match row {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             if assembly
                 .changes()
                 .is_row_deleted(TableId::CustomAttribute, row.rid)
@@ -725,6 +742,13 @@ fn collect_alive_method_tokens(assembly: &CilAssembly) -> HashSet<Token> {
     // These are alive if the row itself is not deleted.
     if let Some(sem_table) = tables.table::<MethodSemanticsRaw>() {
         for row in sem_table {
+            let row = match row {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             if assembly
                 .changes()
                 .is_row_deleted(TableId::MethodSemantics, row.rid)
@@ -739,6 +763,13 @@ fn collect_alive_method_tokens(assembly: &CilAssembly) -> HashSet<Token> {
     // MethodImpl.method_body / method_declaration → explicit overrides.
     if let Some(impl_table) = tables.table::<MethodImplRaw>() {
         for row in impl_table {
+            let row = match row {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             if assembly
                 .changes()
                 .is_row_deleted(TableId::MethodImpl, row.rid)

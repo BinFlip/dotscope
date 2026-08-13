@@ -128,9 +128,9 @@ pub fn stream_strings_heap(
 pub fn compute_strings_heap_offsets(
     source_data: &[u8],
     changes: &HeapChanges<String>,
+    referenced_offsets: &HashSet<u32>,
 ) -> Result<StreamResult> {
-    let empty = HashSet::new();
-    process_strings_heap(None, 0, source_data, changes, &empty)
+    process_strings_heap(None, 0, source_data, changes, referenced_offsets)
 }
 
 /// Emits original substrings as standalone entries when their parent string was
@@ -493,9 +493,19 @@ pub fn stream_blob_heap(
 pub fn compute_blob_heap_offsets(
     source_data: &[u8],
     changes: &HeapChanges<Vec<u8>>,
+    typedef_remap: &HashMap<u32, u32>,
+    typeref_remap: &HashMap<u32, u32>,
+    typespec_remap: &HashMap<u32, u32>,
 ) -> Result<StreamResult> {
-    let empty = HashMap::new();
-    process_blob_heap(None, 0, source_data, changes, &empty, &empty, &empty)
+    process_blob_heap(
+        None,
+        0,
+        source_data,
+        changes,
+        typedef_remap,
+        typeref_remap,
+        typespec_remap,
+    )
 }
 
 /// Unified blob heap processor.

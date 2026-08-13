@@ -143,7 +143,14 @@ where
         };
 
         (1..=table.row_count)
-            .filter_map(|rid| table.get(rid).filter(|r| is_orphan(r)).map(|_| rid))
+            .filter_map(|rid| {
+                table
+                    .get(rid)
+                    .ok()
+                    .flatten()
+                    .filter(|r| is_orphan(r))
+                    .map(|_| rid)
+            })
             .collect()
     };
 
@@ -190,7 +197,11 @@ pub(super) fn remove_orphan_params(assembly: &mut CilAssembly, ctx: &DeletionCon
             }
 
             let range = list_range(method_rid, method_count, param_count, |rid| {
-                methoddef_table.get(rid).map(|m| m.param_list)
+                methoddef_table
+                    .get(rid)
+                    .ok()
+                    .flatten()
+                    .map(|m| m.param_list)
             });
 
             params.extend(range);
@@ -278,6 +289,13 @@ pub(super) fn collect_orphaned_nested_types(
 
     let mut orphaned = Vec::new();
     for nested in nested_table.iter() {
+        let nested = match nested {
+            Ok(row) => row,
+            Err(e) => {
+                log::warn!("skipping unreadable metadata row: {e}");
+                continue;
+            }
+        };
         let enclosing_token = Token::from_parts(TableId::TypeDef, nested.enclosing_class);
         let nested_token = Token::from_parts(TableId::TypeDef, nested.nested_class);
         if ctx.is_type_deleted(enclosing_token) && !ctx.is_type_deleted(nested_token) {
@@ -374,7 +392,7 @@ pub(super) fn remove_orphan_genericparam(
 
         (1..=table.row_count)
             .filter_map(|rid| {
-                table.get(rid).and_then(|param| {
+                table.get(rid).ok().flatten().and_then(|param| {
                     if ctx.is_deleted(param.owner.token) {
                         Some(rid)
                     } else {
@@ -478,7 +496,7 @@ pub(super) fn remove_orphan_events(
         let mut events = Vec::new();
 
         for map_rid in 1..=map_count {
-            let Some(eventmap) = eventmap_table.get(map_rid) else {
+            let Some(eventmap) = eventmap_table.get(map_rid).ok().flatten() else {
                 continue;
             };
             let parent_token = Token::from_parts(TableId::TypeDef, eventmap.parent);
@@ -487,7 +505,7 @@ pub(super) fn remove_orphan_events(
             }
 
             let range = list_range(map_rid, map_count, event_count, |rid| {
-                eventmap_table.get(rid).map(|m| m.event_list)
+                eventmap_table.get(rid).ok().flatten().map(|m| m.event_list)
             });
 
             events.extend(range);
@@ -539,7 +557,7 @@ pub(super) fn remove_orphan_properties(
         let mut props = Vec::new();
 
         for map_rid in 1..=map_count {
-            let Some(propertymap) = propertymap_table.get(map_rid) else {
+            let Some(propertymap) = propertymap_table.get(map_rid).ok().flatten() else {
                 continue;
             };
             let parent_token = Token::from_parts(TableId::TypeDef, propertymap.parent);
@@ -548,7 +566,11 @@ pub(super) fn remove_orphan_properties(
             }
 
             let range = list_range(map_rid, map_count, property_count, |rid| {
-                propertymap_table.get(rid).map(|m| m.property_list)
+                propertymap_table
+                    .get(rid)
+                    .ok()
+                    .flatten()
+                    .map(|m| m.property_list)
             });
 
             props.extend(range);
@@ -629,7 +651,7 @@ pub(super) fn remove_orphan_modulerefs(
                 if assembly.changes().is_row_deleted(TableId::ImplMap, rid) {
                     continue;
                 }
-                if let Some(implmap) = implmap_table.get(rid) {
+                if let Some(implmap) = implmap_table.get(rid).ok().flatten() {
                     alive.insert(implmap.import_scope);
                 }
             }
@@ -641,7 +663,7 @@ pub(super) fn remove_orphan_modulerefs(
                 if assembly.changes().is_row_deleted(TableId::TypeRef, rid) {
                     continue;
                 }
-                if let Some(typeref) = typeref_table.get(rid) {
+                if let Some(typeref) = typeref_table.get(rid).ok().flatten() {
                     if typeref.resolution_scope.tag == TableId::ModuleRef {
                         alive.insert(typeref.resolution_scope.row);
                     }
@@ -686,7 +708,7 @@ pub(super) fn remove_orphan_assemblyrefs(
                 if assembly.changes().is_row_deleted(TableId::TypeRef, rid) {
                     continue;
                 }
-                if let Some(typeref) = typeref_table.get(rid) {
+                if let Some(typeref) = typeref_table.get(rid).ok().flatten() {
                     if typeref.resolution_scope.tag == TableId::AssemblyRef {
                         alive.insert(typeref.resolution_scope.row);
                     }
@@ -723,7 +745,7 @@ pub(super) fn remove_orphan_exportedtypes(assembly: &mut CilAssembly) -> (usize,
 
         (1..=table.row_count)
             .filter_map(|rid| {
-                let entry = table.get(rid)?;
+                let entry = table.get(rid).ok().flatten()?;
                 // Null implementation (row == 0) means type is defined in this module
                 if entry.implementation.row == 0 {
                     return None;
@@ -772,7 +794,7 @@ pub(super) fn remove_orphan_manifestresources(assembly: &mut CilAssembly) -> (us
 
         (1..=table.row_count)
             .filter_map(|rid| {
-                let entry = table.get(rid)?;
+                let entry = table.get(rid).ok().flatten()?;
                 // Null implementation (row == 0) = embedded resource, skip
                 if entry.implementation.row == 0 {
                     return None;
@@ -827,7 +849,7 @@ pub(super) fn remove_orphan_files(assembly: &mut CilAssembly, candidates: &BTree
                 {
                     continue;
                 }
-                if let Some(entry) = table.get(rid) {
+                if let Some(entry) = table.get(rid).ok().flatten() {
                     if entry.implementation.token.is_table(TableId::File) {
                         alive.insert(entry.implementation.token.row());
                     }
@@ -844,7 +866,7 @@ pub(super) fn remove_orphan_files(assembly: &mut CilAssembly, candidates: &BTree
                 {
                     continue;
                 }
-                if let Some(entry) = table.get(rid) {
+                if let Some(entry) = table.get(rid).ok().flatten() {
                     if entry.implementation.token.is_table(TableId::File) {
                         alive.insert(entry.implementation.token.row());
                     }
@@ -1053,6 +1075,13 @@ pub(super) fn cascade_reference_cleanup(
         if let Some(tables) = view.tables() {
             if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
                 for memberref in memberref_table {
+                    let memberref = match memberref {
+                        Ok(row) => row,
+                        Err(e) => {
+                            log::warn!("skipping unreadable metadata row: {e}");
+                            continue;
+                        }
+                    };
                     if !assembly
                         .changes()
                         .is_row_deleted(TableId::MemberRef, memberref.rid)
@@ -1082,6 +1111,13 @@ pub(super) fn cascade_reference_cleanup(
         if let Some(tables) = view.tables() {
             if let Some(typespec_table) = tables.table::<crate::metadata::tables::TypeSpecRaw>() {
                 for typespec in typespec_table {
+                    let typespec = match typespec {
+                        Ok(row) => row,
+                        Err(e) => {
+                            log::warn!("skipping unreadable metadata row: {e}");
+                            continue;
+                        }
+                    };
                     if !assembly
                         .changes()
                         .is_row_deleted(TableId::TypeSpec, typespec.rid)
@@ -1117,7 +1153,7 @@ pub(super) fn cascade_reference_cleanup(
         if let Some(tables) = view.tables() {
             if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
                 for &memberref_rid in &deleted_memberref_rids {
-                    if let Some(memberref) = memberref_table.get(memberref_rid) {
+                    if let Some(memberref) = memberref_table.get(memberref_rid).ok().flatten() {
                         if memberref.class.token.is_table(TableId::TypeRef) {
                             typeref_candidates.insert(memberref.class.token.row());
                         }
@@ -1139,6 +1175,13 @@ pub(super) fn cascade_reference_cleanup(
         if let Some(tables) = view.tables() {
             if let Some(typeref_table) = tables.table::<TypeRefRaw>() {
                 for typeref in typeref_table {
+                    let typeref = match typeref {
+                        Ok(row) => row,
+                        Err(e) => {
+                            log::warn!("skipping unreadable metadata row: {e}");
+                            continue;
+                        }
+                    };
                     if !assembly
                         .changes()
                         .is_row_deleted(TableId::TypeRef, typeref.rid)
@@ -1166,7 +1209,7 @@ pub(super) fn cascade_reference_cleanup(
             // From cascade-deleted TypeRefs
             if let Some(typeref_table) = tables.table::<TypeRefRaw>() {
                 for &typeref_rid in &deleted_typeref_rids {
-                    if let Some(typeref) = typeref_table.get(typeref_rid) {
+                    if let Some(typeref) = typeref_table.get(typeref_rid).ok().flatten() {
                         match typeref.resolution_scope.tag {
                             TableId::AssemblyRef => {
                                 assemblyref_candidates.insert(typeref.resolution_scope.row);
@@ -1183,6 +1226,13 @@ pub(super) fn cascade_reference_cleanup(
             // From deleted ImplMaps (import_scope → ModuleRef)
             if let Some(implmap_table) = tables.table::<ImplMapRaw>() {
                 for implmap in implmap_table {
+                    let implmap = match implmap {
+                        Ok(row) => row,
+                        Err(e) => {
+                            log::warn!("skipping unreadable metadata row: {e}");
+                            continue;
+                        }
+                    };
                     if assembly
                         .changes()
                         .is_row_deleted(TableId::ImplMap, implmap.rid)
@@ -1200,6 +1250,13 @@ pub(super) fn cascade_reference_cleanup(
         if let Some(tables) = view.tables() {
             if let Some(table) = tables.table::<crate::metadata::tables::ModuleRefRaw>() {
                 for row in table {
+                    let row = match row {
+                        Ok(row) => row,
+                        Err(e) => {
+                            log::warn!("skipping unreadable metadata row: {e}");
+                            continue;
+                        }
+                    };
                     if !assembly
                         .changes()
                         .is_row_deleted(TableId::ModuleRef, row.rid)
@@ -1210,6 +1267,13 @@ pub(super) fn cascade_reference_cleanup(
             }
             if let Some(table) = tables.table::<crate::metadata::tables::AssemblyRefRaw>() {
                 for row in table {
+                    let row = match row {
+                        Ok(row) => row,
+                        Err(e) => {
+                            log::warn!("skipping unreadable metadata row: {e}");
+                            continue;
+                        }
+                    };
                     if !assembly
                         .changes()
                         .is_row_deleted(TableId::AssemblyRef, row.rid)
@@ -1248,7 +1312,7 @@ pub(super) fn cascade_reference_cleanup(
         if let Some(tables) = view.tables() {
             if let Some(table) = tables.table::<ExportedTypeRaw>() {
                 for &rid in &deleted_exportedtype_rids {
-                    if let Some(entry) = table.get(rid) {
+                    if let Some(entry) = table.get(rid).ok().flatten() {
                         if entry.implementation.token.is_table(TableId::File) {
                             file_candidates.insert(entry.implementation.token.row());
                         }
@@ -1257,7 +1321,7 @@ pub(super) fn cascade_reference_cleanup(
             }
             if let Some(table) = tables.table::<ManifestResourceRaw>() {
                 for &rid in &deleted_manifestresource_rids {
-                    if let Some(entry) = table.get(rid) {
+                    if let Some(entry) = table.get(rid).ok().flatten() {
                         if entry.implementation.token.is_table(TableId::File) {
                             file_candidates.insert(entry.implementation.token.row());
                         }

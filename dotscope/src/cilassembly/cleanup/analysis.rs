@@ -253,6 +253,13 @@ pub fn find_unreferenced_types(
     if let Some(tables) = assembly.tables() {
         if let Some(attr_table) = tables.table::<CustomAttributeRaw>() {
             for row in attr_table {
+                let row = match row {
+                    Ok(row) => row,
+                    Err(e) => {
+                        log::warn!("skipping unreadable metadata row: {e}");
+                        continue;
+                    }
+                };
                 if row.constructor.token.is_table(TableId::MethodDef) {
                     if let Some(&ctor_type) = method_to_type.get(&row.constructor.token) {
                         if candidates.remove(&ctor_type) {

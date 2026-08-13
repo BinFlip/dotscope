@@ -92,6 +92,8 @@ fn calculate_field_size(
     })?;
     let field_row = field_table
         .iter()
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
         .find(|r| r.rid == field_index)
         .ok_or_else(|| {
             Error::ModificationInvalid(format!("Field {field_index} not found in Field table"))
@@ -142,6 +144,7 @@ fn calculate_type_size(
             if is_typedef {
                 if let Some(class_layout_table) = tables.table::<ClassLayoutRaw>() {
                     for layout_row in class_layout_table {
+                        let layout_row = layout_row?;
                         if layout_row.parent == row {
                             return Ok(layout_row.class_size as usize);
                         }
@@ -227,6 +230,7 @@ fn collect_original_fieldrva_data(
     let mut entries_to_process: Vec<(u32, u32, u32)> = Vec::new(); // (rva, rid, field_index)
 
     for row in fieldrva_table {
+        let row = row?;
         if deleted_rids.contains(&row.rid)
             || deleted_field_rids.contains(&row.field)
             || modified_rids.contains(&row.rid)

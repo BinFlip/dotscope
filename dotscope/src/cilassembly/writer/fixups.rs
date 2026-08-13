@@ -211,18 +211,20 @@ pub fn fixup_section_table(ctx: &mut WriteContext) -> Result<()> {
             continue; // Skip sections without data
         };
 
-        // SizeOfRawData must be a multiple of FileAlignment per PE spec.
-        // This is required for all sections including the last one.
-        let file_size = u32::try_from(align_to(
-            u64::from(data_size),
-            u64::from(ctx.file_alignment),
-        ))
-        .map_err(|_| {
-            Error::LayoutFailed(format!(
-                "Section {} file size exceeds u32 range",
-                section.name
-            ))
-        })?;
+        // SizeOfRawData must be a multiple of FileAlignment per PE spec, and must describe the
+        // bytes actually written — not `data_size`, which is the section's *virtual* extent and
+        // also drives RVA placement. The two differ whenever a section carries uninitialised
+        // data (VirtualSize > SizeOfRawData) or trailing alignment padding (the reverse).
+        //
+        // Falls back to `data_size` only for sections that recorded no written length.
+        let raw_size = section.raw_size.unwrap_or(data_size);
+        let file_size = u32::try_from(align_to(u64::from(raw_size), u64::from(ctx.file_alignment)))
+            .map_err(|_| {
+                Error::LayoutFailed(format!(
+                    "Section {} file size exceeds u32 range",
+                    section.name
+                ))
+            })?;
 
         let offset_u32 = u32::try_from(data_offset).map_err(|_| {
             Error::LayoutFailed(format!("Section {} offset exceeds u32 range", section.name))
@@ -682,24 +684,18 @@ pub fn zero_stripped_data_regions(ctx: &mut WriteContext) -> Result<()> {
     // we don't copy those sections either - we only preserve .rsrc and .reloc.
     let _ = ctx.original_debug_dir; // Stored for reference but not used
 
-    // Certificate data handling:
+    // Certificate data is deliberately NOT scrubbed here.
     //
-    // Certificates use a FILE OFFSET (not RVA) in the data directory, and are
-    // typically appended after all sections. Since we truncate the output to
-    // `bytes_written`, certificate data that was beyond our content is naturally
-    // excluded. If somehow certificate data falls within our written bounds
-    // (unusual but possible), we zero it since the signature is invalid after
-    // any modification.
-    if let Some((cert_offset, cert_size)) = ctx.original_certificate_dir {
-        let cert_offset_u64 = u64::from(cert_offset);
-        let cert_end = cert_offset_u64
-            .checked_add(u64::from(cert_size))
-            .ok_or_else(|| Error::LayoutFailed("Certificate region offset overflow".to_string()))?;
-        if cert_end <= ctx.bytes_written {
-            let zeros = vec![0u8; cert_size as usize];
-            ctx.write_at(cert_offset_u64, &zeros)?;
-        }
-    }
+    // `original_certificate_dir` is a **file offset into the input**, and this writes into the
+    // *output*, which has an entirely different layout — the offset that held a signature in the
+    // input names unrelated content here, typically live `.text` or metadata. Zeroing it
+    // corrupted the generated file rather than sanitising it, and it ran before
+    // `fixup_checksum`, so the checksum was computed over the damage and the result looked
+    // internally consistent.
+    //
+    // Nothing needs scrubbing: the output is rebuilt from scratch and never copies certificate
+    // bytes, and `write_optional_header` already zeroes the CertificateTable data-directory
+    // entry. This mirrors the reasoning already applied to the debug directory.
 
     Ok(())
 }

@@ -49,9 +49,9 @@ use crate::{
         },
         streams::Blob,
         tables::{
-            CustomAttributeRaw, FieldRaw, GenericParamConstraintRaw, InterfaceImplRaw,
-            MemberRefRaw, MethodDefRaw, MethodSpecRaw, PropertyRaw, StandAloneSigRaw,
-            TableDataOwned, TableId, TypeDefRaw, TypeSpecRaw,
+            skip_unreadable, CustomAttributeRaw, FieldRaw, GenericParamConstraintRaw,
+            InterfaceImplRaw, MemberRefRaw, MethodDefRaw, MethodSpecRaw, PropertyRaw,
+            StandAloneSigRaw, TableDataOwned, TableId, TypeDefRaw, TypeRefRaw, TypeSpecRaw,
         },
         token::Token,
     },
@@ -116,6 +116,13 @@ pub(super) fn collect_pre_deletion_references(
         // Scan method bodies and signatures of methods being deleted
         if let Some(methoddef_table) = tables.table::<MethodDefRaw>() {
             for methoddef in methoddef_table {
+                let methoddef = match methoddef {
+                    Ok(row) => row,
+                    Err(e) => {
+                        log::warn!("skipping unreadable metadata row: {e}");
+                        continue;
+                    }
+                };
                 let method_token = Token::from_parts(TableId::MethodDef, methoddef.rid);
                 if !methods.contains(&method_token) {
                     continue;
@@ -147,6 +154,13 @@ pub(super) fn collect_pre_deletion_references(
         if let Some(field_table) = tables.table::<FieldRaw>() {
             if let Some(blob) = &blob_heap {
                 for field in field_table {
+                    let field = match field {
+                        Ok(row) => row,
+                        Err(e) => {
+                            log::warn!("skipping unreadable metadata row: {e}");
+                            continue;
+                        }
+                    };
                     let field_token = Token::from_parts(TableId::Field, field.rid);
                     if !fields.contains(&field_token) {
                         continue;
@@ -159,7 +173,7 @@ pub(super) fn collect_pre_deletion_references(
         // Scan extends clause of types being deleted
         if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
             for type_token in types {
-                if let Some(typedef) = typedef_table.get(type_token.row()) {
+                if let Some(typedef) = typedef_table.get(type_token.row()).ok().flatten() {
                     if typedef.extends.token.is_table(TableId::TypeRef) {
                         typeref_rids.insert(typedef.extends.token.row());
                     }
@@ -170,6 +184,13 @@ pub(super) fn collect_pre_deletion_references(
         // Scan CustomAttribute constructors whose parent is being deleted
         if let Some(attr_table) = tables.table::<CustomAttributeRaw>() {
             for attr in attr_table {
+                let attr = match attr {
+                    Ok(row) => row,
+                    Err(e) => {
+                        log::warn!("skipping unreadable metadata row: {e}");
+                        continue;
+                    }
+                };
                 let parent_token = attr.parent.token;
                 let parent_deleted = types.contains(&parent_token)
                     || methods.contains(&parent_token)
@@ -381,6 +402,13 @@ pub(super) fn collect_typedefs_from_field_signatures(assembly: &CilAssembly) -> 
     };
 
     for field in field_table.iter() {
+        let field = match field {
+            Ok(row) => row,
+            Err(e) => {
+                log::warn!("skipping unreadable metadata row: {e}");
+                continue;
+            }
+        };
         if assembly.changes().is_row_deleted(TableId::Field, field.rid) {
             continue;
         }
@@ -415,6 +443,7 @@ pub(super) fn collect_referenced_standalonesig_rids(assembly: &CilAssembly) -> H
 
         methoddef_table
             .into_iter()
+            .filter_map(skip_unreadable)
             .filter(|m| !assembly.changes().is_row_deleted(TableId::MethodDef, m.rid))
             .map(|m| get_effective_method_rva(assembly, m.rid, m.rva))
             .filter(|&rva| rva != 0)
@@ -457,6 +486,7 @@ pub(super) fn scan_method_body_tokens(assembly: &CilAssembly) -> HashSet<Token> 
 
         methoddef_table
             .into_iter()
+            .filter_map(skip_unreadable)
             .filter(|m| !assembly.changes().is_row_deleted(TableId::MethodDef, m.rid))
             .map(|m| get_effective_method_rva(assembly, m.rid, m.rva))
             .filter(|&rva| rva != 0)
@@ -487,7 +517,7 @@ pub(super) fn scan_method_body_tokens(assembly: &CilAssembly) -> HashSet<Token> 
         if let (Some(tables), Some(blob_heap)) = (view.tables(), view.blobs()) {
             if let Some(sig_table) = tables.table::<StandAloneSigRaw>() {
                 for &rid in &local_sig_rids {
-                    if let Some(sig_row) = sig_table.get(rid) {
+                    if let Some(sig_row) = sig_table.get(rid).ok().flatten() {
                         if let Ok(blob_data) = blob_heap.get(sig_row.signature as usize) {
                             collect_type_tokens_from_local_sig(blob_data, &mut referenced);
                         }
@@ -529,7 +559,7 @@ pub(super) fn collect_typerefs_from_deleted_memberref_sigs(
     };
 
     for &rid in memberref_rids {
-        if let Some(memberref) = memberref_table.get(rid) {
+        if let Some(memberref) = memberref_table.get(rid).ok().flatten() {
             if !scan_method_signature_blob(blob_heap, memberref.signature, &mut result) {
                 scan_field_signature_blob(blob_heap, memberref.signature, &mut result);
             }
@@ -558,6 +588,13 @@ pub(super) fn scan_typeref_metadata_refs(assembly: &CilAssembly) -> HashSet<u32>
     // TypeDef.extends - base class references (skip deleted types)
     if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
         for typedef in typedef_table {
+            let typedef = match typedef {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             if assembly
                 .changes()
                 .is_row_deleted(TableId::TypeDef, typedef.rid)
@@ -573,6 +610,13 @@ pub(super) fn scan_typeref_metadata_refs(assembly: &CilAssembly) -> HashSet<u32>
     // InterfaceImpl.interface (skip deleted rows)
     if let Some(interfaceimpl_table) = tables.table::<InterfaceImplRaw>() {
         for impl_ in interfaceimpl_table {
+            let impl_ = match impl_ {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             if assembly
                 .changes()
                 .is_row_deleted(TableId::InterfaceImpl, impl_.rid)
@@ -588,6 +632,13 @@ pub(super) fn scan_typeref_metadata_refs(assembly: &CilAssembly) -> HashSet<u32>
     // MemberRef.class - declaring type of member references (skip deleted rows)
     if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
         for memberref in memberref_table {
+            let memberref = match memberref {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             if assembly
                 .changes()
                 .is_row_deleted(TableId::MemberRef, memberref.rid)
@@ -603,6 +654,13 @@ pub(super) fn scan_typeref_metadata_refs(assembly: &CilAssembly) -> HashSet<u32>
     // GenericParamConstraint - type constraints (skip deleted rows)
     if let Some(constraint_table) = tables.table::<GenericParamConstraintRaw>() {
         for constraint in constraint_table {
+            let constraint = match constraint {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             if assembly
                 .changes()
                 .is_row_deleted(TableId::GenericParamConstraint, constraint.rid)
@@ -619,6 +677,13 @@ pub(super) fn scan_typeref_metadata_refs(assembly: &CilAssembly) -> HashSet<u32>
     if let Some(attr_table) = tables.table::<CustomAttributeRaw>() {
         if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
             for attr in attr_table {
+                let attr = match attr {
+                    Ok(row) => row,
+                    Err(e) => {
+                        log::warn!("skipping unreadable metadata row: {e}");
+                        continue;
+                    }
+                };
                 if assembly
                     .changes()
                     .is_row_deleted(TableId::CustomAttribute, attr.rid)
@@ -633,7 +698,7 @@ pub(super) fn scan_typeref_metadata_refs(assembly: &CilAssembly) -> HashSet<u32>
                     {
                         continue;
                     }
-                    if let Some(memberref) = memberref_table.get(memberref_rid) {
+                    if let Some(memberref) = memberref_table.get(memberref_rid).ok().flatten() {
                         if memberref.class.token.is_table(TableId::TypeRef) {
                             referenced_rids.insert(memberref.class.token.row());
                         }
@@ -644,6 +709,62 @@ pub(super) fn scan_typeref_metadata_refs(assembly: &CilAssembly) -> HashSet<u32>
     }
 
     referenced_rids
+}
+
+/// The `nested TypeRef -> enclosing TypeRef` edges, as `(rid, enclosing_rid)` pairs.
+///
+/// A nested type is encoded as a TypeRef whose `ResolutionScope` points at the *enclosing*
+/// TypeRef, and nothing in the ordinary reference scans reads that column — so an enclosing
+/// TypeRef referenced only from a surviving nested one looks orphaned, is deleted, and leaves
+/// the survivor's scope dangling.
+///
+/// Collected separately from [`close_over_typeref_nesting`] because the closure has to run
+/// against the *complete* live set. Rows already marked deleted are excluded: a nested TypeRef
+/// on its way out must not keep its parent alive.
+fn typeref_nesting_edges(assembly: &CilAssembly) -> Vec<(u32, u32)> {
+    let view = assembly.view();
+    let Some(tables) = view.tables() else {
+        return Vec::new();
+    };
+    let Some(typeref_table) = tables.table::<TypeRefRaw>() else {
+        return Vec::new();
+    };
+
+    typeref_table
+        .into_iter()
+        .filter_map(skip_unreadable)
+        .filter(|type_ref| {
+            !assembly
+                .changes()
+                .is_row_deleted(TableId::TypeRef, type_ref.rid)
+        })
+        .filter(|type_ref| type_ref.resolution_scope.token.is_table(TableId::TypeRef))
+        .map(|type_ref| (type_ref.rid, type_ref.resolution_scope.token.row()))
+        .collect()
+}
+
+/// Marks every enclosing TypeRef of an already-live nested TypeRef live, transitively.
+///
+/// Must be called once the live set is **complete**. Running it earlier — while it could see
+/// only the metadata-table references and not the IL body tokens, signature blobs, or
+/// MemberRef-derived RIDs added afterwards — meant a nested TypeRef kept alive by an IL token
+/// never marked its parent, which is the most common way a nested type stays live.
+///
+/// Nesting is transitive (`A+B+C`), so this iterates to a fixed point: marking `B` live must
+/// in turn mark `A` live. Bounded by the edge count, since each pass either marks at least one
+/// new RID live or stops.
+fn close_over_typeref_nesting(referenced_rids: &mut HashSet<u32>, nesting: &[(u32, u32)]) {
+    loop {
+        let mut changed = false;
+        for (rid, enclosing) in nesting {
+            if referenced_rids.contains(rid) && referenced_rids.insert(*enclosing) {
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
 }
 
 /// Scans metadata tables to collect MemberRef RIDs that are referenced.
@@ -662,6 +783,13 @@ pub(super) fn scan_memberref_metadata_refs(assembly: &CilAssembly) -> HashSet<u3
     // CustomAttribute.constructor (skip deleted rows)
     if let Some(attr_table) = tables.table::<CustomAttributeRaw>() {
         for attr in attr_table {
+            let attr = match attr {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             if assembly
                 .changes()
                 .is_row_deleted(TableId::CustomAttribute, attr.rid)
@@ -677,6 +805,13 @@ pub(super) fn scan_memberref_metadata_refs(assembly: &CilAssembly) -> HashSet<u3
     // MethodSpec.method (skip deleted rows)
     if let Some(methodspec_table) = tables.table::<MethodSpecRaw>() {
         for spec in methodspec_table {
+            let spec = match spec {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             if assembly
                 .changes()
                 .is_row_deleted(TableId::MethodSpec, spec.rid)
@@ -710,6 +845,13 @@ pub(super) fn scan_typespec_metadata_refs(assembly: &CilAssembly) -> HashSet<u32
     // MemberRef.class (skip deleted rows)
     if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
         for memberref in memberref_table {
+            let memberref = match memberref {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             if assembly
                 .changes()
                 .is_row_deleted(TableId::MemberRef, memberref.rid)
@@ -725,6 +867,13 @@ pub(super) fn scan_typespec_metadata_refs(assembly: &CilAssembly) -> HashSet<u32
     // InterfaceImpl.interface (skip deleted rows)
     if let Some(interfaceimpl_table) = tables.table::<InterfaceImplRaw>() {
         for impl_ in interfaceimpl_table {
+            let impl_ = match impl_ {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             if assembly
                 .changes()
                 .is_row_deleted(TableId::InterfaceImpl, impl_.rid)
@@ -740,6 +889,13 @@ pub(super) fn scan_typespec_metadata_refs(assembly: &CilAssembly) -> HashSet<u32
     // GenericParamConstraint.constraint (skip deleted rows)
     if let Some(constraint_table) = tables.table::<GenericParamConstraintRaw>() {
         for constraint in constraint_table {
+            let constraint = match constraint {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             if assembly
                 .changes()
                 .is_row_deleted(TableId::GenericParamConstraint, constraint.rid)
@@ -755,6 +911,13 @@ pub(super) fn scan_typespec_metadata_refs(assembly: &CilAssembly) -> HashSet<u32
     // TypeDef.extends (skip deleted rows)
     if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
         for typedef in typedef_table {
+            let typedef = match typedef {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             if assembly
                 .changes()
                 .is_row_deleted(TableId::TypeDef, typedef.rid)
@@ -909,6 +1072,13 @@ pub(super) fn scan_signature_typeref_refs(assembly: &CilAssembly) -> HashSet<u32
     // MethodDef signatures (skip deleted rows)
     if let Some(methoddef_table) = tables.table::<MethodDefRaw>() {
         for methoddef in methoddef_table {
+            let methoddef = match methoddef {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             if assembly
                 .changes()
                 .is_row_deleted(TableId::MethodDef, methoddef.rid)
@@ -922,6 +1092,13 @@ pub(super) fn scan_signature_typeref_refs(assembly: &CilAssembly) -> HashSet<u32
     // Field signatures (skip deleted rows)
     if let Some(field_table) = tables.table::<FieldRaw>() {
         for field in field_table {
+            let field = match field {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             if assembly.changes().is_row_deleted(TableId::Field, field.rid) {
                 continue;
             }
@@ -932,6 +1109,13 @@ pub(super) fn scan_signature_typeref_refs(assembly: &CilAssembly) -> HashSet<u32
     // MemberRef signatures (skip deleted rows)
     if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
         for memberref in memberref_table {
+            let memberref = match memberref {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             if assembly
                 .changes()
                 .is_row_deleted(TableId::MemberRef, memberref.rid)
@@ -951,6 +1135,13 @@ pub(super) fn scan_signature_typeref_refs(assembly: &CilAssembly) -> HashSet<u32
     let referenced_sigs = collect_referenced_standalonesig_rids(assembly);
     if let Some(standalonesig_table) = tables.table::<StandAloneSigRaw>() {
         for sig in standalonesig_table {
+            let sig = match sig {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             // Only scan StandAloneSigs that are referenced by current method bodies
             if referenced_sigs.contains(&sig.rid) {
                 scan_local_var_signature_blob(blob_heap, sig.signature, &mut referenced_rids);
@@ -961,6 +1152,13 @@ pub(super) fn scan_signature_typeref_refs(assembly: &CilAssembly) -> HashSet<u32
     // TypeSpec signatures (skip deleted rows)
     if let Some(typespec_table) = tables.table::<TypeSpecRaw>() {
         for typespec in typespec_table {
+            let typespec = match typespec {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             if assembly
                 .changes()
                 .is_row_deleted(TableId::TypeSpec, typespec.rid)
@@ -974,6 +1172,13 @@ pub(super) fn scan_signature_typeref_refs(assembly: &CilAssembly) -> HashSet<u32
     // Property signatures (skip deleted rows)
     if let Some(property_table) = tables.table::<PropertyRaw>() {
         for property in property_table {
+            let property = match property {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             if assembly
                 .changes()
                 .is_row_deleted(TableId::Property, property.rid)
@@ -1139,6 +1344,13 @@ pub(super) fn remove_unreferenced_typerefs(
         if let Some(tables) = view.tables() {
             if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
                 for memberref in memberref_table {
+                    let memberref = match memberref {
+                        Ok(row) => row,
+                        Err(e) => {
+                            log::warn!("skipping unreadable metadata row: {e}");
+                            continue;
+                        }
+                    };
                     if assembly
                         .changes()
                         .is_row_deleted(TableId::MemberRef, memberref.rid)
@@ -1154,6 +1366,14 @@ pub(super) fn remove_unreferenced_typerefs(
             }
         }
     }
+
+    // Last, once every source above has contributed: a nested TypeRef that survives keeps its
+    // enclosing TypeRef alive. This has to see the *whole* live set — running it inside
+    // `scan_typeref_metadata_refs` meant it saw only that function's own five metadata sources,
+    // so a nested TypeRef kept alive by an IL body token, a signature blob, or a MemberRef
+    // never marked its parent, and the parent was deleted out from under it.
+    let nesting = typeref_nesting_edges(assembly);
+    close_over_typeref_nesting(&mut referenced_rids, &nesting);
 
     remove_candidates_not_alive(assembly, TableId::TypeRef, candidates, &referenced_rids)
 }
@@ -1200,6 +1420,13 @@ pub(super) fn remove_unreferenced_memberrefs(
         if let Some(tables) = view.tables() {
             if let Some(methodspec_table) = tables.table::<MethodSpecRaw>() {
                 for spec in methodspec_table {
+                    let spec = match spec {
+                        Ok(row) => row,
+                        Err(e) => {
+                            log::warn!("skipping unreadable metadata row: {e}");
+                            continue;
+                        }
+                    };
                     if assembly
                         .changes()
                         .is_row_deleted(TableId::MethodSpec, spec.rid)
@@ -1254,6 +1481,7 @@ pub(super) fn remove_unreferenced_typespecs(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::{
         cilassembly::cleanup::utils::PLACEHOLDER_RVA_THRESHOLD,
         metadata::{tables::TableId, token::Token},
@@ -1279,5 +1507,52 @@ mod tests {
         assert!(typeref_token.is_table(TableId::TypeRef));
         assert!(memberref_token.is_table(TableId::MemberRef));
         assert!(typespec_token.is_table(TableId::TypeSpec));
+    }
+
+    /// A nested TypeRef kept alive by *any* source must keep its enclosing TypeRef alive too.
+    ///
+    /// The closure used to run inside `scan_typeref_metadata_refs`, where it could see only
+    /// that function's own metadata sources — not the IL body tokens, signature blobs or
+    /// MemberRef-derived RIDs unioned in afterwards. Seeding here with a RID that only those
+    /// later sources would have supplied is what distinguishes the fixed version: under the
+    /// old ordering the enclosing RIDs stayed absent and the rows were deleted, leaving the
+    /// survivor's `ResolutionScope` pointing at whatever shifted into their place.
+    #[test]
+    fn nesting_closure_marks_enclosing_typerefs_of_a_live_nested_typeref() {
+        // 3 nested in 2, 2 nested in 1 — the transitive `A+B+C` shape.
+        let nesting = [(3u32, 2u32), (2u32, 1u32)];
+
+        // RID 3 is live only because an IL body token referenced it.
+        let mut live = HashSet::from([3u32]);
+        close_over_typeref_nesting(&mut live, &nesting);
+
+        assert!(live.contains(&2), "the immediately enclosing TypeRef");
+        assert!(
+            live.contains(&1),
+            "nesting is transitive, so the outermost TypeRef must be marked too"
+        );
+    }
+
+    /// The closure must not resurrect an enclosing TypeRef whose nested type is itself dead.
+    #[test]
+    fn nesting_closure_leaves_unreferenced_chains_alone() {
+        let nesting = [(3u32, 2u32), (2u32, 1u32)];
+
+        let mut live = HashSet::from([9u32]);
+        close_over_typeref_nesting(&mut live, &nesting);
+
+        assert_eq!(live, HashSet::from([9u32]));
+    }
+
+    /// A cycle in `ResolutionScope` must not spin: the fixed point stops once nothing new is
+    /// marked, so a self- or mutually-nested pair terminates rather than looping forever.
+    #[test]
+    fn nesting_closure_terminates_on_a_cycle() {
+        let nesting = [(1u32, 2u32), (2u32, 1u32)];
+
+        let mut live = HashSet::from([1u32]);
+        close_over_typeref_nesting(&mut live, &nesting);
+
+        assert_eq!(live, HashSet::from([1u32, 2u32]));
     }
 }

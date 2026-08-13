@@ -127,7 +127,7 @@ pub(crate) fn is_cctor_method(assembly: &CilAssembly, method_rid: u32) -> bool {
     let Some(method_table) = tables.table::<MethodDefRaw>() else {
         return false;
     };
-    let Some(row) = method_table.get(method_rid) else {
+    let Some(row) = method_table.get(method_rid).ok().flatten() else {
         return false;
     };
     let Some(strings) = view.strings() else {
