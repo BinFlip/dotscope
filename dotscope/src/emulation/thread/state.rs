@@ -282,7 +282,7 @@ pub struct ThreadCallFrame {
     /// This enables cross-assembly execution: when a method from a dynamically
     /// loaded assembly calls another method, the controller uses this index to
     /// fetch instructions and resolve metadata from the correct assembly.
-    assembly_index: Option<u8>,
+    assembly_index: Option<u32>,
 }
 
 impl ThreadCallFrame {
@@ -520,7 +520,7 @@ impl ThreadCallFrame {
     /// Sets the assembly index for this frame.
     ///
     /// `None` = primary assembly, `Some(i)` = i-th dynamically loaded assembly.
-    pub fn set_assembly_index(&mut self, index: Option<u8>) {
+    pub fn set_assembly_index(&mut self, index: Option<u32>) {
         self.assembly_index = index;
     }
 
@@ -528,7 +528,7 @@ impl ThreadCallFrame {
     ///
     /// `None` = primary assembly, `Some(i)` = i-th dynamically loaded assembly.
     #[must_use]
-    pub fn assembly_index(&self) -> Option<u8> {
+    pub fn assembly_index(&self) -> Option<u32> {
         self.assembly_index
     }
 
@@ -937,8 +937,24 @@ impl EmulationThread {
     /// Pops and returns the current call frame.
     ///
     /// Used when returning from a method.
+    ///
+    /// Also discards any cleanup handlers still queued against the popped method. Such an entry
+    /// can never run correctly — the handler IL reads locals, arguments and the evaluation stack
+    /// from whatever frame happens to be current — and left in place it accumulates for the
+    /// lifetime of the emulation.
+    ///
+    /// The check is against the *remaining* call stack rather than the popped method alone,
+    /// because a recursive method occupies several frames at once and the outer frames' entries
+    /// are still live.
     pub fn pop_frame(&mut self) -> Option<ThreadCallFrame> {
-        self.call_stack.pop()
+        let popped = self.call_stack.pop()?;
+
+        let method = popped.method();
+        if !self.call_stack.iter().any(|frame| frame.method() == method) {
+            self.exception_state.discard_finally_for_method(method);
+        }
+
+        Some(popped)
     }
 
     /// Returns a reference to the evaluation stack.
@@ -1086,6 +1102,16 @@ impl EmulationThread {
     /// address space. Reads and writes through the native address are
     /// transparently delegated to the managed heap's `Vec<EmValue>`,
     /// ensuring a single source of truth.
+    ///
+    /// Re-pinning an array that is already pinned returns its existing base rather than
+    /// reserving a second range. A loop that walks an array with `ldelema` + `conv.u` reaches
+    /// here on every iteration, so without this the pin table grows once per element access —
+    /// and every memory access scans it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the array's size overflows, if no free address range remains, or
+    /// if pin registration fails.
     pub fn pin_array_element(
         &self,
         array: HeapRef,
@@ -1097,7 +1123,16 @@ impl EmulationThread {
 
         let length = heap.get_array_length(array).unwrap_or(0);
         if length == 0 {
-            return Ok(self.context.address_space.reserve_address_range(1));
+            return self
+                .context
+                .address_space
+                .reserve_address_range(1)
+                .ok_or_else(|| {
+                    Error::from(EmulationError::InvalidAddress {
+                        address: 0,
+                        reason: "no free address range for pinned array".to_string(),
+                    })
+                });
         }
 
         // Determine element size from the element type or first element
@@ -1117,15 +1152,28 @@ impl EmulationThread {
         let total_size = length
             .checked_mul(elem_size)
             .ok_or(EmulationError::ArithmeticOverflow)?;
-        let base_addr = self
-            .context
-            .address_space
-            .reserve_address_range(total_size.max(1));
 
-        // Register the pinned mapping for transparent read/write delegation
-        self.context
-            .address_space
-            .register_pinned_array(base_addr, array, elem_size, length)?;
+        let base_addr = match self.context.address_space.pinned_base_of(array) {
+            Some(existing) => existing,
+            None => {
+                let base_addr = self
+                    .context
+                    .address_space
+                    .reserve_address_range(total_size.max(1))
+                    .ok_or_else(|| {
+                        Error::from(EmulationError::InvalidAddress {
+                            address: 0,
+                            reason: "no free address range for pinned array".to_string(),
+                        })
+                    })?;
+
+                // Register the pinned mapping for transparent read/write delegation
+                self.context
+                    .address_space
+                    .register_pinned_array(base_addr, array, elem_size, length)?;
+                base_addr
+            }
+        };
 
         let index_offset = index
             .checked_mul(elem_size)
@@ -1488,6 +1536,27 @@ impl EmulationThread {
 mod tests {
     use super::*;
     use crate::test::emulation::{create_test_context, create_test_thread};
+
+    /// The index selects which loaded assembly's metadata a frame executes against, and
+    /// emulated code grows that list. Narrowing it binds the frame to a different assembly
+    /// than the one the method token was resolved in — a valid token run against the wrong
+    /// method table.
+    #[test]
+    fn assembly_index_survives_beyond_a_byte() {
+        let mut frame = ThreadCallFrame::new(
+            Token::new(0x0600_0001),
+            None,
+            0,
+            Vec::new(),
+            Vec::new(),
+            false,
+        );
+
+        for index in [0_u32, 255, 256, 4096, u32::from(u16::MAX) + 1] {
+            frame.set_assembly_index(Some(index));
+            assert_eq!(frame.assembly_index(), Some(index));
+        }
+    }
 
     #[test]
     fn test_thread_creation() {

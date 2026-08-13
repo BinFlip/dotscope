@@ -130,6 +130,7 @@ impl ControlFlowGraph<'static> {
                 ))
             })?;
             let successors = block.successors.clone();
+            let exception_successors = block.exception_successors.clone();
             let last_instruction = block.instructions.last();
 
             // Determine edge kinds based on the terminating instruction
@@ -152,6 +153,43 @@ impl ControlFlowGraph<'static> {
                 let edge = CfgEdge::new(succ_idx, edge_kind);
 
                 graph.add_edge(*node_id, target_node, edge)?;
+            }
+
+            // Exception edges. Any instruction in a protected region can raise, so control
+            // can leave this block for its handler entry at any point; the edge is modelled
+            // at block granularity. Without these, handler blocks are unreachable islands —
+            // outside the dominator tree and invisible to every dataflow analysis.
+            for &handler_idx in &exception_successors {
+                if handler_idx >= block_count {
+                    return Err(GraphError(format!(
+                        "Block {} has exception successor index {} which exceeds block count {}",
+                        node_id.index(),
+                        handler_idx,
+                        block_count
+                    )));
+                }
+
+                // `add_edge` does not deduplicate and `predecessors` yields one entry per
+                // incoming edge, so a parallel edge would list this block twice among the
+                // handler's predecessors and desynchronise phi operand count from
+                // predecessor count. Skip a handler that is already a normal successor.
+                if successors.contains(&handler_idx) {
+                    continue;
+                }
+
+                let target_node = *node_ids
+                    .get(handler_idx)
+                    .ok_or_else(|| GraphError(format!("missing node id {handler_idx}")))?;
+
+                // The caught class token is not reachable from here: `exception_successors`
+                // holds block indices, and `HandlerEntryInfo` carries the handler's *kind*,
+                // not its type, which lives in the method's exception table. `None` is the
+                // documented catch-all/finally encoding.
+                graph.add_edge(
+                    *node_id,
+                    target_node,
+                    CfgEdge::exception_handler(handler_idx, None),
+                )?;
             }
         }
 
@@ -250,6 +288,26 @@ impl<'a> ControlFlowGraph<'a> {
                 let edge = CfgEdge::new(succ_idx, edge_kind);
 
                 graph.add_edge(node_id, target_node, edge)?;
+            }
+
+            // See `from_basic_blocks` for why these edges exist, why an already-present
+            // normal successor is skipped, and why the exception type is `None`.
+            for &handler_idx in &block.exception_successors {
+                if handler_idx >= block_count {
+                    return Err(GraphError(format!(
+                        "Block {block_idx} has exception successor index {handler_idx} which exceeds block count {block_count}"
+                    )));
+                }
+
+                if block.successors.contains(&handler_idx) {
+                    continue;
+                }
+
+                graph.add_edge(
+                    node_id,
+                    NodeId::new(handler_idx),
+                    CfgEdge::exception_handler(handler_idx, None),
+                )?;
             }
         }
 
@@ -1125,5 +1183,95 @@ mod tests {
         assert_eq!(self_loop.size(), 1); // Only the header itself
         assert_eq!(self_loop.latches.len(), 1);
         assert_eq!(self_loop.latches[0], NodeId::new(1)); // Self back edge (latch)
+    }
+
+    /// Blocks 0 and 1 form a protected region; block 2 is the handler entry.
+    ///
+    /// Layout: 0 -> 1 -> 3 (normal flow), with 0 and 1 both protected by handler 2.
+    fn eh_blocks() -> Vec<BasicBlock> {
+        let mut blocks = vec![
+            make_block(0, vec![1], FlowType::UnconditionalBranch),
+            make_block(1, vec![3], FlowType::UnconditionalBranch),
+            make_block(2, vec![3], FlowType::UnconditionalBranch),
+            make_block(3, vec![], FlowType::Return),
+        ];
+        for idx in 0..2 {
+            if let Some(block) = blocks.get_mut(idx) {
+                block.exception_successors.push(2);
+            }
+        }
+        blocks
+    }
+
+    /// Without exception edges a handler is an unreachable island — outside
+    /// the dominator tree and invisible to every dataflow analysis.
+    #[test]
+    fn exception_edges_make_the_handler_reachable() {
+        let cfg = ControlFlowGraph::from_basic_blocks(eh_blocks()).unwrap();
+
+        // Every protected block reaches the handler.
+        let mut handler_preds: Vec<usize> = cfg
+            .predecessors(NodeId::new(2))
+            .map(NodeId::index)
+            .collect();
+        handler_preds.sort_unstable();
+        assert_eq!(handler_preds, vec![0, 1]);
+
+        // And the handler is a successor of each of them, tagged as an EH edge.
+        for protected in [0usize, 1] {
+            let succs: Vec<usize> = cfg
+                .successors(NodeId::new(protected))
+                .map(NodeId::index)
+                .collect();
+            assert!(succs.contains(&2), "block {protected} must reach handler 2");
+        }
+    }
+
+    /// `add_edge` does not deduplicate and `predecessors` yields one entry per incoming
+    /// edge, so a handler that is also a normal successor must not be wired twice.
+    #[test]
+    fn exception_edge_is_not_duplicated_when_already_a_normal_successor() {
+        let mut blocks = eh_blocks();
+        // Make block 1 fall through to the handler as ordinary control flow too.
+        if let Some(block) = blocks.get_mut(1) {
+            block.successors = vec![2];
+        }
+
+        let cfg = ControlFlowGraph::from_basic_blocks(blocks).unwrap();
+
+        let preds: Vec<usize> = cfg
+            .predecessors(NodeId::new(2))
+            .map(NodeId::index)
+            .collect();
+        assert_eq!(
+            preds.iter().filter(|&&p| p == 1).count(),
+            1,
+            "block 1 must appear exactly once among the handler's predecessors, got {preds:?}"
+        );
+    }
+
+    /// An out-of-range handler index is a malformed input, not a panic.
+    #[test]
+    fn exception_successor_out_of_range_is_rejected() {
+        let mut blocks = eh_blocks();
+        if let Some(block) = blocks.get_mut(0) {
+            block.exception_successors = vec![99];
+        }
+
+        assert!(ControlFlowGraph::from_basic_blocks(blocks).is_err());
+    }
+
+    /// The borrowed constructor must wire the same edges as the owning one.
+    #[test]
+    fn from_blocks_ref_wires_exception_edges_too() {
+        let blocks = eh_blocks();
+        let cfg = ControlFlowGraph::from_blocks_ref(&blocks).unwrap();
+
+        let mut handler_preds: Vec<usize> = cfg
+            .predecessors(NodeId::new(2))
+            .map(NodeId::index)
+            .collect();
+        handler_preds.sort_unstable();
+        assert_eq!(handler_preds, vec![0, 1]);
     }
 }

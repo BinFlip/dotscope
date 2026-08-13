@@ -107,7 +107,7 @@ use crate::{emulation::HeapRef, metadata::token::Token, CilObject};
 /// // The domain is ready for emulation
 /// assert!(domain.executing_assembly().is_some());
 /// ```
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct AppDomainState {
     /// Loaded assemblies indexed by their simple name.
     ///
@@ -444,13 +444,25 @@ impl AppDomainState {
     /// to associate frames with their
     /// originating assembly.
     ///
+    /// Returns `None` when the domain already holds `max` assemblies. Emulated code drives
+    /// this list through `Assembly.Load(byte[])`, and each entry retains a whole parsed
+    /// metadata graph in host memory that no heap budget accounts for, so the list has to be
+    /// bounded by something. The caller decides what to do on refusal — the .NET-visible
+    /// behaviour is a failed load, not a silently dropped registration.
+    ///
     /// # Arguments
     ///
     /// * `asm` - The parsed [`CilObject`] wrapped in `Arc`
-    pub fn register_parsed_assembly(&mut self, asm: Arc<CilObject>) -> usize {
+    /// * `max` - Maximum assemblies this domain may hold, from
+    ///   [`EmulationLimits::max_loaded_assemblies`](crate::emulation::process::EmulationLimits::max_loaded_assemblies)
+    pub fn register_parsed_assembly(&mut self, asm: Arc<CilObject>, max: usize) -> Option<usize> {
+        if self.loaded_cilobjects.len() >= max {
+            return None;
+        }
+
         let index = self.loaded_cilobjects.len();
         self.loaded_cilobjects.push(asm);
-        index
+        Some(index)
     }
 
     /// Retrieves a previously registered parsed assembly by index.
@@ -503,6 +515,60 @@ mod tests {
     fn test_app_domain_creation() {
         let domain = AppDomainState::new();
         assert!(domain.loaded_assemblies().next().is_none());
+    }
+
+    /// Loads the smallest sample available; only its identity as a parsed assembly matters.
+    fn sample_assembly() -> Arc<CilObject> {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/samples/WindowsBase.dll");
+        Arc::new(CilObject::from_path(&path).expect("sample assembly must load"))
+    }
+
+    /// Emulated code drives this list through `Assembly.Load(byte[])`, so it must refuse to
+    /// grow past the configured limit rather than retain a parsed assembly per call.
+    #[test]
+    fn register_parsed_assembly_refuses_past_the_cap() {
+        let mut domain = AppDomainState::new();
+        let asm = sample_assembly();
+
+        assert_eq!(
+            domain.register_parsed_assembly(Arc::clone(&asm), 2),
+            Some(0)
+        );
+        assert_eq!(
+            domain.register_parsed_assembly(Arc::clone(&asm), 2),
+            Some(1)
+        );
+        assert_eq!(domain.register_parsed_assembly(Arc::clone(&asm), 2), None);
+
+        assert_eq!(domain.parsed_assembly_count(), 2);
+    }
+
+    /// A cap of zero must refuse everything rather than wrap into "unlimited".
+    #[test]
+    fn register_parsed_assembly_honours_a_zero_cap() {
+        let mut domain = AppDomainState::new();
+
+        assert_eq!(domain.register_parsed_assembly(sample_assembly(), 0), None);
+        assert_eq!(domain.parsed_assembly_count(), 0);
+    }
+
+    /// Forks execute in parallel, so an assembly one fork loads must not appear in another —
+    /// otherwise a planted type steers a sibling's method resolution.
+    #[test]
+    fn cloning_the_domain_keeps_later_registrations_local() {
+        let mut parent = AppDomainState::new();
+        parent.register_parsed_assembly(sample_assembly(), 8);
+
+        let mut fork = parent.clone();
+        fork.register_parsed_assembly(sample_assembly(), 8);
+
+        assert_eq!(fork.parsed_assembly_count(), 2);
+        assert_eq!(
+            parent.parsed_assembly_count(),
+            1,
+            "a fork's load must not be visible to the parent"
+        );
     }
 
     #[test]

@@ -5,7 +5,10 @@
 
 use std::time::Duration;
 
-use crate::{deobfuscation::SmartRenameConfig, emulation::TracingConfig};
+use crate::{
+    deobfuscation::SmartRenameConfig,
+    emulation::{EmulationLimits, TracingConfig},
+};
 
 /// Fixpoint iteration limits.
 #[derive(Debug, Clone)]
@@ -123,6 +126,46 @@ pub struct EmulationConfig {
     pub warmup_timeout: Duration,
     /// Number of retry passes for warmup methods with dependency chains.
     pub warmup_retry_passes: usize,
+    /// Maximum emulations a single deobfuscation run may perform, or 0 for unlimited.
+    ///
+    /// [`max_instructions`](Self::max_instructions) and [`timeout`](Self::timeout) bound one
+    /// emulation. Neither bounds how many a run performs: the decryption pass emulates once
+    /// per distinct call site with constant arguments, and its value cache is keyed on
+    /// `(decryptor, args)`, so a loop calling a decryptor with a varying key misses the cache
+    /// every iteration. This is the ceiling on the run as a whole.
+    pub max_emulations: usize,
+}
+
+impl EmulationConfig {
+    /// Limits for one per-method emulation.
+    ///
+    /// A template process is warmed up once under [`warmup_timeout`](Self::warmup_timeout),
+    /// which is deliberately generous because warmup executes module and type initialisers.
+    /// Every per-method execution is forked from that template, and is a different job with
+    /// its own budget: [`timeout`](Self::timeout).
+    ///
+    /// Forking shares the emulator's configuration `Arc` by default, so without applying
+    /// these explicitly a per-method execution silently inherits the warmup budget — which is
+    /// what left `timeout` written and never read, and let a single method run under a wall
+    /// clock up to 120x larger than documented.
+    ///
+    /// Only the two per-method fields are overridden; everything else is inherited from
+    /// `base`, which must be the limits of the template being forked
+    /// ([`EmulationProcess::limits`]). Defaulting the remainder instead would silently
+    /// *raise* the call-depth ceiling and *lower* the heap ceiling relative to the template
+    /// the fork inherits its warmed heap from — 1000 and 256 MiB against the 100 and 512 MiB
+    /// the template pool builds with — so a sample whose warmup allocates past 256 MiB would
+    /// fail every per-method decryption on a limit it was never intended to be held to.
+    ///
+    /// [`EmulationProcess::limits`]: crate::emulation::EmulationProcess::limits
+    #[must_use]
+    pub fn execution_limits(&self, base: &EmulationLimits) -> EmulationLimits {
+        EmulationLimits {
+            max_instructions: self.max_instructions,
+            timeout_ms: u64::try_from(self.timeout.as_millis()).unwrap_or(u64::MAX),
+            ..base.clone()
+        }
+    }
 }
 
 impl Default for EmulationConfig {
@@ -133,6 +176,7 @@ impl Default for EmulationConfig {
             tracing: None,
             warmup_timeout: Duration::from_secs(60),
             warmup_retry_passes: 5,
+            max_emulations: 100_000,
         }
     }
 }
@@ -452,6 +496,7 @@ impl EngineConfig {
                 timeout: Duration::from_millis(500),
                 warmup_timeout: Duration::from_secs(30),
                 warmup_retry_passes: 2,
+                max_emulations: 10_000,
                 ..Default::default()
             },
             resolution_strategies: vec![ResolutionStrategy::Static, ResolutionStrategy::Pattern],
@@ -491,6 +536,7 @@ impl EngineConfig {
                 timeout: Duration::from_secs(30),
                 warmup_timeout: Duration::from_secs(120),
                 warmup_retry_passes: 8,
+                max_emulations: 1_000_000,
                 ..Default::default()
             },
             unflattening: UnflatteningThresholds {
@@ -864,5 +910,80 @@ mod tests {
 
         assert!(ResolutionStrategy::Emulation.requires_emulation());
         assert!(!ResolutionStrategy::Static.requires_emulation());
+    }
+    /// A per-method execution must run under `timeout`, not the template's `warmup_timeout`.
+    ///
+    /// Forking shares the emulator's configuration `Arc`, so without applying these limits
+    /// explicitly the documented per-method budget is written and never read and the method
+    /// runs under the warmup budget instead.
+    #[test]
+    fn execution_limits_use_the_per_method_timeout() {
+        let config = EmulationConfig::default();
+        let limits = config.execution_limits(&EmulationLimits::default());
+
+        assert_eq!(
+            limits.timeout_ms,
+            u64::try_from(config.timeout.as_millis()).unwrap()
+        );
+        assert_ne!(
+            limits.timeout_ms,
+            u64::try_from(config.warmup_timeout.as_millis()).unwrap(),
+            "a per-method execution must not inherit the warmup budget"
+        );
+        assert_eq!(limits.max_instructions, config.max_instructions);
+    }
+
+    /// The `fast()` preset tightens the per-method budget; the derivation must follow the
+    /// configuration rather than any default.
+    #[test]
+    fn execution_limits_follow_the_preset() {
+        let fast = EngineConfig::fast();
+        let base = EmulationLimits::default();
+
+        assert_eq!(
+            fast.emulation.execution_limits(&base).timeout_ms,
+            u64::try_from(fast.emulation.timeout.as_millis()).unwrap()
+        );
+        assert_eq!(
+            fast.emulation.execution_limits(&base).max_instructions,
+            fast.emulation.max_instructions
+        );
+    }
+
+    /// Everything the per-method budget does not name must come from the template being
+    /// forked, not from [`EmulationLimits::default`].
+    ///
+    /// The template pool builds with a call depth of 100 and a 512 MiB heap, and a fork
+    /// inherits the warmed heap by copy-on-write. Defaulting the unnamed fields instead
+    /// raised the depth to 1000 and *lowered* the heap to 256 MiB, so a sample whose warmup
+    /// allocated past 256 MiB failed every per-method decryption on a ceiling the template
+    /// had never been held to.
+    #[test]
+    fn execution_limits_inherit_every_unnamed_field_from_the_template() {
+        let config = EmulationConfig::default();
+        let template = EmulationLimits {
+            max_call_depth: 100,
+            max_heap_bytes: 512 * 1024 * 1024,
+            max_unmanaged_bytes: 7 * 1024 * 1024,
+            ..EmulationLimits::default()
+        };
+
+        let limits = config.execution_limits(&template);
+
+        assert_eq!(limits.max_call_depth, template.max_call_depth);
+        assert_eq!(limits.max_heap_bytes, template.max_heap_bytes);
+        assert_eq!(limits.max_unmanaged_bytes, template.max_unmanaged_bytes);
+        assert_ne!(
+            limits.max_heap_bytes,
+            EmulationLimits::default().max_heap_bytes,
+            "the template's heap ceiling must survive the derivation"
+        );
+
+        // Only the two per-method fields are overridden.
+        assert_eq!(limits.max_instructions, config.max_instructions);
+        assert_eq!(
+            limits.timeout_ms,
+            u64::try_from(config.timeout.as_millis()).unwrap()
+        );
     }
 }

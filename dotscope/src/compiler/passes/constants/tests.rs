@@ -6,7 +6,7 @@ use crate::{
         SsaVarId,
     },
     compiler::{
-        passes::constants::{AlgebraicResult, ConstantPropagationPass},
+        passes::constants::{fold_rem, AlgebraicResult, ConstantPropagationPass, IntOperand},
         CompilerContext, EventLog, SsaPass,
     },
     metadata::{token::Token, typesystem::PointerSize},
@@ -1284,5 +1284,120 @@ fn test_fold_string_operations_with_decrypted_concat() {
     assert!(
         !constants.contains_key(&v2),
         "Unresolvable method should not fold"
+    );
+}
+
+/// `rem.un` reads its operands as unsigned at their own width.
+///
+/// Reaching them through a sign-extending accessor turns `I32(-1)` into
+/// `0xFFFF_FFFF_FFFF_FFFF`, so `-1 rem.un 7` folds to `1` instead of the `3` that
+/// `0xFFFF_FFFF % 7` gives. That is a wrong constant on the default deobfuscation path —
+/// modulus-with-a-key is the canonical decryptor shape.
+#[test]
+fn rem_un_treats_i32_operands_as_unsigned_32_bit() {
+    let l = IntOperand::from_const(&ConstValue::I32(-1)).unwrap();
+    let r = IntOperand::from_const(&ConstValue::I32(7)).unwrap();
+
+    assert_eq!(fold_rem(l, r, true), Some(ConstValue::I32(3)));
+    // Signed: Rust and CIL agree that the remainder takes the dividend's sign.
+    assert_eq!(fold_rem(l, r, false), Some(ConstValue::I32(-1)));
+}
+
+/// The folded constant keeps the operands' width.
+///
+/// Narrowing a 64-bit remainder to `I32` is worse than a wrong value: codegen then emits
+/// `ldc.i4` where the stack type requires `ldc.i8`, which fails verification.
+#[test]
+fn rem_keeps_the_operand_width() {
+    let wide = IntOperand::from_const(&ConstValue::I64(0x1_0000_0000 + 5)).unwrap();
+    let divisor = IntOperand::from_const(&ConstValue::I64(0x1_0000_0000)).unwrap();
+
+    assert_eq!(fold_rem(wide, divisor, false), Some(ConstValue::I64(5)));
+}
+
+/// Cases the runtime turns into an exception must not be folded away.
+#[test]
+fn rem_refuses_to_fold_faulting_and_unverifiable_cases() {
+    let one = IntOperand::from_const(&ConstValue::I32(1)).unwrap();
+    let zero = IntOperand::from_const(&ConstValue::I32(0)).unwrap();
+    let min = IntOperand::from_const(&ConstValue::I32(i32::MIN)).unwrap();
+    let neg_one = IntOperand::from_const(&ConstValue::I32(-1)).unwrap();
+    let wide = IntOperand::from_const(&ConstValue::I64(1)).unwrap();
+
+    // DivideByZeroException
+    assert_eq!(fold_rem(one, zero, false), None);
+    assert_eq!(fold_rem(one, zero, true), None);
+    // OverflowException
+    assert_eq!(fold_rem(min, neg_one, false), None);
+    // Mixed widths are unverifiable IL; folding would invent a promotion.
+    assert_eq!(fold_rem(one, wide, false), None);
+}
+
+/// An overflow-checked op must test overflow at the operands' width, signed or unsigned.
+///
+/// Two 32-bit values can never overflow the 64-bit range, so reading them through a
+/// sign-extending accessor reports success for a case that must raise `OverflowException`,
+/// and yields an `I64` where the stack holds an `int32`. The unsigned half of this was fixed
+/// first; the signed half kept the `as_i64` shape and is the regression this pins.
+#[test]
+fn overflow_checks_use_the_operand_width() {
+    let ptr = PointerSize::Bit64;
+    let one: ConstValue = ConstValue::I32(1);
+    let two: ConstValue = ConstValue::I32(2);
+    let wide_one: ConstValue = ConstValue::I64(1);
+
+    // Unsigned: 0xFFFF_FFFF + 1 overflows int32, so this must not fold.
+    let all_ones: ConstValue = ConstValue::I32(-1);
+    assert_eq!(all_ones.add_checked(&one, true, ptr), None);
+
+    // Signed: i32::MAX + 1 overflows int32. Under `as_i64` both operands widened to 64 bits,
+    // no overflow was reported, and the wrapping `add` folded this to `i32::MIN` — turning a
+    // throwing path into a wrong constant.
+    let max: ConstValue = ConstValue::I32(i32::MAX);
+    let min: ConstValue = ConstValue::I32(i32::MIN);
+    assert_eq!(max.add_checked(&one, false, ptr), None);
+    assert_eq!(min.sub_checked(&one, false, ptr), None);
+    assert_eq!(max.mul_checked(&two, false, ptr), None);
+
+    // In range, and the result keeps the 32-bit width.
+    assert_eq!(
+        two.add_checked(&one, true, ptr),
+        Some(ConstValue::I32(3)),
+        "an in-range unsigned add must fold at int32 width"
+    );
+    assert_eq!(
+        two.add_checked(&one, false, ptr),
+        Some(ConstValue::I32(3)),
+        "an in-range signed add must fold at int32 width"
+    );
+
+    // The same values at 64-bit width do fit.
+    let wide: ConstValue = ConstValue::I64(0xFFFF_FFFF);
+    assert_eq!(
+        wide.add_checked(&wide_one, true, ptr),
+        Some(ConstValue::I64(0x1_0000_0000))
+    );
+}
+
+/// A multiply by zero folds through the ordinary overflow check, at the operands' width.
+///
+/// The `x * 0 == 0` short-circuit that used to precede the check returned the *zero operand's
+/// own* variant, so the result width depended on which side happened to be zero.
+#[test]
+fn mul_ovf_by_zero_folds_at_the_operand_width() {
+    let ptr = PointerSize::Bit64;
+
+    let hundred: ConstValue = ConstValue::I32(100);
+    let zero: ConstValue = ConstValue::I32(0);
+    assert_eq!(
+        hundred.mul_checked(&zero, false, ptr),
+        Some(ConstValue::I32(0))
+    );
+
+    let wide_zero: ConstValue = ConstValue::I64(0);
+    let wide_hundred: ConstValue = ConstValue::I64(100);
+    assert_eq!(
+        wide_zero.mul_checked(&wide_hundred, false, ptr),
+        Some(ConstValue::I64(0))
     );
 }

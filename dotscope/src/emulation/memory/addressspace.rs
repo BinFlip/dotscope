@@ -32,9 +32,14 @@
 //! assert_eq!(data, vec![0xDE, 0xAD, 0xBE, 0xEF]);
 //! ```
 
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc, RwLock,
+use std::{
+    collections::BTreeMap,
+    ops::Deref,
+    result::Result as StdResult,
+    sync::{
+        atomic::{AtomicU64, AtomicUsize, Ordering},
+        Arc, RwLock,
+    },
 };
 
 use imbl::HashMap as ImHashMap;
@@ -171,13 +176,20 @@ impl Default for SharedHeap {
     }
 }
 
-impl std::ops::Deref for SharedHeap {
+impl Deref for SharedHeap {
     type Target = ManagedHeap;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
+
+/// Default ceiling on unmanaged allocations for a newly created address space.
+///
+/// Matches the `max_unmanaged_bytes` default in
+/// [`ProcessConfig`](crate::emulation::process::ProcessConfig) so that an address space built
+/// directly and one built through the process builder behave the same.
+pub const DEFAULT_MAX_UNMANAGED_BYTES: usize = 64 * 1024 * 1024;
 
 /// Metadata for a pinned managed array whose native address aliases
 /// the managed heap data. Reads and writes through the native address
@@ -254,8 +266,15 @@ pub struct AddressSpace {
     /// Managed .NET heap (shared across threads).
     heap: SharedHeap,
 
-    /// Memory regions (PE images, mapped data, etc.).
-    regions: RwLock<Vec<MemoryRegion>>,
+    /// Memory regions (PE images, mapped data, etc.), keyed by base address.
+    ///
+    /// Ordered by base so a containing region is found with `range(..=address).next_back()`
+    /// rather than a scan. Every access an emulated program makes to unmanaged memory goes
+    /// through that lookup, and the region count is attacker-growable: `Marshal.WriteByte`
+    /// to an unmapped address maps a fresh region, so a linear structure makes both the
+    /// per-access lookup and the insert-time overlap check scale with how many regions the
+    /// program has already created.
+    regions: RwLock<BTreeMap<u64, MemoryRegion>>,
 
     /// Static field storage.
     statics: StaticFieldStorage,
@@ -294,6 +313,20 @@ pub struct AddressSpace {
     ///
     /// Uses `imbl::HashMap` for O(1) fork via structural sharing.
     pinned_arrays: RwLock<ImHashMap<u64, PinnedArrayEntry>>,
+
+    /// Bytes currently committed to unmanaged allocations.
+    ///
+    /// Unmanaged allocations (`localloc`, `Marshal.AllocHGlobal`, `Marshal.AllocCoTaskMem`,
+    /// `VirtualAlloc`) commit real host pages and are not charged against the managed heap
+    /// budget, so they need their own accounting.
+    unmanaged_bytes: AtomicUsize,
+
+    /// Ceiling on [`unmanaged_bytes`](Self::unmanaged_bytes).
+    ///
+    /// Atomic so it can be adjusted after construction through
+    /// [`set_max_unmanaged_bytes`](Self::set_max_unmanaged_bytes), which the process builder
+    /// uses to apply the configured limit to an address space it does not own exclusively.
+    max_unmanaged_bytes: AtomicUsize,
 }
 
 impl AddressSpace {
@@ -321,13 +354,15 @@ impl AddressSpace {
     pub fn with_config(heap_size: usize, address_space_size: u64) -> Self {
         Self {
             heap: SharedHeap::new(heap_size),
-            regions: RwLock::new(Vec::new()),
+            regions: RwLock::new(BTreeMap::new()),
             statics: StaticFieldStorage::new(),
             next_address: AtomicU64::new(0x1000_0000), // Start at 256MB
             size: address_space_size,
             protection_overrides: RwLock::new(ImHashMap::new()),
             monitor_locks: RwLock::new(ImHashMap::new()),
             pinned_arrays: RwLock::new(ImHashMap::new()),
+            unmanaged_bytes: AtomicUsize::new(0),
+            max_unmanaged_bytes: AtomicUsize::new(DEFAULT_MAX_UNMANAGED_BYTES),
         }
     }
 
@@ -344,13 +379,15 @@ impl AddressSpace {
     pub fn with_heap(heap: SharedHeap) -> Self {
         Self {
             heap,
-            regions: RwLock::new(Vec::new()),
+            regions: RwLock::new(BTreeMap::new()),
             statics: StaticFieldStorage::new(),
             next_address: AtomicU64::new(0x1000_0000),
             size: 0x1_0000_0000,
             protection_overrides: RwLock::new(ImHashMap::new()),
             monitor_locks: RwLock::new(ImHashMap::new()),
             pinned_arrays: RwLock::new(ImHashMap::new()),
+            unmanaged_bytes: AtomicUsize::new(0),
+            max_unmanaged_bytes: AtomicUsize::new(DEFAULT_MAX_UNMANAGED_BYTES),
         }
     }
 
@@ -441,8 +478,17 @@ impl AddressSpace {
             })
         })?;
 
-        // Check for overlaps
-        for existing in regions.iter() {
+        // Only two regions can overlap a new one in a base-ordered map: the last starting at
+        // or before it, and the first starting after it. Everything else starts earlier and
+        // ends before that predecessor does, or starts later than the successor.
+        let base = region.base();
+        let predecessor = regions.range(..=base).next_back().map(|(_, r)| r);
+        let successor = regions
+            .range(base.saturating_add(1)..)
+            .next()
+            .map(|(_, r)| r);
+
+        for existing in [predecessor, successor].into_iter().flatten() {
             if Self::regions_overlap(existing, &region) {
                 return Err(EmulationError::InvalidAddress {
                     address,
@@ -452,7 +498,7 @@ impl AddressSpace {
             }
         }
 
-        regions.push(region);
+        regions.insert(base, region);
         Ok(())
     }
 
@@ -513,8 +559,7 @@ impl AddressSpace {
             })
         })?;
 
-        if let Some(pos) = regions.iter().position(|r| r.base() == base) {
-            regions.remove(pos);
+        if regions.remove(&base).is_some() {
             Ok(())
         } else {
             Err(EmulationError::InvalidAddress {
@@ -541,29 +586,97 @@ impl AddressSpace {
             return result;
         }
 
+        // Validate before allocating. `read_mapped` below checks the range too, but only
+        // after it has been handed a `len`-sized buffer — so an unmapped address with an
+        // attacker-chosen length would commit that much host memory before being refused.
+        // `cpblk` reaches here with a size straight off the evaluation stack, so "refused"
+        // has to cost nothing. Same rule `init_block` follows: validate first, fill second.
+        if !self.covers_range(address, len)? {
+            return Err(EmulationError::InvalidAddress {
+                address,
+                reason: format!("read of {len} bytes is not fully mapped"),
+            }
+            .into());
+        }
+
         let regions = self.regions.read().map_err(|_| {
             Error::from(EmulationError::InternalError {
                 description: "region lock poisoned".to_string(),
             })
         })?;
 
-        for region in regions.iter() {
-            if region.contains_range(address, len) {
-                return region.read(address, len).ok_or_else(|| {
-                    EmulationError::InvalidAddress {
-                        address,
-                        reason: "read failed".to_string(),
-                    }
-                    .into()
-                });
+        let mut buffer = vec![0u8; len];
+        self.read_mapped(&regions, address, &mut buffer)?;
+        Ok(buffer)
+    }
+
+    /// Reads into a caller-supplied buffer, allocating nothing.
+    ///
+    /// `read` hands back an owned `Vec`, which makes a 1-, 2-, 4- or 8-byte `ldind` — the
+    /// interpreter's inner loop — pay a malloc and a free per load. The fixed-size accessors
+    /// below fill a stack array through this instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the range is unmapped, unreadable under its protection, or the
+    /// region lock is poisoned.
+    pub fn read_into(&self, address: u64, dest: &mut [u8]) -> Result<()> {
+        if let Some(result) = self.read_pinned(address, dest.len()) {
+            let bytes = result?;
+            if bytes.len() != dest.len() {
+                return Err(EmulationError::InvalidAddress {
+                    address,
+                    reason: "pinned read length mismatch".to_string(),
+                }
+                .into());
             }
+            dest.copy_from_slice(&bytes);
+            return Ok(());
         }
 
-        Err(EmulationError::InvalidAddress {
-            address,
-            reason: "address not mapped".to_string(),
+        let regions = self.regions.read().map_err(|_| {
+            Error::from(EmulationError::InternalError {
+                description: "region lock poisoned".to_string(),
+            })
+        })?;
+
+        self.read_mapped(&regions, address, dest)
+    }
+
+    /// Shared body of [`Self::read`] and [`Self::read_into`], with the regions lock held.
+    fn read_mapped(
+        &self,
+        regions: &BTreeMap<u64, MemoryRegion>,
+        address: u64,
+        dest: &mut [u8],
+    ) -> Result<()> {
+        let Some(region) = Self::region_containing(regions, address) else {
+            return Err(EmulationError::InvalidAddress {
+                address,
+                reason: "address not mapped".to_string(),
+            }
+            .into());
+        };
+
+        if !region.contains_range(address, dest.len()) {
+            return Err(EmulationError::InvalidAddress {
+                address,
+                reason: "address not mapped".to_string(),
+            }
+            .into());
         }
-        .into())
+
+        self.check_access(region, address, dest.len(), MemoryProtection::READ)?;
+
+        if region.read_into(address, dest) {
+            Ok(())
+        } else {
+            Err(EmulationError::InvalidAddress {
+                address,
+                reason: "read failed".to_string(),
+            }
+            .into())
+        }
     }
 
     /// Writes bytes to any mapped region.
@@ -589,24 +702,149 @@ impl AddressSpace {
             })
         })?;
 
-        for region in regions.iter() {
-            if region.contains_range(address, data.len()) {
-                if region.write(address, data) {
-                    return Ok(());
+        let Some(region) = Self::region_containing(&regions, address) else {
+            return Err(EmulationError::InvalidAddress {
+                address,
+                reason: "address not mapped".to_string(),
+            }
+            .into());
+        };
+
+        if !region.contains_range(address, data.len()) {
+            return Err(EmulationError::InvalidAddress {
+                address,
+                reason: "address not mapped".to_string(),
+            }
+            .into());
+        }
+
+        self.check_access(region, address, data.len(), MemoryProtection::WRITE)?;
+
+        if region.write(address, data) {
+            Ok(())
+        } else {
+            // Protection is rejected above, so reaching here means the paged write itself
+            // failed — a range or page-level fault, not a permission one.
+            Err(EmulationError::InvalidAddress {
+                address,
+                reason: "write failed".to_string(),
+            }
+            .into())
+        }
+    }
+
+    /// Rejects an access whose protection does not permit it.
+    ///
+    /// Protection is per page, so an access is checked at the first and last page it touches;
+    /// a region's pages carry uniform protection unless `VirtualProtect` has overridden some
+    /// of them, and an override is page-aligned, so those two are what can differ.
+    ///
+    /// `GUARD` faults on any access regardless of `required`, matching a Windows guard page.
+    ///
+    /// Takes the region rather than looking it up, because both callers already hold the
+    /// regions read lock — re-acquiring it here would be a recursive read acquisition, which
+    /// `std::sync::RwLock` may deadlock on when a writer is queued between the two.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmulationError::AccessViolation`] when the access is not permitted.
+    fn check_access(
+        &self,
+        region: &MemoryRegion,
+        address: u64,
+        len: usize,
+        required: MemoryProtection,
+    ) -> Result<()> {
+        if len == 0 {
+            return Ok(());
+        }
+
+        let last = address.saturating_add(len.saturating_sub(1) as u64);
+        for probe in [address, last] {
+            let Some(protection) = self.protection_of(region, probe) else {
+                continue;
+            };
+
+            if protection.contains(MemoryProtection::GUARD) {
+                return Err(EmulationError::AccessViolation {
+                    address: probe,
+                    reason: "guard page".to_string(),
                 }
-                return Err(EmulationError::InvalidAddress {
-                    address,
-                    reason: "write failed (possibly read-only)".to_string(),
+                .into());
+            }
+
+            if !protection.contains(required) {
+                return Err(EmulationError::AccessViolation {
+                    address: probe,
+                    reason: format!("protection {protection:?} does not permit {required:?}"),
                 }
                 .into());
             }
         }
 
-        Err(EmulationError::InvalidAddress {
-            address,
-            reason: "address not mapped".to_string(),
+        Ok(())
+    }
+
+    /// Resolves the protection of one address inside a region already in hand.
+    ///
+    /// Same resolution order as [`Self::get_protection`] — `VirtualProtect` override first,
+    /// then the region's own (per-PE-section) protection — without the regions lookup.
+    fn protection_of(&self, region: &MemoryRegion, address: u64) -> Option<MemoryProtection> {
+        let page_addr = address & !(Self::PAGE_SIZE - 1);
+        if let Ok(overrides) = self.protection_overrides.read() {
+            if let Some(&protection) = overrides.get(&page_addr) {
+                return Some(protection);
+            }
         }
-        .into())
+
+        region.protection_at(address).ok()
+    }
+
+    /// Reads a fixed-size little-endian value without allocating.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the range is unmapped or unreadable under its protection.
+    pub fn read_exact<const N: usize>(&self, address: u64) -> Result<[u8; N]> {
+        let mut buffer = [0u8; N];
+        self.read_into(address, &mut buffer)?;
+        Ok(buffer)
+    }
+
+    /// Reads one byte.
+    ///
+    /// # Errors
+    ///
+    /// See [`Self::read_exact`].
+    pub fn read_u8(&self, address: u64) -> Result<u8> {
+        Ok(u8::from_le_bytes(self.read_exact::<1>(address)?))
+    }
+
+    /// Reads a little-endian `u16`.
+    ///
+    /// # Errors
+    ///
+    /// See [`Self::read_exact`].
+    pub fn read_u16(&self, address: u64) -> Result<u16> {
+        Ok(u16::from_le_bytes(self.read_exact::<2>(address)?))
+    }
+
+    /// Reads a little-endian `u32`.
+    ///
+    /// # Errors
+    ///
+    /// See [`Self::read_exact`].
+    pub fn read_u32(&self, address: u64) -> Result<u32> {
+        Ok(u32::from_le_bytes(self.read_exact::<4>(address)?))
+    }
+
+    /// Reads a little-endian `u64`.
+    ///
+    /// # Errors
+    ///
+    /// See [`Self::read_exact`].
+    pub fn read_u64(&self, address: u64) -> Result<u64> {
+        Ok(u64::from_le_bytes(self.read_exact::<8>(address)?))
     }
 
     /// Returns `true` if the address is within a mapped region.
@@ -629,7 +867,7 @@ impl AddressSpace {
         let Ok(regions) = self.regions.read() else {
             return false;
         };
-        regions.iter().any(|r| r.contains(address))
+        Self::region_containing(&regions, address).is_some()
     }
 
     /// Returns the region containing the given address, if any.
@@ -640,7 +878,7 @@ impl AddressSpace {
     #[must_use]
     pub fn get_region(&self, address: u64) -> Option<MemoryRegion> {
         let regions = self.regions.read().ok()?;
-        regions.iter().find(|r| r.contains(address)).cloned()
+        Self::region_containing(&regions, address).cloned()
     }
 
     /// Returns the memory protection flags for an address.
@@ -665,10 +903,7 @@ impl AddressSpace {
 
         // Fall back to region's inherent protection
         let regions = self.regions.read().ok()?;
-        regions
-            .iter()
-            .find(|r| r.contains(address))
-            .and_then(|r| r.protection_at(address).ok())
+        Self::region_containing(&regions, address).and_then(|r| r.protection_at(address).ok())
     }
 
     /// Sets the memory protection for a range of addresses.
@@ -792,8 +1027,78 @@ impl AddressSpace {
     ///
     /// Returns an error if the mapping fails.
     pub fn alloc_unmanaged(&self, size: usize) -> Result<u64> {
+        // Unmanaged allocations commit real host pages and are invisible to the managed heap
+        // budget, so they are charged here — before the region is constructed, since
+        // `MemoryRegion::unmanaged_alloc` allocates the backing store eagerly.
+        let max = self.max_unmanaged_bytes.load(Ordering::Relaxed);
+        let current = self.unmanaged_bytes.load(Ordering::Relaxed);
+        if current.saturating_add(size) > max {
+            return Err(EmulationError::HeapMemoryLimitExceeded {
+                current,
+                limit: max,
+            }
+            .into());
+        }
+
         let region = MemoryRegion::unmanaged_alloc(0, size);
-        self.map(region)
+        let address = self.map(region)?;
+        self.unmanaged_bytes.fetch_add(size, Ordering::Relaxed);
+        Ok(address)
+    }
+
+    /// Maps a zero-filled region at a fixed address, charged against the unmanaged budget.
+    ///
+    /// This backs the `Marshal.Write*` auto-allocation path, where emulated code writes to an
+    /// address that is not mapped and the emulator materialises memory there rather than
+    /// aborting. The address is attacker-chosen and the loop is driven by ordinary CIL, so
+    /// without a ceiling each unmapped page written to commits real host pages that are never
+    /// reclaimed. Charging the same counter as [`Self::alloc_unmanaged`] also bounds the
+    /// region *count*, since every auto-allocation is the same fixed size.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmulationError::HeapMemoryLimitExceeded`] once the unmanaged budget is
+    /// exhausted, or an error if the range overlaps an existing mapping.
+    pub fn alloc_unmanaged_at(&self, address: u64, size: usize, label: &str) -> Result<()> {
+        let max = self.max_unmanaged_bytes.load(Ordering::Relaxed);
+        let current = self.unmanaged_bytes.load(Ordering::Relaxed);
+        if current.saturating_add(size) > max {
+            return Err(EmulationError::HeapMemoryLimitExceeded {
+                current,
+                limit: max,
+            }
+            .into());
+        }
+
+        let region = MemoryRegion::mapped_data(
+            address,
+            &vec![0u8; size],
+            label,
+            MemoryProtection::READ_WRITE,
+        );
+        self.map_at(address, region)?;
+        self.unmanaged_bytes.fetch_add(size, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Sets the ceiling on total unmanaged allocation, in bytes.
+    ///
+    /// Applied after construction because the process builder configures limits on an address
+    /// space it shares rather than owns.
+    pub fn set_max_unmanaged_bytes(&self, max: usize) {
+        self.max_unmanaged_bytes.store(max, Ordering::Relaxed);
+    }
+
+    /// Returns the number of bytes currently committed to unmanaged allocations.
+    #[must_use]
+    pub fn unmanaged_bytes(&self) -> usize {
+        self.unmanaged_bytes.load(Ordering::Relaxed)
+    }
+
+    /// Returns the ceiling on unmanaged allocation, in bytes.
+    #[must_use]
+    pub fn max_unmanaged_bytes(&self) -> usize {
+        self.max_unmanaged_bytes.load(Ordering::Relaxed)
     }
 
     /// Frees unmanaged memory previously allocated with [`alloc_unmanaged`](Self::alloc_unmanaged).
@@ -813,14 +1118,28 @@ impl AddressSpace {
             })
         })?;
 
-        let is_unmanaged = regions
-            .iter()
-            .any(|r| r.base() == address && r.is_unmanaged_alloc());
+        let freed_size = regions
+            .get(&address)
+            .filter(|r| r.is_unmanaged_alloc())
+            .map(MemoryRegion::size);
 
         drop(regions);
 
-        if is_unmanaged {
-            self.unmap(address)
+        if let Some(size) = freed_size {
+            self.unmap(address)?;
+            // Return the budget so an alloc/free cycle cannot ratchet the accounted total
+            // upwards and starve later allocations.
+            //
+            // Saturating rather than a plain `fetch_sub`: a region can be flagged as an
+            // unmanaged allocation without having been charged here (a forked address space
+            // carries regions over, for instance), and a wrapping subtract would underflow the
+            // counter to near `usize::MAX` and reject every later allocation.
+            let _ = self.unmanaged_bytes.fetch_update(
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+                |current| Some(current.saturating_sub(size)),
+            );
+            Ok(())
         } else {
             Err(EmulationError::InvalidAddress {
                 address,
@@ -833,11 +1152,71 @@ impl AddressSpace {
     /// Reserves an address range without creating a backing memory region.
     ///
     /// Used for pinned arrays where the backing store is the managed heap.
-    /// The returned address is guaranteed not to conflict with other allocations.
-    pub fn reserve_address_range(&self, size: usize) -> u64 {
-        let aligned_size = size.saturating_add(0xFFF) & !0xFFF; // Align to 4KB
-        self.next_address
-            .fetch_add(aligned_size as u64, Ordering::SeqCst)
+    ///
+    /// The cursor starts at `0x1000_0000` — the default `ImageBase` the C# compiler emits —
+    /// so it walks straight into a mapped PE image on any host that opted into
+    /// `ProcessBuilder::map_pe_image`. Bumping it blindly there hands out a base that aliases
+    /// the image: `read`/`write` consult pins before regions, so the pin would silently
+    /// intercept accesses to the image and redirect them into a managed array. The same
+    /// cursor also feeds `map`, so once it is inside an image every `alloc_unmanaged` fails
+    /// on the overlap check. This therefore skips past any range that overlaps a mapping.
+    ///
+    /// # Returns
+    ///
+    /// The reserved base address, or `None` if no free range of this size remains below the
+    /// address space limit.
+    pub fn reserve_address_range(&self, size: usize) -> Option<u64> {
+        let aligned_size = u64::try_from(size.saturating_add(0xFFF) & !0xFFF).ok()?;
+        let regions = self.regions.read().ok()?;
+        let region_end = |region: &MemoryRegion| {
+            region
+                .base()
+                .saturating_add(u64::try_from(region.size()).unwrap_or(u64::MAX))
+        };
+
+        loop {
+            let base = self.next_address.load(Ordering::SeqCst);
+            let end = base.checked_add(aligned_size)?;
+            if end > self.size {
+                return None;
+            }
+
+            // Regions never overlap, so the only ones that can intersect [base, end) are the
+            // last starting before it — if it reaches past base — and the first starting
+            // inside it.
+            let blocker = regions
+                .range(..base)
+                .next_back()
+                .map(|(_, region)| region)
+                .filter(|region| region_end(region) > base)
+                .or_else(|| regions.range(base..end).next().map(|(_, region)| region));
+
+            let next = match blocker {
+                // Resume at the page after the blocking region and try again.
+                Some(region) => (region_end(region).checked_add(0xFFF)?) & !0xFFF,
+                None => {
+                    if self
+                        .next_address
+                        .compare_exchange(base, end, Ordering::SeqCst, Ordering::SeqCst)
+                        .is_ok()
+                    {
+                        return Some(base);
+                    }
+                    continue;
+                }
+            };
+
+            // Another thread may have moved the cursor further along already; never rewind it.
+            let _ = self
+                .next_address
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+                    if current >= next {
+                        None
+                    } else {
+                        Some(next)
+                    }
+                });
+        }
     }
 
     /// Registers a pinned managed array so that native pointer access
@@ -860,14 +1239,28 @@ impl AddressSpace {
         element_size: usize,
         element_count: usize,
     ) -> Result<()> {
+        let byte_length = element_size.checked_mul(element_count).ok_or_else(|| {
+            EmulationError::InternalError {
+                description: "pinned array byte length overflow".to_string(),
+            }
+        })?;
+
+        // Pins are consulted before regions on every access, so one registered over a mapped
+        // range would shadow it: reads and writes to the mapping would be answered from the
+        // managed array instead. `reserve_address_range` picks bases that avoid this, but the
+        // base is a parameter here, so the invariant is enforced rather than assumed.
+        if byte_length > 0 && self.region_overlaps_range(base_addr, byte_length)? {
+            return Err(EmulationError::InvalidAddress {
+                address: base_addr,
+                reason: "pinned array would shadow a mapped region".to_string(),
+            }
+            .into());
+        }
+
         let entry = PinnedArrayEntry {
             array_ref,
             base_addr,
-            byte_length: element_size.checked_mul(element_count).ok_or_else(|| {
-                EmulationError::InternalError {
-                    description: "pinned array byte length overflow".to_string(),
-                }
-            })?,
+            byte_length,
             element_size,
         };
         let mut pins = self.pinned_arrays.write().map_err(|_| {
@@ -877,6 +1270,21 @@ impl AddressSpace {
         })?;
         pins.insert(base_addr, entry);
         Ok(())
+    }
+
+    /// Returns the native base address an array is already pinned at, if any.
+    ///
+    /// Lets a re-pin reuse the existing reservation instead of adding another entry for the
+    /// same array — the pin table is scanned on every unmanaged access, so duplicates cost
+    /// every later access, not just the memory.
+    #[must_use]
+    pub fn pinned_base_of(&self, array_ref: HeapRef) -> Option<u64> {
+        let pins = self.pinned_arrays.read().ok()?;
+        let base = pins
+            .values()
+            .find(|entry| entry.array_ref == array_ref)
+            .map(|entry| entry.base_addr);
+        base
     }
 
     /// Attempts to read from a pinned array region.
@@ -1119,8 +1527,111 @@ impl AddressSpace {
             return Ok(());
         }
 
-        let data = vec![value; size];
-        self.write(address, &data)
+        // `size` comes from the emulated stack via `initblk`. Building the whole fill buffer
+        // first would commit it to the host allocator before the destination is checked, so an
+        // out-of-range address with a huge size costs the memory anyway and only then fails.
+        // Validate first, fill second.
+        if !self.covers_range(address, size)? {
+            return Err(EmulationError::InvalidAddress {
+                address,
+                reason: format!("initblk destination range of {size} bytes is not mapped"),
+            }
+            .into());
+        }
+
+        // Fill through a fixed-size buffer so peak overhead is constant in `size`.
+        const CHUNK: usize = 64 * 1024;
+        let chunk_len = size.min(CHUNK);
+        let chunk = vec![value; chunk_len];
+
+        let mut written: usize = 0;
+        while written < size {
+            let remaining = size.saturating_sub(written);
+            let n = remaining.min(chunk_len);
+            let slice = chunk
+                .get(..n)
+                .ok_or_else(|| EmulationError::InternalError {
+                    description: "initblk chunk slice out of range".to_string(),
+                })?;
+            let offset = u64::try_from(written).map_err(|_| EmulationError::InvalidAddress {
+                address,
+                reason: "initblk offset exceeds address width".to_string(),
+            })?;
+            let target =
+                address
+                    .checked_add(offset)
+                    .ok_or_else(|| EmulationError::InvalidAddress {
+                        address,
+                        reason: "initblk range overflows the address space".to_string(),
+                    })?;
+            self.write(target, slice)?;
+            written = written.saturating_add(n);
+        }
+
+        Ok(())
+    }
+
+    /// Reports whether any mapped region intersects `[address, address + size)`.
+    ///
+    /// Unlike [`Self::covers_range`] this asks about *intersection*, not containment, and
+    /// ignores pins: it exists to keep a new pin from being laid over a mapping.
+    fn region_overlaps_range(&self, address: u64, size: usize) -> Result<bool> {
+        let len = u64::try_from(size).map_err(|_| EmulationError::InvalidAddress {
+            address,
+            reason: "range length exceeds the address width".to_string(),
+        })?;
+        let Some(end) = address.checked_add(len) else {
+            return Ok(false);
+        };
+
+        let regions = self.regions.read().map_err(|_| {
+            Error::from(EmulationError::InternalError {
+                description: "region lock poisoned".to_string(),
+            })
+        })?;
+
+        let predecessor_overlaps =
+            regions
+                .range(..address)
+                .next_back()
+                .is_some_and(|(_, region)| {
+                    region
+                        .base()
+                        .saturating_add(u64::try_from(region.size()).unwrap_or(u64::MAX))
+                        > address
+                });
+
+        Ok(predecessor_overlaps || regions.range(address..end).next().is_some())
+    }
+
+    /// Reports whether a contiguous range is backed by a pinned array or a mapped region.
+    ///
+    /// Used to validate a destination before committing memory proportional to its size.
+    fn covers_range(&self, address: u64, size: usize) -> Result<bool> {
+        let len = u64::try_from(size).map_err(|_| EmulationError::InvalidAddress {
+            address,
+            reason: "range length exceeds the address width".to_string(),
+        })?;
+        let Some(end) = address.checked_add(len) else {
+            return Ok(false);
+        };
+
+        if let Ok(pins) = self.pinned_arrays.read() {
+            for entry in pins.values() {
+                let pin_end = entry.base_addr.saturating_add(entry.byte_length as u64);
+                if address >= entry.base_addr && end <= pin_end {
+                    return Ok(true);
+                }
+            }
+        }
+
+        let regions = self.regions.read().map_err(|_| {
+            Error::from(EmulationError::InternalError {
+                description: "region lock poisoned".to_string(),
+            })
+        })?;
+        Ok(Self::region_containing(&regions, address)
+            .is_some_and(|r| r.contains_range(address, size)))
     }
 
     /// Maps a PE image at its preferred base address.
@@ -1174,7 +1685,7 @@ impl AddressSpace {
     pub fn regions(&self) -> Vec<(u64, usize, String)> {
         match self.regions.read() {
             Ok(regions) => regions
-                .iter()
+                .values()
                 .map(|r| (r.base(), r.size(), r.label().to_string()))
                 .collect(),
             Err(_) => Vec::new(),
@@ -1185,9 +1696,24 @@ impl AddressSpace {
     #[must_use]
     pub fn mapped_size(&self) -> usize {
         match self.regions.read() {
-            Ok(regions) => regions.iter().map(MemoryRegion::size).sum(),
+            Ok(regions) => regions.values().map(MemoryRegion::size).sum(),
             Err(_) => 0,
         }
+    }
+
+    /// Finds the region containing `address`, in `O(log regions)`.
+    ///
+    /// Regions never overlap — [`Self::map_at`] rejects a mapping that would create one — so
+    /// the only candidate is the last region starting at or before the address.
+    fn region_containing(
+        regions: &BTreeMap<u64, MemoryRegion>,
+        address: u64,
+    ) -> Option<&MemoryRegion> {
+        regions
+            .range(..=address)
+            .next_back()
+            .map(|(_, region)| region)
+            .filter(|region| region.contains(address))
     }
 
     /// Checks if two regions overlap in the address space.
@@ -1316,7 +1842,7 @@ impl AddressSpace {
         // Clone regions - this is cheap because pages use CoW internally
         let regions = match self.regions.read() {
             Ok(r) => r.clone(),
-            Err(_) => Vec::new(),
+            Err(_) => BTreeMap::new(),
         };
 
         Self {
@@ -1336,6 +1862,8 @@ impl AddressSpace {
             monitor_locks: RwLock::new(ImHashMap::new()),
             // Fresh pinned array mappings
             pinned_arrays: RwLock::new(ImHashMap::new()),
+            unmanaged_bytes: AtomicUsize::new(0),
+            max_unmanaged_bytes: AtomicUsize::new(DEFAULT_MAX_UNMANAGED_BYTES),
         }
     }
 
@@ -1396,8 +1924,8 @@ impl AddressSpace {
                 description: "address space regions",
             })?
             .iter()
-            .map(|region| region.fork())
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+            .map(|(&base, region)| region.fork().map(|forked| (base, forked)))
+            .collect::<StdResult<BTreeMap<_, _>, _>>()?;
 
         // Fork protection overrides (O(1) due to imbl)
         let protection_overrides = self
@@ -1443,6 +1971,10 @@ impl AddressSpace {
             monitor_locks: RwLock::new(monitor_locks),
             // Fork pinned array mappings - O(1) due to imbl
             pinned_arrays: RwLock::new(pinned_arrays),
+            // The forked regions are carried over, so their bytes stay charged; the fork
+            // inherits the parent's ceiling.
+            unmanaged_bytes: AtomicUsize::new(self.unmanaged_bytes.load(Ordering::Relaxed)),
+            max_unmanaged_bytes: AtomicUsize::new(self.max_unmanaged_bytes.load(Ordering::Relaxed)),
         })
     }
 }
@@ -1457,7 +1989,7 @@ mod tests {
             },
             EmValue,
         },
-        metadata::token::Token,
+        metadata::{token::Token, typesystem::CilFlavor},
     };
 
     #[test]
@@ -1486,6 +2018,90 @@ mod tests {
 
         let read = space.read(0x1000, 2).unwrap();
         assert_eq!(read, vec![0xCA, 0xFE]);
+    }
+
+    /// Protection is tracked per page; an access that its page forbids must fault rather
+    /// than succeed silently, or `VirtualProtect` emulation is pure bookkeeping and an
+    /// obfuscator probing by writing where a real process faults detects the emulator.
+    #[test]
+    fn write_to_read_only_memory_faults() {
+        let space = AddressSpace::new();
+        space.map_data(0x1000, &[0u8; 16], "test").unwrap();
+        space
+            .set_protection(0x1000, 16, MemoryProtection::READ)
+            .unwrap();
+
+        assert!(space.read(0x1000, 4).is_ok(), "reads must still work");
+        assert!(space.write(0x1000, &[0xFF]).is_err());
+    }
+
+    /// A guard page faults on *any* access, read included.
+    #[test]
+    fn guard_page_faults_on_read_and_write() {
+        let space = AddressSpace::new();
+        space.map_data(0x2000, &[0u8; 16], "test").unwrap();
+        space
+            .set_protection(
+                0x2000,
+                16,
+                MemoryProtection::READ_WRITE | MemoryProtection::GUARD,
+            )
+            .unwrap();
+
+        assert!(space.read(0x2000, 1).is_err());
+        assert!(space.write(0x2000, &[0x01]).is_err());
+    }
+
+    /// Fixed-size reads must agree with the allocating path byte for byte.
+    #[test]
+    fn fixed_size_reads_match_the_allocating_read() {
+        let space = AddressSpace::new();
+        space
+            .map_data(
+                0x3000,
+                &[0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88],
+                "test",
+            )
+            .unwrap();
+
+        assert_eq!(space.read_u8(0x3000).unwrap(), 0x11);
+        assert_eq!(space.read_u16(0x3000).unwrap(), 0x2211);
+        assert_eq!(space.read_u32(0x3000).unwrap(), 0x4433_2211);
+        assert_eq!(space.read_u64(0x3000).unwrap(), 0x8877_6655_4433_2211);
+        assert_eq!(
+            space.read_exact::<4>(0x3000).unwrap().to_vec(),
+            space.read(0x3000, 4).unwrap()
+        );
+        assert!(space.read_u32(0x9000).is_err(), "unmapped must still fault");
+    }
+
+    /// The reservation cursor starts at 0x1000_0000 — the default managed `ImageBase` — so
+    /// it must step over a mapping rather than hand out a base that aliases it.
+    #[test]
+    fn reserved_ranges_skip_mapped_regions() {
+        let space = AddressSpace::new();
+        let cursor = space.reserve_address_range(0x1000).unwrap();
+
+        // Map exactly where the next reservation would otherwise land.
+        let blocked = cursor + 0x1000;
+        space.map_data(blocked, &[0u8; 0x2000], "image").unwrap();
+
+        let next = space.reserve_address_range(0x1000).unwrap();
+        assert!(
+            next >= blocked + 0x2000,
+            "reservation {next:#x} overlaps the region at {blocked:#x}"
+        );
+    }
+
+    /// Pins are consulted before regions on every access, so one laid over a mapping would
+    /// shadow it.
+    #[test]
+    fn pinned_array_cannot_shadow_a_mapped_region() {
+        let space = AddressSpace::new();
+        space.map_data(0x4000, &[0u8; 0x1000], "image").unwrap();
+        let array = space.managed_heap().alloc_array(CilFlavor::I4, 4).unwrap();
+
+        assert!(space.register_pinned_array(0x4000, array, 4, 4).is_err());
     }
 
     #[test]
@@ -1691,5 +2307,37 @@ mod tests {
 
         // Original doesn't see it
         assert!(heap.get_string(new_ref).is_err());
+    }
+
+    /// An unmapped read must be refused without first allocating a buffer for it.
+    ///
+    /// `read` built its destination `Vec` before `read_mapped` validated the range, so the
+    /// length — which arrives from the emulated evaluation stack via `cpblk` — was committed
+    /// to the host allocator on the reject path. At these sizes that is `handle_alloc_error`
+    /// and an uncatchable abort of the analysis host, not an `Err`. The value below is far
+    /// beyond any plausible mapping, so this test asserts the refusal is decided from the
+    /// region index rather than by trying and failing to allocate.
+    #[test]
+    fn unmapped_read_is_refused_without_allocating() {
+        let space = AddressSpace::new();
+        space.map_data(0x1000, &[0u8; 16], "test").unwrap();
+
+        // Wholly unmapped address.
+        assert!(space.read(0xDEAD_0000, 1 << 40).is_err());
+        // Mapped base, but the range runs off the end of the region.
+        assert!(space.read(0x1000, 1 << 40).is_err());
+        // The in-bounds case still works.
+        assert_eq!(space.read(0x1000, 4).unwrap(), vec![0u8; 4]);
+    }
+
+    /// `cpblk` reaches `copy_block` with a size taken straight off the evaluation stack, so
+    /// the same refusal has to hold there — this is the path that made the ordering bug
+    /// reachable from three emulated instructions.
+    #[test]
+    fn copy_block_with_an_unmapped_source_is_refused_without_allocating() {
+        let space = AddressSpace::new();
+        space.map_data(0x1000, &[0u8; 16], "test").unwrap();
+
+        assert!(space.copy_block(0x1000, 0xDEAD_0000, 1 << 40).is_err());
     }
 }
