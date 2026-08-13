@@ -199,7 +199,7 @@ impl Identity {
     /// - [`Identity::PubKey`] for other public key sizes
     ///
     /// # Errors
-    /// Returns [`crate::Error::OutOfBounds`] if:
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if:
     /// - Token creation requested but data has fewer than 8 bytes
     /// - Data cannot be read as little-endian `u64`
     ///

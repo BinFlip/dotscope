@@ -75,6 +75,7 @@ use crate::{
         },
         token::Token,
     },
+    utils::LazyList,
     Error, Result,
 };
 
@@ -89,6 +90,47 @@ pub type CilTypeList = Arc<boxcar::Vec<CilTypeRc>>;
 /// Enables efficient sharing of type information across the metadata system
 /// while maintaining thread safety for concurrent access scenarios.
 pub type CilTypeRc = Arc<CilType>;
+
+/// Maximum number of ancestors [`CilType::base_chain`] will yield before stopping.
+///
+/// Real inheritance chains are shallow — the deepest in the .NET base class library is well
+/// under 20. This bound exists solely to terminate walks over malformed metadata, and is set
+/// high enough that no legitimate assembly can reach it. It matches the limit already applied
+/// to the virtual-dispatch walks in the emulation engine.
+pub const MAX_BASE_WALK_DEPTH: usize = 256;
+
+/// Iterator over a type's inheritance chain, hardened against attacker-supplied cycles.
+///
+/// Created by [`CilType::base_chain`]; see that method for why walking `base()` by hand is
+/// unsafe on untrusted input.
+pub struct BaseChain {
+    /// Next ancestor to yield, or `None` once the chain is exhausted.
+    current: Option<CilTypeRc>,
+    /// Tokens already yielded, seeded with the starting type so self-extends terminates.
+    visited: HashSet<Token>,
+    /// Remaining depth budget.
+    remaining: usize,
+}
+
+impl Iterator for BaseChain {
+    type Item = CilTypeRc;
+
+    fn next(&mut self) -> Option<CilTypeRc> {
+        if self.remaining == 0 {
+            return None;
+        }
+        let current = self.current.take()?;
+        // A token we have already yielded means the chain closed into a cycle.
+        if !self.visited.insert(current.token) {
+            return None;
+        }
+        self.remaining = self.remaining.saturating_sub(1);
+        self.current = current.base();
+        Some(current)
+    }
+}
+
+impl std::iter::FusedIterator for BaseChain {}
 
 /// Represents a unified type definition combining information from `TypeDef`, `TypeRef`, and `TypeSpec` tables.
 ///
@@ -160,7 +202,7 @@ pub struct CilType {
     /// Enclosing type for nested types - used for reverse lookup to build hierarchical names
     pub enclosing_type: OnceLock<CilTypeRef>,
     /// Cached full name to avoid expensive recomputation.
-    fullname: RwLock<Option<String>>,
+    fullname: RwLock<Option<Arc<str>>>,
     // vtable
     // security
     // default_constructor: Option<MethodRef>
@@ -197,6 +239,7 @@ impl CilType {
     ///
     /// ```rust,no_run
     /// use dotscope::metadata::{
+    ///     method::MethodRefList,
     ///     tables::TypeAttributes,
     ///     typesystem::{CilType, CilFlavor},
     ///     token::Token,
@@ -211,7 +254,7 @@ impl CilType {
     ///     None, // No base type specified yet
     ///     TypeAttributes::new(0x00100001), // TypeAttributes flags
     ///     Arc::new(boxcar::Vec::new()), // Empty fields list
-    ///     Arc::new(boxcar::Vec::new()), // Empty methods list
+    ///     MethodRefList::new(), // Empty methods list, allocated on first push
     ///     Some(CilFlavor::Class), // Explicit class flavor
     /// );
     /// ```
@@ -257,9 +300,9 @@ impl CilType {
             interfaces: Arc::new(boxcar::Vec::new()),
             overwrites: Arc::new(boxcar::Vec::new()),
             nested_types: Arc::new(boxcar::Vec::new()),
-            generic_params: Arc::new(boxcar::Vec::new()),
-            generic_args: Arc::new(boxcar::Vec::new()),
-            custom_attributes: Arc::new(boxcar::Vec::new()),
+            generic_params: LazyList::new(),
+            generic_args: LazyList::new(),
+            custom_attributes: LazyList::new(),
             packing_size: OnceLock::new(),
             class_size: OnceLock::new(),
             spec: OnceLock::new(),
@@ -390,6 +433,49 @@ impl CilType {
             base.upgrade()
         } else {
             None
+        }
+    }
+
+    /// Iterates the type's inheritance chain, from the immediate base type towards the root.
+    ///
+    /// The starting type itself is **not** yielded — the first item is `self.base()`.
+    ///
+    /// # Why this exists
+    ///
+    /// [`CilType::base`] is populated directly from the TypeDef `extends` coded index, which is
+    /// attacker-controlled. A malformed assembly can describe a type that extends itself, or an
+    /// `A -> B -> A` cycle, and such an assembly still loads under
+    /// [`ValidationConfig::analysis`](crate::metadata::validation::ValidationConfig::analysis)
+    /// because that preset reports circular inheritance as a diagnostic rather than refusing the
+    /// file. A hand-written `while let Some(t) = t.base()` loop over such a graph never
+    /// terminates, and the recursive equivalent exhausts the native stack — an abort that no
+    /// caller can catch and that no emulation budget can interrupt.
+    ///
+    /// This iterator is the only sanctioned way to walk a base chain. It is bounded twice over:
+    /// by a visited set seeded with the starting type's token, so a cycle stops the walk the
+    /// first time it closes, and by [`MAX_BASE_WALK_DEPTH`], so even an acyclic-but-absurd chain
+    /// terminates. Both bounds end the iteration quietly rather than erroring, matching the
+    /// permissive posture the rest of the analysis path takes towards malformed input.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use dotscope::metadata::typesystem::CilType;
+    /// # fn example(cil_type: &CilType) {
+    /// // Safe against attacker-supplied inheritance cycles.
+    /// let derives_from_exception = cil_type
+    ///     .base_chain()
+    ///     .any(|ancestor| &*ancestor.fullname() == "System.Exception");
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn base_chain(&self) -> BaseChain {
+        let mut visited = HashSet::new();
+        visited.insert(self.token);
+        BaseChain {
+            current: self.base(),
+            visited,
+            remaining: MAX_BASE_WALK_DEPTH,
         }
     }
 
@@ -656,14 +742,14 @@ impl CilType {
             let base_fullname = base_type.fullname();
 
             // Direct well-known base types
-            if base_fullname == wellknown::names::VALUE_TYPE
-                || base_fullname == wellknown::names::ENUM
+            if &*base_fullname == wellknown::names::VALUE_TYPE
+                || &*base_fullname == wellknown::names::ENUM
             {
                 return Some(CilFlavor::ValueType);
             }
 
-            if base_fullname == wellknown::names::DELEGATE
-                || base_fullname == wellknown::names::MULTICAST_DELEGATE
+            if &*base_fullname == wellknown::names::DELEGATE
+                || &*base_fullname == wellknown::names::MULTICAST_DELEGATE
             {
                 return Some(CilFlavor::Class); // Delegates are reference types but special classes
             }
@@ -731,19 +817,19 @@ impl CilType {
             let ancestor_name = ancestor.fullname();
 
             // Check for well-known ancestor types
-            if ancestor_name == wellknown::names::VALUE_TYPE
-                || ancestor_name == wellknown::names::ENUM
+            if &*ancestor_name == wellknown::names::VALUE_TYPE
+                || &*ancestor_name == wellknown::names::ENUM
             {
                 return Some(CilFlavor::ValueType);
             }
 
-            if ancestor_name == wellknown::names::DELEGATE
-                || ancestor_name == wellknown::names::MULTICAST_DELEGATE
+            if &*ancestor_name == wellknown::names::DELEGATE
+                || &*ancestor_name == wellknown::names::MULTICAST_DELEGATE
             {
                 return Some(CilFlavor::Class);
             }
 
-            if ancestor_name == wellknown::names::OBJECT {
+            if &*ancestor_name == wellknown::names::OBJECT {
                 // Reached the root - this is a reference type class
                 return Some(CilFlavor::Class);
             }
@@ -939,7 +1025,7 @@ impl CilType {
     #[must_use]
     pub fn is_enum(&self) -> bool {
         self.base()
-            .is_some_and(|b| b.fullname() == wellknown::names::ENUM)
+            .is_some_and(|b| &*b.fullname() == wellknown::names::ENUM)
     }
 
     /// Returns true if this type is a delegate (inherits from `System.Delegate` or `System.MulticastDelegate`).
@@ -947,7 +1033,7 @@ impl CilType {
     pub fn is_delegate(&self) -> bool {
         self.base().is_some_and(|b| {
             let name = b.fullname();
-            name == wellknown::names::MULTICAST_DELEGATE || name == wellknown::names::DELEGATE
+            &*name == wellknown::names::MULTICAST_DELEGATE || &*name == wellknown::names::DELEGATE
         })
     }
 
@@ -1086,16 +1172,16 @@ impl CilType {
     ///
     /// # Caching
     /// The result is cached after first computation for performance.
-    pub fn fullname(&self) -> String {
+    pub fn fullname(&self) -> Arc<str> {
         if let Ok(guard) = self.fullname.read() {
             if let Some(cached) = guard.as_ref() {
-                return cached.clone();
+                return Arc::clone(cached);
             }
         }
 
-        let fullname = self.compute_fullname();
+        let fullname: Arc<str> = Arc::from(self.compute_fullname());
         if let Ok(mut guard) = self.fullname.write() {
-            *guard = Some(fullname.clone());
+            *guard = Some(Arc::clone(&fullname));
         }
         fullname
     }
@@ -1266,37 +1352,35 @@ impl CilType {
     }
 
     /// Check if this type is a subtype of (inherits from) the target type
+    ///
+    /// Walks via [`CilType::base_chain`], so a cyclic `extends` graph terminates the search
+    /// instead of spinning forever.
     fn is_subtype_of(&self, target: &CilType) -> bool {
-        let mut current = self.base();
-        while let Some(base_type) = current {
-            if base_type.token == target.token
+        self.base_chain().any(|base_type| {
+            base_type.token == target.token
                 || (base_type.namespace == target.namespace && base_type.name == target.name)
-            {
-                return true;
-            }
-            current = base_type.base();
-        }
-        false
+        })
     }
 
     /// Check if this type implements the specified interface
+    ///
+    /// Walks via [`CilType::base_chain`] rather than recursing, so a cyclic `extends` graph
+    /// terminates the search instead of exhausting the native stack.
     fn implements_interface(&self, interface: &CilType) -> bool {
-        for (_, entry) in self.interfaces.iter() {
-            if let Some(impl_type) = entry.interface.upgrade() {
-                if impl_type.token == interface.token
-                    || (impl_type.namespace == interface.namespace
-                        && impl_type.name == interface.name)
-                {
-                    return true;
-                }
-            }
+        fn declares(candidate: &CilType, interface: &CilType) -> bool {
+            candidate.interfaces.iter().any(|(_, entry)| {
+                entry.interface.upgrade().is_some_and(|impl_type| {
+                    impl_type.token == interface.token
+                        || (impl_type.namespace == interface.namespace
+                            && impl_type.name == interface.name)
+                })
+            })
         }
 
-        if let Some(base_type) = self.base() {
-            return base_type.implements_interface(interface);
-        }
-
-        false
+        declares(self, interface)
+            || self
+                .base_chain()
+                .any(|base_type| declares(&base_type, interface))
     }
 
     /// Check if a constant value is compatible with this type
@@ -1571,5 +1655,118 @@ impl CilType {
 impl fmt::Display for CilType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.fullname())
+    }
+}
+
+/// Tests that inheritance-chain walks terminate on attacker-controlled `extends` cycles.
+///
+/// Each case constructs an inheritance graph that no valid assembly contains but that a
+/// malformed one can describe, then walks it. A regression shows up as a hung or killed test
+/// process rather than an assertion failure, since the failure mode being guarded against is
+/// an infinite loop or native stack exhaustion.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test::builders::CilTypeBuilder;
+
+    /// Builds a type with a distinct token so the visited set can tell instances apart.
+    fn typ(rid: u32, name: &str) -> CilTypeRc {
+        CilTypeBuilder::simple_class("Test", name)
+            .with_token(Token::new(0x0200_0000 | rid))
+            .build()
+    }
+
+    #[test]
+    fn base_chain_terminates_on_self_extends() {
+        let a = typ(1, "SelfRef");
+        a.set_base(&CilTypeRef::new(&a)).expect("set_base");
+
+        // The starting token seeds the visited set, so the self-edge yields nothing at all.
+        assert_eq!(a.base_chain().count(), 0);
+    }
+
+    #[test]
+    fn base_chain_terminates_on_two_type_cycle() {
+        let a = typ(1, "A");
+        let b = typ(2, "B");
+        a.set_base(&CilTypeRef::new(&b)).expect("set_base a -> b");
+        b.set_base(&CilTypeRef::new(&a)).expect("set_base b -> a");
+
+        // Walking from A yields B, then stops: A's token is already in the visited set.
+        let chain: Vec<Token> = a.base_chain().map(|t| t.token).collect();
+        assert_eq!(chain, vec![b.token]);
+    }
+
+    #[test]
+    fn base_chain_terminates_on_three_type_cycle() {
+        let a = typ(1, "A");
+        let b = typ(2, "B");
+        let c = typ(3, "C");
+        a.set_base(&CilTypeRef::new(&b)).expect("set_base a -> b");
+        b.set_base(&CilTypeRef::new(&c)).expect("set_base b -> c");
+        c.set_base(&CilTypeRef::new(&a)).expect("set_base c -> a");
+
+        let chain: Vec<Token> = a.base_chain().map(|t| t.token).collect();
+        assert_eq!(chain, vec![b.token, c.token]);
+    }
+
+    #[test]
+    fn base_chain_yields_acyclic_ancestors_in_order() {
+        let object = typ(1, "Object");
+        let mid = typ(2, "Mid");
+        let leaf = typ(3, "Leaf");
+        mid.set_base(&CilTypeRef::new(&object))
+            .expect("set_base mid -> object");
+        leaf.set_base(&CilTypeRef::new(&mid))
+            .expect("set_base leaf -> mid");
+
+        let chain: Vec<Token> = leaf.base_chain().map(|t| t.token).collect();
+        assert_eq!(chain, vec![mid.token, object.token]);
+    }
+
+    #[test]
+    fn base_chain_is_bounded_even_without_a_cycle() {
+        // A chain longer than the depth budget, with every token distinct so only the depth
+        // bound can stop it.
+        let types: Vec<CilTypeRc> = (0..MAX_BASE_WALK_DEPTH + 50)
+            .map(|i| {
+                #[allow(clippy::cast_possible_truncation)]
+                typ(i as u32 + 1, "Deep")
+            })
+            .collect();
+        for pair in types.windows(2) {
+            if let [derived, base] = pair {
+                derived.set_base(&CilTypeRef::new(base)).expect("set_base");
+            }
+        }
+
+        let first = types.first().expect("non-empty");
+        assert_eq!(first.base_chain().count(), MAX_BASE_WALK_DEPTH);
+    }
+
+    #[test]
+    fn is_subtype_of_terminates_on_cycle() {
+        let a = typ(1, "A");
+        let b = typ(2, "B");
+        let unrelated = typ(3, "Unrelated");
+        a.set_base(&CilTypeRef::new(&b)).expect("set_base a -> b");
+        b.set_base(&CilTypeRef::new(&a)).expect("set_base b -> a");
+
+        // Searching for a type that is nowhere in the cycle is the non-terminating case.
+        assert!(!a.is_subtype_of(&unrelated));
+        assert!(a.is_subtype_of(&b));
+    }
+
+    #[test]
+    fn implements_interface_terminates_on_cycle() {
+        let a = typ(1, "A");
+        let b = typ(2, "B");
+        let iface = CilTypeBuilder::interface("Test", "IUnimplemented")
+            .with_token(Token::new(0x0200_0003))
+            .build();
+        a.set_base(&CilTypeRef::new(&b)).expect("set_base a -> b");
+        b.set_base(&CilTypeRef::new(&a)).expect("set_base b -> a");
+
+        assert!(!a.implements_interface(&iface));
     }
 }

@@ -51,9 +51,11 @@ mod enums;
 mod hash;
 mod heap_calc;
 mod io;
+mod lazylist;
 mod lebytes;
 mod math;
 mod synchronization;
+mod text;
 mod visitedmap;
 
 pub use alignment::align_to;
@@ -67,7 +69,10 @@ pub(crate) use crypto::derive_pbkdf1_key;
 #[cfg(feature = "deobfuscation")]
 pub(crate) use crypto::CryptoParameters;
 #[cfg(feature = "emulation")]
-pub(crate) use crypto::{apply_crypto_transform, derive_pbkdf2_key, verify_rsa_pkcs1v15};
+pub(crate) use crypto::{
+    apply_crypto_transform, derive_pbkdf2_key, verify_rsa_pkcs1v15, MAX_DERIVED_KEY_LEN,
+    MAX_PBKDF2_ITERATIONS,
+};
 #[cfg(feature = "emulation")]
 pub(crate) use crypto::{compute_hmac_sha256, compute_hmac_sha512};
 #[cfg(feature = "legacy-crypto")]
@@ -75,7 +80,9 @@ pub(crate) use crypto::{compute_md5, compute_sha1};
 pub(crate) use crypto::{compute_sha256, compute_sha384, compute_sha512};
 #[allow(unused_imports)]
 pub(crate) use decompress::{
-    decompress_confuserex_lzma, decompress_deflate, decompress_gzip, is_confuserex_lzma,
+    decompress_confuserex_lzma, decompress_confuserex_lzma_limited, decompress_deflate,
+    decompress_deflate_limited, decompress_gzip, decompress_gzip_limited, is_confuserex_lzma,
+    MAX_DECOMPRESSED_BYTES,
 };
 pub use dot::escape_dot;
 pub use enums::EnumUtils;
@@ -90,10 +97,14 @@ pub use io::{
     write_le_at_dyn, write_prefixed_string_utf16, write_prefixed_string_utf8, write_string_at,
     write_string_utf8, CilIO,
 };
+pub use lazylist::LazyList;
+#[allow(unused_imports)]
+pub use lazylist::LazyListIter;
 #[cfg(feature = "emulation")]
 pub use lebytes::LeBytes;
 #[cfg(feature = "emulation")]
 pub use math::to_i32_saturating;
 pub use math::to_u32;
 pub use synchronization::FailFastBarrier;
+pub(crate) use text::truncate_chars;
 pub use visitedmap::VisitedMap;

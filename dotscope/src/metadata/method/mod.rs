@@ -125,7 +125,7 @@ use crate::{
             CilModifier, CilTypeRc, CilTypeRef, CilTypeReference, TypeRegistry, TypeResolver,
         },
     },
-    utils::VisitedMap,
+    utils::{LazyList, VisitedMap},
     CilObject,
     Error::SsaError,
     Result,
@@ -136,7 +136,7 @@ pub type MethodMap = SkipMap<Token, MethodRc>;
 /// A vector that holds several parsed `Method`s.
 pub type MethodList = Arc<boxcar::Vec<MethodRc>>;
 /// A vector that holds `MethodRef` instances (weak references)
-pub type MethodRefList = Arc<boxcar::Vec<MethodRef>>;
+pub type MethodRefList = LazyList<MethodRef>;
 /// A reference-counted pointer to a `Method`.
 pub type MethodRc = Arc<Method>;
 
@@ -271,7 +271,7 @@ impl MethodRef {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::Malformed`] if the underlying method has been dropped.
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`] if the underlying method has been dropped.
     ///
     /// # Examples
     ///
@@ -1162,7 +1162,7 @@ impl Method {
     /// Returns the fully-qualified name of the declaring type, if available.
     #[must_use]
     pub fn declaring_type_fullname(&self) -> Option<String> {
-        self.declaring_type_rc().map(|t| t.fullname())
+        self.declaring_type_rc().map(|t| t.fullname().to_string())
     }
 
     /// Returns the fully-qualified method name in `"DeclaringType::MethodName"` format.
@@ -1330,7 +1330,7 @@ impl Method {
             return Ok(());
         };
 
-        let local_var_sig_data = match sigs_table.get(body.local_var_sig_token & 0x00FF_FFFF) {
+        let local_var_sig_data = match sigs_table.get(body.local_var_sig_token & 0x00FF_FFFF)? {
             Some(var_sig_row) => blobs.get(var_sig_row.signature as usize)?,
             None => {
                 return Err(malformed_error!(
