@@ -65,12 +65,13 @@ mod tests {
 
         {
             for row in table.iter() {
+                let row = row.expect("row parses");
                 eval(row);
             }
         }
 
         {
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             eval(row);
         }
     }
@@ -110,12 +111,13 @@ mod tests {
 
         {
             for row in table.iter() {
+                let row = row.expect("row parses");
                 eval(row);
             }
         }
 
         {
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             eval(row);
         }
     }

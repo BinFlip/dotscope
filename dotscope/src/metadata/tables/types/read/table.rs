@@ -66,12 +66,12 @@ use crate::{
 /// let table: MetadataTable<MyRow> = MetadataTable::new(data, 100, table_info)?;
 ///
 /// // Access specific rows
-/// if let Some(first_row) = table.get(1) {
+/// if let Some(first_row) = table.get(1)? {
 ///     println!("First row ID: {}", first_row.id);
 /// }
 ///
 /// // Sequential iteration
-/// for (index, row) in table.iter().enumerate() {
+/// for (index, row) in table.iter().filter_map(skip_unreadable).enumerate() {
 ///     println!("Row {}: ID = {}", index + 1, row.id);
 /// }
 /// # Ok(())
@@ -97,7 +97,8 @@ use crate::{
 ///
 /// // Parallel processing with automatic error handling
 /// table.par_iter().try_for_each(|row| {
-///     // Process each row in parallel
+///     // A row that failed to parse is reported, not skipped.
+///     let row = row?;
 ///     println!("Processing row: {}", row.id);
 ///     Ok(())
 /// })?;
@@ -142,10 +143,37 @@ impl<'a, T: RowReadable> MetadataTable<'a, T> {
     /// - The table configuration is invalid or inconsistent
     /// - Row size calculation fails due to invalid size parameters
     pub fn new(data: &'a [u8], row_count: u32, sizes: TableInfoRef) -> Result<Self> {
+        let row_size = T::row_size(&sizes);
+
+        // `data` is the remainder of the whole `#~` stream, not this table's own extent, so a
+        // row count larger than the table really has would read rows belonging to the tables
+        // that follow it. Widened to `u64` because `row_count * row_size` overflows `u32` at
+        // counts the raw validator still permits.
+        let declared = u64::from(row_count)
+            .checked_mul(u64::from(row_size))
+            .ok_or_else(|| malformed_error!("Table extent overflows"))?;
+        let available = u64::try_from(data.len())
+            .map_err(|_| malformed_error!("Table buffer length exceeds the address width"))?;
+        if declared > available {
+            return Err(malformed_error!(
+                "Table declares {} rows of {} bytes ({}) but only {} bytes remain",
+                row_count,
+                row_size,
+                declared,
+                available
+            ));
+        }
+
+        // Truncate to the declared extent so no read can cross into the next table, whatever
+        // the iterators do.
+        let data = data
+            .get(..usize::try_from(declared).unwrap_or(data.len()))
+            .unwrap_or(data);
+
         Ok(MetadataTable {
             data,
             row_count,
-            row_size: T::row_size(&sizes),
+            row_size,
             sizes,
             _phantom: Arc::new(PhantomData),
         })
@@ -176,14 +204,23 @@ impl<'a, T: RowReadable> MetadataTable<'a, T> {
     ///
     /// ## Returns
     ///
-    /// Returns `Some(T)` if the row exists and can be parsed successfully,
-    /// or `None` if the index is out of bounds or parsing fails.
-    #[must_use]
-    pub fn get(&self, index: u32) -> Option<T> {
+    /// `Ok(Some(row))` when the row exists and parses, `Ok(None)` when the index is outside
+    /// the table, and `Err` when the row exists but does not parse. Those are three different
+    /// facts and callers act on them differently — a row that will not parse is a defect in
+    /// the input, not an absent row.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the row's bytes cannot be decoded.
+    pub fn get(&self, index: u32) -> Result<Option<T>> {
         if index == 0 || self.row_count < index {
-            return None;
+            return Ok(None);
         }
 
+        // The offset is derived from the index rather than carried across calls, so a row
+        // that fails to parse cannot desynchronise any other row. That independence is what
+        // lets the iterators report a failure and keep going, instead of having to stop
+        // because they no longer know where the next row begins.
         T::row_read(
             self.data,
             &mut (index as usize)
@@ -192,7 +229,7 @@ impl<'a, T: RowReadable> MetadataTable<'a, T> {
             index,
             &self.sizes,
         )
-        .ok()
+        .map(Some)
     }
 
     /// Creates a sequential iterator over all rows in the table.
@@ -210,7 +247,6 @@ impl<'a, T: RowReadable> MetadataTable<'a, T> {
         TableIterator {
             table: self,
             current_row: 0,
-            current_offset: 0,
         }
     }
 
@@ -234,7 +270,7 @@ impl<'a, T: RowReadable> MetadataTable<'a, T> {
 }
 
 impl<'a, T: RowReadable> IntoIterator for &'a MetadataTable<'a, T> {
-    type Item = T;
+    type Item = Result<T>;
     type IntoIter = TableIterator<'a, T>;
 
     fn into_iter(self) -> Self::IntoIter {

@@ -105,7 +105,10 @@
 //!     println!("Found {} type definitions", typedef_table.row_count);
 //!     
 //!     // Examine first few types
+//!     // Iteration yields `Result<TypeDefRaw>`: a row that fails to parse is reported
+//!     // rather than silently ending the iteration.
 //!     for (index, type_def) in typedef_table.iter().enumerate().take(5) {
+//!         let type_def = type_def?;
 //!         println!("Type {}: flags={:#x}, name_idx={}, namespace_idx={}",
 //!                  index, type_def.flags, type_def.type_name, type_def.type_namespace);
 //!     }
@@ -117,6 +120,7 @@
 //!     
 //!     // Find methods by characteristics
 //!     let static_methods = method_table.iter()
+//!         .filter_map(Result::ok) // skip rows that fail to parse
 //!         .filter(|method| method.flags & 0x0010 != 0) // MethodAttributes.Static
 //!         .count();
 //!     println!("Static methods: {}", static_methods);
@@ -138,12 +142,14 @@
 //!     tables.table::<FieldRaw>()
 //! ) {
 //!     for (type_idx, type_def) in typedef_table.iter().enumerate().take(10) {
+//!         let type_def = type_def?;
 //!         // Calculate field range for this type
 //!         let field_start = type_def.field_list.saturating_sub(1) as usize;
-//!         
-//!         // Find field range end (next type's field_list or table end)
+//!
+//!         // Find field range end (next type's field_list or table end). `get` returns
+//!         // `Result<Option<_>>`: outer for a malformed row, inner for a RID past the end.
 //!         let field_end = if type_idx + 1 < typedef_table.row_count as usize {
-//!             typedef_table.get((type_idx + 1) as u32)
+//!             typedef_table.get((type_idx + 1) as u32)?
 //!                 .map(|next_type| next_type.field_list.saturating_sub(1) as usize)
 //!                 .unwrap_or(field_table.row_count as usize)
 //!         } else {
@@ -173,6 +179,7 @@
 //!     
 //!     // Parallel analysis using rayon
 //!     let attribute_stats = ca_table.par_iter()
+//!         .filter_map(Result::ok) // parallel iteration yields `Result<CustomAttributeRaw>`
 //!         .map(|attr| {
 //!             // Analyze attribute type and parent
 //!             let parent_table = attr.parent.tag;
@@ -207,7 +214,7 @@
 //!         // Process chunk without loading entire table into memory
 //!         let mut external_refs = 0;
 //!         for i in chunk_start..chunk_end {
-//!             if let Some(member_ref) = memberref_table.get(i) {
+//!             if let Ok(Some(member_ref)) = memberref_table.get(i) {
 //!                 // Analyze member reference
 //!                 if member_ref.class.tag == TableId::TypeRef {
 //!                     external_refs += 1;
@@ -279,7 +286,8 @@
 //! - **Lifetime enforcement**: Rust borrow checker prevents use-after-free
 //! - **Type safety**: Generic type parameters prevent incorrect table access
 //! - **Bounds verification**: All array and slice access bounds-checked
-//! - **No unsafe aliasing**: Careful pointer management in type casting
+//! - **No unsafe code**: Table access goes through the safe accessor layer; there is no pointer
+//!   casting here to manage
 //!
 //! # See Also
 //! - [`crate::metadata::tables`]: Individual metadata table definitions and structures
@@ -385,7 +393,10 @@ use crate::{
 ///     println!("Assembly defines {} types", typedef_table.row_count);
 ///     
 ///     // Analyze type characteristics
+///     // Iteration yields `Result<TypeDefRaw>`: a row that fails to parse is reported
+///     // rather than silently ending the iteration.
 ///     for (index, type_def) in typedef_table.iter().enumerate().take(10) {
+///         let type_def = type_def?;
 ///         let is_public = type_def.flags & 0x00000007 == 0x00000001;
 ///         let is_sealed = type_def.flags & 0x00000100 != 0;
 ///         let is_abstract = type_def.flags & 0x00000080 != 0;
@@ -412,9 +423,11 @@ use crate::{
 ///     tables.table::<MethodDefRaw>()
 /// ) {
 ///     for (type_idx, type_def) in typedef_table.iter().enumerate().take(5) {
-///         // Calculate member ranges for this type
-///         let next_type = typedef_table.get((type_idx + 1) as u32);
-///         
+///         let type_def = type_def?;
+///         // Calculate member ranges for this type. `get` returns `Result<Option<_>>`:
+///         // outer for a malformed row, inner for a RID past the end of the table.
+///         let next_type = typedef_table.get((type_idx + 1) as u32)?;
+///
 ///         let field_start = type_def.field_list.saturating_sub(1);
 ///         let field_end = next_type.as_ref()
 ///             .map(|t| t.field_list.saturating_sub(1))
@@ -492,7 +505,7 @@ use crate::{
 ///         let chunk_end = (chunk_start + CHUNK_SIZE).min(total_rows);
 ///         
 ///         for i in chunk_start..chunk_end {
-///             if let Some(member_ref) = memberref_table.get(i) {
+///             if let Ok(Some(member_ref)) = memberref_table.get(i) {
 ///                 // Analyze member reference type and parent
 ///                 let is_method = true; // Simplified: check signature
 ///                 let is_external = true; // Simplified: check class reference
@@ -578,7 +591,7 @@ use crate::{
 /// - **Lifetime enforcement**: Rust borrow checker prevents use-after-free vulnerabilities
 /// - **Type safety**: Generic parameters prevent incorrect table type access
 /// - **Bounds verification**: All array and slice access is bounds-checked
-/// - **Controlled unsafe**: Minimal unsafe code with careful pointer management
+/// - **No unsafe code**: The safe accessor layer replaced the pointer casting this once needed
 ///
 /// # ECMA-335 Compliance
 ///
@@ -608,7 +621,7 @@ use crate::{
 ///         println!("TypeDef table has {} rows", typedef_table.row_count);
 ///         
 ///         // Access individual rows by index (0-based)
-///         if let Some(first_type) = typedef_table.get(0) {
+///         if let Ok(Some(first_type)) = typedef_table.get(1) {
 ///             println!("First type: flags={}, name_idx={}, namespace_idx={}",
 ///                     first_type.flags, first_type.type_name, first_type.type_namespace);
 ///         }
@@ -626,6 +639,7 @@ use crate::{
 /// // Iterate over all methods in the assembly
 /// if let Some(method_table) = tables_header.table::<MethodDefRaw>() {
 ///     for (index, method) in method_table.iter().enumerate() {
+///         let method = method?;
 ///         println!("Method {}: RVA={:#x}, impl_flags={}, flags={}, name_idx={}",
 ///                 index, method.rva, method.impl_flags, method.flags, method.name);
 ///         
@@ -646,6 +660,7 @@ use crate::{
 /// // Process field metadata in parallel
 /// if let Some(field_table) = tables_header.table::<FieldRaw>() {
 ///     let field_count = field_table.par_iter()
+///         .filter_map(Result::ok) // parallel iteration yields `Result<FieldRaw>`
 ///         .filter(|field| field.flags & 0x0010 != 0) // FieldAttributes.Static
 ///         .count();
 ///     
@@ -666,6 +681,7 @@ use crate::{
 ///     tables_header.table::<MethodDefRaw>()
 /// ) {
 ///     for (type_idx, type_def) in typedef_table.iter().enumerate().take(5) {
+///         let type_def = type_def?;
 ///         println!("Type {}: methods {}-{}",
 ///                 type_idx, type_def.method_list,
 ///                 type_def.method_list.saturating_add(10)); // Simplified example
@@ -717,7 +733,7 @@ use crate::{
 ///         let chunk_end = (chunk_start + CHUNK_SIZE).min(total_rows);
 ///         
 ///         for i in chunk_start..chunk_end {
-///             if let Some(attr) = ca_table.get(i) {
+///             if let Ok(Some(attr)) = ca_table.get(i) {
 ///                 // Process individual custom attribute
 ///                 // attr.parent, attr.type_def, attr.value are available
 ///                 // without copying the entire table into memory
@@ -849,7 +865,7 @@ impl<'a> TablesHeader<'a> {
     /// # Errors
     ///
     /// Returns [`crate::Error`] in the following cases:
-    /// - **[`crate::Error::OutOfBounds`]**: Data too short for complete header (< 24 bytes)
+    /// - **[`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`]**: Data too short for complete header (< 24 bytes)
     /// - **Malformed data**: No valid tables present (all bits in `valid` are 0)
     /// - **Version error**: Unsupported major/minor version combination
     /// - **Format error**: Invalid table data or corrupted stream structure
@@ -1083,6 +1099,16 @@ impl<'a> TablesHeader<'a> {
             )?;
         }
 
+        // Checked again after the loop, not only at the top of each iteration: the check above
+        // catches an overshoot on the *next* variant, which leaves the last one — presently
+        // `CustomDebugInformation` — with nothing behind it to notice.
+        if current_offset > data.len() {
+            return Err(ParseFailure::OutOfBounds {
+                stage: ParseStage::TildeStream,
+            }
+            .into());
+        }
+
         Ok(tables_header)
     }
 
@@ -1136,12 +1162,13 @@ impl<'a> TablesHeader<'a> {
     /// if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
     ///     // Efficient access to all type definitions
     ///     for type_def in typedef_table.iter().take(5) {
+    ///         let type_def = type_def?;
     ///         println!("Type: flags={:#x}, name_idx={}, namespace_idx={}",
     ///                 type_def.flags, type_def.type_name, type_def.type_namespace);
     ///     }
-    ///     
-    ///     // Random access to specific rows
-    ///     if let Some(first_type) = typedef_table.get(0) {
+    ///
+    ///     // Random access to specific rows, by RID (1-based)
+    ///     if let Ok(Some(first_type)) = typedef_table.get(1) {
     ///         println!("First type name index: {}", first_type.type_name);
     ///     }
     /// }

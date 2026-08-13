@@ -4,6 +4,8 @@
 //! ``LocalScope`` table data during metadata loading. The loader handles parallel
 //! processing and integration with the broader loader context.
 
+use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+
 use crate::{
     metadata::{
         diagnostics::DiagnosticCategory,
@@ -47,7 +49,10 @@ impl MetadataLoader for LocalScopeLoader {
             return Ok(());
         };
 
-        table.par_iter().try_for_each(|row| {
+        table.par_iter().enumerate().try_for_each(|(index, row)| {
+            let Some(row) = context.handle_row(row, index)? else {
+                return Ok(());
+            };
             let token_msg = || format!("local scope 0x{:08x}", row.token.value());
 
             let Some(local_scope) = context.handle_result(

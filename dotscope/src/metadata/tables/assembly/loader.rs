@@ -55,7 +55,7 @@ impl MetadataLoader for AssemblyLoader {
         let Some(table) = header.table::<AssemblyRaw>() else {
             return Ok(());
         };
-        let Some(row) = table.get(1) else {
+        let Some(row) = table.get(1)? else {
             return Ok(());
         };
 

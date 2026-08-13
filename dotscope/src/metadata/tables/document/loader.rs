@@ -63,7 +63,11 @@ impl MetadataLoader for DocumentLoader {
 
         table
             .par_iter()
-            .map(|row| {
+            .enumerate()
+            .map(|(index, row)| {
+                let Some(row) = context.handle_row(row, index)? else {
+                    return Ok(());
+                };
                 let token_msg = || format!("document 0x{:08x}", row.token.value());
 
                 let Some(document) = context.handle_result(

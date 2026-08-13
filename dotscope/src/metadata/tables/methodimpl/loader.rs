@@ -73,6 +73,8 @@
 //! - Partition II, §22.27 for the `MethodImpl` table specification
 //! - Table ID: 0x19
 //! - Purpose: Define method implementation mappings for interface and virtual method resolution
+use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+
 use crate::{
     metadata::{
         diagnostics::DiagnosticCategory,
@@ -149,7 +151,10 @@ impl MetadataLoader for MethodImplLoader {
             return Ok(());
         };
 
-        table.par_iter().try_for_each(|row| {
+        table.par_iter().enumerate().try_for_each(|(index, row)| {
+            let Some(row) = context.handle_row(row, index)? else {
+                return Ok(());
+            };
             let token_msg = || format!("method impl 0x{:08x}", row.token.value());
 
             let Some(owned) = context.handle_result(

@@ -22,6 +22,8 @@
 //! # Reference
 //! - [ECMA-335 II.22.14](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `ExportedType` table specification
 
+use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+
 use crate::{
     metadata::{
         diagnostics::DiagnosticCategory,
@@ -70,28 +72,37 @@ impl MetadataLoader for ExportedTypeLoader {
         };
 
         // First pass: create exported type entries
-        table.par_iter().try_for_each(|row| {
-            let token_msg = || format!("exported type 0x{:08x}", row.token.value());
+        table
+            .par_iter()
+            .enumerate()
+            .try_for_each(|(index, row)| -> Result<()> {
+                let Some(row) = context.handle_row(row, index)? else {
+                    return Ok(());
+                };
+                let token_msg = || format!("exported type 0x{:08x}", row.token.value());
 
-            let Some(owned) = context.handle_result(
-                row.to_owned(|coded_index| context.get_ref(coded_index), strings, true),
-                DiagnosticCategory::Type,
-                token_msg,
-            )?
-            else {
-                return Ok(());
-            };
+                let Some(owned) = context.handle_result(
+                    row.to_owned(|coded_index| context.get_ref(coded_index), strings, true),
+                    DiagnosticCategory::Type,
+                    token_msg,
+                )?
+                else {
+                    return Ok(());
+                };
 
-            context.handle_result(
-                context.exported_type.insert(row.token, owned.clone()),
-                DiagnosticCategory::Type,
-                token_msg,
-            )?;
-            Ok(())
-        })?;
+                context.handle_result(
+                    context.exported_type.insert(row.token, owned.clone()),
+                    DiagnosticCategory::Type,
+                    token_msg,
+                )?;
+                Ok(())
+            })?;
 
         // Second pass: resolve implementations
-        table.par_iter().try_for_each(|row| {
+        table.par_iter().enumerate().try_for_each(|(index, row)| {
+            let Some(row) = context.handle_row(row, index)? else {
+                return Ok(());
+            };
             let token_msg = || format!("exported type impl 0x{:08x}", row.token.value());
 
             if let Some(implementation) =

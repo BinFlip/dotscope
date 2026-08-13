@@ -57,7 +57,10 @@ impl MetadataLoader for ParamPtrLoader {
             return Ok(());
         };
 
-        for row in table {
+        for (index, row) in table.into_iter().enumerate() {
+            let Some(row) = context.handle_row(row, index)? else {
+                continue;
+            };
             let token_msg = || format!("param ptr 0x{:08x}", row.token.value());
 
             let Some(owned) =

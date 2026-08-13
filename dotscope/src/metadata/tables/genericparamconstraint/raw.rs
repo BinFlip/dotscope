@@ -30,6 +30,7 @@ use crate::{
         token::Token,
         typesystem::TypeRegistry,
     },
+    utils::LazyList,
     Result,
 };
 
@@ -212,7 +213,7 @@ impl GenericParamConstraintRaw {
                     ))
                 }
             },
-            custom_attributes: Arc::new(boxcar::Vec::new()),
+            custom_attributes: LazyList::new(),
         }))
     }
 }

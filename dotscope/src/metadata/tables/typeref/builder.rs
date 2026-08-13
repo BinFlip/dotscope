@@ -153,8 +153,8 @@ impl TypeRefBuilder {
         // Create the TypeRefRaw entry
         let typeref_raw = TypeRefRaw {
             rid,
-            token: Token::new(rid | 0x0100_0000), // TypeRef table token prefix
-            offset: 0,                            // Will be set during binary generation
+            token: Token::from_parts(TableId::TypeRef, rid),
+            offset: 0, // Will be set during binary generation
             resolution_scope,
             type_name: name_index,
             type_namespace: namespace_index,

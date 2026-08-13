@@ -23,6 +23,7 @@ use crate::{
         token::Token,
         typesystem::{CilTypeRef, TypeRegistry},
     },
+    utils::LazyList,
     Result,
 };
 
@@ -111,7 +112,7 @@ impl InterfaceImplRaw {
             Some(class) => {
                 class.interfaces.push(InterfaceEntry {
                     interface: CilTypeRef::new(&interface),
-                    custom_attributes: Arc::new(boxcar::Vec::new()),
+                    custom_attributes: LazyList::new(),
                 });
                 Ok(())
             }
@@ -163,7 +164,7 @@ impl InterfaceImplRaw {
                     ))
                 }
             },
-            custom_attributes: Arc::new(boxcar::Vec::new()),
+            custom_attributes: LazyList::new(),
         }))
     }
 }

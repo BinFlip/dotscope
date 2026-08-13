@@ -17,6 +17,8 @@
 //! # ECMA-335 Reference
 //! See ECMA-335, Partition II, §22.16 for the `FieldLayout` table specification.
 
+use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+
 use crate::{
     metadata::{
         diagnostics::DiagnosticCategory,
@@ -69,7 +71,10 @@ impl MetadataLoader for FieldLayoutLoader {
             return Ok(());
         };
 
-        table.par_iter().try_for_each(|row| {
+        table.par_iter().enumerate().try_for_each(|(index, row)| {
+            let Some(row) = context.handle_row(row, index)? else {
+                return Ok(());
+            };
             let token_msg = || format!("field layout 0x{:08x}", row.token.value());
 
             let Some(owned) = context.handle_result(

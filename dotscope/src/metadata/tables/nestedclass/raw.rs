@@ -111,6 +111,7 @@ impl NestedClassRaw {
         let mut mapping: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
 
         for row in classes {
+            let row = row?;
             mapping
                 .entry(row.enclosing_class | 0x0200_0000)
                 .or_default()

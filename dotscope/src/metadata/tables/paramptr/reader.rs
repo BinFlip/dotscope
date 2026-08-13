@@ -79,8 +79,8 @@ impl RowReadable for ParamPtrRaw {
     ///
     /// ## Errors
     ///
-    /// * [`crate::error::Error::OutOfBounds`] - Insufficient data for complete entry
-    /// * [`crate::error::Error::Malformed`] - Malformed table entry structure
+    /// * [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] - Insufficient data for complete entry
+    /// * [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`] - Malformed table entry structure
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(ParamPtrRaw {
             rid,
@@ -120,12 +120,13 @@ mod tests {
 
         {
             for row in table.iter() {
+                let row = row.expect("row parses");
                 eval(row);
             }
         }
 
         {
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             eval(row);
         }
     }
@@ -152,12 +153,13 @@ mod tests {
 
         {
             for row in table.iter() {
+                let row = row.expect("row parses");
                 eval(row);
             }
         }
 
         {
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             eval(row);
         }
     }

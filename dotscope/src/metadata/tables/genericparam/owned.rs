@@ -269,7 +269,7 @@ impl fmt::Display for GenericParam {
         // Type/interface constraints
         for (_, constraint_ref) in self.constraints.iter() {
             if let Some(constraint_type) = constraint_ref.upgrade() {
-                constraints.push(constraint_type.fullname());
+                constraints.push(constraint_type.fullname().to_string());
             }
         }
 

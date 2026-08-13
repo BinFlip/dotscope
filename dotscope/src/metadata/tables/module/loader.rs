@@ -69,7 +69,7 @@ impl MetadataLoader for ModuleLoader {
                 || "module".to_string(),
             );
         };
-        let Some(row) = table.get(1) else {
+        let Some(row) = table.get(1)? else {
             return context.handle_error(
                 Err(malformed_error!(
                     "Module table is present but contains no rows"

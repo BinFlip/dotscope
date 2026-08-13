@@ -158,7 +158,7 @@ impl LocalScopeRaw {
         } else {
             let start = self.variable_list;
 
-            let end = if let Some(next_scope) = scope_table.get(next_rid) {
+            let end = if let Some(next_scope) = scope_table.get(next_rid)? {
                 if next_scope.variable_list != 0 {
                     next_scope.variable_list
                 } else {
@@ -195,7 +195,7 @@ impl LocalScopeRaw {
         } else {
             let start = self.constant_list;
 
-            let end = if let Some(next_scope) = scope_table.get(next_rid) {
+            let end = if let Some(next_scope) = scope_table.get(next_rid)? {
                 if next_scope.constant_list != 0 {
                     next_scope.constant_list
                 } else {

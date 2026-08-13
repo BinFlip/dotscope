@@ -27,6 +27,8 @@
 //! # ECMA-335 Reference
 //! See ECMA-335, Partition II, §22.24 for the `ManifestResource` table specification.
 
+use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+
 use crate::{
     metadata::{
         diagnostics::DiagnosticCategory,
@@ -65,7 +67,10 @@ impl MetadataLoader for ManifestResourceLoader {
             return Ok(());
         };
 
-        table.par_iter().try_for_each(|row| {
+        table.par_iter().enumerate().try_for_each(|(index, row)| {
+            let Some(row) = context.handle_row(row, index)? else {
+                return Ok(());
+            };
             let token_msg = || format!("manifest resource 0x{:08x}", row.token.value());
 
             let Some(owned) = context.handle_result(

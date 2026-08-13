@@ -72,6 +72,7 @@ use crate::{
         tables::{MetadataTable, ParamMap, ParamPtrMap, TableId, TableInfoRef, TableRow},
         token::Token,
     },
+    utils::LazyList,
     Result,
 };
 
@@ -254,7 +255,7 @@ impl MethodDefRaw {
             let end = if next_row_id > table.row_count {
                 params_map.len().saturating_add(1)
             } else {
-                match table.get(next_row_id) {
+                match table.get(next_row_id)? {
                     Some(next_row) => next_row.param_list as usize,
                     None => {
                         return Err(malformed_error!(
@@ -270,38 +271,27 @@ impl MethodDefRaw {
             } else {
                 let type_params = Arc::new(boxcar::Vec::with_capacity(end.saturating_sub(start)));
                 for counter in start..end {
+                    let param_rid = u32::try_from(counter).map_err(|_| {
+                        malformed_error!("Param row index out of range: {}", counter)
+                    })?;
                     let actual_param_token = if param_ptr_map.is_empty() {
-                        let token_value = u32::try_from(counter | 0x0800_0000).map_err(|_| {
-                            malformed_error!("Token value too large: {}", counter | 0x0800_0000)
-                        })?;
-                        Token::new(token_value)
+                        Token::from_parts(TableId::Param, param_rid)
                     } else {
-                        let param_ptr_token_value =
-                            u32::try_from(counter | 0x0A00_0000).map_err(|_| {
-                                malformed_error!(
-                                    "ParamPtr token value too large: {}",
-                                    counter | 0x0A00_0000
-                                )
-                            })?;
-                        let param_ptr_token = Token::new(param_ptr_token_value);
+                        // Built from the TableId enum rather than a hand-written prefix so the
+                        // table id cannot drift from the value `ParamPtrReader` keys rows under.
+                        // It had: this was `0x0A00_0000`, which is MemberRef, while ParamPtr is
+                        // `0x07` — so the lookup below never hit and every assembly carrying a
+                        // ParamPtr table failed to load.
+                        let param_ptr_token = Token::from_parts(TableId::ParamPtr, param_rid);
 
                         match param_ptr_map.get(&param_ptr_token) {
                             Some(param_ptr) => {
-                                let actual_param_rid = param_ptr.value().param;
-                                let actual_param_token_value =
-                                    u32::try_from(actual_param_rid as usize | 0x0800_0000)
-                                        .map_err(|_| {
-                                            malformed_error!(
-                                                "Param token value too large: {}",
-                                                actual_param_rid as usize | 0x0800_0000
-                                            )
-                                        })?;
-                                Token::new(actual_param_token_value)
+                                Token::from_parts(TableId::Param, param_ptr.value().param)
                             }
                             None => {
                                 return Err(malformed_error!(
                                     "Failed to resolve ParamPtr - {}",
-                                    counter | 0x0A00_0000
+                                    param_ptr_token.value()
                                 ))
                             }
                         }
@@ -335,17 +325,17 @@ impl MethodDefRaw {
             flags_pinvoke: AtomicU32::new(0),
             params: type_params,
             varargs: Arc::new(boxcar::Vec::new()),
-            generic_params: Arc::new(boxcar::Vec::new()),
-            generic_args: Arc::new(boxcar::Vec::new()),
+            generic_params: LazyList::new(),
+            generic_args: LazyList::new(),
             signature,
             rva: if self.rva == 0 { None } else { Some(self.rva) },
             body: OnceLock::new(),
             local_vars: Arc::new(boxcar::Vec::new()),
             overrides: Arc::new(boxcar::Vec::new()),
-            interface_impls: Arc::new(boxcar::Vec::new()),
+            interface_impls: LazyList::new(),
             security: OnceLock::new(),
             blocks: OnceLock::new(),
-            custom_attributes: Arc::new(boxcar::Vec::new()),
+            custom_attributes: LazyList::new(),
             declaring_type: OnceLock::new(),
         }))
     }

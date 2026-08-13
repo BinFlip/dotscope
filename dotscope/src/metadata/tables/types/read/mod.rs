@@ -29,6 +29,6 @@ mod traits;
 
 pub(crate) use access::TableAccess;
 pub use data::TableData;
-pub use iter::{TableIterator, TableParIterator};
+pub use iter::{skip_unreadable, TableIterator, TableParIterator};
 pub use table::MetadataTable;
 pub use traits::RowReadable;

@@ -72,8 +72,8 @@ impl RowReadable for StandAloneSigRaw {
     ///
     /// ## Errors
     ///
-    /// * [`crate::error::Error::OutOfBounds`] - Insufficient data for complete entry
-    /// * [`crate::error::Error::Malformed`] - Malformed table entry structure
+    /// * [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] - Insufficient data for complete entry
+    /// * [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`] - Malformed table entry structure
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         let offset_org = *offset;
 
@@ -112,12 +112,13 @@ mod tests {
 
         {
             for row in table.iter() {
+                let row = row.expect("row parses");
                 eval(row);
             }
         }
 
         {
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             eval(row);
         }
     }
@@ -129,8 +130,7 @@ mod tests {
         ];
 
         let sizes = Arc::new(TableInfo::new_test(&[], true, true, true));
-        let table =
-            MetadataTable::<StandAloneSigRaw>::new(&data, u16::MAX as u32 + 3, sizes).unwrap();
+        let table = MetadataTable::<StandAloneSigRaw>::new(&data, 1, sizes).unwrap();
 
         let eval = |row: StandAloneSigRaw| {
             assert_eq!(row.rid, 1);
@@ -140,12 +140,13 @@ mod tests {
 
         {
             for row in table.iter() {
+                let row = row.expect("row parses");
                 eval(row);
             }
         }
 
         {
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             eval(row);
         }
     }

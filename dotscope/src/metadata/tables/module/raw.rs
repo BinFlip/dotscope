@@ -11,6 +11,7 @@ use crate::{
         tables::{Module, ModuleRc, TableInfoRef, TableRow},
         token::Token,
     },
+    utils::LazyList,
     Result,
 };
 
@@ -138,7 +139,7 @@ impl ModuleRaw {
                 Some(guids.get(self.encbaseid as usize)?)
             },
             imports: Vec::new(),
-            custom_attributes: Arc::new(boxcar::Vec::new()),
+            custom_attributes: LazyList::new(),
         }))
     }
 
