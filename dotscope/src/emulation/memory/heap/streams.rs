@@ -307,7 +307,13 @@ impl ManagedHeap {
     ///
     /// # Errors
     ///
-    /// Returns [`EmulationError::LockPoisoned`] if the internal `RwLock` is poisoned.
+    /// Returns [`EmulationError::LockPoisoned`] if the internal `RwLock` is poisoned, or
+    /// [`EmulationError::HeapMemoryLimitExceeded`] if growing the stream to `new_length` would
+    /// exceed the heap budget.
+    ///
+    /// Growth is charged against the heap budget and reserved fallibly before the buffer is
+    /// resized. This method is `pub`, and `new_length` reaches it from emulated code via
+    /// `Stream.SetLength`, so the bound has to live here rather than in any one caller.
     pub fn truncate_stream(&self, heap_ref: HeapRef, new_length: usize) -> Result<()> {
         let mut state = self
             .state
@@ -316,6 +322,39 @@ impl ManagedHeap {
                 description: "managed heap",
             })?;
         if let Some(HeapObject::Stream { data, position }) = state.objects.get_mut(&heap_ref.id()) {
+            let old_length = data.len();
+            if new_length > old_length {
+                let growth = new_length.saturating_sub(old_length);
+                let current = self.current_size.load(Ordering::Relaxed);
+                if current.saturating_add(growth) > self.max_size {
+                    return Err(EmulationError::HeapMemoryLimitExceeded {
+                        current,
+                        limit: self.max_size,
+                    }
+                    .into());
+                }
+                data.try_reserve(growth)
+                    .map_err(|_| EmulationError::HeapMemoryLimitExceeded {
+                        current,
+                        limit: self.max_size,
+                    })?;
+                self.current_size.fetch_add(growth, Ordering::Relaxed);
+            } else {
+                // Shrinking returns budget so a grow/shrink cycle cannot ratchet the
+                // accounted size upwards.
+                //
+                // Saturating, not `fetch_sub`: in-place stream writes do not currently update
+                // `current_size`, so a stream can hold more bytes than were ever charged.
+                // Crediting those back with a wrapping subtract would underflow the counter to
+                // near `usize::MAX` and make every later allocation fail.
+                let refund = old_length.saturating_sub(new_length);
+                let _ = self.current_size.fetch_update(
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                    |current| Some(current.saturating_sub(refund)),
+                );
+            }
+
             data.resize(new_length, 0);
             if *position > new_length {
                 *position = new_length;

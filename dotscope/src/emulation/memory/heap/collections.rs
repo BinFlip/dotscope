@@ -4,12 +4,15 @@
 //! on [`ManagedHeap`] objects. Each collection type is stored as a variant of
 //! [`HeapObject`] and supports the standard .NET collection operations.
 
-use std::collections::{HashMap, HashSet as StdHashSet, VecDeque};
+use std::{
+    collections::{HashMap, HashSet as StdHashSet, VecDeque},
+    sync::atomic::Ordering,
+};
 
 use crate::{
     emulation::{
         engine::EmulationError,
-        memory::heap::{DictionaryKey, HeapObject, ManagedHeap},
+        memory::heap::{DictionaryKey, HeapObject, ManagedHeap, EMVALUE_SIZE},
         EmValue, HeapRef,
     },
     Result,
@@ -354,10 +357,19 @@ impl ManagedHeap {
 
     /// Appends an element to a List.
     ///
+    /// The appended element is charged against the heap budget. A `List<T>` grows in place
+    /// without ever going back through the allocator, so nothing else on this path would
+    /// observe the growth: the budget is otherwise consulted only when an object is created.
+    ///
     /// # Errors
     ///
-    /// Returns [`EmulationError::LockPoisoned`] if the internal `RwLock` is poisoned.
+    /// Returns [`EmulationError::LockPoisoned`] if the internal `RwLock` is poisoned, or
+    /// [`EmulationError::HeapMemoryLimitExceeded`] if the append would exceed the budget.
     pub fn list_add(&self, heap_ref: HeapRef, value: EmValue) -> Result<()> {
+        // Gate before taking the lock and before the push, so a refused append does not grow
+        // the host `Vec` first and ask permission afterwards.
+        self.check_allocation(EMVALUE_SIZE)?;
+
         let mut state = self
             .state
             .write()
@@ -366,6 +378,9 @@ impl ManagedHeap {
             })?;
         if let Some(HeapObject::List { elements }) = state.objects.get_mut(&heap_ref.id()) {
             elements.push(value);
+            // Only charge when the push actually happened — a mismatched or missing reference
+            // leaves the footprint unchanged.
+            self.current_size.fetch_add(EMVALUE_SIZE, Ordering::Relaxed);
         }
         Ok(())
     }
@@ -957,5 +972,73 @@ impl ManagedHeap {
             elements.clear();
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Appending to a `List<T>` must be charged against the heap budget.
+    ///
+    /// A list grows in place without going back through the allocator, so nothing else on this
+    /// path observes the growth — the budget is otherwise consulted only at object creation.
+    #[test]
+    fn list_add_charges_the_appended_element() {
+        let heap = ManagedHeap::new(1024 * 1024);
+        let list = heap.alloc_list_with_elements(Vec::new()).unwrap();
+        let before = heap.current_size.load(Ordering::Relaxed);
+
+        heap.list_add(list, EmValue::I32(1)).unwrap();
+
+        assert_eq!(
+            heap.current_size.load(Ordering::Relaxed),
+            before.saturating_add(EMVALUE_SIZE),
+            "the appended element must be charged exactly once"
+        );
+    }
+
+    /// Once the budget is exhausted, further appends are refused rather than growing the host
+    /// `Vec` and asking permission afterwards.
+    #[test]
+    fn list_add_is_refused_past_the_budget() {
+        // Enough for the list object itself, but only a handful of elements.
+        let heap = ManagedHeap::new(EMVALUE_SIZE.saturating_mul(8).saturating_add(256));
+        let list = heap.alloc_list_with_elements(Vec::new()).unwrap();
+
+        let mut appended = 0usize;
+        for _ in 0..1000 {
+            if heap.list_add(list, EmValue::I32(1)).is_err() {
+                break;
+            }
+            appended = appended.saturating_add(1);
+        }
+
+        assert!(appended > 0, "some appends should succeed");
+        assert!(
+            appended < 1000,
+            "the budget must eventually refuse an append"
+        );
+        assert_eq!(
+            heap.list_count(list).unwrap(),
+            appended,
+            "a refused append must not have pushed"
+        );
+    }
+
+    /// A mismatched reference changes nothing, so it must not be charged either.
+    #[test]
+    fn list_add_on_non_list_does_not_charge() {
+        let heap = ManagedHeap::new(1024 * 1024);
+        let not_a_list = heap.alloc_string("x").unwrap();
+        let before = heap.current_size.load(Ordering::Relaxed);
+
+        heap.list_add(not_a_list, EmValue::I32(1)).unwrap();
+
+        assert_eq!(
+            heap.current_size.load(Ordering::Relaxed),
+            before,
+            "nothing was appended, so nothing should be charged"
+        );
     }
 }

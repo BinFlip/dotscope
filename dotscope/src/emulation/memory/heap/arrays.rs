@@ -23,9 +23,20 @@ impl ManagedHeap {
     ///
     /// # Errors
     ///
-    /// Returns [`EmulationError::HeapMemoryLimitExceeded`] if heap is out of memory.
+    /// Returns [`EmulationError::HeapMemoryLimitExceeded`] if the array would exceed the heap
+    /// budget. The check happens **before** any host memory is committed — `length` comes
+    /// straight off the emulated evaluation stack via `newarr`, so building the backing store
+    /// first and asking afterwards means the limit can never fire.
     pub fn alloc_array(&self, element_type: CilFlavor, length: usize) -> Result<HeapRef> {
-        let elements = vec![EmValue::default_for_flavor(&element_type); length];
+        self.reserve_elements(length)?;
+        let mut elements = Vec::new();
+        elements.try_reserve_exact(length).map_err(|_| {
+            EmulationError::HeapMemoryLimitExceeded {
+                current: self.current_size(),
+                limit: self.max_size(),
+            }
+        })?;
+        elements.resize(length, EmValue::default_for_flavor(&element_type));
         self.alloc_object_internal(
             HeapObject::Array {
                 element_type,
@@ -64,8 +75,25 @@ impl ManagedHeap {
         element_type: CilFlavor,
         dimensions: Vec<usize>,
     ) -> Result<HeapRef> {
-        let total_elements: usize = dimensions.iter().product();
-        let elements = vec![EmValue::default_for_flavor(&element_type); total_elements];
+        // `iter().product()` wraps on overflow in release builds and panics in debug, so the
+        // element count is computed with checked arithmetic before it is used for anything.
+        let total_elements = dimensions
+            .iter()
+            .try_fold(1usize, |acc, &d| acc.checked_mul(d))
+            .ok_or(EmulationError::HeapMemoryLimitExceeded {
+                current: self.current_size(),
+                limit: self.max_size(),
+            })?;
+
+        self.reserve_elements(total_elements)?;
+        let mut elements = Vec::new();
+        elements.try_reserve_exact(total_elements).map_err(|_| {
+            EmulationError::HeapMemoryLimitExceeded {
+                current: self.current_size(),
+                limit: self.max_size(),
+            }
+        })?;
+        elements.resize(total_elements, EmValue::default_for_flavor(&element_type));
         self.alloc_object_internal(
             HeapObject::MultiArray {
                 element_type,
@@ -117,6 +145,19 @@ impl ManagedHeap {
     }
 
     /// Sets an array element.
+    ///
+    /// # Heap accounting
+    ///
+    /// Deliberately none. This overwrites an existing slot rather than extending the array, and
+    /// [`HeapObject::estimated_size`] charges arrays a flat `EMVALUE_SIZE` per element, so the
+    /// accounted footprint is identical before and after — a delta calculation here would always
+    /// be zero.
+    ///
+    /// The residual gap is that the estimate is *shallow*: an `EmValue::ValueType` carries a
+    /// `Vec<EmValue>` whose contents are not walked, so a deeply nested value costs more host
+    /// memory than it is charged. Building such values is bounded by the instruction budget
+    /// rather than by the heap budget. Closing that properly means making `estimated_size`
+    /// recursive, which costs a walk on every size query; it is not fixed here.
     ///
     /// # Panics
     ///
@@ -228,7 +269,17 @@ impl ManagedHeap {
     ///
     /// Returns [`EmulationError::HeapMemoryLimitExceeded`] if heap is out of memory.
     pub fn alloc_byte_array(&self, data: &[u8]) -> Result<HeapRef> {
-        let elements: Vec<EmValue> = data.iter().map(|&b| EmValue::I32(i32::from(b))).collect();
+        // Each byte becomes a full `EmValue`, so a byte array costs an order of magnitude more
+        // host memory than its logical size. Charge for that before expanding.
+        self.reserve_elements(data.len())?;
+        let mut elements = Vec::new();
+        elements.try_reserve_exact(data.len()).map_err(|_| {
+            EmulationError::HeapMemoryLimitExceeded {
+                current: self.current_size(),
+                limit: self.max_size(),
+            }
+        })?;
+        elements.extend(data.iter().map(|&b| EmValue::I32(i32::from(b))));
         self.alloc_array_with_values(CilFlavor::U1, elements)
     }
 
@@ -373,5 +424,86 @@ mod tests {
         assert!(heap
             .set_array_element(array_ref, 10, EmValue::I32(0))
             .is_err());
+    }
+
+    // The allocators below take their element count from emulated, attacker-controlled values,
+    // so the heap budget has to be consulted before any host memory is committed. These cases
+    // assert that: a failure shows up as an OOM-killed or aborted test process rather than an
+    // assertion failure, because the rejected length would otherwise be allocated for real.
+
+    /// 64 MiB budget: large enough for ordinary test allocations, small enough that the
+    /// hostile lengths below are rejected rather than attempted.
+    const HEAP_BUDGET: usize = 64 * 1024 * 1024;
+
+    #[test]
+    fn alloc_array_rejects_absurd_length_without_allocating() {
+        let heap = ManagedHeap::new(HEAP_BUDGET);
+        // The length must be refused before materialisation: constructing the object first
+        // would evaluate `vec![EmValue; 2^40]` before any guard could fire.
+        assert!(heap.alloc_array(CilFlavor::I4, 1 << 40).is_err());
+        assert_eq!(heap.current_size(), 0, "rejected array must not be charged");
+    }
+
+    #[test]
+    fn alloc_array_rejects_usize_max() {
+        let heap = ManagedHeap::new(HEAP_BUDGET);
+        // The value a bare `-1 as usize` produces.
+        assert!(heap.alloc_array(CilFlavor::I4, usize::MAX).is_err());
+    }
+
+    #[test]
+    fn alloc_array_still_serves_reasonable_requests() {
+        let heap = ManagedHeap::new(HEAP_BUDGET);
+        let r = heap
+            .alloc_array(CilFlavor::I4, 1000)
+            .expect("1000 elements");
+        assert_eq!(heap.get_array_length(r).unwrap(), 1000);
+    }
+
+    #[test]
+    fn alloc_multi_array_rejects_overflowing_dimensions() {
+        let heap = ManagedHeap::new(HEAP_BUDGET);
+        // The product of these wraps `usize`; `iter().product()` would have silently produced
+        // a small number and allocated an array of the wrong size.
+        let dims = vec![usize::MAX, 2, 2];
+        assert!(heap.alloc_multi_array(CilFlavor::I4, dims).is_err());
+    }
+
+    #[test]
+    fn alloc_multi_array_rejects_oversized_product() {
+        let heap = ManagedHeap::new(HEAP_BUDGET);
+        assert!(heap
+            .alloc_multi_array(CilFlavor::I4, vec![1 << 20, 1 << 20])
+            .is_err());
+    }
+
+    #[test]
+    fn alloc_byte_array_is_charged_per_emvalue_not_per_byte() {
+        let heap = ManagedHeap::new(HEAP_BUDGET);
+        // Each byte expands to a full EmValue, so a buffer that looks like it fits by byte
+        // count must still be rejected when its real cost exceeds the budget.
+        let too_big = vec![0u8; HEAP_BUDGET / 2];
+        assert!(heap.alloc_byte_array(&too_big).is_err());
+    }
+
+    #[test]
+    fn estimated_size_charges_the_real_element_width() {
+        let heap = ManagedHeap::new(HEAP_BUDGET);
+        heap.alloc_array(CilFlavor::I4, 100).expect("alloc");
+        // A hard-coded 8 bytes/element would under-charge by roughly 30x.
+        assert!(
+            heap.current_size() >= 100 * std::mem::size_of::<EmValue>(),
+            "charged {} for 100 elements of {} bytes each",
+            heap.current_size(),
+            std::mem::size_of::<EmValue>()
+        );
+    }
+
+    #[test]
+    fn reserve_gates_without_charging() {
+        let heap = ManagedHeap::new(HEAP_BUDGET);
+        assert!(heap.reserve(HEAP_BUDGET * 2).is_err());
+        assert!(heap.reserve(1024).is_ok());
+        assert_eq!(heap.current_size(), 0, "reserve must not itself account");
     }
 }
