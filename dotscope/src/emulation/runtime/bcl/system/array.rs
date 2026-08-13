@@ -58,6 +58,7 @@
 
 use crate::{
     emulation::{
+        engine::synthetic_exception,
         memory::HeapObject,
         runtime::hook::{Hook, HookContext, HookManager, PreHookResult},
         thread::EmulationThread,
@@ -882,11 +883,20 @@ fn array_create_instance_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread
     };
 
     // arg[1] = int length (or int[] for multi-dimensional, which we only handle for 1D)
+    //
+    // A bare `as usize` turns `Array.CreateInstance(typeof(int), -1)` into `usize::MAX`, which
+    // the allocator then tries to honour. .NET throws ArgumentOutOfRangeException for a
+    // negative length, so do the same and let emulated code catch it.
     let length = match length_arg {
-        EmValue::I32(n) => *n as usize,
-        EmValue::I64(n) => *n as usize,
-        EmValue::NativeInt(n) => *n as usize,
+        EmValue::I32(n) => usize::try_from(*n).ok(),
+        EmValue::I64(n) | EmValue::NativeInt(n) => usize::try_from(*n).ok(),
         _ => return PreHookResult::Continue,
+    };
+    let Some(length) = length else {
+        return PreHookResult::Throw {
+            exception_type: synthetic_exception::ARGUMENT_OUT_OF_RANGE,
+            message: "Array.CreateInstance: length must be non-negative".to_string(),
+        };
     };
 
     // arg[0] = Type (ObjectRef to ReflectionType on the heap)
@@ -914,7 +924,13 @@ fn array_create_instance_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread
 
     match thread.heap_mut().alloc_array(element_flavor, length) {
         Ok(array_ref) => PreHookResult::Bypass(Some(EmValue::ObjectRef(array_ref))),
-        Err(_) => PreHookResult::Continue,
+        // Falling through to `Continue` on a budget rejection would let the emulated program
+        // proceed as though the allocation had succeeded. Surface it as the CLR exception the
+        // real runtime raises so `catch` blocks in the sample still behave correctly.
+        Err(e) => PreHookResult::Throw {
+            exception_type: synthetic_exception::OUT_OF_MEMORY,
+            message: format!("Array.CreateInstance: {e}"),
+        },
     }
 }
 

@@ -46,6 +46,8 @@ use pbkdf2::pbkdf2_hmac;
 use sha1::{Digest as Sha1Digest, Sha1};
 use sha2::{Digest as Sha2Digest, Sha256, Sha384, Sha512};
 
+use crate::{Error::TypeError, Result};
+
 // Type aliases for AES CBC modes
 type Aes128CbcEnc = Encryptor<Aes128>;
 type Aes128CbcDec = Decryptor<Aes128>;
@@ -224,6 +226,24 @@ pub fn compute_hmac_sha512(key: &[u8], data: &[u8]) -> Vec<u8> {
     mac.finalize().into_bytes().to_vec()
 }
 
+/// Upper bound on the PBKDF2 iteration count accepted by [`derive_pbkdf2_key`].
+///
+/// The iteration count reaching this function is a constant lifted out of an attacker-supplied
+/// method body, so it is bounded only by `i32::MAX` (~2.1×10⁹) at the source. PBKDF2 runs its
+/// full iteration loop once per output block, so iterations and key length multiply, and this
+/// is native computation with no instruction budget or cancellation attached to it.
+///
+/// Real-world obfuscators use 100–100 000. Ten million leaves three orders of magnitude of
+/// headroom over observed usage while keeping the worst case to seconds rather than days.
+pub(crate) const MAX_PBKDF2_ITERATIONS: u32 = 10_000_000;
+
+/// Upper bound on the derived key length accepted by [`derive_pbkdf2_key`], in bytes.
+///
+/// Symmetric keys and IVs in the formats this crate handles are at most 32 and 16 bytes.
+/// 1 KiB accommodates any plausible combined key+IV request and rejects the ~2 GB one that an
+/// unvalidated `int32` allows.
+pub(crate) const MAX_DERIVED_KEY_LEN: usize = 1024;
+
 /// Derives a key using PBKDF2 (RFC 2898 Section 5.2).
 ///
 /// PBKDF2 is the algorithm used by .NET's `Rfc2898DeriveBytes` class.
@@ -233,13 +253,24 @@ pub fn compute_hmac_sha512(key: &[u8], data: &[u8]) -> Vec<u8> {
 ///
 /// * `password` - The password bytes
 /// * `salt` - The salt bytes
-/// * `iterations` - Number of iterations (minimum 1000 recommended)
-/// * `key_len` - Desired length of the derived key
+/// * `iterations` - Number of iterations (minimum 1000 recommended), capped at
+///   [`MAX_PBKDF2_ITERATIONS`]
+/// * `key_len` - Desired length of the derived key, capped at [`MAX_DERIVED_KEY_LEN`]
 /// * `hash_algorithm` - Hash algorithm: "SHA1", "SHA256", "SHA384", "SHA512"
 ///
 /// # Returns
 ///
 /// The derived key bytes of the specified length.
+///
+/// # Errors
+///
+/// Returns [`crate::Error::NotSupported`] if `hash_algorithm` is not one of the recognised
+/// names, or if it is "SHA1" in a build without the `legacy-crypto` feature. Returns
+/// [`crate::Error::TypeError`] if `iterations` or `key_len` exceeds its ceiling.
+///
+/// Unknown algorithms are an error rather than a silent fallback on purpose: substituting a
+/// different hash yields plausible-looking bytes of the right length and the wrong value, which
+/// an analyst then consumes as ground truth.
 ///
 /// # Example
 ///
@@ -248,7 +279,7 @@ pub fn compute_hmac_sha512(key: &[u8], data: &[u8]) -> Vec<u8> {
 ///
 /// let password = b"mypassword";
 /// let salt = b"somesalt";
-/// let key = derive_pbkdf2_key(password, salt, 1000, 32, "SHA256");
+/// let key = derive_pbkdf2_key(password, salt, 1000, 32, "SHA256")?;
 /// assert_eq!(key.len(), 32);
 /// ```
 pub fn derive_pbkdf2_key(
@@ -257,7 +288,19 @@ pub fn derive_pbkdf2_key(
     iterations: u32,
     key_len: usize,
     hash_algorithm: &str,
-) -> Vec<u8> {
+) -> Result<Vec<u8>> {
+    if iterations > MAX_PBKDF2_ITERATIONS {
+        return Err(TypeError(format!(
+            "PBKDF2 iteration count {iterations} exceeds maximum {MAX_PBKDF2_ITERATIONS}"
+        )));
+    }
+
+    if key_len > MAX_DERIVED_KEY_LEN {
+        return Err(TypeError(format!(
+            "PBKDF2 derived key length {key_len} exceeds maximum {MAX_DERIVED_KEY_LEN}"
+        )));
+    }
+
     let mut key = vec![0u8; key_len];
 
     match hash_algorithm.to_uppercase().as_str() {
@@ -271,18 +314,28 @@ pub fn derive_pbkdf2_key(
             pbkdf2_hmac::<sha2::Sha512>(password, salt, iterations, &mut key);
         }
         #[cfg(feature = "legacy-crypto")]
-        _ => {
-            // Default to SHA1 (most common in .NET Framework)
+        "SHA1" => {
             pbkdf2_hmac::<sha1::Sha1>(password, salt, iterations, &mut key);
         }
         #[cfg(not(feature = "legacy-crypto"))]
-        _ => {
-            // Default to SHA256 when legacy-crypto is disabled
-            pbkdf2_hmac::<sha2::Sha256>(password, salt, iterations, &mut key);
+        "SHA1" => {
+            // Deriving with SHA-256 instead would return the right number of bytes and the
+            // wrong ones. `Rfc2898DeriveBytes` defaults to SHA-1, so this is the common path
+            // in such a build, not a corner case — name the feature that fixes it.
+            return Err(TypeError(
+                "PBKDF2-HMAC-SHA1 requires the `legacy-crypto` feature; \
+                 rebuild with it enabled to derive this key"
+                    .to_string(),
+            ));
+        }
+        other => {
+            return Err(TypeError(format!(
+                "Unsupported PBKDF2 hash algorithm: {other}"
+            )));
         }
     }
 
-    key
+    Ok(key)
 }
 
 /// Derives a key using PBKDF1 (RFC 2898 Section 5.1).
@@ -785,14 +838,20 @@ impl Default for CryptoParameters {
 /// # Returns
 ///
 /// A tuple `(key, iv)` of the derived key material.
+///
+/// # Errors
+///
+/// Propagates any error from [`derive_pbkdf2_key`] — an iteration count or output length past
+/// its ceiling, or an unsupported hash algorithm. Both are reachable from a crafted assembly,
+/// since `params` is extracted from an attacker-supplied decryptor body.
 pub fn derive_key_iv(
     password: &[u8],
     salt: &[u8],
     params: &CryptoParameters,
-) -> (Vec<u8>, Vec<u8>) {
+) -> Result<(Vec<u8>, Vec<u8>)> {
     // Sizes come from configuration extracted via SSA from a decryptor body.
-    // Saturating addition avoids overflow on absurd values (in which case
-    // we degrade to empty key/iv rather than panicking).
+    // Saturating addition avoids overflow on absurd values; the resulting length is then
+    // bounds-checked by `derive_pbkdf2_key` rather than being allocated on trust.
     let output_len = params.key_size.saturating_add(params.iv_size);
     let derived = derive_pbkdf2_key(
         password,
@@ -800,30 +859,30 @@ pub fn derive_key_iv(
         params.iterations,
         output_len,
         params.hash_algorithm,
-    );
+    )?;
     let key = derived.get(..params.key_size).unwrap_or(&[]).to_vec();
     let iv = derived
         .get(params.key_size..output_len)
         .unwrap_or(&[])
         .to_vec();
-    (key, iv)
+    Ok((key, iv))
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::crypto::derive_pbkdf2_key;
+    use super::*;
 
     #[test]
     fn test_pbkdf2_sha256_basic() {
         let password = b"password";
         let salt = b"salt";
-        let key = derive_pbkdf2_key(password, salt, 1, 32, "SHA256");
+        let key = derive_pbkdf2_key(password, salt, 1, 32, "SHA256").unwrap();
 
         // Verify length
         assert_eq!(key.len(), 32);
 
         // The result should be deterministic
-        let key2 = derive_pbkdf2_key(password, salt, 1, 32, "SHA256");
+        let key2 = derive_pbkdf2_key(password, salt, 1, 32, "SHA256").unwrap();
         assert_eq!(key, key2);
     }
 
@@ -831,7 +890,7 @@ mod tests {
     fn test_pbkdf2_sha384() {
         let password = b"test";
         let salt = b"salt123";
-        let key = derive_pbkdf2_key(password, salt, 1000, 48, "SHA384");
+        let key = derive_pbkdf2_key(password, salt, 1000, 48, "SHA384").unwrap();
         assert_eq!(key.len(), 48);
     }
 
@@ -839,7 +898,7 @@ mod tests {
     fn test_pbkdf2_sha512() {
         let password = b"test";
         let salt = b"salt123";
-        let key = derive_pbkdf2_key(password, salt, 1000, 64, "SHA512");
+        let key = derive_pbkdf2_key(password, salt, 1000, 64, "SHA512").unwrap();
         assert_eq!(key.len(), 64);
     }
 
@@ -848,8 +907,8 @@ mod tests {
         let password = b"password";
         let salt = b"salt";
 
-        let key_1 = derive_pbkdf2_key(password, salt, 1, 20, "SHA256");
-        let key_1000 = derive_pbkdf2_key(password, salt, 1000, 20, "SHA256");
+        let key_1 = derive_pbkdf2_key(password, salt, 1, 20, "SHA256").unwrap();
+        let key_1000 = derive_pbkdf2_key(password, salt, 1000, 20, "SHA256").unwrap();
 
         // Different iteration counts should produce different keys
         assert_ne!(key_1, key_1000);
@@ -861,8 +920,8 @@ mod tests {
         let salt1 = b"salt1";
         let salt2 = b"salt2";
 
-        let key1 = derive_pbkdf2_key(password, salt1, 1000, 20, "SHA256");
-        let key2 = derive_pbkdf2_key(password, salt2, 1000, 20, "SHA256");
+        let key1 = derive_pbkdf2_key(password, salt1, 1000, 20, "SHA256").unwrap();
+        let key2 = derive_pbkdf2_key(password, salt2, 1000, 20, "SHA256").unwrap();
 
         assert_ne!(key1, key2);
     }
@@ -872,9 +931,9 @@ mod tests {
         let password = b"test";
         let salt = b"salt";
 
-        let key_upper = derive_pbkdf2_key(password, salt, 1, 32, "SHA256");
-        let key_lower = derive_pbkdf2_key(password, salt, 1, 32, "sha256");
-        let key_mixed = derive_pbkdf2_key(password, salt, 1, 32, "Sha256");
+        let key_upper = derive_pbkdf2_key(password, salt, 1, 32, "SHA256").unwrap();
+        let key_lower = derive_pbkdf2_key(password, salt, 1, 32, "sha256").unwrap();
+        let key_mixed = derive_pbkdf2_key(password, salt, 1, 32, "Sha256").unwrap();
 
         assert_eq!(key_upper, key_lower);
         assert_eq!(key_upper, key_mixed);
@@ -884,7 +943,7 @@ mod tests {
     fn test_pbkdf2_empty_password() {
         let password = b"";
         let salt = b"salt";
-        let key = derive_pbkdf2_key(password, salt, 1000, 16, "SHA256");
+        let key = derive_pbkdf2_key(password, salt, 1000, 16, "SHA256").unwrap();
 
         assert_eq!(key.len(), 16);
         // Empty password should still produce non-zero key
@@ -895,7 +954,7 @@ mod tests {
     fn test_pbkdf2_empty_salt() {
         let password = b"password";
         let salt = b"";
-        let key = derive_pbkdf2_key(password, salt, 1000, 16, "SHA256");
+        let key = derive_pbkdf2_key(password, salt, 1000, 16, "SHA256").unwrap();
 
         assert_eq!(key.len(), 16);
     }
@@ -906,14 +965,53 @@ mod tests {
         let salt = b"salt";
 
         for len in [1, 16, 20, 32, 48, 64, 100] {
-            let key = derive_pbkdf2_key(password, salt, 1, len, "SHA256");
+            let key = derive_pbkdf2_key(password, salt, 1, len, "SHA256").unwrap();
             assert_eq!(key.len(), len);
         }
     }
 
+    /// The iteration ceiling is what stops a crafted decryptor body from wedging the process:
+    /// the count is an `i32` constant lifted straight out of attacker-supplied CIL.
+    #[test]
+    fn test_pbkdf2_rejects_excessive_iterations() {
+        let password = b"password";
+        let salt = b"salt";
+
+        assert!(derive_pbkdf2_key(password, salt, MAX_PBKDF2_ITERATIONS, 1, "SHA256").is_ok());
+        assert!(derive_pbkdf2_key(
+            password,
+            salt,
+            MAX_PBKDF2_ITERATIONS.saturating_add(1),
+            32,
+            "SHA256"
+        )
+        .is_err());
+        // The value an unvalidated i32 allows.
+        assert!(derive_pbkdf2_key(password, salt, 2_147_483_647, 32, "SHA256").is_err());
+    }
+
+    /// The length ceiling bounds the output buffer and, with it, the number of PBKDF2 blocks —
+    /// the loop runs once per block, so length and iterations multiply.
+    #[test]
+    fn test_pbkdf2_rejects_excessive_key_length() {
+        let password = b"password";
+        let salt = b"salt";
+
+        assert!(derive_pbkdf2_key(password, salt, 1, MAX_DERIVED_KEY_LEN, "SHA256").is_ok());
+        assert!(derive_pbkdf2_key(
+            password,
+            salt,
+            1,
+            MAX_DERIVED_KEY_LEN.saturating_add(1),
+            "SHA256"
+        )
+        .is_err());
+        // Roughly what a maximal i32 key size would request.
+        assert!(derive_pbkdf2_key(password, salt, 1, 2_000_000_000, "SHA256").is_err());
+    }
+
     // NOTE: PBKDF1 tests are in the legacy_tests module below
     // because they require the legacy-crypto feature (PBKDF1 uses SHA1)
-    use super::apply_crypto_transform;
 
     #[test]
     fn test_aes_128_encrypt_decrypt() {
@@ -1077,19 +1175,19 @@ mod tests {
 mod legacy_tests {
     use sha1::Digest;
 
-    use crate::utils::crypto::{derive_pbkdf1_key, derive_pbkdf2_key};
+    use super::*;
 
     #[test]
     fn test_pbkdf2_sha1_basic() {
         let password = b"password";
         let salt = b"salt";
-        let key = derive_pbkdf2_key(password, salt, 1, 20, "SHA1");
+        let key = derive_pbkdf2_key(password, salt, 1, 20, "SHA1").unwrap();
 
         // Verify length
         assert_eq!(key.len(), 20);
 
         // The result should be deterministic
-        let key2 = derive_pbkdf2_key(password, salt, 1, 20, "SHA1");
+        let key2 = derive_pbkdf2_key(password, salt, 1, 20, "SHA1").unwrap();
         assert_eq!(key, key2);
     }
 
@@ -1097,22 +1195,25 @@ mod legacy_tests {
     fn test_pbkdf2_sha256_vs_sha1() {
         let password = b"password";
         let salt = b"salt";
-        let key_sha256 = derive_pbkdf2_key(password, salt, 1, 32, "SHA256");
-        let key_sha1 = derive_pbkdf2_key(password, salt, 1, 32, "SHA1");
+        let key_sha256 = derive_pbkdf2_key(password, salt, 1, 32, "SHA256").unwrap();
+        let key_sha1 = derive_pbkdf2_key(password, salt, 1, 32, "SHA1").unwrap();
 
         // Different algorithms produce different keys
         assert_ne!(key_sha256, key_sha1);
     }
 
+    /// An unrecognised algorithm name must be an error, not a silent substitution.
+    ///
+    /// A fallback to SHA-1 would return bytes of the correct length and the wrong value, which
+    /// an analyst then consumes as ground truth with no signal that the crypto was substituted.
     #[test]
-    fn test_pbkdf2_unknown_algorithm_defaults_to_sha1() {
+    fn test_pbkdf2_unknown_algorithm_is_rejected() {
         let password = b"test";
         let salt = b"salt";
 
-        let key_unknown = derive_pbkdf2_key(password, salt, 1000, 20, "UNKNOWN");
-        let key_sha1 = derive_pbkdf2_key(password, salt, 1000, 20, "SHA1");
-
-        assert_eq!(key_unknown, key_sha1);
+        assert!(derive_pbkdf2_key(password, salt, 1000, 20, "UNKNOWN").is_err());
+        assert!(derive_pbkdf2_key(password, salt, 1000, 20, "").is_err());
+        assert!(derive_pbkdf2_key(password, salt, 1000, 20, "MD5").is_err());
     }
 
     #[test]
@@ -1244,15 +1345,13 @@ mod legacy_tests {
         let salt = b"salt";
 
         let key1 = derive_pbkdf1_key(password, salt, 100, 20);
-        let key2 = derive_pbkdf2_key(password, salt, 100, 20, "SHA1");
+        let key2 = derive_pbkdf2_key(password, salt, 100, 20, "SHA1").unwrap();
 
         // PBKDF1 and PBKDF2 are different algorithms
         assert_ne!(key1, key2);
     }
 
     // DES encryption tests
-
-    use super::apply_crypto_transform;
 
     #[test]
     fn test_des_encrypt_decrypt() {

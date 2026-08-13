@@ -29,7 +29,10 @@
 use crate::{
     emulation::{
         memory::HeapObject,
-        runtime::hook::{Hook, HookContext, HookManager, PreHookResult},
+        runtime::{
+            bcl::limits::{checked_len, MAX_HOOK_STRING_CHARS},
+            hook::{Hook, HookContext, HookManager, PreHookResult},
+        },
         thread::EmulationThread,
         EmValue,
     },
@@ -393,15 +396,25 @@ fn stringbuilder_set_length_pre(
     if let Some(EmValue::ObjectRef(sb_ref)) = ctx.this {
         if let Some((buffer, capacity)) = read_sb(thread, *sb_ref) {
             if let Some(EmValue::I32(new_len)) = ctx.args.first() {
-                let target = (*new_len).max(0) as usize;
+                // The growth branch pads one character at a time, bounded only by the
+                // caller's Int32, so the target width needs a ceiling before it is used.
+                let target = match checked_len(
+                    *new_len,
+                    MAX_HOOK_STRING_CHARS,
+                    "StringBuilder.set_Length",
+                    "value",
+                ) {
+                    Ok(n) => n,
+                    Err(result) => return result,
+                };
                 let current = buffer.chars().count();
                 let new_buffer = if target <= current {
                     buffer.chars().take(target).collect()
                 } else {
+                    let pad = target.saturating_sub(current);
                     let mut s = buffer;
-                    for _ in 0..target.saturating_sub(current) {
-                        s.push('\0');
-                    }
+                    s.reserve(pad);
+                    s.extend(std::iter::repeat_n('\0', pad));
                     s
                 };
                 try_hook!(write_sb(thread, *sb_ref, new_buffer, capacity));

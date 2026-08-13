@@ -257,7 +257,10 @@ fn module_get_fully_qualified_name_pre(
             let tables = asm.tables()?;
             let strings = asm.strings()?;
             let module_table = tables.table::<ModuleRaw>()?;
-            let module_row = module_table.iter().next()?;
+            // The Module table has exactly one row and it is RID 1 (ECMA-335 II.22.30), so
+            // fetch it by RID. Taking the first row that *parses* silently promotes row 2
+            // when row 1 is malformed.
+            let module_row = module_table.get(1).ok().flatten()?;
             strings.get(module_row.name as usize).ok().map(String::from)
         })
         .unwrap_or_else(|| "module.exe".to_string());
@@ -444,7 +447,10 @@ fn assembly_get_location_pre(
             let tables = asm.tables()?;
             let strings = asm.strings()?;
             let module_table = tables.table::<ModuleRaw>()?;
-            let module_row = module_table.iter().next()?;
+            // The Module table has exactly one row and it is RID 1 (ECMA-335 II.22.30), so
+            // fetch it by RID. Taking the first row that *parses* silently promotes row 2
+            // when row 1 is malformed.
+            let module_row = module_table.get(1).ok().flatten()?;
             strings.get(module_row.name as usize).ok().map(String::from)
         })
         .unwrap_or_else(|| "module.exe".to_string());
