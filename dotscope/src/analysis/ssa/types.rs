@@ -973,7 +973,7 @@ pub fn resolve_corelib_valuetype(assembly: &CilObject, fullname: &str) -> SsaTyp
     let registry = assembly.types();
     for entry in registry.iter() {
         let ty = entry.value();
-        if ty.token.table() == 0x01 && ty.fullname() == fullname {
+        if ty.token.table() == 0x01 && &*ty.fullname() == fullname {
             return SsaType::ValueType(TypeRef::new(ty.token));
         }
     }
@@ -1266,7 +1266,7 @@ impl<'a> TypeContext<'a> {
         let Some(table) = tables.table::<StandAloneSigRaw>() else {
             return SsaType::Unknown;
         };
-        let Some(raw) = table.get(sig_token.row()) else {
+        let Some(raw) = table.get(sig_token.row()).ok().flatten() else {
             return SsaType::Unknown;
         };
         let Some(blob) = self.assembly.blob() else {
@@ -1382,7 +1382,10 @@ impl<'a> TypeContext<'a> {
         }
         let tables = self.assembly.tables()?;
         let table = tables.table::<StandAloneSigRaw>()?;
-        let raw = table.get(body.local_var_sig_token & 0x00FF_FFFF)?;
+        let raw = table
+            .get(body.local_var_sig_token & 0x00FF_FFFF)
+            .ok()
+            .flatten()?;
         let blob = self.assembly.blob()?;
         let sig_data = blob.get(raw.signature as usize).ok()?;
         let locals_sig = parse_local_var_signature(sig_data).ok()?;

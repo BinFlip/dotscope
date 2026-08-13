@@ -170,17 +170,6 @@ pub struct SsaConverter<'a, 'cfg> {
     /// variables (those not covered by `infer_origin`, e.g. add, box, call results).
     var_stack_positions: BTreeMap<SsaVarId, usize>,
 
-    /// Version stack snapshots at try_start_block entries.
-    ///
-    /// Saved during the main rename pass so that handler blocks can inherit
-    /// the reaching definitions from their try scope. Without this, handler
-    /// blocks get renamed with empty version stacks and resolve locals to
-    /// their initial (null/0) values instead of the values stored by the
-    /// try setup code.
-    ///
-    /// Maps handler_start_block → snapshot of current_def for each group.
-    handler_scope_defs: BTreeMap<usize, BTreeMap<u32, SsaVarId>>,
-
     /// Type provider for assigning types during SSA construction.
     ///
     /// Variables are assigned correct types at creation time based on method
@@ -892,7 +881,6 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             entry_stacks: BTreeMap::new(),
             indirect_stores: BTreeMap::new(),
             var_stack_positions: BTreeMap::new(),
-            handler_scope_defs: BTreeMap::new(),
             type_provider,
         };
 
@@ -1586,7 +1574,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         }
         let tables = assembly.tables()?;
         let table = tables.table::<StandAloneSigRaw>()?;
-        let raw = table.get(token.row())?;
+        let raw = table.get(token.row()).ok().flatten()?;
         let blob = assembly.blob()?;
         let owned = raw.to_owned(blob).ok()?;
         match &owned.parsed_signature {
@@ -1822,6 +1810,22 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                 continue;
             }
 
+            // Exception handler entries never inherit the protected region's evaluation
+            // stack. Per ECMA-335 the stack at handler entry holds only the exception
+            // object the runtime pushes (catch/filter) or nothing at all (finally/fault),
+            // so the try blocks' exit stacks are not values that merge here. Now that the
+            // CFG carries exception edges these blocks do have multiple predecessors, and
+            // without this guard every one of those exit-stack slots would grow a phi —
+            // including slot 0, which `rename_block_process` defines directly as the
+            // exception object.
+            if self
+                .cfg
+                .block(node_id)
+                .is_some_and(|block| block.handler_entry.is_some())
+            {
+                continue;
+            }
+
             // Get enhanced stacks from all predecessors
             let pred_stacks: Vec<Option<&Vec<StackSlot>>> = predecessors
                 .iter()
@@ -1999,13 +2003,15 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         let mut rename_map = BTreeMap::new();
         self.rename_block(self.cfg.entry().index(), dom_tree, &mut rename_map)?;
 
-        // Also rename exception handler blocks that aren't reachable via dominator tree.
-        // These blocks are only entered via exception flow, not normal control flow,
-        // so they won't be visited during the dominator tree traversal.
+        // Fallback for handler blocks the dominator traversal did not reach.
         //
-        // The dominator tree is built from the method's entry block, so blocks only
-        // reachable via exception handlers won't appear as children in the tree.
-        // We need to explicitly traverse all blocks reachable from handler entries.
+        // Now that the CFG carries exception edges, a handler covering a reachable try
+        // region is itself reachable from the method entry, so it is renamed by the main
+        // traversal above and this loop skips it. What remains are handlers with no
+        // incoming exception edge at all: `wire_exception_edges` drops a handler whose
+        // RVA does not resolve to a block start, and a handler over an unreachable try
+        // region has no reachable predecessor. Those blocks still need renaming, and they
+        // have no try scope to inherit from, so they simply start from the entry stacks.
         let entry_idx = self.cfg.entry().index();
 
         // Collect handler entry blocks
@@ -2037,24 +2043,8 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             }
         }
 
-        // Now process handler regions - blocks that aren't reachable from main entry.
-        // Before renaming each handler, push the try-scope version stacks so that
-        // handler blocks resolve locals to the correct reaching definitions.
+        // Now process handler regions that the main traversal did not reach.
         for handler_entry in handler_entries {
-            // Push try-scope version stacks for this handler entry
-            let scope_defs = self.handler_scope_defs.get(&handler_entry).cloned();
-            let mut scope_pushed: BTreeMap<u32, usize> = BTreeMap::new();
-            if let Some(ref defs) = scope_defs {
-                for (&group, &var_id) in defs {
-                    self.version_stacks
-                        .entry(group)
-                        .or_default()
-                        .push((0, var_id));
-                    let entry = scope_pushed.entry(group).or_insert(0);
-                    *entry = entry.saturating_add(1);
-                }
-            }
-
             // BFS through all blocks reachable from this handler
             let mut worklist: Vec<usize> = vec![handler_entry];
             while let Some(block_idx) = worklist.pop() {
@@ -2070,15 +2060,6 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                 for succ_id in self.cfg.successors(NodeId::new(block_idx)) {
                     if !visited.contains(succ_id.index()) {
                         worklist.push(succ_id.index());
-                    }
-                }
-            }
-
-            // Pop the try-scope definitions
-            for (group, count) in scope_pushed {
-                if let Some(stack) = self.version_stacks.get_mut(&group) {
-                    for _ in 0..count {
-                        stack.pop();
                     }
                 }
             }
@@ -2647,28 +2628,14 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         dom_tree: &DominatorTree,
         rename_map: &mut BTreeMap<SsaVarId, SsaVarId>,
     ) -> Result<BTreeMap<u32, usize>> {
-        // Save version stack snapshot for exception handler blocks.
-        // Handler blocks are renamed separately (they're not in the dominator
-        // tree), so they need the version stacks from the try scope to correctly
-        // resolve locals. We save the snapshot for each handler entry that this
-        // block can reach via exception dispatch.
+        // Handler blocks need no seeding of their own. An exception can be raised at any
+        // instruction in a protected region, so a handler's reaching definition for a local
+        // is the *join* over every program point in that region — which a snapshot of one
+        // try-body block's version stacks cannot express.
         //
-        // Last block wins: each try-body block overwrites the previous snapshot.
-        // The dominator tree traversal processes deeper blocks last, so the
-        // deepest reaching definitions (e.g., from inside CFF case blocks that
-        // modify the state variable) are captured. This ensures handler blocks
-        // see the state variable from the CFF dispatcher scope (via its phi),
-        // not just the initial value from the try entry.
-        if let Some(cfg_block) = self.cfg.block(NodeId::new(block_idx)) {
-            for &handler_idx in &cfg_block.exception_successors {
-                let snapshot: BTreeMap<u32, SsaVarId> = self
-                    .version_stacks
-                    .iter()
-                    .filter_map(|(&group, stack)| stack.last().map(|(_, var_id)| (group, *var_id)))
-                    .collect();
-                self.handler_scope_defs.insert(handler_idx, snapshot);
-            }
-        }
+        // The CFG carries real exception edges, which makes handler entries ordinary join
+        // points: `place_phi_nodes` puts a phi there via the dominance frontier, and Step 3
+        // below fills one operand per try-region predecessor.
 
         let mut pushed_counts: BTreeMap<u32, usize> = BTreeMap::new();
 
@@ -2734,9 +2701,10 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         // ECMA-335 §I.12.4.2.5: When control transfers to a catch/filter handler,
         // the runtime pushes the exception object on the stack. This is an implicit
         // definition that doesn't flow from any predecessor — it's created by the
-        // runtime. Exception handler entry blocks typically have 0 predecessors in
-        // the CFG (exception edges aren't modeled as regular edges), so no phi is
-        // placed and predecessor-based resolution will fail.
+        // runtime. Handler entries do have predecessors now that the CFG carries
+        // exception edges, but they are the *try* blocks, whose exit stacks say nothing
+        // about the exception object; `place_stack_phi_nodes` deliberately places no
+        // stack phi here, so predecessor-based resolution must not be relied on.
         //
         // We create a new SSA variable with the correct exception type here, before
         // the normal entry stack resolution loop, so the exception object has proper

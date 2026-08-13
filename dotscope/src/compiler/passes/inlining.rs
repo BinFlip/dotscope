@@ -565,7 +565,11 @@ impl<'a> InliningContext<'a> {
             return false;
         }
 
-        // Insert remaining inlined ops
+        // Insert remaining inlined ops.
+        //
+        // Capture the count before `into_iter` consumes the vector: the return-value copy below
+        // must land *after* every spliced op, and it needs this length to know where that is.
+        let spliced_count = inlined_ops.len().saturating_sub(1);
         let instructions = block.instructions_mut();
         let base = call_instr_idx.saturating_add(1);
         for (i, op) in inlined_ops.into_iter().skip(1).enumerate() {
@@ -580,7 +584,15 @@ impl<'a> InliningContext<'a> {
                 let Some(block) = self.caller_ssa.block_mut(call_block_idx) else {
                     return false;
                 };
-                let insert_pos = call_instr_idx.saturating_add(1);
+                // *After* the spliced body, not at its start. Inserting at
+                // `call_instr_idx + 1` puts the copy between the callee's first op and the
+                // rest, so for any callee with two or more non-`Return` ops the copy reads
+                // `remapped_ret` before the op that defines it — a use-before-def that hands
+                // `dest_var` whatever the unwritten storage holds. Nothing downstream re-sorts
+                // block instructions before codegen.
+                let insert_pos = call_instr_idx
+                    .saturating_add(1)
+                    .saturating_add(spliced_count);
                 block.instructions_mut().insert(
                     insert_pos,
                     SsaInstruction::synthetic(SsaOp::Copy {
