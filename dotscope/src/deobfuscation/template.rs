@@ -193,7 +193,8 @@ impl EmulationTemplatePool {
             let tables = assembly.tables()?;
             let strings = assembly.strings()?;
             let module_table = tables.table::<ModuleRaw>()?;
-            let module_row = module_table.iter().next()?;
+            // Module is RID 1 by definition (ECMA-335 II.22.30).
+            let module_row = module_table.get(1).ok().flatten()?;
             strings.get(module_row.name as usize).ok().map(String::from)
         });
         if let Some(ref name) = module_name {
@@ -263,7 +264,10 @@ impl EmulationTemplatePool {
             .map_err(|e| Error::LockError(format!("template pool read lock: {e}")))?;
 
         match *guard {
-            Some(ref template) => template.fork(),
+            Some(ref template) => {
+                let limits = self.config.emulation.execution_limits(template.limits());
+                template.fork_with_limits(limits)
+            }
             None => Err(Error::Emulation(Box::new(EmulationError::InternalError {
                 description: "template pool not warmed up".to_string(),
             }))),
@@ -290,6 +294,8 @@ impl EmulationTemplatePool {
     pub fn fork_for_targeted_warmup(&self, cctors: &[Token]) -> Option<EmulationProcess> {
         let guard = self.template.read().ok()?;
         let template = guard.as_ref()?;
+        // Targeted warmup runs extra `.cctor`s on the fork, so it gets the warmup budget
+        // rather than the per-method one — that is what the longer budget is *for*.
         let mut process = match template.fork() {
             Ok(p) => p,
             Err(e) => {

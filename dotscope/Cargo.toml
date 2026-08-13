@@ -37,6 +37,7 @@ expect_used = "deny"
 panic = "deny"
 arithmetic_side_effects = "deny"
 indexing_slicing = "deny"
+string_slice = "deny"
 
 [dependencies]
 thiserror = "2.0.19"

@@ -135,7 +135,7 @@ impl StringDecryptionPass {
 
         let salt_bytes = get_field_rva_data(assembly, salt_token.row(), field_rva_map)?;
         let key_bytes = get_field_rva_data(assembly, key_token.row(), field_rva_map)?;
-        let derived = derive_key_iv(&key_bytes, &salt_bytes, &self.crypto_params);
+        let derived = derive_key_iv(&key_bytes, &salt_bytes, &self.crypto_params)?;
 
         self.key_cache
             .lock()
@@ -420,6 +420,13 @@ fn build_field_rva_map(assembly: &CilObject) -> HashMap<u32, FieldRvaEntry> {
 
     // Build direct FieldRVA map (backing_field_rid -> (rva, size))
     for row in fieldrva_table {
+        let row = match row {
+            Ok(row) => row,
+            Err(e) => {
+                log::warn!("skipping unreadable metadata row: {e}");
+                continue;
+            }
+        };
         if row.rva == 0 {
             continue;
         }
@@ -504,13 +511,13 @@ mod tests {
         let key = [0u8; 8];
 
         let params = CryptoParameters::default();
-        let (aes_key, aes_iv) = derive_key_iv(&key, &salt, &params);
+        let (aes_key, aes_iv) = derive_key_iv(&key, &salt, &params).unwrap();
 
         assert_eq!(aes_key.len(), 32, "AES-256 key should be 32 bytes");
         assert_eq!(aes_iv.len(), 16, "AES IV should be 16 bytes");
 
         // Verify deterministic output with all-zero inputs
-        let (aes_key2, aes_iv2) = derive_key_iv(&key, &salt, &params);
+        let (aes_key2, aes_iv2) = derive_key_iv(&key, &salt, &params).unwrap();
         assert_eq!(aes_key, aes_key2, "Key derivation should be deterministic");
         assert_eq!(aes_iv, aes_iv2, "IV derivation should be deterministic");
     }
@@ -520,7 +527,7 @@ mod tests {
         let salt = [0u8; 8];
         let key = [0u8; 8];
         let params = CryptoParameters::default();
-        let (aes_key, aes_iv) = derive_key_iv(&key, &salt, &params);
+        let (aes_key, aes_iv) = derive_key_iv(&key, &salt, &params).unwrap();
 
         // Encrypt a test string using the shared crypto utility
         let original = "Hello, BitMono!";
@@ -538,7 +545,7 @@ mod tests {
         let salt = [0u8; 8];
         let key = [0u8; 8];
         let params = CryptoParameters::default();
-        let (aes_key, aes_iv) = derive_key_iv(&key, &salt, &params);
+        let (aes_key, aes_iv) = derive_key_iv(&key, &salt, &params).unwrap();
 
         let result = decrypt_string(&[], &aes_key, &aes_iv).unwrap();
         assert_eq!(result, "");
@@ -549,7 +556,7 @@ mod tests {
         let salt = [0u8; 8];
         let key = [0u8; 8];
         let params = CryptoParameters::default();
-        let (aes_key, aes_iv) = derive_key_iv(&key, &salt, &params);
+        let (aes_key, aes_iv) = derive_key_iv(&key, &salt, &params).unwrap();
 
         // Non-multiple-of-16 data should fail
         let result = decrypt_string(&[1, 2, 3], &aes_key, &aes_iv);

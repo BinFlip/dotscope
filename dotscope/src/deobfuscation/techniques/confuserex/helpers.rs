@@ -66,7 +66,7 @@ pub(super) fn get_method_rva(assembly: &CilObject, token: Token) -> Option<u32> 
     let tables = assembly.tables()?;
     let method_table = tables.table::<MethodDefRaw>()?;
     let row = token.row();
-    let method_row = method_table.get(row)?;
+    let method_row = method_table.get(row).ok().flatten()?;
     Some(method_row.rva)
 }
 
@@ -123,6 +123,13 @@ pub(super) fn extract_decrypted_field_data(
     };
 
     for row in fieldrva_table {
+        let row = match row {
+            Ok(row) => row,
+            Err(e) => {
+                log::warn!("skipping unreadable metadata row: {e}");
+                continue;
+            }
+        };
         let rva = row.rva;
         if rva == 0 {
             continue;
@@ -204,6 +211,13 @@ pub(super) fn resolve_pinvoke_tokens(assembly: &CilObject, target_name: &str) ->
     };
 
     for row in implmap_table {
+        let row = match row {
+            Ok(row) => row,
+            Err(e) => {
+                log::warn!("skipping unreadable metadata row: {e}");
+                continue;
+            }
+        };
         let Ok(import_name) = strings.get(row.import_name as usize) else {
             continue;
         };

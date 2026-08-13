@@ -420,6 +420,10 @@ impl SsaPass<CilTarget, CompilerContext> for CffReconstructionPass {
         "Recovers original control flow from flattened state machine patterns"
     }
 
+    fn repairs_ssa(&self) -> bool {
+        true
+    }
+
     fn provides(&self) -> &[PassCapability] {
         &[PassCapability::RestoredControlFlow]
     }

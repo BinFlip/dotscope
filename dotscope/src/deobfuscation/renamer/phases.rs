@@ -20,6 +20,7 @@ use crate::{
         },
         utils::is_obfuscated_name,
     },
+    utils::truncate_chars,
     CilObject,
 };
 
@@ -401,8 +402,8 @@ pub fn build_call_site_skeleton(ssa: &SsaFunction, assembly: &CilObject) -> Opti
                 value: ConstValue::DecryptedString(s),
                 ..
             } => {
-                let truncated = if s.len() > 30 {
-                    format!("\"{}...\"", &s[..27])
+                let truncated = if s.chars().count() > 30 {
+                    format!("\"{}...\"", truncate_chars(s, 27))
                 } else {
                     format!("\"{s}\"")
                 };
@@ -416,8 +417,8 @@ pub fn build_call_site_skeleton(ssa: &SsaFunction, assembly: &CilObject) -> Opti
                     if let Ok(s) = us.get(*idx as usize) {
                         if let Ok(decoded) = s.to_string() {
                             if !decoded.is_empty() {
-                                let truncated = if decoded.len() > 30 {
-                                    format!("\"{}...\"", &decoded[..27])
+                                let truncated = if decoded.chars().count() > 30 {
+                                    format!("\"{}...\"", truncate_chars(&decoded, 27))
                                 } else {
                                     format!("\"{decoded}\"")
                                 };
@@ -806,14 +807,17 @@ fn classify_op_into_profile(op: &SsaOp, profile: &mut OpcodeProfile) {
 ///
 /// The namespace portion of the name.
 fn extract_namespace(method_name: &str) -> String {
-    if let Some(idx) = method_name.rfind("::") {
-        let type_part = &method_name[..idx];
-        if let Some(dot_idx) = type_part.rfind('.') {
-            return type_part[..dot_idx].to_string();
-        }
-        return type_part.to_string();
+    // `rsplit_once` rather than `rfind` + slice: the byte offsets from `rfind` are always
+    // character boundaries so the slicing was sound, but expressing it this way keeps the
+    // crate free of `str` range indexing and so needs no `clippy::string_slice` escape.
+    let Some((type_part, _)) = method_name.rsplit_once("::") else {
+        return method_name.to_string();
+    };
+
+    match type_part.rsplit_once('.') {
+        Some((namespace, _)) => namespace.to_string(),
+        None => type_part.to_string(),
     }
-    method_name.to_string()
 }
 
 #[cfg(test)]

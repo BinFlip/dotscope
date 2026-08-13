@@ -786,6 +786,8 @@ fn extract_and_decrypt_resource(
 
     let rva_entry = fieldrva_table
         .iter()
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
         .find(|row| row.field == field_rid)
         .ok_or_else(|| {
             Error::Deobfuscation(format!("No FieldRVA entry for field RID 0x{:X}", field_rid))

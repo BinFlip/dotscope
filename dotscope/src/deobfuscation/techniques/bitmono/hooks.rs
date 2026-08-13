@@ -894,7 +894,7 @@ fn is_redirect_stub_memberref(
     let Some(memberref_table) = tables.table::<MemberRefRaw>() else {
         return false;
     };
-    let Some(memberref) = memberref_table.get(token.row()) else {
+    let Some(memberref) = memberref_table.get(token.row()).ok().flatten() else {
         return false;
     };
 

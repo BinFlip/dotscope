@@ -47,7 +47,8 @@ use crate::{
     error::Error,
     metadata::{
         tables::{
-            ManifestResourceAttributes, ManifestResourceBuilder, ManifestResourceRaw, TableId,
+            skip_unreadable, ManifestResourceAttributes, ManifestResourceBuilder,
+            ManifestResourceRaw, TableId,
         },
         token::Token,
         validation::ValidationConfig,
@@ -389,6 +390,7 @@ fn find_manifest_resources_by_name(
 
     manifest_table
         .iter()
+        .filter_map(skip_unreadable)
         .filter_map(|row| {
             strings
                 .get(row.name as usize)

@@ -85,6 +85,13 @@ impl Technique for ConfuserExMarker {
         let mut version = None;
 
         for attr in ca_table {
+            let attr = match attr {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             // Resolve the constructor to find the declaring type name.
             // ConfuserEx defines marker attributes locally, so the constructor
             // is typically a MethodDef pointing to a local TypeDef.

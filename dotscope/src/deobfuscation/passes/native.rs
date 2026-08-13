@@ -231,7 +231,7 @@ impl NativeMethodConversionPass {
             .view()
             .tables()
             .and_then(|t| t.table::<MethodDefRaw>())
-            .and_then(|table| table.get(rid))
+            .and_then(|table| table.get(rid).ok().flatten())
             .ok_or_else(|| Error::X86Error(format!("MethodDef row {rid} not found for token")))?;
 
         // Verify this is actually a native method

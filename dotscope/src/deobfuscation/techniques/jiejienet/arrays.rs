@@ -51,8 +51,8 @@ use crate::{
         },
     },
     metadata::{
-        signatures::TypeSignature,
-        tables::{FieldRvaRaw, TableId},
+        signatures::{parse_field_signature, TypeSignature},
+        tables::{ClassLayoutRaw, FieldRaw, FieldRvaRaw, TableId},
         token::Token,
         typesystem::{wellknown, PointerSize},
     },
@@ -805,6 +805,8 @@ fn decrypt_field_rva_data_to_bytes(
     let field_rid = field_token.row();
     let rva_entry = fieldrva_table
         .iter()
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
         .find(|row| row.field == field_rid)
         .ok_or_else(|| {
             Error::Other(format!(
@@ -837,11 +839,6 @@ fn decrypt_field_rva_data_to_bytes(
 /// Uses the ClassLayout table for ValueType fields (the common case for
 /// array-init backing fields which are ExplicitLayout structs).
 fn calculate_field_data_size(assembly: &CilObject, field_rid: u32) -> Result<usize> {
-    use crate::metadata::{
-        signatures::parse_field_signature,
-        tables::{ClassLayoutRaw, FieldRaw},
-    };
-
     let tables = assembly
         .tables()
         .ok_or_else(|| Error::Other("No metadata tables".to_string()))?;
@@ -851,6 +848,8 @@ fn calculate_field_data_size(assembly: &CilObject, field_rid: u32) -> Result<usi
         .ok_or_else(|| Error::Other("No Field table".to_string()))?;
     let field_row = field_table
         .iter()
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
         .find(|r| r.rid == field_rid)
         .ok_or_else(|| Error::Other(format!("Field {field_rid} not found")))?;
 
@@ -875,6 +874,7 @@ fn calculate_field_data_size(assembly: &CilObject, field_rid: u32) -> Result<usi
             let row = type_token.row();
             if let Some(class_layout_table) = tables.table::<ClassLayoutRaw>() {
                 for layout_row in class_layout_table {
+                    let layout_row = layout_row?;
                     if layout_row.parent == row {
                         return Ok(layout_row.class_size as usize);
                     }

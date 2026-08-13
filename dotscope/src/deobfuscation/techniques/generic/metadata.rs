@@ -111,6 +111,13 @@ impl Technique for GenericMetadata {
             let strings_size = strings.as_ref().map(|s| s.data().len()).unwrap_or(0);
 
             for row in module_table {
+                let row = match row {
+                    Ok(row) => row,
+                    Err(e) => {
+                        log::warn!("skipping unreadable metadata row: {e}");
+                        continue;
+                    }
+                };
                 let name_index = row.name as usize;
                 let is_sentinel = KNOWN_SENTINEL_VALUES.contains(&row.name);
                 if name_index >= strings_size || is_sentinel {
@@ -133,6 +140,13 @@ impl Technique for GenericMetadata {
             let strings_size = strings.as_ref().map(|s| s.data().len()).unwrap_or(0);
 
             for row in assembly_table {
+                let row = match row {
+                    Ok(row) => row,
+                    Err(e) => {
+                        log::warn!("skipping unreadable metadata row: {e}");
+                        continue;
+                    }
+                };
                 let is_sentinel = KNOWN_SENTINEL_VALUES.contains(&row.name);
                 if row.name as usize >= strings_size || is_sentinel {
                     findings.invalid_assembly_rows =
@@ -146,6 +160,13 @@ impl Technique for GenericMetadata {
         // outside this range is invalid and likely injected by an obfuscator.
         if let Some(declsec_table) = tables.table::<DeclSecurityRaw>() {
             for row in declsec_table {
+                let row = match row {
+                    Ok(row) => row,
+                    Err(e) => {
+                        log::warn!("skipping unreadable metadata row: {e}");
+                        continue;
+                    }
+                };
                 let is_sentinel = KNOWN_SENTINEL_VALUES_16.contains(&row.action);
                 if row.action > 0x000E || is_sentinel {
                     findings.invalid_declsecurity_rows =
@@ -157,6 +178,13 @@ impl Technique for GenericMetadata {
         // Check TypeRef resolution scopes for invalid indices
         if let Some(typeref_table) = tables.table::<TypeRefRaw>() {
             for row in typeref_table {
+                let row = match row {
+                    Ok(row) => row,
+                    Err(e) => {
+                        log::warn!("skipping unreadable metadata row: {e}");
+                        continue;
+                    }
+                };
                 // Resolution scope with tag Module but row 0 is suspicious
                 // (valid Module is row 1)
                 if row.resolution_scope.tag == TableId::Module && row.resolution_scope.row == 0 {

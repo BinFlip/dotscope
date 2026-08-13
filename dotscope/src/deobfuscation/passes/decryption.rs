@@ -88,7 +88,7 @@ use crate::{
         EmValue, EmulationError, EmulationOutcome, EmulationProcess, EmulationThread, StepResult,
     },
     metadata::{
-        tables::TypeRefRaw,
+        tables::{skip_unreadable, TypeRefRaw},
         token::Token,
         typesystem::{CilFlavor, CilPrimitive, CilPrimitiveKind, PointerSize},
     },
@@ -125,8 +125,11 @@ pub struct DecryptionPass {
     decryptors: Arc<DecryptorContext>,
     /// State machine providers for order-dependent decryption.
     statemachine_providers: Arc<boxcar::Vec<Arc<dyn StateMachineProvider>>>,
-    /// Maximum instructions per emulation call.
-    emulation_max_instructions: u64,
+    /// Ceiling on how many emulations the whole run may perform, or 0 for unlimited.
+    ///
+    /// The per-emulation instruction and wall-clock budgets are applied by the template pool
+    /// when it forks; this is the run-level budget they do not provide.
+    max_emulations: usize,
 }
 
 /// Owned CFG analysis info, storing dominator tree and predecessors.
@@ -173,7 +176,7 @@ impl DecryptionPass {
             template_pool: ctx.template_pool.get().cloned(),
             decryptors: Arc::clone(&ctx.decryptors),
             statemachine_providers: Arc::clone(&ctx.statemachine_providers),
-            emulation_max_instructions: ctx.config.emulation.max_instructions,
+            max_emulations: ctx.config.emulation.max_emulations,
         }
     }
 
@@ -261,6 +264,12 @@ impl DecryptionPass {
         method: Token,
         args: &[ConstValue],
     ) -> (Option<ConstValue>, Option<FailureReason>) {
+        // Reserve against the run budget before doing any work. Taking the reservation up
+        // front means two concurrent callers cannot both pass the check on the last slot.
+        if !self.decryptors.try_reserve_emulation(self.max_emulations) {
+            return (None, Some(FailureReason::EmulationBudgetExhausted));
+        }
+
         // Fork from the template process - O(1) due to CoW semantics.
         // The template is created lazily on first call with expensive PE loading,
         // hooks, etc. Subsequent calls share memory via structural sharing.
@@ -397,7 +406,7 @@ impl DecryptionPass {
         let strings = asm.strings()?;
         let type_refs = tables.table::<TypeRefRaw>()?;
 
-        for row in type_refs {
+        for row in type_refs.iter().filter_map(skip_unreadable) {
             let row_name = strings.get(row.type_name as usize).ok()?;
             let row_ns = strings.get(row.type_namespace as usize).ok()?;
             if row_name == name && row_ns == namespace {

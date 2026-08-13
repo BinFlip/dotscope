@@ -102,12 +102,72 @@ fn collect_predicate_static_fields(ssa: &SsaFunction) -> HashSet<Token> {
     static_fields
 }
 
+/// Collects every field token written by a `StoreField`/`StoreStaticField` anywhere in `ssa`.
+///
+/// A field that is assigned after its declaring constructor has run cannot be folded to a
+/// constant: the value observed at `.cctor` warm-up time is not the value the program sees.
+/// Callers use this across *every* SSA function in the assembly, because the write that
+/// invalidates a fold is frequently in a different method from the read.
+fn collect_field_stores(ssa: &SsaFunction) -> HashSet<Token> {
+    let mut stored = HashSet::new();
+    for block in ssa.blocks() {
+        for instr in block.instructions() {
+            match instr.op() {
+                SsaOp::StoreField { field, .. } | SsaOp::StoreStaticField { field, .. } => {
+                    stored.insert(field.token());
+                }
+                _ => {}
+            }
+        }
+    }
+    stored
+}
+
+/// Returns whether `token` names a field marked `initonly` (C# `readonly`).
+///
+/// Resolves `MemberRef` tokens through the assembly resolver first, so a field referenced
+/// indirectly is judged on the definition's flags rather than skipped.
+fn field_is_init_only(assembly: &CilObject, token: Token) -> bool {
+    let resolved = if token.is_table(TableId::MemberRef) {
+        assembly.resolver().resolve_field(token).unwrap_or(token)
+    } else {
+        token
+    };
+
+    assembly.types().iter().any(|entry| {
+        entry
+            .value()
+            .fields
+            .iter()
+            .any(|(_, field)| field.token == resolved && field.flags.is_init_only())
+    })
+}
+
+/// Returns whether `token` names a static constructor.
+///
+/// Used to exclude `.cctor` bodies from the assembly-wide store scan: an `initonly` static is
+/// assigned there by definition, so counting those stores would disqualify every field the
+/// immutability gate is meant to admit.
+fn is_static_constructor(assembly: &CilObject, token: Token) -> bool {
+    assembly
+        .resolve_method_name(token)
+        .is_some_and(|name| name == ".cctor")
+}
+
 /// Scans an SSA function for ALL `LoadField(LoadStaticField(..))` patterns
 /// and collects the static field tokens.
 ///
 /// Unlike [`collect_predicate_static_fields`] which only looks at Branch
 /// terminators, this function scans every instruction. It captures both
 /// opaque predicate fields AND string encryption XOR key fields.
+///
+/// # Why callers must gate the result
+///
+/// This matches the plain singleton-access idiom (`Config.Instance.Retries`) just as readily as
+/// an opaque predicate — `ldsfld; ldfld` is not an obfuscation signature. Folding an unfiltered
+/// match set freezes mutable state at its constructor-time value, turning branches that depend
+/// on runtime state into unconditional jumps to the wrong successor. Every caller therefore
+/// filters through [`field_is_init_only`] and [`collect_field_stores`].
 fn collect_field_load_sources(ssa: &SsaFunction) -> HashSet<Token> {
     let defs = build_def_map(ssa);
 
@@ -291,10 +351,43 @@ impl Technique for GenericOpaquePredicates {
         let mut affected_fields: HashSet<Token> = HashSet::new();
         let mut affected_methods: HashSet<Token> = HashSet::new();
 
+        // Every field written anywhere in the assembly *except* in a static constructor. A
+        // store in one method invalidates a fold of the same field in another, so this has to
+        // be assembly-wide rather than per-method — and it must be collected before any
+        // folding decision is made.
+        //
+        // `.cctor`s are excluded deliberately, and the gate below does not work without it.
+        // That gate admits a field only when it is `initonly` *and* absent from this set, but
+        // an `initonly` static can only ever be assigned in its declaring type's `.cctor` —
+        // so counting `.cctor` stores made the two conditions mutually exclusive, left
+        // `all_field_loads` permanently empty, and silently disabled Variant A's field-load
+        // detection entirely. The pass warms those `.cctor`s up precisely so their values are
+        // known constants; a store there is what makes the field foldable, not what
+        // disqualifies it.
+        let mut stored_fields: HashSet<Token> = HashSet::new();
+        for entry in ctx.ssa_functions.iter() {
+            if is_static_constructor(assembly, *entry.key()) {
+                continue;
+            }
+            stored_fields.extend(collect_field_stores(entry.value()));
+        }
+
         for entry in ctx.ssa_functions.iter() {
             let method_token = *entry.key();
             let predicate_fields = collect_predicate_static_fields(entry.value());
-            let all_field_loads = collect_field_load_sources(entry.value());
+
+            // `collect_field_load_sources` matches the ordinary singleton idiom as well as
+            // opaque predicates, so admit a field only when it is provably immutable: marked
+            // `initonly`, and never stored outside the `.cctor`s this pass warms up (see the
+            // `.cctor` exclusion where `stored_fields` is built). Without both conditions the
+            // fold silently freezes runtime-mutated state.
+            let all_field_loads: HashSet<Token> = collect_field_load_sources(entry.value())
+                .into_iter()
+                .filter(|token| {
+                    !stored_fields.contains(token) && field_is_init_only(assembly, *token)
+                })
+                .collect();
+
             let combined: HashSet<Token> =
                 predicate_fields.union(&all_field_loads).copied().collect();
             if !combined.is_empty() {
@@ -337,14 +430,27 @@ impl Technique for GenericOpaquePredicates {
 
         // Find types that own the Variant A opaque predicate fields.
         // These types exist solely as opaque predicate infrastructure and can be deleted.
+        //
+        // Deletion is whole-type and `build_cleanup_request` merges a type-only request
+        // unconditionally, so the bar is higher than for folding: require that *every* static
+        // field the type declares was resolved as predicate infrastructure. A type with even
+        // one unrelated static field is a real type that something else may still reference,
+        // and removing its methods and fields would leave surviving call sites dangling.
         let mut owning_types: HashSet<Token> = HashSet::new();
         let registry = assembly.types();
         for entry in registry.iter() {
             let type_ref = entry.value();
-            let owns_field = type_ref.fields.iter().any(|(_, field)| {
-                field.flags.is_static() && resolved_fields.contains(&field.token)
-            });
-            if owns_field {
+            let mut static_fields = type_ref
+                .fields
+                .iter()
+                .filter(|(_, field)| field.flags.is_static())
+                .peekable();
+
+            if static_fields.peek().is_none() {
+                continue;
+            }
+
+            if static_fields.all(|(_, field)| resolved_fields.contains(&field.token)) {
                 owning_types.insert(*entry.key());
             }
         }
@@ -481,17 +587,25 @@ impl Technique for GenericOpaquePredicates {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::{
         compiler::PassPhase,
-        deobfuscation::techniques::{
-            generic::opaquefields::{GenericOpaquePredicates, OpaquePredicateFindings},
-            Technique, TechniqueCategory,
-        },
+        deobfuscation::techniques::{Technique, TechniqueCategory},
         test::helpers::load_sample,
     };
 
+    /// Pins the contract that the non-SSA `detect` entry point reports nothing.
+    ///
+    /// This is **not** a negative test for opaque-predicate detection, despite how the previous
+    /// version of it read. `detect` returns [`Detection::new_empty`] unconditionally — real
+    /// detection happens in `detect_ssa`, which needs def-use chains — so asserting
+    /// "nothing detected" here passes for every input, obfuscated or not, and cannot fail.
+    ///
+    /// Kept, narrowed, and renamed so it documents the contract instead of implying coverage
+    /// that does not exist. Genuine negative coverage for `detect_ssa` requires an
+    /// `AnalysisContext` with built SSA functions and belongs in the integration suite.
     #[test]
-    fn test_detect_negative_confuserex_original() {
+    fn detect_without_ssa_reports_nothing_by_contract() {
         let asm = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
 
         let technique = GenericOpaquePredicates;
@@ -499,31 +613,15 @@ mod tests {
 
         assert!(
             !detection.is_detected(),
-            "GenericOpaquePredicates should not detect anything in a ConfuserEx original sample"
+            "the non-SSA entry point defers to detect_ssa and must report nothing"
         );
-        assert!(
-            detection.evidence().is_empty(),
-            "No evidence should be present for a non-obfuscated sample"
-        );
-        assert!(
-            detection.findings::<OpaquePredicateFindings>().is_none(),
-            "No findings should be present for a non-obfuscated sample"
-        );
+        assert!(detection.evidence().is_empty());
+        assert!(detection.findings::<OpaquePredicateFindings>().is_none());
     }
 
-    #[test]
-    fn test_detect_negative_obfuscar_sample() {
-        let asm = load_sample("tests/samples/packers/obfuscar/2.2.50/obfuscar_strings_only.exe");
-
-        let technique = GenericOpaquePredicates;
-        let detection = technique.detect(&asm);
-
-        // Obfuscar does not use opaque field predicates
-        assert!(
-            !detection.is_detected(),
-            "GenericOpaquePredicates should not detect anything in an Obfuscar sample"
-        );
-    }
+    // A second sample-loading copy of the above was removed rather than renamed: it asserted
+    // the same unconditional-empty contract through a different sample and so added no
+    // coverage, only the appearance of it plus a sample load.
 
     #[test]
     fn test_technique_metadata() {
@@ -542,5 +640,47 @@ mod tests {
             Some(PassPhase::Structure),
             "GenericOpaquePredicates should run in the Structure SSA phase"
         );
+    }
+
+    /// The `.cctor` exclusion that keeps Variant A's immutability gate satisfiable.
+    ///
+    /// The gate admits a static field only when it is `initonly` *and* never stored. An
+    /// `initonly` static can only be assigned in its declaring type's `.cctor`, so unless
+    /// `.cctor` stores are excluded from the store scan the two halves are mutually exclusive,
+    /// the candidate set is always empty, and field-load detection is dead code that no
+    /// assertion in this suite would notice. This pins the predicate that exclusion rests on.
+    #[test]
+    fn static_constructors_are_identified_for_the_store_scan() {
+        let asm = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+
+        let cctors: Vec<_> = asm
+            .query_methods()
+            .static_constructors()
+            .into_iter()
+            .collect();
+        assert!(
+            !cctors.is_empty(),
+            "sample must contain at least one .cctor for this test to mean anything"
+        );
+        for cctor in &cctors {
+            assert!(
+                is_static_constructor(&asm, cctor.token),
+                "a .cctor must be excluded from the assembly-wide store scan"
+            );
+        }
+
+        let non_cctors: Vec<_> = asm
+            .query_methods()
+            .filter(|m| !m.is_cctor())
+            .into_iter()
+            .take(8)
+            .collect();
+        assert!(!non_cctors.is_empty());
+        for method in &non_cctors {
+            assert!(
+                !is_static_constructor(&asm, method.token),
+                "an ordinary method's stores must still invalidate a fold"
+            );
+        }
     }
 }

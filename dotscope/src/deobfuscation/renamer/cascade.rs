@@ -341,7 +341,7 @@ impl<'a> CascadeRenamer<'a> {
         let param_owners = build_param_owner_map(methoddef_table, param_table.row_count);
 
         for rid in 1..=param_table.row_count {
-            let Some(param) = param_table.get(rid) else {
+            let Some(param) = param_table.get(rid).ok().flatten() else {
                 continue;
             };
             let name_index = param.name;
@@ -401,7 +401,7 @@ impl<'a> CascadeRenamer<'a> {
         let method_order = self.build_method_order(methoddef_table.row_count);
 
         for rid in method_order {
-            let Some(methoddef) = methoddef_table.get(rid) else {
+            let Some(methoddef) = methoddef_table.get(rid).ok().flatten() else {
                 continue;
             };
             let name_index = methoddef.name;
@@ -465,7 +465,7 @@ impl<'a> CascadeRenamer<'a> {
             .unwrap_or_default();
 
         for rid in 1..=field_table.row_count {
-            let Some(field) = field_table.get(rid) else {
+            let Some(field) = field_table.get(rid).ok().flatten() else {
                 continue;
             };
             let name_index = field.name;
@@ -524,7 +524,7 @@ impl<'a> CascadeRenamer<'a> {
                 continue;
             }
 
-            let Some(typedef) = typedef_table.get(rid) else {
+            let Some(typedef) = typedef_table.get(rid).ok().flatten() else {
                 continue;
             };
             let name_index = typedef.type_name;
@@ -645,7 +645,7 @@ impl<'a> CascadeRenamer<'a> {
                 }
                 // Base class
                 if let Some(base) = declaring_type.base() {
-                    context.base_class = Some(base.fullname());
+                    context.base_class = Some(base.fullname().to_string());
                 }
                 // Siblings: already-renamed methods in the same type
                 for sibling_method in declaring_type.methods() {
@@ -782,7 +782,7 @@ impl<'a> CascadeRenamer<'a> {
 
             // Base class
             if let Some(base) = cil_type.base() {
-                context.base_class = Some(base.fullname());
+                context.base_class = Some(base.fullname().to_string());
             }
 
             // Interfaces
@@ -1017,7 +1017,7 @@ fn build_param_owner_map(
     let mut map = HashMap::new();
 
     for method_rid in 1..=methoddef_table.row_count {
-        let Some(method) = methoddef_table.get(method_rid) else {
+        let Some(method) = methoddef_table.get(method_rid).ok().flatten() else {
             continue;
         };
         let param_start = method.param_list;
@@ -1031,6 +1031,8 @@ fn build_param_owner_map(
         let param_end = if method_rid < methoddef_table.row_count {
             methoddef_table
                 .get(next_method_rid)
+                .ok()
+                .flatten()
                 .map(|next| next.param_list)
                 .unwrap_or(param_end_default)
         } else {
@@ -1057,7 +1059,7 @@ fn build_member_owner_map(
     let mut map = HashMap::new();
 
     for type_rid in 1..=typedef_table.row_count {
-        let Some(typedef) = typedef_table.get(type_rid) else {
+        let Some(typedef) = typedef_table.get(type_rid).ok().flatten() else {
             continue;
         };
         let start = get_list_start(&typedef);
@@ -1070,6 +1072,8 @@ fn build_member_owner_map(
         let end = if type_rid < typedef_table.row_count {
             typedef_table
                 .get(next_type_rid)
+                .ok()
+                .flatten()
                 .map(|next| get_list_start(&next))
                 .unwrap_or(end_default)
         } else {
@@ -1150,6 +1154,7 @@ mod tests {
             validation::ValidationConfig,
         },
         test::helpers::load_sample,
+        utils::truncate_chars,
         CilObject,
     };
 
@@ -1544,7 +1549,7 @@ mod tests {
         let methoddef_table = tables.table::<MethodDefRaw>().unwrap();
 
         for rid in 1..=methoddef_table.row_count {
-            let Some(methoddef) = methoddef_table.get(rid) else {
+            let Some(methoddef) = methoddef_table.get(rid).ok().flatten() else {
                 continue;
             };
             let name_index = methoddef.name;
@@ -1616,7 +1621,7 @@ mod tests {
         let mut obfuscated_with_context = 0u32;
 
         for rid in 1..=methoddef_table.row_count {
-            let Some(methoddef) = methoddef_table.get(rid) else {
+            let Some(methoddef) = methoddef_table.get(rid).ok().flatten() else {
                 continue;
             };
             let Ok(name) = strings.get(methoddef.name as usize) else {
@@ -1675,7 +1680,7 @@ mod tests {
         // Find the first obfuscated method with call targets
         let mut found_method_with_calls = false;
         for rid in 1..=methoddef_table.row_count {
-            let Some(methoddef) = methoddef_table.get(rid) else {
+            let Some(methoddef) = methoddef_table.get(rid).ok().flatten() else {
                 continue;
             };
             let Ok(name) = strings.get(methoddef.name as usize) else {
@@ -1745,7 +1750,7 @@ mod tests {
         let mut params_with_parent_or_calls = 0u32;
 
         for rid in 1..=param_table.row_count {
-            let Some(param) = param_table.get(rid) else {
+            let Some(param) = param_table.get(rid).ok().flatten() else {
                 continue;
             };
             if param.name == 0 {
@@ -2026,7 +2031,7 @@ mod tests {
         if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
             eprintln!("\nTypeDef table: {} rows", typedef_table.row_count);
             for rid in 1..=typedef_table.row_count {
-                if let Some(td) = typedef_table.get(rid) {
+                if let Some(td) = typedef_table.get(rid).ok().flatten() {
                     let name = strings.get(td.type_name as usize).unwrap_or("?");
                     let ns = strings.get(td.type_namespace as usize).unwrap_or("");
                     let obf = is_obfuscated_name(name);
@@ -2042,7 +2047,7 @@ mod tests {
         if let Some(methoddef_table) = tables.table::<MethodDefRaw>() {
             eprintln!("\nMethodDef table: {} rows", methoddef_table.row_count);
             for rid in 1..=methoddef_table.row_count {
-                if let Some(md) = methoddef_table.get(rid) {
+                if let Some(md) = methoddef_table.get(rid).ok().flatten() {
                     let name = strings.get(md.name as usize).unwrap_or("?");
                     let obf = is_obfuscated_name(name);
                     let special = is_special_name(name);
@@ -2063,7 +2068,7 @@ mod tests {
         if let Some(field_table) = tables.table::<FieldRaw>() {
             eprintln!("\nField table: {} rows", field_table.row_count);
             for rid in 1..=field_table.row_count {
-                if let Some(f) = field_table.get(rid) {
+                if let Some(f) = field_table.get(rid).ok().flatten() {
                     let name = strings.get(f.name as usize).unwrap_or("?");
                     let obf = is_obfuscated_name(name);
                     eprintln!(
@@ -2077,7 +2082,7 @@ mod tests {
         if let Some(param_table) = tables.table::<ParamRaw>() {
             eprintln!("\nParam table: {} rows", param_table.row_count);
             for rid in 1..=param_table.row_count {
-                if let Some(p) = param_table.get(rid) {
+                if let Some(p) = param_table.get(rid).ok().flatten() {
                     let name = strings.get(p.name as usize).unwrap_or("?");
                     let obf = is_obfuscated_name(name);
                     eprintln!(
@@ -2115,6 +2120,8 @@ mod tests {
                 }
                 let name = methoddef_table
                     .get(rid)
+                    .ok()
+                    .flatten()
                     .and_then(|md| strings.get(md.name as usize).ok())
                     .unwrap_or("?");
                 let method = assembly.method(&method_token).ok();
@@ -2152,6 +2159,8 @@ mod tests {
             };
             let name = methoddef_table
                 .get(rid)
+                .ok()
+                .flatten()
                 .and_then(|md| strings.get(md.name as usize).ok())
                 .unwrap_or("?")
                 .to_string();
@@ -2179,8 +2188,8 @@ mod tests {
             let string_lits = features::collect_string_literals(ssa, &assembly);
             eprintln!("  String literals ({}):", string_lits.len());
             for s in &string_lits {
-                let display = if s.len() > 60 {
-                    format!("{}...", &s[..57])
+                let display = if s.chars().count() > 60 {
+                    format!("{}...", truncate_chars(s, 57))
                 } else {
                     s.clone()
                 };
@@ -2334,13 +2343,13 @@ mod tests {
             let param_owners = build_param_owner_map(methoddef_table, param_table.row_count);
 
             for rid in 1..=param_table.row_count {
-                let Some(param) = param_table.get(rid) else {
+                let Some(param) = param_table.get(rid).ok().flatten() else {
                     continue;
                 };
                 let name = strings.get(param.name as usize).unwrap_or("?");
                 let owner_rid = param_owners.get(&rid).copied();
                 let owner_name = owner_rid
-                    .and_then(|r| methoddef_table.get(r))
+                    .and_then(|r| methoddef_table.get(r).ok().flatten())
                     .and_then(|md| strings.get(md.name as usize).ok())
                     .unwrap_or("?");
 
@@ -2368,7 +2377,7 @@ mod tests {
 
         if let Some(field_table) = tables.table::<FieldRaw>() {
             for rid in 1..=field_table.row_count {
-                let Some(f) = field_table.get(rid) else {
+                let Some(f) = field_table.get(rid).ok().flatten() else {
                     continue;
                 };
                 let name = strings.get(f.name as usize).unwrap_or("?");
@@ -2397,7 +2406,7 @@ mod tests {
                 if rid == 1 {
                     continue; // skip <Module>
                 }
-                let Some(td) = typedef_table.get(rid) else {
+                let Some(td) = typedef_table.get(rid).ok().flatten() else {
                     continue;
                 };
                 let name = strings.get(td.type_name as usize).unwrap_or("?");

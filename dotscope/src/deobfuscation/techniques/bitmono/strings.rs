@@ -64,10 +64,10 @@ use crate::{
         utils::build_init_array_map,
     },
     metadata::{
-        tables::{MemberRefRaw, TableId, TypeDefRaw, TypeRefRaw},
+        tables::{MemberRefRaw, MetadataTable, RowReadable, TableId, TypeDefRaw, TypeRefRaw},
         token::Token,
     },
-    utils::CryptoParameters,
+    utils::{CryptoParameters, MAX_DERIVED_KEY_LEN, MAX_PBKDF2_ITERATIONS},
     CilObject,
 };
 
@@ -476,6 +476,17 @@ fn extract_crypto_parameters(ssa: &SsaFunction, assembly: &CilObject) -> CryptoP
         params.iv_size = iv_size as usize;
     }
 
+    // Defence in depth. `derive_pbkdf2_key` enforces these ceilings too and is the guard that
+    // matters, but everything above is lifted verbatim from constants in an attacker-supplied
+    // method body, so an implausible value here means the detection misfired rather than that a
+    // real decryptor wants a 2 GB key. Falling back to the .NET defaults keeps the pass working
+    // on the samples it was written for instead of failing the whole assembly.
+    if params.iterations > MAX_PBKDF2_ITERATIONS
+        || params.key_size.saturating_add(params.iv_size) > MAX_DERIVED_KEY_LEN
+    {
+        return CryptoParameters::default();
+    }
+
     params
 }
 
@@ -530,54 +541,44 @@ fn resolve_type_name(assembly: &CilObject, token: Token) -> Option<String> {
     let tables = assembly.tables()?;
     let strings = assembly.strings()?;
 
+    /// Reads one row, treating both "no such row" and "row does not parse" as "no name".
+    ///
+    /// This function has no error channel — it answers `Option<String>` — so an unreadable
+    /// row cannot be propagated. `.ok().flatten()` is that decision written down: the row is
+    /// given up on here, at the point that can see it, rather than inside the iterator.
+    fn row<T: RowReadable>(table: &MetadataTable<'_, T>, rid: u32) -> Option<T> {
+        table.get(rid).ok().flatten()
+    }
+
+    let type_name = |namespace_idx: u32, name_idx: u32| -> Option<String> {
+        let name = strings.get(name_idx as usize).ok()?;
+        let ns = strings.get(namespace_idx as usize).unwrap_or("");
+        Some(format!("{ns}.{name}"))
+    };
+
     match token.table() {
         // MemberRef (0x0A) — follow class to get declaring type
         0x0A => {
-            let memberref_table = tables.table::<MemberRefRaw>()?;
-            let memberref = memberref_table.get(token.row())?;
+            let memberref = row(tables.table::<MemberRefRaw>()?, token.row())?;
             if memberref.class.tag == TableId::TypeRef {
-                let typeref_table = tables.table::<TypeRefRaw>()?;
-                let typeref = typeref_table.get(memberref.class.row)?;
-                let name = strings.get(typeref.type_name as usize).ok()?;
-                let ns = strings
-                    .get(typeref.type_namespace as usize)
-                    .ok()
-                    .unwrap_or("");
-                Some(format!("{ns}.{name}"))
+                let typeref = row(tables.table::<TypeRefRaw>()?, memberref.class.row)?;
+                type_name(typeref.type_namespace, typeref.type_name)
             } else if memberref.class.tag == TableId::TypeDef {
-                let typedef_table = tables.table::<TypeDefRaw>()?;
-                let typedef = typedef_table.get(memberref.class.row)?;
-                let name = strings.get(typedef.type_name as usize).ok()?;
-                let ns = strings
-                    .get(typedef.type_namespace as usize)
-                    .ok()
-                    .unwrap_or("");
-                Some(format!("{ns}.{name}"))
+                let typedef = row(tables.table::<TypeDefRaw>()?, memberref.class.row)?;
+                type_name(typedef.type_namespace, typedef.type_name)
             } else {
                 None
             }
         }
         // TypeRef (0x01)
         0x01 => {
-            let typeref_table = tables.table::<TypeRefRaw>()?;
-            let typeref = typeref_table.get(token.row())?;
-            let name = strings.get(typeref.type_name as usize).ok()?;
-            let ns = strings
-                .get(typeref.type_namespace as usize)
-                .ok()
-                .unwrap_or("");
-            Some(format!("{ns}.{name}"))
+            let typeref = row(tables.table::<TypeRefRaw>()?, token.row())?;
+            type_name(typeref.type_namespace, typeref.type_name)
         }
         // TypeDef (0x02)
         0x02 => {
-            let typedef_table = tables.table::<TypeDefRaw>()?;
-            let typedef = typedef_table.get(token.row())?;
-            let name = strings.get(typedef.type_name as usize).ok()?;
-            let ns = strings
-                .get(typedef.type_namespace as usize)
-                .ok()
-                .unwrap_or("");
-            Some(format!("{ns}.{name}"))
+            let typedef = row(tables.table::<TypeDefRaw>()?, token.row())?;
+            type_name(typedef.type_namespace, typedef.type_name)
         }
         _ => None,
     }
