@@ -40,7 +40,7 @@
 //! # Reference
 //! - [ECMA-335 II.24.2.4](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf)
 
-use widestring::U16Str;
+use widestring::U16String;
 
 use crate::{
     utils::{read_compressed_int, read_compressed_int_at},
@@ -111,7 +111,7 @@ impl<'a> UserStrings<'a> {
     /// * `Ok(UserStrings)` - Valid heap accessor
     ///
     /// # Errors
-    /// * [`crate::Error::OutOfBounds`] - If data is empty or doesn't start with null byte
+    /// * [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] - If data is empty or doesn't start with null byte
     ///
     /// # Examples
     ///
@@ -145,10 +145,10 @@ impl<'a> UserStrings<'a> {
     /// * `index` - The byte offset within the heap (typically from metadata table references)
     ///
     /// # Returns
-    /// * `Ok(&U16Str)` - Reference to the UTF-16 string at the specified offset
+    /// * `Ok(U16String)` - The UTF-16 string at the specified offset
     ///
     /// # Errors
-    /// * [`crate::Error::OutOfBounds`] - If index is out of bounds
+    /// * [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] - If index is out of bounds
     /// * [`crate::Error`] - If string data is malformed or has invalid UTF-16 length
     ///
     /// # Examples
@@ -164,15 +164,12 @@ impl<'a> UserStrings<'a> {
     /// ```
     ///
     /// # Platform Notes
-    /// This method performs unaligned memory access which is well-supported on all modern
-    /// platforms (x86/x64, aarch64/ARMv8, most ARMv7+). On platforms without hardware
-    /// unaligned access support, there may be a performance penalty but no correctness issues.
-    ///
-    /// # Panics
-    /// This function will not panic under normal circumstances - the internal `unwrap()` is
-    /// used on a raw pointer conversion that is guaranteed to succeed when the input slice
-    /// is valid.
-    pub fn get(&self, index: usize) -> Result<&'a U16Str> {
+    /// ECMA-335 stores `#US` entries little-endian and guarantees no alignment for them, so the
+    /// code points are decoded explicitly from byte pairs. Returning an owned string rather than
+    /// a borrowed `&U16Str` is what makes that possible: a `&[u16]` borrowed from the heap would
+    /// have to be reinterpreted from a possibly-odd byte offset, which is undefined behaviour
+    /// regardless of what the hardware tolerates, and would read native-endian.
+    pub fn get(&self, index: usize) -> Result<U16String> {
         let oob = || ParseFailure::HeapOutOfBounds {
             heap: HeapKind::UserStrings,
             index: u32::try_from(index).unwrap_or(u32::MAX),
@@ -195,8 +192,7 @@ impl<'a> UserStrings<'a> {
         }
 
         if total_bytes == 1 {
-            static EMPTY_U16: [u16; 0] = [];
-            return Ok(U16Str::from_slice(&EMPTY_U16));
+            return Ok(U16String::new());
         }
 
         // Total bytes includes UTF-16 data + terminator byte (1 byte)
@@ -224,35 +220,26 @@ impl<'a> UserStrings<'a> {
             .get(data_start..utf16_data_end)
             .ok_or_else(|| Error::from(oob()))?;
 
-        // Convert byte slice to u16 slice for UTF-16 string construction.
+        // Decode the code points from byte pairs rather than reinterpreting the bytes as
+        // `&[u16]`.
         //
-        // SAFETY:
-        // - `utf16_data.len()` is guaranteed to be even (checked above with `utf16_length % 2 != 0`)
-        // - The resulting slice length is exactly `utf16_data.len() / 2` u16 elements
-        // - The pointer comes from a valid `&[u8]` slice that outlives this function
+        // A cast would be wrong twice over. `data_start` is attacker-influenced — the compressed
+        // length prefix is 1, 2 or 4 bytes depending on its first byte, so an odd offset is
+        // reachable without touching the stream offset at all — and building a *reference* from a
+        // pointer that is not aligned to its referent is undefined behaviour in Rust however the
+        // hardware behaves. It also reads native-endian, while ECMA-335 §II.24.2.4 specifies
+        // little-endian, so the same input would decode differently on a big-endian target.
         //
-        // Alignment considerations:
-        // - x86/x64: Hardware supports unaligned access natively
-        // - aarch64 (ARMv8): Hardware supports unaligned access (may be slightly slower)
-        // - arm (ARMv7+): Most implementations support unaligned access via hardware or kernel trap
-        // - Older ARM/MIPS/PowerPC without unaligned support: May fault
-        //
-        // The ECMA-335 specification does not guarantee alignment of #US heap entries.
-        // However, unaligned access works on all modern platforms where .NET runs.
-        // We accept the potential performance penalty on ARM rather than failing entirely.
-        //
-        // Note: We suppress the clippy warning because unaligned u16 access is safe (not UB)
-        // on all platforms we target - it may be slow but won't cause memory corruption.
-        let str_slice = unsafe {
-            let ptr = utf16_data.as_ptr();
+        // `utf16_data.len()` is even (rejected above otherwise), so `chunks_exact(2)` consumes it
+        // fully with no remainder.
+        let code_units: Vec<u16> = utf16_data
+            .chunks_exact(2)
+            // `chunks_exact(2)` yields only two-byte chunks, so the conversion cannot fail; the
+            // fallback exists so this stays free of indexing that could panic.
+            .map(|pair| <[u8; 2]>::try_from(pair).map_or(0, u16::from_le_bytes))
+            .collect();
 
-            #[allow(clippy::cast_ptr_alignment)]
-            core::ptr::slice_from_raw_parts(ptr.cast::<u16>(), utf16_data.len() / 2)
-                .as_ref()
-                .ok_or_else(|| corrupt("null pointer in user string slice conversion".into()))?
-        };
-
-        Ok(U16Str::from_slice(str_slice))
+        Ok(U16String::from_vec(code_units))
     }
 
     /// Returns an iterator over all user strings in the heap
@@ -401,7 +388,7 @@ impl<'a> UserStrings<'a> {
 }
 
 impl<'a> IntoIterator for &'a UserStrings<'a> {
-    type Item = (usize, &'a U16Str);
+    type Item = (usize, U16String);
     type IntoIter = UserStringsIterator<'a>;
 
     /// Create an iterator over the user strings heap.
@@ -429,7 +416,7 @@ impl<'a> IntoIterator for &'a UserStrings<'a> {
 /// Iterator over entries in the `#US` (`UserStrings`) heap
 ///
 /// Provides zero-copy access to UTF-16 user strings with their byte offsets.
-/// Each iteration returns a `(usize, &U16Str)` containing the offset and string content.
+/// Each iteration returns a `(usize, U16String)` containing the offset and string content.
 /// The iterator automatically handles length prefixes and string format validation.
 ///
 /// # Iteration Behavior
@@ -458,7 +445,7 @@ impl<'a> UserStringsIterator<'a> {
 }
 
 impl<'a> Iterator for UserStringsIterator<'a> {
-    type Item = (usize, &'a U16Str);
+    type Item = (usize, U16String);
 
     /// Get the next user string from the heap
     ///
@@ -542,6 +529,58 @@ mod tests {
         let us_str = UserStrings::from(&data).unwrap();
 
         assert_eq!(us_str.get(1).unwrap(), u16str!("Hello, World!"));
+    }
+
+    /// A user string whose payload starts at an *odd* byte offset.
+    ///
+    /// This is the case that makes a zero-copy `&[u16]` unsound: building one from
+    /// `utf16_data.as_ptr()` creates a reference from a pointer that is not aligned to its
+    /// referent, which is UB in Rust no matter how tolerant the hardware is. Nothing upstream
+    /// constrains the parity — a two-byte compressed length prefix at index 1 puts the payload
+    /// at index 3 without touching the stream offset at all — so the decoder copies.
+    ///
+    /// A 0x81-byte entry forces that two-byte prefix: values >= 0x80 cannot use the one-byte form.
+    #[test]
+    fn payload_at_odd_offset_decodes() {
+        const TOTAL_BYTES: usize = 0x81; // 128 bytes of UTF-16 + 1 terminator byte
+        const CODE_UNITS: usize = 64;
+
+        let mut data = vec![0x00];
+        // Compressed-int encoding of 0x81 in the two-byte form.
+        data.push(0x80);
+        data.push(0x81);
+        assert_eq!(data.len(), 3, "payload must begin at an odd offset");
+
+        // 64 x 'A' (U+0041), little-endian as ECMA-335 requires.
+        for _ in 0..CODE_UNITS {
+            data.push(0x41);
+            data.push(0x00);
+        }
+        data.push(0x00); // terminator byte
+
+        assert_eq!(data.len(), 3 + TOTAL_BYTES);
+
+        let heap = UserStrings::from(&data).unwrap();
+        let s = heap.get(1).unwrap();
+
+        assert_eq!(s.len(), CODE_UNITS);
+        assert_eq!(s.to_string_lossy(), "A".repeat(CODE_UNITS));
+    }
+
+    /// Code units must be read little-endian regardless of host byte order (ECMA-335 II.24.2.4).
+    ///
+    /// U+3042 is asymmetric, so a native-endian read on a big-endian host would yield U+4230
+    /// ('B0' as two bytes) instead. Reading it back correctly pins the byte order down.
+    #[test]
+    fn code_units_are_little_endian() {
+        // 0x05 = 4 payload bytes + terminator; U+3042 U+3044 encoded little-endian.
+        let data: [u8; 8] = [0x00, 0x05, 0x42, 0x30, 0x44, 0x30, 0x00, 0x00];
+
+        let heap = UserStrings::from(&data).unwrap();
+        let s = heap.get(1).unwrap();
+
+        assert_eq!(s.as_slice(), &[0x3042, 0x3044]);
+        assert_eq!(s.to_string_lossy(), "\u{3042}\u{3044}");
     }
 
     #[test]

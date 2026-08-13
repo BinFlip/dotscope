@@ -197,8 +197,8 @@ const MAX_ATTRIBUTE_ARRAY_LENGTH: i32 = 65536;
 /// - `named_args` - Field and property assignments with names and values
 ///
 /// # Errors
-/// Returns [`crate::Error::OutOfBounds`] if the index is invalid, or one of the following:
-/// - [`crate::Error::Malformed`]: Invalid prolog (not 0x0001), insufficient data for declared arguments, or type/value mismatches in argument parsing
+/// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if the index is invalid, or one of the following:
+/// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`]: Invalid prolog (not 0x0001), insufficient data for declared arguments, or type/value mismatches in argument parsing
 /// - [`crate::Error::DepthLimitExceeded`]: Maximum nesting depth exceeded during parsing
 ///
 /// # Examples
@@ -265,7 +265,7 @@ pub fn parse_custom_attribute_blob(
 ///
 /// # Errors
 /// Returns one of the following errors if the blob data doesn't conform to ECMA-335 format:
-/// - [`crate::Error::Malformed`]: Invalid or missing prolog (must be 0x0001), insufficient data for the number of declared arguments, type mismatches between expected and actual argument types, invalid serialization type tags in named arguments, or truncated/corrupted blob data
+/// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`]: Invalid or missing prolog (must be 0x0001), insufficient data for the number of declared arguments, type mismatches between expected and actual argument types, invalid serialization type tags in named arguments, or truncated/corrupted blob data
 /// - [`crate::Error::DepthLimitExceeded`]: Maximum nesting depth exceeded during complex type parsing
 ///
 /// # Examples
@@ -478,7 +478,7 @@ impl<'a> CustomAttributeParser<'a> {
     /// A complete [`crate::metadata::customattributes::CustomAttributeValue`] with all parsed data.
     ///
     /// # Errors
-    /// Returns [`crate::Error::Malformed`] for various format violations:
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`] for various format violations:
     /// - Invalid prolog (not 0x0001)
     /// - Insufficient data for declared arguments
     /// - Invalid serialization types in named arguments
@@ -561,7 +561,7 @@ impl<'a> CustomAttributeParser<'a> {
     /// Vector of parsed arguments in constructor parameter order
     ///
     /// # Errors
-    /// Returns [`crate::Error::Malformed`] if:
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`] if:
     /// - Constructor has parameters but no resolved types
     /// - Insufficient blob data for declared parameters
     /// - Parameter type parsing fails
@@ -689,7 +689,7 @@ impl<'a> CustomAttributeParser<'a> {
     /// Parsed argument if successful, None if type is unsupported
     ///
     /// # Errors
-    /// Returns [`crate::Error::Malformed`] for invalid data or unsupported types
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`] for invalid data or unsupported types
     fn parse_fixed_argument(
         &mut self,
         cil_type: &CilTypeRef,
@@ -809,7 +809,7 @@ impl<'a> CustomAttributeParser<'a> {
                 // BUT: Enum types can also appear as Class and should be handled as ValueType/Enum
                 let type_name = type_ref.fullname();
 
-                if type_name == "System.Type" {
+                if &*type_name == "System.Type" {
                     // System.Type is stored as a string (type name)
                     if self.parser.peek_byte()? == 0xFF {
                         let _ = self.parser.read_le::<u8>()?; // consume null marker
@@ -820,7 +820,7 @@ impl<'a> CustomAttributeParser<'a> {
                         })?;
                         Ok(Some(CustomAttributeArgument::Type(s)))
                     }
-                } else if type_name == "System.String" {
+                } else if &*type_name == "System.String" {
                     // System.String is stored as a string
                     if self.parser.peek_byte()? == 0xFF {
                         let _ = self.parser.read_le::<u8>()?; // consume null marker
@@ -831,7 +831,7 @@ impl<'a> CustomAttributeParser<'a> {
                         })?;
                         Ok(Some(CustomAttributeArgument::String(s)))
                     }
-                } else if type_name == "System.Object" {
+                } else if &*type_name == "System.Object" {
                     // System.Object is stored as a tagged object - read type tag first
                     let type_tag = self.parser.read_le::<u8>()?;
                     let value = self.parse_argument_by_type_tag(type_tag)?;
@@ -846,7 +846,8 @@ impl<'a> CustomAttributeParser<'a> {
                             if EnumUtils::is_enum_type(&resolved_type, Some(registry)) {
                                 let underlying_type_size =
                                     EnumUtils::get_enum_underlying_type_size(&resolved_type);
-                                return self.parse_enum(type_name, underlying_type_size);
+                                return self
+                                    .parse_enum(type_name.to_string(), underlying_type_size);
                             }
                         }
                     }
@@ -865,7 +866,7 @@ impl<'a> CustomAttributeParser<'a> {
                             EnumUtils::get_enum_underlying_type_size(&type_ref)
                         };
 
-                        return self.parse_enum(type_name, underlying_type_size);
+                        return self.parse_enum(type_name.to_string(), underlying_type_size);
                     }
 
                     // Stage 3: Fallback for unresolvable external types
@@ -874,7 +875,7 @@ impl<'a> CustomAttributeParser<'a> {
                     // determine inheritance. For custom attributes, external types that
                     // aren't System.Type/String/Object are typically enums. Assume int32
                     // underlying type (the most common) to allow parsing to continue.
-                    self.parse_enum(type_name, 4)
+                    self.parse_enum(type_name.to_string(), 4)
                 }
             }
             CilFlavor::ValueType => {
@@ -901,7 +902,7 @@ impl<'a> CustomAttributeParser<'a> {
                         if EnumUtils::is_enum_type(&resolved_type, Some(registry)) {
                             let underlying_type_size =
                                 EnumUtils::get_enum_underlying_type_size(&resolved_type);
-                            return self.parse_enum(type_name, underlying_type_size);
+                            return self.parse_enum(type_name.to_string(), underlying_type_size);
                         }
                     }
                 }
@@ -920,7 +921,7 @@ impl<'a> CustomAttributeParser<'a> {
                         EnumUtils::get_enum_underlying_type_size(&type_ref)
                     };
 
-                    self.parse_enum(type_name, underlying_type_size)
+                    self.parse_enum(type_name.to_string(), underlying_type_size)
                 } else {
                     // Stage 3: No resolution possible - missing dependencies
                     Err(malformed_error!(
@@ -1001,7 +1002,7 @@ impl<'a> CustomAttributeParser<'a> {
     /// Parsed named argument with name, type, and value, or None if no more data
     ///
     /// # Errors
-    /// Returns [`crate::Error::Malformed`] for invalid format or unsupported types
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`] for invalid format or unsupported types
     fn parse_named_argument(&mut self) -> Result<Option<CustomAttributeNamedArgument>> {
         if !self.parser.has_more_data() {
             return Ok(None);
@@ -1054,9 +1055,23 @@ impl<'a> CustomAttributeParser<'a> {
             }
         };
 
-        // Read field/property name
-        let name_length = self.parser.read_compressed_uint()?;
-        let mut name = String::with_capacity(name_length as usize);
+        // Read field/property name.
+        //
+        // Each name byte consumes exactly one input byte, so a length beyond what remains in the
+        // blob can never be legitimate. Reject it before reserving, mirroring `parse_string`:
+        // `read_compressed_uint` reaches 0x1FFF_FFFF, so four attacker bytes would otherwise buy
+        // a ~512 MB reservation per row before the first read could fail.
+        let name_length = self.parser.read_compressed_uint()? as usize;
+        let available_data = self.parser.len().saturating_sub(self.parser.pos());
+        if name_length > available_data {
+            return Err(malformed_error!(
+                "Named argument name length {} exceeds {} remaining blob bytes",
+                name_length,
+                available_data
+            ));
+        }
+
+        let mut name = String::with_capacity(name_length);
         for _ in 0..name_length {
             name.push(char::from(self.parser.read_le::<u8>()?));
         }
@@ -1097,7 +1112,7 @@ impl<'a> CustomAttributeParser<'a> {
     ///
     /// # Errors
     /// - [`crate::Error::DepthLimitExceeded`]: Maximum nesting depth exceeded
-    /// - [`crate::Error::Malformed`]: Invalid type tags or malformed data format
+    /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`]: Invalid type tags or malformed data format
     fn parse_argument_by_type_tag(&mut self, type_tag: u8) -> Result<CustomAttributeArgument> {
         /// Work item for iterative parsing stack
         enum WorkItem {
@@ -1217,6 +1232,26 @@ impl<'a> CustomAttributeParser<'a> {
                                     "Invalid array length: {}",
                                     array_length
                                 ));
+                            } else if array_length > MAX_ATTRIBUTE_ARRAY_LENGTH {
+                                // Same cap the type-driven path applies. Without it this arm is
+                                // an allocation bomb: the push loop below consumes no further
+                                // input, so the blob's own length does not bound the work and
+                                // ~12 bytes can demand gigabytes of `work_stack`.
+                                return Err(malformed_error!(
+                                    "Custom attribute array too large: {} (max: {})",
+                                    array_length,
+                                    MAX_ATTRIBUTE_ARRAY_LENGTH
+                                ));
+                            } else if work_stack
+                                .len()
+                                .saturating_add(usize::try_from(array_length).unwrap_or(usize::MAX))
+                                > MAX_NESTING_DEPTH
+                            {
+                                // Bound the burst *before* it happens. The depth check at the top
+                                // of this loop is only evaluated on the next pop, i.e. after the
+                                // vector has already grown. Behaviour-preserving: any length past
+                                // the depth limit would error on that next pop regardless.
+                                return Err(DepthLimitExceeded(MAX_NESTING_DEPTH));
                             } else {
                                 // Schedule work to build array after parsing elements
                                 work_stack.push(WorkItem::BuildArray(array_length));
@@ -1367,7 +1402,7 @@ impl<'a> CustomAttributeParser<'a> {
     /// Parsed string (empty `String` for both null marker and zero length)
     ///
     /// # Errors
-    /// Returns [`crate::Error::Malformed`] if:
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`] if:
     /// - No data available for reading
     /// - Declared length exceeds available data
     /// - Compressed length parsing fails
@@ -1438,6 +1473,7 @@ mod tests {
             create_constructor_with_params, create_constructor_with_params_and_registry,
             create_empty_constructor, get_test_type_registry,
         },
+        utils::LazyList,
     };
 
     #[test]
@@ -1812,7 +1848,7 @@ mod tests {
             modifiers: Arc::new(boxcar::Vec::new()),
             base: OnceLock::new(),
             is_by_ref: std::sync::atomic::AtomicBool::new(false),
-            custom_attributes: Arc::new(boxcar::Vec::new()),
+            custom_attributes: LazyList::new(),
         });
         param.base.set(CilTypeRef::from(array_type)).ok();
         method.params.push(param);
