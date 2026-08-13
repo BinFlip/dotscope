@@ -5,17 +5,20 @@
 
 use std::sync::Arc;
 
-use crate::metadata::{
-    customattributes::CustomAttributeValue,
-    tables::{AssemblyRefHash, File, FileAttributes, FileRc, ModuleRef, ModuleRefRc},
-    token::Token,
+use crate::{
+    metadata::{
+        customattributes::CustomAttributeValue,
+        tables::{AssemblyRefHash, File, FileAttributes, FileRc, ModuleRef, ModuleRefRc},
+        token::Token,
+    },
+    utils::LazyList,
 };
 
 /// Builder for creating mock ModuleRef instances with various configurations
 pub struct ModuleRefBuilder {
     rid: u32,
     name: String,
-    custom_attributes: Option<Arc<boxcar::Vec<Arc<CustomAttributeValue>>>>,
+    custom_attributes: Option<LazyList<Arc<CustomAttributeValue>>>,
 }
 
 impl ModuleRefBuilder {
@@ -43,9 +46,7 @@ impl ModuleRefBuilder {
             offset: self.rid as usize,
             token: Token::new(0x1A000000 + self.rid),
             name: self.name,
-            custom_attributes: self
-                .custom_attributes
-                .unwrap_or_else(|| Arc::new(boxcar::Vec::<Arc<CustomAttributeValue>>::new())),
+            custom_attributes: self.custom_attributes.unwrap_or_default(),
         })
     }
 }
@@ -99,7 +100,7 @@ impl FileBuilder {
             hash_value: self
                 .hash_value
                 .unwrap_or_else(|| AssemblyRefHash::new(&[1, 2, 3, 4]).unwrap()),
-            custom_attributes: Arc::new(boxcar::Vec::new()),
+            custom_attributes: LazyList::new(),
         })
     }
 }

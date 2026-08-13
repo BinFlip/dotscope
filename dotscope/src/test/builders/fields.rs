@@ -5,12 +5,15 @@
 
 use std::sync::{Arc, OnceLock};
 
-use crate::metadata::{
-    marshalling::{MarshallingInfo, NativeType},
-    signatures::{SignatureField, TypeSignature},
-    tables::{Field, FieldAttributes, FieldRc, TypeAttributes},
-    token::Token,
-    typesystem::{CilFlavor, CilPrimitive, CilTypeRc},
+use crate::{
+    metadata::{
+        marshalling::{MarshallingInfo, NativeType},
+        signatures::{SignatureField, TypeSignature},
+        tables::{Field, FieldAttributes, FieldRc, TypeAttributes},
+        token::Token,
+        typesystem::{CilFlavor, CilPrimitive, CilTypeRc},
+    },
+    utils::LazyList,
 };
 
 /// Field layout types for explicit field positioning
@@ -216,7 +219,7 @@ impl FieldBuilder {
             None,
             TypeAttributes::ZERO,
             Arc::new(boxcar::Vec::new()),
-            Arc::new(boxcar::Vec::new()),
+            LazyList::new(),
             Some(CilFlavor::I4),
         ));
         Self::new(name, i4_type)
@@ -232,7 +235,7 @@ impl FieldBuilder {
             None,
             TypeAttributes::ZERO,
             Arc::new(boxcar::Vec::new()),
-            Arc::new(boxcar::Vec::new()),
+            LazyList::new(),
             Some(CilFlavor::String),
         ));
         Self::new(name, string_type)
@@ -248,7 +251,7 @@ impl FieldBuilder {
             None,
             TypeAttributes::ZERO,
             Arc::new(boxcar::Vec::new()),
-            Arc::new(boxcar::Vec::new()),
+            LazyList::new(),
             Some(CilFlavor::Boolean),
         ));
         Self::new(name, bool_type)
@@ -264,7 +267,7 @@ impl FieldBuilder {
             None,
             TypeAttributes::ZERO,
             Arc::new(boxcar::Vec::new()),
-            Arc::new(boxcar::Vec::new()),
+            LazyList::new(),
             Some(CilFlavor::R4),
         ));
         Self::new(name, r4_type)
@@ -280,7 +283,7 @@ impl FieldBuilder {
             None,
             TypeAttributes::ZERO,
             Arc::new(boxcar::Vec::new()),
-            Arc::new(boxcar::Vec::new()),
+            LazyList::new(),
             Some(CilFlavor::Object),
         ));
         Self::new(name, object_type)
@@ -338,7 +341,7 @@ impl FieldBuilder {
             rva: OnceLock::new(),
             layout: OnceLock::new(),
             marshal: OnceLock::new(),
-            custom_attributes: Arc::new(boxcar::Vec::new()),
+            custom_attributes: LazyList::new(),
             declaring_type: OnceLock::new(),
         };
 
@@ -420,7 +423,7 @@ impl Default for FieldBuilder {
             None,
             TypeAttributes::ZERO,
             Arc::new(boxcar::Vec::new()),
-            Arc::new(boxcar::Vec::new()),
+            LazyList::new(),
             Some(CilFlavor::I4),
         ));
 

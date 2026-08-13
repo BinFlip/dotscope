@@ -61,6 +61,9 @@ pub fn run(path: &Path, owner_filter: Option<&str>, opts: &GlobalOptions) -> any
     let mut entries: Vec<AttrEntry> = Vec::new();
 
     for row in ca_table {
+        let Ok(row) = row else {
+            continue;
+        };
         let (owner_kind, owner_name) = resolve_owner(&assembly, &row.parent, strings);
         let attr_type = resolve_constructor_type(&assembly, &row.constructor, strings);
 
@@ -206,6 +209,9 @@ fn resolve_string_from_raw_table(
         "field" => {
             if let Some(table) = tables.table::<FieldRaw>() {
                 for row in table {
+                    let Ok(row) = row else {
+                        continue;
+                    };
                     if row.rid == ci.row {
                         if let Ok(s) = strings.get(row.name as usize) {
                             return s.to_string();
@@ -217,6 +223,9 @@ fn resolve_string_from_raw_table(
         "param" => {
             if let Some(table) = tables.table::<ParamRaw>() {
                 for row in table {
+                    let Ok(row) = row else {
+                        continue;
+                    };
                     if row.rid == ci.row {
                         if let Ok(s) = strings.get(row.name as usize) {
                             return s.to_string();
@@ -228,6 +237,9 @@ fn resolve_string_from_raw_table(
         "property" => {
             if let Some(table) = tables.table::<PropertyRaw>() {
                 for row in table {
+                    let Ok(row) = row else {
+                        continue;
+                    };
                     if row.rid == ci.row {
                         if let Ok(s) = strings.get(row.name as usize) {
                             return s.to_string();
@@ -239,6 +251,9 @@ fn resolve_string_from_raw_table(
         "event" => {
             if let Some(table) = tables.table::<EventRaw>() {
                 for row in table {
+                    let Ok(row) = row else {
+                        continue;
+                    };
                     if row.rid == ci.row {
                         if let Ok(s) = strings.get(row.name as usize) {
                             return s.to_string();
@@ -303,12 +318,18 @@ fn resolve_memberref_class_name(
     };
 
     for row in mr_table {
+        let Ok(row) = row else {
+            continue;
+        };
         if row.rid == ci.row {
             // The class field is a MemberRefParent coded index
             if row.class.tag == TableId::TypeRef {
                 // Resolve the TypeRef
                 if let Some(tr_table) = tables.table::<TypeRefRaw>() {
                     for tr in tr_table {
+                        let Ok(tr) = tr else {
+                            continue;
+                        };
                         if tr.rid == row.class.row {
                             let ns = strings.get(tr.type_namespace as usize).unwrap_or("?");
                             let name = strings.get(tr.type_name as usize).unwrap_or("?");

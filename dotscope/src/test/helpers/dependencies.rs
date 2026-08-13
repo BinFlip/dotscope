@@ -6,16 +6,17 @@
 
 use std::sync::{atomic::AtomicU32, Arc};
 
-use boxcar::Vec as BoxcarVec;
-
-use crate::metadata::{
-    dependencies::{
-        AssemblyDependency, DependencyResolutionState, DependencySource, DependencyType,
-        VersionRequirement,
+use crate::{
+    metadata::{
+        dependencies::{
+            AssemblyDependency, DependencyResolutionState, DependencySource, DependencyType,
+            VersionRequirement,
+        },
+        identity::{AssemblyIdentity, AssemblyVersion},
+        tables::{AssemblyFlags, AssemblyRef, AssemblyRefHash, File, FileAttributes, ModuleRef},
+        token::Token,
     },
-    identity::{AssemblyIdentity, AssemblyVersion},
-    tables::{AssemblyFlags, AssemblyRef, AssemblyRefHash, File, FileAttributes, ModuleRef},
-    token::Token,
+    utils::LazyList,
 };
 
 /// Create a test assembly identity with basic version information.
@@ -66,7 +67,7 @@ pub fn create_test_assembly_ref_with_culture(
         offset: 0,
         rid: 1,
         token: Token::new(0x23000001), // AssemblyRef table token (0x23 = table, 1 = row)
-        custom_attributes: Arc::new(BoxcarVec::new()),
+        custom_attributes: LazyList::new(),
         hash: None,
         os_platform_id: AtomicU32::new(0),
         os_major_version: AtomicU32::new(0),
@@ -82,7 +83,7 @@ pub fn create_test_module_ref(name: &str) -> Arc<ModuleRef> {
         offset: 0,
         rid: 1,
         token: Token::new(0x1A000001), // ModuleRef table token (0x1A = table, 1 = row)
-        custom_attributes: Arc::new(BoxcarVec::new()),
+        custom_attributes: LazyList::new(),
     })
 }
 
@@ -95,7 +96,7 @@ pub fn create_test_file(name: &str) -> Arc<File> {
         offset: 0,
         rid: 1,
         token: Token::new(0x26000001), // File table token (0x26 = table, 1 = row)
-        custom_attributes: Arc::new(BoxcarVec::new()),
+        custom_attributes: LazyList::new(),
     })
 }
 

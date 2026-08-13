@@ -418,7 +418,7 @@ mod tests {
         let cil_type = asm
             .query_types()
             .defined()
-            .filter(|t| t.fullname() == type_name)
+            .filter(|t| &*t.fullname() == type_name)
             .find_all()
             .into_iter()
             .next()
@@ -550,14 +550,14 @@ mod tests {
         // DerivedClass has MetadataTestAttribute with fixed args
         let output = format_type_by_name(&asm, "DerivedClass");
         // Find the comment and .custom lines
-        if let Some(comment_pos) = output.find("// (int32(100)") {
-            if let Some(custom_pos) = output[comment_pos..].find(".custom ") {
-                // Comment should come before .custom in the same region
-                assert!(
-                    custom_pos > 0,
-                    "Comment should appear before .custom directive"
-                );
-            }
+        if let Some((_, after_comment)) = output.split_once("// (int32(100)") {
+            // Searching the text that *follows* the comment states the property directly. The
+            // previous form sliced from the comment's own offset and asserted the directive's
+            // index was non-zero, which no match could ever violate.
+            assert!(
+                after_comment.contains(".custom "),
+                "Comment should appear before .custom directive"
+            );
         }
     }
 

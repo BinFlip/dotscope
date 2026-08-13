@@ -16,6 +16,7 @@ use crate::{
         typesystem::{CilFlavor, TypeRegistry},
     },
     test::builders::params::ParamBuilder,
+    utils::LazyList,
 };
 
 /// Builder for creating mock Method instances with complex configurations
@@ -245,8 +246,8 @@ impl MethodBuilder {
             name: self.name,
             params,
             varargs: Arc::new(boxcar::Vec::new()),
-            generic_params: Arc::new(boxcar::Vec::new()),
-            generic_args: Arc::new(boxcar::Vec::new()),
+            generic_params: LazyList::new(),
+            generic_args: LazyList::new(),
             signature: self.signature.unwrap_or_else(|| SignatureMethod {
                 has_this: false,
                 explicit_this: false,
@@ -270,10 +271,10 @@ impl MethodBuilder {
             body: OnceLock::new(),
             local_vars: Arc::new(boxcar::Vec::new()),
             overrides: Arc::new(boxcar::Vec::new()),
-            interface_impls: Arc::new(boxcar::Vec::new()),
+            interface_impls: LazyList::new(),
             security: OnceLock::new(),
             blocks: OnceLock::new(),
-            custom_attributes: Arc::new(boxcar::Vec::new()),
+            custom_attributes: LazyList::new(),
             declaring_type: OnceLock::new(),
         })
     }

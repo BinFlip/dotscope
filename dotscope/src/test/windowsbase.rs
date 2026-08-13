@@ -133,7 +133,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 1);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.generation, 0);
             assert_eq!(row.name, 0x1E026);
@@ -150,7 +150,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 472);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.token.value(), 0x01000001);
             assert_eq!(
@@ -160,7 +160,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             assert_eq!(row.type_name, 0x18C2C);
             assert_eq!(row.type_namespace, 0x277D8);
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.token.value(), 0x01000005);
             assert_eq!(
@@ -170,7 +170,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             assert_eq!(row.type_name, 0x27A21);
             assert_eq!(row.type_namespace, 0);
 
-            let row = module.get(320).unwrap();
+            let row = module.get(320).unwrap().unwrap();
             assert_eq!(row.rid, 320);
             assert_eq!(row.token.value(), 0x01000140);
             assert_eq!(
@@ -189,7 +189,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 820);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.flags, 0);
             assert_eq!(row.type_name, 0x1495);
@@ -201,7 +201,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             assert_eq!(row.field_list, 1);
             assert_eq!(row.method_list, 1);
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.flags, 0x100180);
             assert_eq!(row.type_name, 0x26FB4);
@@ -213,7 +213,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             assert_eq!(row.field_list, 0x2C);
             assert_eq!(row.method_list, 1);
 
-            let row = module.get(320).unwrap();
+            let row = module.get(320).unwrap().unwrap();
             assert_eq!(row.rid, 320);
             assert_eq!(row.flags, 0x100000);
             assert_eq!(row.type_name, 0x1238D);
@@ -234,19 +234,19 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 6241);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.flags, 0x8056);
             assert_eq!(row.name, 0x2747E);
             assert_eq!(row.signature, 0x7F1);
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.flags, 0x8056);
             assert_eq!(row.name, 0x5FD4);
             assert_eq!(row.signature, 0x7F1);
 
-            let row = module.get(320).unwrap();
+            let row = module.get(320).unwrap().unwrap();
             assert_eq!(row.rid, 320);
             assert_eq!(row.flags, 0x8056);
             assert_eq!(row.name, 0x5B7A);
@@ -261,7 +261,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 6496);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.rva, 0xEAA84);
             assert_eq!(row.impl_flags, 0);
@@ -270,7 +270,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             assert_eq!(row.signature, 0xB041);
             assert_eq!(row.param_list, 1);
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.rva, 0xEAB5C);
             assert_eq!(row.impl_flags, 0);
@@ -279,7 +279,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             assert_eq!(row.signature, 0xB041);
             assert_eq!(row.param_list, 9);
 
-            let row = module.get(320).unwrap();
+            let row = module.get(320).unwrap().unwrap();
             assert_eq!(row.rid, 320);
             assert_eq!(row.rva, 0xEB604);
             assert_eq!(row.impl_flags, 0);
@@ -297,19 +297,19 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 7877);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.flags, 0);
             assert_eq!(row.sequence, 1);
             assert_eq!(row.name, 0x14593);
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.flags, 0);
             assert_eq!(row.sequence, 1);
             assert_eq!(row.name, 0x16E17);
 
-            let row = module.get(320).unwrap();
+            let row = module.get(320).unwrap().unwrap();
             assert_eq!(row.rid, 320);
             assert_eq!(row.flags, 0);
             assert_eq!(row.sequence, 3);
@@ -324,7 +324,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 122);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.class, 0xB);
             assert_eq!(
@@ -332,7 +332,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
                 CodedIndex::new(TableId::TypeRef, 64, CodedIndexType::TypeDefOrRef)
             );
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.class, 0x10);
             assert_eq!(
@@ -340,7 +340,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
                 CodedIndex::new(TableId::TypeSpec, 3, CodedIndexType::TypeDefOrRef)
             );
 
-            let row = module.get(100).unwrap();
+            let row = module.get(100).unwrap().unwrap();
             assert_eq!(row.rid, 100);
             assert_eq!(row.class, 0x308);
             assert_eq!(
@@ -357,7 +357,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 1762);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(
                 row.class,
@@ -366,7 +366,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             assert_eq!(row.name, 0x26F0B);
             assert_eq!(row.signature, 1);
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(
                 row.class,
@@ -375,7 +375,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             assert_eq!(row.name, 0x26F0B);
             assert_eq!(row.signature, 0x10);
 
-            let row = module.get(100).unwrap();
+            let row = module.get(100).unwrap().unwrap();
             assert_eq!(row.rid, 100);
             assert_eq!(
                 row.class,
@@ -393,7 +393,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 4213);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.base, 0xE);
             assert_eq!(
@@ -402,7 +402,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             );
             assert_eq!(row.value, 0x3BB9);
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.base, 0xE);
             assert_eq!(
@@ -411,7 +411,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             );
             assert_eq!(row.value, 0x3C1D);
 
-            let row = module.get(100).unwrap();
+            let row = module.get(100).unwrap().unwrap();
             assert_eq!(row.rid, 100);
             assert_eq!(row.base, 8);
             assert_eq!(
@@ -430,7 +430,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 914);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(
                 row.parent,
@@ -442,7 +442,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             );
             assert_eq!(row.value, 0x4015);
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(
                 row.parent,
@@ -454,7 +454,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             );
             assert_eq!(row.value, 0xFC8F);
 
-            let row = module.get(100).unwrap();
+            let row = module.get(100).unwrap().unwrap();
             assert_eq!(row.rid, 100);
             assert_eq!(
                 row.parent,
@@ -479,7 +479,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 620);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(
                 row.parent,
@@ -487,7 +487,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             );
             assert_eq!(row.native_type, 0xA56F);
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(
                 row.parent,
@@ -495,7 +495,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             );
             assert_eq!(row.native_type, 0xA58F);
 
-            let row = module.get(100).unwrap();
+            let row = module.get(100).unwrap().unwrap();
             assert_eq!(row.rid, 100);
             assert_eq!(
                 row.parent,
@@ -512,7 +512,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 1);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.action, 8);
             assert_eq!(
@@ -530,19 +530,19 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 13);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.packing_size, 0);
             assert_eq!(row.class_size, 0x10);
             assert_eq!(row.parent, 0x28);
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.packing_size, 1);
             assert_eq!(row.class_size, 0);
             assert_eq!(row.parent, 0x24C);
 
-            let row = module.get(10).unwrap();
+            let row = module.get(10).unwrap().unwrap();
             assert_eq!(row.rid, 10);
             assert_eq!(row.packing_size, 1);
             assert_eq!(row.class_size, 0x34);
@@ -557,17 +557,17 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 83);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.field_offset, 0);
             assert_eq!(row.field, 0x808);
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.field_offset, 0);
             assert_eq!(row.field, 0x9A4);
 
-            let row = module.get(50).unwrap();
+            let row = module.get(50).unwrap().unwrap();
             assert_eq!(row.rid, 50);
             assert_eq!(row.field_offset, 0);
             assert_eq!(row.field, 0xC74);
@@ -581,15 +581,15 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 668);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.signature, 0x220);
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.signature, 0x280);
 
-            let row = module.get(100).unwrap();
+            let row = module.get(100).unwrap().unwrap();
             assert_eq!(row.rid, 100);
             assert_eq!(row.signature, 0xB9D);
         }
@@ -602,17 +602,17 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 18);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.parent, 0xC);
             assert_eq!(row.event_list, 0x1);
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.parent, 0x120);
             assert_eq!(row.event_list, 5);
 
-            let row = module.get(10).unwrap();
+            let row = module.get(10).unwrap().unwrap();
             assert_eq!(row.rid, 10);
             assert_eq!(row.parent, 0x158);
             assert_eq!(row.event_list, 0xD);
@@ -626,7 +626,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 47);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.flags, 0);
             assert_eq!(row.name, 0xEF15);
@@ -635,7 +635,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
                 CodedIndex::new(TableId::TypeRef, 69, CodedIndexType::TypeDefOrRef)
             );
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.flags, 0);
             assert_eq!(row.name, 0x1BBAA);
@@ -644,7 +644,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
                 CodedIndex::new(TableId::TypeDef, 290, CodedIndexType::TypeDefOrRef)
             );
 
-            let row = module.get(25).unwrap();
+            let row = module.get(25).unwrap().unwrap();
             assert_eq!(row.rid, 25);
             assert_eq!(row.flags, 0);
             assert_eq!(row.name, 0x13403);
@@ -662,17 +662,17 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 234);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.parent, 0xC);
             assert_eq!(row.property_list, 1);
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.parent, 0x15);
             assert_eq!(row.property_list, 0xB);
 
-            let row = module.get(100).unwrap();
+            let row = module.get(100).unwrap().unwrap();
             assert_eq!(row.rid, 100);
             assert_eq!(row.parent, 0x103);
             assert_eq!(row.property_list, 0x36D);
@@ -686,19 +686,19 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 1511);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.flags, 0);
             assert_eq!(row.name, 0x1458B);
             assert_eq!(row.signature, 0xF6F5);
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.flags, 0);
             assert_eq!(row.name, 0x4494);
             assert_eq!(row.signature, 0xF6FD);
 
-            let row = module.get(100).unwrap();
+            let row = module.get(100).unwrap().unwrap();
             assert_eq!(row.rid, 100);
             assert_eq!(row.flags, 0);
             assert_eq!(row.name, 0x1EEE3);
@@ -713,7 +713,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 1848);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.semantics, 8);
             assert_eq!(row.method, 0x19C);
@@ -722,7 +722,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
                 CodedIndex::new(TableId::Event, 1, CodedIndexType::HasSemantics)
             );
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.semantics, 0x10);
             assert_eq!(row.method, 0x336);
@@ -731,7 +731,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
                 CodedIndex::new(TableId::Event, 2, CodedIndexType::HasSemantics)
             );
 
-            let row = module.get(100).unwrap();
+            let row = module.get(100).unwrap().unwrap();
             assert_eq!(row.rid, 100);
             assert_eq!(row.semantics, 8);
             assert_eq!(row.method, 0x10FF);
@@ -749,7 +749,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 174);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.class, 0xC);
             assert_eq!(
@@ -761,7 +761,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
                 CodedIndex::new(TableId::MemberRef, 25, CodedIndexType::MethodDefOrRef)
             );
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.class, 0x5C);
             assert_eq!(
@@ -773,7 +773,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
                 CodedIndex::new(TableId::MemberRef, 40, CodedIndexType::MethodDefOrRef)
             );
 
-            let row = module.get(100).unwrap();
+            let row = module.get(100).unwrap().unwrap();
             assert_eq!(row.rid, 100);
             assert_eq!(row.class, 0x2E9);
             assert_eq!(
@@ -794,15 +794,15 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 29);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.name, 0x1E036);
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.name, 0x1DF93);
 
-            let row = module.get(25).unwrap();
+            let row = module.get(25).unwrap().unwrap();
             assert_eq!(row.rid, 25);
             assert_eq!(row.name, 0x1E09E);
         }
@@ -815,15 +815,15 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 234);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.signature, 0x49);
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.signature, 0x67);
 
-            let row = module.get(100).unwrap();
+            let row = module.get(100).unwrap().unwrap();
             assert_eq!(row.rid, 100);
             assert_eq!(row.signature, 0x1418);
         }
@@ -836,7 +836,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 422);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.mapping_flags, 0x147);
             assert_eq!(
@@ -846,7 +846,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             assert_eq!(row.import_name, 0x2A5E1);
             assert_eq!(row.import_scope, 0x2);
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.mapping_flags, 0x1120);
             assert_eq!(
@@ -856,7 +856,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             assert_eq!(row.import_name, 0x1BAE);
             assert_eq!(row.import_scope, 0x3);
 
-            let row = module.get(100).unwrap();
+            let row = module.get(100).unwrap().unwrap();
             assert_eq!(row.rid, 100);
             assert_eq!(row.mapping_flags, 0x1166);
             assert_eq!(
@@ -875,12 +875,12 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 5);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.rva, 0x3CE40);
             assert_eq!(row.field, 0x119E);
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.rva, 0x3CED0);
             assert_eq!(row.field, 0x11A2);
@@ -894,7 +894,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 1);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.hash_alg_id, 0x8004);
             assert_eq!(row.major_version, 8);
@@ -914,7 +914,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 32);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.major_version, 8);
             assert_eq!(row.minor_version, 0);
@@ -925,7 +925,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             assert_eq!(row.name, 0x15D67);
             assert_eq!(row.hash_value, 0);
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.major_version, 8);
             assert_eq!(row.minor_version, 0);
@@ -936,7 +936,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             assert_eq!(row.name, 0x289E2);
             assert_eq!(row.hash_value, 0);
 
-            let row = module.get(25).unwrap();
+            let row = module.get(25).unwrap().unwrap();
             assert_eq!(row.rid, 25);
             assert_eq!(row.major_version, 8);
             assert_eq!(row.minor_version, 0);
@@ -956,7 +956,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 63);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.flags, 0x200000);
             assert_eq!(row.type_def_id, 0);
@@ -967,7 +967,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
                 CodedIndex::new(TableId::AssemblyRef, 11, CodedIndexType::Implementation)
             );
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.flags, 0x200000);
             assert_eq!(row.type_def_id, 0);
@@ -978,7 +978,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
                 CodedIndex::new(TableId::AssemblyRef, 11, CodedIndexType::Implementation)
             );
 
-            let row = module.get(50).unwrap();
+            let row = module.get(50).unwrap().unwrap();
             assert_eq!(row.rid, 50);
             assert_eq!(row.flags, 0x200000);
             assert_eq!(row.type_def_id, 0);
@@ -998,7 +998,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 1);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.flags, 1);
             assert_eq!(row.name, 0x279FC);
@@ -1016,17 +1016,17 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 379);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.nested_class, 0x1BA);
             assert_eq!(row.enclosing_class, 2);
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.nested_class, 0x1BE);
             assert_eq!(row.enclosing_class, 6);
 
-            let row = module.get(50).unwrap();
+            let row = module.get(50).unwrap().unwrap();
             assert_eq!(row.rid, 50);
             assert_eq!(row.nested_class, 0x1EB);
             assert_eq!(row.enclosing_class, 6);
@@ -1040,7 +1040,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 60);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.number, 0);
             assert_eq!(row.flags, 0);
@@ -1050,7 +1050,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             );
             assert_eq!(row.name, 0xB6F1);
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.number, 0);
             assert_eq!(row.flags, 0);
@@ -1060,7 +1060,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             );
             assert_eq!(row.name, 0xB6F1);
 
-            let row = module.get(50).unwrap();
+            let row = module.get(50).unwrap().unwrap();
             assert_eq!(row.rid, 50);
             assert_eq!(row.number, 0);
             assert_eq!(row.flags, 0);
@@ -1079,7 +1079,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 37);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(
                 row.method,
@@ -1087,7 +1087,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             );
             assert_eq!(row.instantiation, 0x343);
 
-            let row = module.get(5).unwrap();
+            let row = module.get(5).unwrap().unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(
                 row.method,
@@ -1095,7 +1095,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             );
             assert_eq!(row.instantiation, 0x50C);
 
-            let row = module.get(25).unwrap();
+            let row = module.get(25).unwrap().unwrap();
             assert_eq!(row.rid, 25);
             assert_eq!(
                 row.method,
@@ -1112,7 +1112,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         Some(module) => {
             assert_eq!(module.row_count, 3);
 
-            let row: GenericParamConstraintRaw = module.get(1).unwrap();
+            let row: GenericParamConstraintRaw = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.owner, 0x11);
             assert_eq!(
@@ -1120,7 +1120,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
                 CodedIndex::new(TableId::TypeRef, 73, CodedIndexType::TypeDefOrRef)
             );
 
-            let row = module.get(3).unwrap();
+            let row = module.get(3).unwrap().unwrap();
             assert_eq!(row.rid, 3);
             assert_eq!(row.owner, 0x32);
             assert_eq!(

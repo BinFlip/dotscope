@@ -624,7 +624,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 1);
 
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.generation, 0);
             assert_eq!(row.name, 0x9CF);
@@ -645,7 +645,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 65);
 
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.token.value(), 0x01000001);
             assert_eq!(
@@ -664,7 +664,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 36);
 
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.flags, 0);
             assert_eq!(row.type_name, 0x1FD);
@@ -685,7 +685,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 48);
 
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.flags, 0x26);
             assert_eq!(row.name, 0xABB);
@@ -700,7 +700,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 97);
 
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.rva, 0x2050);
             assert_eq!(row.impl_flags, 0);
@@ -718,7 +718,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 72);
 
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.flags, 0);
             assert_eq!(row.sequence, 1);
@@ -733,7 +733,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 5);
 
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.class, 7);
             assert_eq!(
@@ -750,7 +750,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 67);
 
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(
                 row.class,
@@ -768,7 +768,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 7);
 
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.base, 0xA);
             assert_eq!(
@@ -787,7 +787,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 88);
 
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(
                 row.parent,
@@ -808,7 +808,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 1);
 
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(
                 row.parent,
@@ -825,7 +825,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 2);
 
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.action, 8);
             assert_eq!(
@@ -843,7 +843,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 3);
 
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.packing_size, 0);
             assert_eq!(row.class_size, 0x10);
@@ -858,7 +858,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 3);
 
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.field_offset, 0);
             assert_eq!(row.field, 0xC);
@@ -872,7 +872,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 11);
 
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.signature, 0x53);
         }
@@ -885,7 +885,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(module) => {
             assert_eq!(module.row_count, 2);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.parent, 0x7);
             assert_eq!(row.event_list, 0x1);
@@ -899,7 +899,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 3);
 
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.flags, 0);
             assert_eq!(row.name, 0x102);
@@ -917,7 +917,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 8);
 
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.parent, 0x4);
             assert_eq!(row.property_list, 1);
@@ -931,7 +931,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 13);
 
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.flags, 0);
             assert_eq!(row.name, 0x9B4);
@@ -946,7 +946,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 31);
 
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.semantics, 8);
             assert_eq!(row.method, 0xE);
@@ -964,7 +964,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 4);
 
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.class, 0xE);
             assert_eq!(
@@ -985,7 +985,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 2);
 
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.name, 0xA33);
         }
@@ -998,7 +998,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(module) => {
             assert_eq!(module.row_count, 16);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.signature, 0x40);
         }
@@ -1011,7 +1011,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 2);
 
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.mapping_flags, 0x104);
             assert_eq!(
@@ -1030,7 +1030,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(module) => {
             assert_eq!(module.row_count, 1);
 
-            let row = module.get(1).unwrap();
+            let row = module.get(1).unwrap().unwrap();
             assert_eq!(row.rva, 0x5410);
             assert_eq!(row.field, 0x1E);
         }
@@ -1043,7 +1043,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 1);
 
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.hash_alg_id, 0x8004);
             assert_eq!(row.major_version, 1);
@@ -1063,7 +1063,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 2);
 
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.major_version, 4);
             assert_eq!(row.minor_version, 0);
@@ -1083,7 +1083,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 10);
 
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.nested_class, 0x1B);
             assert_eq!(row.enclosing_class, 0xE);
@@ -1097,7 +1097,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 19);
 
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.number, 0);
             assert_eq!(row.flags, 4);
@@ -1116,7 +1116,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 4);
 
-            let row = table.get(1).unwrap();
+            let row = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(
                 row.method_body,
@@ -1136,7 +1136,7 @@ fn verify_tableheader(asm: &CilObject) {
         Some(table) => {
             assert_eq!(table.row_count, 16);
 
-            let row: GenericParamConstraintRaw = table.get(1).unwrap();
+            let row: GenericParamConstraintRaw = table.get(1).unwrap().unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.owner, 0x3);
             assert_eq!(
@@ -1182,6 +1182,7 @@ fn verify_assembly_custom_attributes(asm: &CilObject) {
     let mut assembly_attr_count = 0;
 
     for attr_row in custom_attr_table.iter() {
+        let attr_row = attr_row.expect("row parses");
         // Check if this attribute is on the assembly (target token 0x20000001)
         if attr_row.parent.token.value() == 0x20000001 {
             assembly_attr_count += 1;
@@ -1203,6 +1204,7 @@ fn verify_module_custom_attributes(asm: &CilObject) {
     let mut module_attr_count = 0;
 
     for attr_row in custom_attr_table.iter() {
+        let attr_row = attr_row.expect("row parses");
         // Check if this attribute is on the module (target token 0x00000001)
         if attr_row.parent.token.value() == 0x00000001 {
             module_attr_count += 1;
@@ -1385,7 +1387,7 @@ fn verify_specialized_attribute_tables(asm: &CilObject) {
 
         // Test marshalling descriptor parsing - this verifies our marshalling implementation
         // against real .NET assembly data
-        let row = field_marshal_table.get(1).unwrap();
+        let row = field_marshal_table.get(1).unwrap().unwrap();
         let blob_heap = asm.blob().expect("Expected blob heap to be present");
         let descriptor_blob = blob_heap.get(row.native_type as usize).unwrap();
 
@@ -2254,6 +2256,7 @@ fn test_nested_type_relationships(asm: &CilObject) {
         );
 
         for nested_row in nested_table.iter().take(5) {
+            let nested_row = nested_row.expect("row parses");
             println!(
                 "  NestedClass: nested=0x{:X}, enclosing=0x{:X}",
                 nested_row.nested_class, nested_row.enclosing_class
@@ -2318,7 +2321,11 @@ fn test_enum_and_constant_validation(asm: &CilObject) {
         );
 
         // Look for constants associated with our enum
-        let constant_rows: Vec<_> = constant_table.iter().take(5).collect();
+        let constant_rows: Vec<_> = constant_table
+            .iter()
+            .take(5)
+            .map(|row| row.expect("row parses"))
+            .collect();
         for constant_row in constant_rows {
             println!(
                 "  Constant: type=0x{:X}, parent=0x{:08X}, value=0x{:X}",
@@ -2555,6 +2562,7 @@ fn test_pinvoke_and_security_validation(asm: &CilObject) {
         );
 
         for implmap_row in implmap_table.iter() {
+            let implmap_row = implmap_row.expect("row parses");
             println!(
                 "  ImplMap: flags=0x{:X}, member=0x{:08X}, name=0x{:X}, scope=0x{:X}",
                 implmap_row.mapping_flags,
@@ -2579,6 +2587,7 @@ fn test_pinvoke_and_security_validation(asm: &CilObject) {
         );
 
         for security_row in declsecurity_table.iter() {
+            let security_row = security_row.expect("row parses");
             println!(
                 "  Security: action={}, parent=0x{:08X}, permission_set=0x{:X}",
                 security_row.action,
@@ -2992,7 +3001,7 @@ fn test_assembly_metadata_validation(asm: &CilObject) {
         println!("Assembly table has {assembly_count} entries");
         assert_eq!(assembly_count, 1, "Should have exactly 1 assembly entry");
 
-        if let Some(assembly_row) = assembly_table.get(1) {
+        if let Some(assembly_row) = assembly_table.get(1).ok().flatten() {
             println!("Assembly metadata:");
             println!("  Major version: {}", assembly_row.major_version);
             println!("  Minor version: {}", assembly_row.minor_version);
@@ -3022,7 +3031,7 @@ fn test_assembly_metadata_validation(asm: &CilObject) {
         println!("Module table has {module_count} entries");
         assert!(module_count >= 1, "Should have at least 1 module");
 
-        if let Some(module_row) = module_table.get(1) {
+        if let Some(module_row) = module_table.get(1).ok().flatten() {
             println!("  Module generation: {}", module_row.generation);
             println!("  ✓ Module metadata validated");
         }
@@ -3098,6 +3107,7 @@ fn test_xml_permission_set_parsing(asm: &CilObject) {
 
         // Iterate through DeclSecurity entries
         for security_row in decl_security_table.iter() {
+            let security_row = security_row.expect("row parses");
             // Get the permission set blob from the blob stream
             if let Some(blob_heap) = asm.blob() {
                 if let Ok(blob_data) = blob_heap.get(security_row.permission_set as usize) {
@@ -3201,6 +3211,7 @@ fn test_xml_permission_set_parsing(asm: &CilObject) {
 
             // Let's test that we can at least parse the binary permission sets
             for security_row in decl_security_table.iter() {
+                let security_row = security_row.expect("row parses");
                 if let Some(blob_heap) = asm.blob() {
                     if let Ok(blob_data) = blob_heap.get(security_row.permission_set as usize) {
                         let permission_set = PermissionSet::new(blob_data).unwrap();

@@ -12,6 +12,7 @@ use crate::{
         typesystem::{CilFlavor, CilType, CilTypeRc, CilTypeReference},
     },
     test::FileBuilder,
+    utils::LazyList,
 };
 
 /// Builder for creating mock CilType instances with various characteristics
@@ -102,7 +103,7 @@ impl CilTypeBuilder {
             None, // base type
             self.flags,
             Arc::new(boxcar::Vec::new()), // fields
-            Arc::new(boxcar::Vec::new()), // methods
+            LazyList::new(),              // methods
             self.flavor,
         ))
     }
@@ -135,6 +136,6 @@ pub fn create_exportedtype(dummy_type: CilTypeRc) -> ExportedTypeRc {
         name: "ExportedType".to_string(),
         namespace: Some("Test.Namespace".to_string()),
         implementation: implementation_lock,
-        custom_attributes: Arc::new(boxcar::Vec::new()),
+        custom_attributes: LazyList::new(),
     })
 }

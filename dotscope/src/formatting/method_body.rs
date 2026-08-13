@@ -149,7 +149,7 @@ fn format_locals(w: &mut dyn Write, method: &Method, asm: &CilObject) -> io::Res
         let rid = body.local_var_sig_token & 0x00FF_FFFF;
         let tables = asm.tables()?;
         let table = tables.table::<StandAloneSigRaw>()?;
-        let row = table.get(rid)?;
+        let row = table.get(rid).ok().flatten()?;
         let blob = asm.blob()?;
         let sig_data = blob.get(row.signature as usize).ok()?;
         parse_local_var_signature(sig_data).ok()

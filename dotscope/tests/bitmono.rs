@@ -37,7 +37,10 @@ use common::{
 };
 use dotscope::{
     deobfuscation::{DeobfuscationEngine, DeobfuscationResult, EngineConfig},
-    metadata::validation::ValidationConfig,
+    metadata::{
+        tables::{AssemblyRefRaw, TypeRefRaw},
+        validation::ValidationConfig,
+    },
     CilObject,
 };
 
@@ -1258,8 +1261,6 @@ fn test_dotnethook_offset_diagnostic() {
 
 #[test]
 fn test_no_obfuscator_metadata_survives() {
-    use dotscope::metadata::tables::{AssemblyRefRaw, TypeRefRaw};
-
     let path = format!("{}/bitmono_maximum_il.exe", SAMPLES_DIR);
     if !std::path::Path::new(&path).exists() {
         eprintln!("Skipping: not found");
@@ -1279,6 +1280,7 @@ fn test_no_obfuscator_metadata_survives() {
 
     if let Some(aref_table) = tables.table::<AssemblyRefRaw>() {
         for aref in aref_table {
+            let aref = aref.expect("row parses");
             let name = strings.get(aref.name as usize).unwrap_or("???");
             // System.Private.CoreLib may survive legitimately if
             // <PrivateImplementationDetails>/__StaticArrayInitTypeSize=N types
@@ -1292,6 +1294,7 @@ fn test_no_obfuscator_metadata_survives() {
 
     if let Some(typeref_table) = tables.table::<TypeRefRaw>() {
         for tr in typeref_table {
+            let tr = tr.expect("row parses");
             let name = strings.get(tr.type_name as usize).unwrap_or("???");
             // System.ValueType may survive legitimately: __StaticArrayInitTypeSize=N
             // nested value types extend it for RuntimeHelpers.InitializeArray support.

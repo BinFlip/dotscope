@@ -1183,7 +1183,7 @@ impl AssemblyStats {
                 continue;
             }
 
-            type_names.insert(fullname);
+            type_names.insert(fullname.to_string());
 
             // Count methods and fields on this type
             method_count += cil_type.methods().count();

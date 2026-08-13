@@ -186,7 +186,7 @@ fn lookup_userstring(
             .userstrings()
             .with_context(|| "assembly has no #US heap")?;
         us.get(off)
-            .map(widestring::U16Str::to_string_lossy)
+            .map(|s| s.to_string_lossy())
             .with_context(|| format!("no user string at offset 0x{off:x}"))
     })
 }

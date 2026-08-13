@@ -171,7 +171,7 @@ pub(super) fn format_type_end(w: &mut dyn Write, cil_type: &CilType) -> io::Resu
     let display_name = if cil_type.enclosing_type().is_some() {
         cil_type.name.clone()
     } else {
-        cil_type.fullname()
+        cil_type.fullname().to_string()
     };
     writeln!(w, "}} // end of class {display_name}")?;
     writeln!(w)?;
