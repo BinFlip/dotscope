@@ -7,7 +7,10 @@
 //! Each [`IdentifierKind`] has a distinct template optimized for the
 //! information most useful for that kind of rename.
 
-use crate::deobfuscation::renamer::context::{IdentifierKind, ParamInfo, PhaseInfo, RenameContext};
+use crate::{
+    deobfuscation::renamer::context::{IdentifierKind, ParamInfo, PhaseInfo, RenameContext},
+    utils::truncate_chars,
+};
 
 /// Builds a FIM prompt from a rename context.
 ///
@@ -184,8 +187,8 @@ fn render_shared_context(prefix: &mut String, context: &RenameContext) {
             .iter()
             .take(5)
             .map(|s| {
-                if s.len() > 30 {
-                    format!("\"{}...\"", &s[..27])
+                if s.chars().count() > 30 {
+                    format!("\"{}...\"", truncate_chars(s, 27))
                 } else {
                     format!("\"{s}\"")
                 }
@@ -237,8 +240,8 @@ fn render_caller_context(prefix: &mut String, context: &RenameContext) {
                 .iter()
                 .take(3)
                 .map(|s| {
-                    if s.len() > 40 {
-                        format!("\"{}...\"", &s[..37])
+                    if s.chars().count() > 40 {
+                        format!("\"{}...\"", truncate_chars(s, 37))
                     } else {
                         format!("\"{s}\"")
                     }

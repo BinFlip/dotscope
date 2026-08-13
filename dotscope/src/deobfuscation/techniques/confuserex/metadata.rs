@@ -123,6 +123,13 @@ impl Technique for ConfuserExMetadata {
         // Check Module table for invalid name indices (0x7fff7fff marker).
         if let Some(module_table) = tables.table::<ModuleRaw>() {
             for row in module_table {
+                let row = match row {
+                    Ok(row) => row,
+                    Err(e) => {
+                        log::warn!("skipping unreadable metadata row: {e}");
+                        continue;
+                    }
+                };
                 if row.name == CONFUSEREX_MARKER || row.name as usize >= strings_size {
                     findings.invalid_entries = findings.invalid_entries.saturating_add(1);
                     // Skip rows where the file offset would overflow when adding the
@@ -141,6 +148,13 @@ impl Technique for ConfuserExMetadata {
         // Check Assembly table for invalid name indices.
         if let Some(assembly_table) = tables.table::<AssemblyRaw>() {
             for row in assembly_table {
+                let row = match row {
+                    Ok(row) => row,
+                    Err(e) => {
+                        log::warn!("skipping unreadable metadata row: {e}");
+                        continue;
+                    }
+                };
                 if row.name == CONFUSEREX_MARKER || row.name as usize >= strings_size {
                     findings.invalid_entries = findings.invalid_entries.saturating_add(1);
                 }
@@ -150,6 +164,13 @@ impl Technique for ConfuserExMetadata {
         // Check DeclSecurity for invalid action values.
         if let Some(declsec_table) = tables.table::<DeclSecurityRaw>() {
             for row in declsec_table {
+                let row = match row {
+                    Ok(row) => row,
+                    Err(e) => {
+                        log::warn!("skipping unreadable metadata row: {e}");
+                        continue;
+                    }
+                };
                 if row.action == CONFUSEREX_MARKER_16 || row.action > 0x000E {
                     findings.invalid_entries = findings.invalid_entries.saturating_add(1);
                 }
@@ -159,6 +180,13 @@ impl Technique for ConfuserExMetadata {
         // Check TypeRef resolution scopes for invalid indices.
         if let Some(typeref_table) = tables.table::<TypeRefRaw>() {
             for row in typeref_table {
+                let row = match row {
+                    Ok(row) => row,
+                    Err(e) => {
+                        log::warn!("skipping unreadable metadata row: {e}");
+                        continue;
+                    }
+                };
                 if row.resolution_scope.tag == TableId::Module && row.resolution_scope.row == 0 {
                     findings.invalid_entries = findings.invalid_entries.saturating_add(1);
                 }

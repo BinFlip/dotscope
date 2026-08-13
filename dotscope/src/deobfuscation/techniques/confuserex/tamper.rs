@@ -198,6 +198,13 @@ impl Technique for ConfuserExAntiTamper {
                 let text_rva_end = text_rva_start.saturating_add(text.virtual_size as usize);
 
                 for row in method_table {
+                    let row = match row {
+                        Ok(row) => row,
+                        Err(e) => {
+                            log::warn!("skipping unreadable metadata row: {e}");
+                            continue;
+                        }
+                    };
                     if row.rva == 0 {
                         continue;
                     }
@@ -457,7 +464,7 @@ impl Technique for ConfuserExAntiTamper {
                 .view()
                 .tables()
                 .and_then(|t| t.table::<MethodDefRaw>())
-                .and_then(|table| table.get(rid))
+                .and_then(|table| table.get(rid).ok().flatten())
                 .ok_or_else(|| Error::Deobfuscation(format!("MethodDef row {rid} not found")))
             {
                 Ok(v) => v,
@@ -495,7 +502,7 @@ impl Technique for ConfuserExAntiTamper {
                 .view()
                 .tables()
                 .and_then(|t| t.table::<FieldRvaRaw>())
-                .and_then(|table| table.get(rid))
+                .and_then(|table| table.get(rid).ok().flatten())
                 .ok_or_else(|| Error::Deobfuscation(format!("FieldRVA row {rid} not found")))
             {
                 Ok(v) => v,

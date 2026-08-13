@@ -466,7 +466,7 @@ impl Technique for NetReactorNecroBit {
                 .view()
                 .tables()
                 .and_then(|t| t.table::<MethodDefRaw>())
-                .and_then(|table| table.get(rid))
+                .and_then(|table| table.get(rid).ok().flatten())
                 .ok_or_else(|| Error::Deobfuscation(format!("MethodDef row {rid} not found")))
             {
                 Ok(v) => v,

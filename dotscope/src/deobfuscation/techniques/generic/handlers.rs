@@ -65,6 +65,13 @@ impl Technique for GenericHandlers {
         let mut affected = Vec::new();
 
         for row in method_table {
+            let row = match row {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             if row.rva == 0 {
                 continue;
             }

@@ -313,6 +313,13 @@ impl Technique for ConfuserExConstants {
             if let Some(fieldrva_table) = tables.table::<FieldRvaRaw>() {
                 let file = assembly.file();
                 for row in fieldrva_table {
+                    let row = match row {
+                        Ok(row) => row,
+                        Err(e) => {
+                            log::warn!("skipping unreadable metadata row: {e}");
+                            continue;
+                        }
+                    };
                     if row.rva == 0 {
                         continue;
                     }
@@ -363,6 +370,13 @@ impl Technique for ConfuserExConstants {
         if let Some(tables) = assembly.tables() {
             if let Some(methodspec_table) = tables.table::<MethodSpecRaw>() {
                 for spec in methodspec_table {
+                    let spec = match spec {
+                        Ok(row) => row,
+                        Err(e) => {
+                            log::warn!("skipping unreadable metadata row: {e}");
+                            continue;
+                        }
+                    };
                     let references_decryptor = if decryptor_set.contains(&spec.method.token) {
                         true
                     } else if spec.method.token.is_table(TableId::MemberRef) {
@@ -663,6 +677,13 @@ fn register_methodspec_mappings(
     };
 
     for methodspec in methodspec_table {
+        let methodspec = match methodspec {
+            Ok(row) => row,
+            Err(e) => {
+                log::warn!("skipping unreadable metadata row: {e}");
+                continue;
+            }
+        };
         let method_token = methodspec.method.token;
 
         // Check if this MethodSpec references a known decryptor.

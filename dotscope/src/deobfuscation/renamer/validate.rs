@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use crate::deobfuscation::renamer::context::IdentifierKind;
+use crate::{deobfuscation::renamer::context::IdentifierKind, utils::truncate_chars};
 
 /// Validates and normalizes a suggested name.
 ///
@@ -47,11 +47,7 @@ pub fn validate_name(name: &str, kind: IdentifierKind, max_length: usize) -> Opt
     }
 
     // Truncate
-    let truncated = if cleaned.len() > max_length {
-        &cleaned[..max_length]
-    } else {
-        cleaned
-    };
+    let truncated = truncate_chars(cleaned, max_length);
 
     // Apply casing convention
     let result = match kind {

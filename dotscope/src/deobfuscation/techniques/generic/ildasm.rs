@@ -68,6 +68,13 @@ impl Technique for GenericIldasm {
         };
 
         for attr in custom_attr_table {
+            let attr = match attr {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             let is_module_or_assembly =
                 attr.parent.tag == TableId::Module || attr.parent.tag == TableId::Assembly;
             if !is_module_or_assembly {

@@ -21,8 +21,8 @@ use crate::{
         signatures::{parse_field_signature, TypeSignature},
         streams::Strings,
         tables::{
-            ClassLayoutRaw, FieldRaw, MemberRefRaw, MetadataTable, MethodDefRaw, TableId,
-            TypeDefRaw, TypeRefRaw,
+            skip_unreadable, ClassLayoutRaw, FieldRaw, MemberRefRaw, MetadataTable, MethodDefRaw,
+            TableId, TypeDefRaw, TypeRefRaw,
         },
         token::Token,
         typesystem::{wellknown, PointerSize},
@@ -41,7 +41,7 @@ pub(crate) fn get_field_data_size(assembly: &CilObject, field_rid: u32) -> Optio
     let blobs = assembly.blob()?;
 
     let field_table = tables.table::<FieldRaw>()?;
-    let field_row = field_table.get(field_rid)?;
+    let field_row = field_table.get(field_rid).ok().flatten()?;
 
     let sig_data = blobs.get(field_row.signature as usize).ok()?;
     let field_sig = parse_field_signature(sig_data).ok()?;
@@ -61,6 +61,13 @@ pub(crate) fn get_field_data_size(assembly: &CilObject, field_rid: u32) -> Optio
 
             let class_layout_table = tables.table::<ClassLayoutRaw>()?;
             for layout in class_layout_table {
+                let layout = match layout {
+                    Ok(row) => row,
+                    Err(e) => {
+                        log::warn!("skipping unreadable metadata row: {e}");
+                        continue;
+                    }
+                };
                 if layout.parent == type_rid {
                     return Some(layout.class_size as usize);
                 }
@@ -407,10 +414,13 @@ pub(crate) fn resolve_methoddef_declaring_type<'a>(
 ) -> Option<ResolvedType<'a>> {
     let methoddef_table = methoddef_table?;
     let typedef_table = typedef_table?;
-    let method = methoddef_table.get(method_row)?;
+    let method = methoddef_table.get(method_row).ok().flatten()?;
 
+    // No error channel here (the function answers `Option`), so an unreadable row is
+    // reported and skipped rather than vanishing inside the iterator.
     let typedef = typedef_table
         .iter()
+        .filter_map(skip_unreadable)
         .filter(|t| t.method_list <= method.rid)
         .last()?;
 
@@ -439,12 +449,12 @@ pub(crate) fn resolve_memberref_declaring_type<'a>(
     strings: &'a Strings<'a>,
 ) -> Option<ResolvedType<'a>> {
     let memberref_table = memberref_table?;
-    let memberref = memberref_table.get(memberref_row)?;
+    let memberref = memberref_table.get(memberref_row).ok().flatten()?;
 
     match memberref.class.tag {
         TableId::TypeDef => {
             let typedef_table = typedef_table?;
-            let typedef = typedef_table.get(memberref.class.row)?;
+            let typedef = typedef_table.get(memberref.class.row).ok().flatten()?;
             let name = strings.get(typedef.type_name as usize).ok()?;
             let namespace = strings.get(typedef.type_namespace as usize).ok();
             Some(ResolvedType {
@@ -456,7 +466,7 @@ pub(crate) fn resolve_memberref_declaring_type<'a>(
         }
         TableId::TypeRef => {
             let typeref_table = typeref_table?;
-            let typeref = typeref_table.get(memberref.class.row)?;
+            let typeref = typeref_table.get(memberref.class.row).ok().flatten()?;
             let name = strings.get(typeref.type_name as usize).ok()?;
             let namespace = strings.get(typeref.type_namespace as usize).ok();
             Some(ResolvedType {
@@ -947,6 +957,13 @@ mod tests {
 
         let mut found_marker = false;
         for attr in ca_table {
+            let attr = match attr {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             if let Some(resolved) = resolve_constructor_type(
                 attr.constructor.tag,
                 attr.constructor.row,

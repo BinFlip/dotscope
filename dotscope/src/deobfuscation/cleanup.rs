@@ -46,7 +46,8 @@ use crate::{
     },
     metadata::{
         tables::{
-            AssemblyRaw, FieldRaw, ModuleRaw, NestedClassRaw, TableDataOwned, TableId, TypeDefRaw,
+            skip_unreadable, AssemblyRaw, FieldRaw, ModuleRaw, NestedClassRaw, TableDataOwned,
+            TableId, TypeDefRaw,
         },
         token::Token,
         typesystem::wellknown,
@@ -481,7 +482,7 @@ fn repair_invalid_module_guids(cil_assembly: &mut CilAssembly, ctx: &AnalysisCon
     let Some(module_table) = tables.table::<ModuleRaw>() else {
         return;
     };
-    let Some(row) = module_table.get(1) else {
+    let Some(row) = module_table.get(1).ok().flatten() else {
         return;
     };
 
@@ -550,7 +551,7 @@ fn needs_metadata_repair(assembly: &CilObject) -> bool {
         if t.row_count > 1 {
             return true;
         }
-        if let Some(row) = t.get(1) {
+        if let Some(row) = t.get(1).ok().flatten() {
             let guid_count: u32 = assembly.guids().map_or(0, |g| (g.data().len() / 16) as u32);
             if (row.encid != 0 && row.encid > guid_count)
                 || (row.encbaseid != 0 && row.encbaseid > guid_count)
@@ -596,6 +597,7 @@ fn repair_duplicate_typedef_rows(
         .table::<NestedClassRaw>()
         .map(|rows| {
             rows.into_iter()
+                .filter_map(skip_unreadable)
                 .map(|r| (r.nested_class, r.enclosing_class, r.rid))
                 .collect()
         })
@@ -609,7 +611,7 @@ fn repair_duplicate_typedef_rows(
     // Collect TypeDef rows to check for duplicates and emptiness
     let typedef_rows: Vec<TypeDefRaw> = tables
         .table::<TypeDefRaw>()
-        .map(|t| t.into_iter().collect())
+        .map(|t| t.into_iter().filter_map(skip_unreadable).collect())
         .unwrap_or_default();
 
     let method_count = cil_assembly.original_table_row_count(TableId::MethodDef);
@@ -713,57 +715,71 @@ fn repair_duplicate_typedef_rows(
 /// This corrects any invalid access to `Private` (1), which is the most
 /// restrictive valid option and unlikely to break anything.
 fn repair_global_field_visibility(cil_assembly: &mut CilAssembly, ctx: &AnalysisContext) {
-    let Some(tables) = cil_assembly.view().tables() else {
-        return;
-    };
-    let Some(typedefs) = tables.table::<TypeDefRaw>() else {
-        return;
-    };
-
-    // Find <Module> type (always RID 1) and its field range
-    let typedef_rows: Vec<TypeDefRaw> = typedefs.into_iter().collect();
-    let Some(module_type) = typedef_rows.first() else {
-        return;
-    };
-    let field_start = module_type.field_list;
-    let field_end = if let Some(next) = typedef_rows.get(1) {
-        next.field_list
-    } else {
-        // If there's only one type, the field end is the total field count + 1
-        cil_assembly
-            .original_table_row_count(TableId::Field)
-            .saturating_add(1)
-    };
-
-    if field_start >= field_end {
-        return;
-    }
-
-    // Check each <Module> field for invalid access
-    let Some(fields_table) = tables.table::<FieldRaw>() else {
-        return;
-    };
-    let fields: Vec<FieldRaw> = fields_table.into_iter().collect();
-    let mut repaired: usize = 0;
-
-    for rid in field_start..field_end {
-        let idx = rid.saturating_sub(1) as usize;
-        let Some(field) = fields.get(idx) else {
-            break;
+    // Collected in a first pass so the read borrow of the view is released before the writes
+    // below take `cil_assembly` mutably.
+    let pending: Vec<(u32, FieldRaw)> = {
+        let Some(tables) = cil_assembly.view().tables() else {
+            return;
         };
-        let access = field.flags & 0x0007; // FieldAccessMask per ECMA-335 §II.23.1.5
+        let Some(typedefs) = tables.table::<TypeDefRaw>() else {
+            return;
+        };
 
-        // Valid access for global fields: CompilerControlled(0), Private(1), or Public(6)
-        if !matches!(access, 0x0000 | 0x0001 | 0x0006) {
-            let mut fixed = field.clone();
-            fixed.flags = (fixed.flags & !0x0007) | 0x0001; // Set to Private
-            if let Err(e) =
-                cil_assembly.table_row_update(TableId::Field, rid, TableDataOwned::Field(fixed))
-            {
-                log::warn!("Failed to repair <Module> field {rid} visibility: {e}");
-            } else {
-                repaired = repaired.saturating_add(1);
-            }
+        // Find <Module> type (always RID 1) and its field range.
+        //
+        // Fetched by RID rather than by position in a collected `Vec`: `skip_unreadable`
+        // drops unparseable rows, so in a damaged assembly — exactly what this function
+        // exists to repair — position stops tracking RID and `<Module>` would be read from
+        // whatever type happened to survive first. `MetadataTable::get` derives each row's
+        // offset from its RID, so one unreadable row cannot displace any other.
+        let Some(module_type) = typedefs.get(1).ok().flatten() else {
+            return;
+        };
+        let field_start = module_type.field_list;
+        let field_end = match typedefs.get(2) {
+            Ok(Some(next)) => next.field_list,
+            // Only one type, or TypeDef RID 2 is unreadable: fall back to the whole table.
+            _ => cil_assembly
+                .original_table_row_count(TableId::Field)
+                .saturating_add(1),
+        };
+
+        if field_start >= field_end {
+            return;
+        }
+
+        let Some(fields_table) = tables.table::<FieldRaw>() else {
+            return;
+        };
+
+        (field_start..field_end)
+            .filter_map(|rid| {
+                // Same reason as above, and it matters more here: the repaired row is written
+                // back under this `rid`, so reading the wrong row would copy one field's flags
+                // onto a different field.
+                let field = fields_table.get(rid).ok().flatten()?;
+                let access = field.flags & 0x0007; // FieldAccessMask per ECMA-335 §II.23.1.5
+
+                // Valid for global fields: CompilerControlled(0), Private(1), Public(6).
+                if matches!(access, 0x0000 | 0x0001 | 0x0006) {
+                    return None;
+                }
+
+                let mut fixed = field;
+                fixed.flags = (fixed.flags & !0x0007) | 0x0001; // Set to Private
+                Some((rid, fixed))
+            })
+            .collect()
+    };
+
+    let mut repaired: usize = 0;
+    for (rid, fixed) in pending {
+        if let Err(e) =
+            cil_assembly.table_row_update(TableId::Field, rid, TableDataOwned::Field(fixed))
+        {
+            log::warn!("Failed to repair <Module> field {rid} visibility: {e}");
+        } else {
+            repaired = repaired.saturating_add(1);
         }
     }
 

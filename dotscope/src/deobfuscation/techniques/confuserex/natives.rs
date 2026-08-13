@@ -229,6 +229,13 @@ fn collect_implmap_methods(tables: &crate::metadata::streams::TablesHeader<'_>) 
     let mut pinvoke_methods = HashSet::new();
     if let Some(implmap_table) = tables.table::<ImplMapRaw>() {
         for row in implmap_table {
+            let row = match row {
+                Ok(row) => row,
+                Err(e) => {
+                    log::warn!("skipping unreadable metadata row: {e}");
+                    continue;
+                }
+            };
             pinvoke_methods.insert(row.member_forwarded.token);
         }
     }

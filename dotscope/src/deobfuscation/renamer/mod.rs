@@ -218,7 +218,7 @@ fn execute_simple_rename(assembly: &CilObject) -> Result<Vec<RenameEntry>> {
     // Collect obfuscated names from TypeDef
     if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
         for rid in 1..=typedef_table.row_count {
-            if let Some(typedef) = typedef_table.get(rid) {
+            if let Some(typedef) = typedef_table.get(rid)? {
                 // Skip <Module> (RID 1)
                 if rid == 1 {
                     continue;
@@ -247,7 +247,7 @@ fn execute_simple_rename(assembly: &CilObject) -> Result<Vec<RenameEntry>> {
     // Collect obfuscated method names from MethodDef
     if let Some(methoddef_table) = tables.table::<MethodDefRaw>() {
         for rid in 1..=methoddef_table.row_count {
-            if let Some(methoddef) = methoddef_table.get(rid) {
+            if let Some(methoddef) = methoddef_table.get(rid)? {
                 let name_index = methoddef.name;
                 if name_index > 0 {
                     if let Ok(name) = strings.get(name_index as usize) {
@@ -271,7 +271,7 @@ fn execute_simple_rename(assembly: &CilObject) -> Result<Vec<RenameEntry>> {
     // Collect obfuscated field names from Field
     if let Some(field_table) = tables.table::<FieldRaw>() {
         for rid in 1..=field_table.row_count {
-            if let Some(field) = field_table.get(rid) {
+            if let Some(field) = field_table.get(rid)? {
                 let name_index = field.name;
                 if name_index > 0 {
                     if let Ok(name) = strings.get(name_index as usize) {
@@ -295,7 +295,7 @@ fn execute_simple_rename(assembly: &CilObject) -> Result<Vec<RenameEntry>> {
     // Collect obfuscated parameter names from Param
     if let Some(param_table) = tables.table::<ParamRaw>() {
         for rid in 1..=param_table.row_count {
-            if let Some(param) = param_table.get(rid) {
+            if let Some(param) = param_table.get(rid)? {
                 let name_index = param.name;
                 if name_index > 0 {
                     if let Ok(name) = strings.get(name_index as usize) {
@@ -351,7 +351,7 @@ fn update_row_name_field(
         match table_id {
             TableId::TypeDef => {
                 let table = tables.table::<TypeDefRaw>();
-                table.and_then(|t| t.get(rid)).map(|row| {
+                table.and_then(|t| t.get(rid).ok().flatten()).map(|row| {
                     let mut row = row.clone();
                     row.type_name = new_string_placeholder;
                     TableDataOwned::TypeDef(row)
@@ -359,7 +359,7 @@ fn update_row_name_field(
             }
             TableId::MethodDef => {
                 let table = tables.table::<MethodDefRaw>();
-                table.and_then(|t| t.get(rid)).map(|row| {
+                table.and_then(|t| t.get(rid).ok().flatten()).map(|row| {
                     let mut row = row.clone();
                     row.name = new_string_placeholder;
                     TableDataOwned::MethodDef(row)
@@ -367,7 +367,7 @@ fn update_row_name_field(
             }
             TableId::Field => {
                 let table = tables.table::<FieldRaw>();
-                table.and_then(|t| t.get(rid)).map(|row| {
+                table.and_then(|t| t.get(rid).ok().flatten()).map(|row| {
                     let mut row = row.clone();
                     row.name = new_string_placeholder;
                     TableDataOwned::Field(row)
@@ -375,7 +375,7 @@ fn update_row_name_field(
             }
             TableId::Param => {
                 let table = tables.table::<ParamRaw>();
-                table.and_then(|t| t.get(rid)).map(|row| {
+                table.and_then(|t| t.get(rid).ok().flatten()).map(|row| {
                     let mut row = row.clone();
                     row.name = new_string_placeholder;
                     TableDataOwned::Param(row)
@@ -616,7 +616,7 @@ mod tests {
 
         let mut type_names = Vec::new();
         for rid in 1..=typedef_table.row_count {
-            if let Some(row) = typedef_table.get(rid) {
+            if let Some(row) = typedef_table.get(rid).ok().flatten() {
                 if let Ok(name) = strings.get(row.type_name as usize) {
                     type_names.push(name.to_string());
                 }
@@ -663,7 +663,7 @@ mod tests {
 
         let mut method_names = Vec::new();
         for rid in 1..=methoddef_table.row_count {
-            if let Some(row) = methoddef_table.get(rid) {
+            if let Some(row) = methoddef_table.get(rid).ok().flatten() {
                 if let Ok(name) = strings.get(row.name as usize) {
                     method_names.push(name.to_string());
                 }

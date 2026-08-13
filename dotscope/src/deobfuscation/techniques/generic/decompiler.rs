@@ -186,7 +186,7 @@ fn detect_antidecompiler_types(
             continue;
         };
 
-        let row = typedef_table.get(nested.token.row());
+        let row = typedef_table.get(nested.token.row()).ok().flatten();
         let Some(row) = row else {
             continue;
         };
@@ -231,6 +231,13 @@ fn detect_fake_attributes(
     };
 
     for attr in custom_attr_table {
+        let attr = match attr {
+            Ok(row) => row,
+            Err(e) => {
+                log::warn!("skipping unreadable metadata row: {e}");
+                continue;
+            }
+        };
         let is_module_or_assembly =
             attr.parent.tag == TableId::Module || attr.parent.tag == TableId::Assembly;
         if !is_module_or_assembly {

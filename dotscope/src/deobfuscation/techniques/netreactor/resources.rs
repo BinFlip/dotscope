@@ -998,6 +998,13 @@ pub fn find_assembly_typeref(assembly: &CilObject) -> Option<Token> {
     let table = tables.table::<TypeRefRaw>()?;
     let strings = assembly.strings()?;
     for row in table {
+        let row = match row {
+            Ok(row) => row,
+            Err(e) => {
+                log::warn!("skipping unreadable metadata row: {e}");
+                continue;
+            }
+        };
         let Ok(name) = strings.get(row.type_name as usize) else {
             continue;
         };

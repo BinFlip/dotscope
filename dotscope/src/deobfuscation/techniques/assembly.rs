@@ -167,7 +167,7 @@ impl WorkingAssembly {
                 .view()
                 .tables()
                 .and_then(|t| t.table::<FieldRvaRaw>())
-                .and_then(|table| table.get(fieldrva_rid))
+                .and_then(|table| table.get(fieldrva_rid).ok().flatten())
                 .ok_or_else(|| Error::Other(format!("FieldRVA row {fieldrva_rid} not found")))?;
 
             let updated_row = FieldRvaRaw {
