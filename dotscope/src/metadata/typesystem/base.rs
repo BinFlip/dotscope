@@ -352,7 +352,7 @@ impl CilTypeRef {
     /// See the [Convenience Accessors](#convenience-accessors) section above for performance notes.
     #[must_use]
     pub fn fullname(&self) -> Option<String> {
-        self.upgrade().map(|t| t.fullname())
+        self.upgrade().map(|t| t.fullname().to_string())
     }
 
     /// Gets a clone of the nested types collection, or [`None`] if dropped.
@@ -1100,8 +1100,16 @@ pub enum CilFlavor {
     Pinned,
     /// Function pointer type with a specific method signature
     FnPtr {
-        /// The method signature this function pointer must match
-        signature: SignatureMethod,
+        /// The method signature this function pointer must match.
+        ///
+        /// Boxed deliberately, matching [`TypeSignature::FnPtr`]. An inline `SignatureMethod`
+        /// is ~144 bytes and, as the widest variant, sets the size of `CilFlavor` and
+        /// everything built on it — `SymbolicValue`, and through it every `EmValue` moved on
+        /// the interpreter's evaluation stack, local slot, argument slot and array element.
+        /// Function pointers are rare in real assemblies, so the indirection is off the hot
+        /// path while the size saving applies to every value. See the `EmValue` size
+        /// assertion in `emulation::value::emvalue`.
+        signature: Box<SignatureMethod>,
     },
     /// Generic parameter from a type or method definition
     GenericParameter {
@@ -1692,7 +1700,7 @@ impl From<&TypeSignature> for CilFlavor {
 
             // Function pointer - carry the full signature
             TypeSignature::FnPtr(method_sig) => CilFlavor::FnPtr {
-                signature: (**method_sig).clone(),
+                signature: method_sig.clone(),
             },
 
             // Single-dimensional zero-based array
@@ -1770,5 +1778,5 @@ impl From<&TypeSignature> for CilFlavor {
 ///
 /// Per ECMA-335, `native int` and `native uint` (`System.IntPtr` /
 /// `System.UIntPtr`) are pointer-sized: 4 bytes on PE32, 8 bytes on PE32+.
-/// Use [`PointerSize::from_pe`] to derive from the PE header.
+/// Use [`PointerSize::from_is_64bit`] to derive from the PE header.
 pub use analyssa::PointerSize;

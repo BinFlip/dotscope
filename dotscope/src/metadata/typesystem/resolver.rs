@@ -151,6 +151,7 @@ use crate::{
             CompleteTypeSpec, TypeRegistry, TypeSource,
         },
     },
+    utils::{truncate_chars, LazyList},
     Error::{RecursionLimit, TypeError, TypeMissingParent, TypeNotFound},
     Result,
 };
@@ -522,11 +523,7 @@ impl TypeResolver {
         let return_info = format!("{:?}", signature.return_type.base).replace(' ', "");
 
         // Truncate return_info to avoid extremely long names
-        let return_short = if return_info.len() > 16 {
-            &return_info[..16]
-        } else {
-            &return_info
-        };
+        let return_short = truncate_chars(&return_info, 16);
 
         format!("FnPtr_{calling_convention}_{param_count}_{return_short}")
     }
@@ -764,7 +761,7 @@ impl TypeResolver {
                 let fnptr_type = self.registry.get_or_create_type(&CompleteTypeSpec {
                     token_init: self.token_init.take(),
                     flavor: CilFlavor::FnPtr {
-                        signature: *fn_ptr.clone(),
+                        signature: fn_ptr.clone(),
                     },
                     namespace: String::new(),
                     name,
@@ -854,7 +851,7 @@ impl TypeResolver {
                         instantiation: SignatureMethodSpec {
                             generic_args: vec![],
                         },
-                        custom_attributes: Arc::new(boxcar::Vec::new()),
+                        custom_attributes: LazyList::new(),
                         generic_args: {
                             let type_ref_list = Arc::new(boxcar::Vec::with_capacity(1));
                             type_ref_list.push(arg_type.into());
@@ -1219,7 +1216,7 @@ mod tests {
             constraints: Arc::new(boxcar::Vec::new()),
             rid: 1,
             offset: 1,
-            custom_attributes: Arc::new(boxcar::Vec::new()),
+            custom_attributes: LazyList::new(),
         });
 
         list_type.generic_params.push(type_param);
@@ -1238,7 +1235,15 @@ mod tests {
 
         assert_eq!(list_int.generic_args.count(), 1);
         assert_eq!(
-            list_int.generic_args[0].generic_args[0].name().unwrap(),
+            list_int
+                .generic_args
+                .get(0)
+                .unwrap()
+                .generic_args
+                .get(0)
+                .unwrap()
+                .name()
+                .unwrap(),
             "Int32"
         );
     }

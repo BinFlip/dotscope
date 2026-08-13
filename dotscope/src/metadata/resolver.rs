@@ -462,16 +462,22 @@ impl<'a> TokenResolver<'a> {
                 self.assembly.types().resolve(&type_token)
             }
             0x06 => {
-                for type_info in self.assembly.types().all_types() {
-                    for (_, method_ref) in type_info.methods.iter() {
-                        if let Some(method) = method_ref.upgrade() {
-                            if method.token == method_token {
-                                return self.assembly.types().get(&type_info.token);
-                            }
-                        }
+                // O(1) via the method's own back-pointer where it is set. This lookup is on the
+                // emulator's hottest paths — every `call`/`callvirt`/`newobj` — so the former
+                // scan over every type and every method made dispatch O(total methods).
+                if let Ok(method) = self.assembly.method(&method_token) {
+                    if let Some(declaring) = method.declaring_type_rc() {
+                        return Some(declaring);
                     }
                 }
-                None
+
+                // Fallback: the `OnceLock` back-pointer is legitimately unset for synthetic
+                // methods (Reflection.Emit), so the registry's memoised index answers those.
+                let type_token = self
+                    .assembly
+                    .types()
+                    .declaring_type_token_of_method(method_token)?;
+                self.assembly.types().get(&type_token)
             }
             0x2B => {
                 let method_spec = self.assembly.method_spec(&method_token).ok()?;
@@ -484,10 +490,9 @@ impl<'a> TokenResolver<'a> {
 
     /// Finds the declaring type of a field token.
     ///
-    /// Scans all types in the registry to find which type's field list contains
-    /// the given field token. Handles both FieldDef (0x04) and MemberRef (0x0A)
-    /// tokens — for MemberRef, the `declaredby` field is used for O(1) lookup;
-    /// for FieldDef, an O(n) scan over all types is performed.
+    /// Handles both FieldDef (0x04) and MemberRef (0x0A) tokens. MemberRef resolves through
+    /// the `declaredby` field; FieldDef resolves through the type registry's memoised
+    /// `field_to_type` index.
     ///
     /// # Arguments
     ///
@@ -500,8 +505,9 @@ impl<'a> TokenResolver<'a> {
     ///
     /// # Performance
     ///
-    /// For MemberRef tokens, resolution is O(1) via the `declaredby` field.
-    /// For FieldDef tokens, this performs an O(n) scan over all types.
+    /// O(1) for MemberRef via `declaredby`. For FieldDef, the first lookup of a given token
+    /// populates the registry index and every later lookup is O(1); this is on the
+    /// `ldsfld`/`stsfld` path, so the repeat case is the one that matters.
     ///
     /// # Examples
     ///
@@ -527,15 +533,13 @@ impl<'a> TokenResolver<'a> {
                 self.resolve_declaring_type(&member.declaredby)
             }
             0x04 => {
-                // FieldDef: scan all types
-                for type_info in self.assembly.types().all_types() {
-                    for (_, field_rc) in type_info.fields.iter() {
-                        if field_rc.token == field_token {
-                            return self.assembly.types().get(&type_info.token);
-                        }
-                    }
-                }
-                None
+                // FieldDef: memoised index rather than a scan over every type's field list.
+                // Reached on every `ldsfld`/`stsfld`.
+                let type_token = self
+                    .assembly
+                    .types()
+                    .declaring_type_token_of_field(field_token)?;
+                self.assembly.types().get(&type_token)
             }
             _ => None,
         }

@@ -116,6 +116,7 @@ use crate::{
             CompleteTypeSpec, TypeRegistry, TypeSource,
         },
     },
+    utils::{truncate_chars, LazyList},
     Error::TypeError,
     Result,
 };
@@ -796,7 +797,9 @@ impl TypeBuilder {
 
         let fn_ptr_type = self.registry.get_or_create_type(&CompleteTypeSpec {
             token_init: self.token_init.take(),
-            flavor: CilFlavor::FnPtr { signature },
+            flavor: CilFlavor::FnPtr {
+                signature: Box::new(signature),
+            },
             namespace: String::new(),
             name,
             source: self.source.clone(),
@@ -919,7 +922,7 @@ impl TypeBuilder {
                         instantiation: SignatureMethodSpec {
                             generic_args: vec![],
                         },
-                        custom_attributes: Arc::new(boxcar::Vec::new()),
+                        custom_attributes: LazyList::new(),
                         generic_args: {
                             let type_ref_list = Arc::new(boxcar::Vec::with_capacity(1));
                             type_ref_list.push(arg.clone().into());
@@ -991,11 +994,7 @@ impl TypeBuilder {
         let return_info = format!("{:?}", signature.return_type.base).replace(' ', "");
 
         // Truncate return_info to avoid extremely long names
-        let return_short = if return_info.len() > 16 {
-            &return_info[..16]
-        } else {
-            &return_info
-        };
+        let return_short = truncate_chars(&return_info, 16);
 
         format!("FnPtr_{calling_convention}_{param_count}_{return_short}")
     }
@@ -1217,7 +1216,7 @@ mod tests {
             constraints: Arc::new(boxcar::Vec::new()),
             rid: 0,
             offset: 0,
-            custom_attributes: Arc::new(boxcar::Vec::new()),
+            custom_attributes: LazyList::new(),
         });
 
         list_type.generic_params.push(generic_param);
@@ -1243,7 +1242,13 @@ mod tests {
 
         assert_eq!(list_int_instance.generic_args.count(), 1);
         assert_eq!(
-            list_int_instance.generic_args[0].generic_args[0]
+            list_int_instance
+                .generic_args
+                .get(0)
+                .unwrap()
+                .generic_args
+                .get(0)
+                .unwrap()
                 .name()
                 .unwrap(),
             "Int32"
@@ -1525,7 +1530,7 @@ mod tests {
             constraints: Arc::new(boxcar::Vec::new()),
             rid: 0,
             offset: 0,
-            custom_attributes: Arc::new(boxcar::Vec::new()),
+            custom_attributes: LazyList::new(),
         });
 
         let value_param = Arc::new(GenericParam {
@@ -1537,7 +1542,7 @@ mod tests {
             constraints: Arc::new(boxcar::Vec::new()),
             rid: 1,
             offset: 1,
-            custom_attributes: Arc::new(boxcar::Vec::new()),
+            custom_attributes: LazyList::new(),
         });
 
         dict_type.generic_params.push(key_param);
@@ -1565,13 +1570,25 @@ mod tests {
 
         assert_eq!(dict_instance.generic_args.count(), 2);
         assert_eq!(
-            dict_instance.generic_args[0].generic_args[0]
+            dict_instance
+                .generic_args
+                .get(0)
+                .unwrap()
+                .generic_args
+                .get(0)
+                .unwrap()
                 .name()
                 .unwrap(),
             "String"
         );
         assert_eq!(
-            dict_instance.generic_args[1].generic_args[0]
+            dict_instance
+                .generic_args
+                .get(1)
+                .unwrap()
+                .generic_args
+                .get(0)
+                .unwrap()
                 .name()
                 .unwrap(),
             "Int32"
@@ -1580,13 +1597,25 @@ mod tests {
         // With the simplified approach, we only store the resolved types
         // The order corresponds to the generic parameter order (0=TKey, 1=TValue)
         assert_eq!(
-            dict_instance.generic_args[0].generic_args[0]
+            dict_instance
+                .generic_args
+                .get(0)
+                .unwrap()
+                .generic_args
+                .get(0)
+                .unwrap()
                 .name()
                 .unwrap(),
             "String"
         ); // TKey -> String
         assert_eq!(
-            dict_instance.generic_args[1].generic_args[0]
+            dict_instance
+                .generic_args
+                .get(1)
+                .unwrap()
+                .generic_args
+                .get(0)
+                .unwrap()
                 .name()
                 .unwrap(),
             "Int32"

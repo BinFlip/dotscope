@@ -162,7 +162,7 @@ impl<'a> TypeQuery<'a> {
     /// Filters to types whose fullname matches exactly.
     #[must_use]
     pub fn fullname(mut self, fqn: &'a str) -> Self {
-        self.filters.push(Box::new(move |t| t.fullname() == fqn));
+        self.filters.push(Box::new(move |t| &*t.fullname() == fqn));
         self
     }
 
