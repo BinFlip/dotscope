@@ -297,8 +297,17 @@ impl CallResolver {
                     is_virtual,
                     pre_push_value: None,
                     is_reflection_invoke: false,
-                    #[allow(clippy::cast_possible_truncation)]
-                    assembly_index: Some(i as u8),
+                    // The index must survive intact: it is what binds the new frame to the
+                    // metadata the token was resolved against. A narrowing conversion here
+                    // wraps a large index onto a different assembly's `EmulationContext`,
+                    // which executes a valid token against the wrong method table.
+                    // Unreachable in practice: `max_loaded_assemblies` bounds the list far
+                    // below `u32::MAX`, so this is an invariant check, not a runtime path.
+                    assembly_index: Some(u32::try_from(i).map_err(|_| {
+                        EmulationError::InternalError {
+                            description: format!("assembly index {i} exceeds u32"),
+                        }
+                    })?),
                     method_type_args: None,
                 }));
             }
@@ -1732,7 +1741,14 @@ pub fn maybe_run_type_cctor_for_method(
         return Ok(false);
     }
 
-    // Find the type that declares this method
+    // Find the type that declares this method.
+    //
+    // This runs for every call instruction, including after the type is initialised and this
+    // function has nothing left to do. The initialisation check cannot be hoisted above it —
+    // it is keyed by *type* token, which is precisely what this lookup produces. The lookup
+    // itself is therefore what has to be cheap: `declaring_type` resolves through the method's
+    // own back-pointer, falling back to a memoised registry index. A scan over every type and
+    // method would make dispatch O(total methods in assembly).
     let Some(type_info) = context.assembly().resolver().declaring_type(method) else {
         return Ok(false);
     };

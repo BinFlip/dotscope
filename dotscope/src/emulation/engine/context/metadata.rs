@@ -97,7 +97,7 @@ impl EmulationContext {
         let blob = self.assembly.blob()?;
         let table = <_ as TableAccess<StandAloneSigRaw>>::table(tables)?;
         let row = token.row();
-        let raw_sig = table.get(row)?;
+        let raw_sig = table.get(row).ok().flatten()?;
         // Parse the raw signature using the blob heap
         let owned_sig = raw_sig.to_owned(blob).ok()?;
         Some(owned_sig.parsed_signature.clone())
@@ -126,7 +126,7 @@ impl EmulationContext {
         let blob = self.assembly.blob()?;
         let table = <_ as TableAccess<TypeSpecRaw>>::table(tables)?;
         let row = token.row();
-        let raw_typespec = table.get(row)?;
+        let raw_typespec = table.get(row).ok().flatten()?;
         // Parse the raw signature using the blob heap
         let owned_typespec = raw_typespec.to_owned(blob).ok()?;
         Some(owned_typespec.signature.clone())

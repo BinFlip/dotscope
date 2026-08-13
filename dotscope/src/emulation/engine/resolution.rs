@@ -38,7 +38,7 @@ pub enum CallResolution {
         /// Whether the caller expects a return value on the stack.
         expects_return: bool,
         /// Assembly index for dynamically loaded assemblies (`None` = primary).
-        assembly_index: Option<u8>,
+        assembly_index: Option<u32>,
         /// Method-level generic type arguments (`!!0`, `!!1`, ...) from MethodSpec.
         method_type_args: Option<Vec<Token>>,
     },
@@ -81,7 +81,7 @@ pub enum CallResolution {
         /// are wrapped in `TargetInvocationException`.
         is_reflection_invoke: bool,
         /// Assembly index for cross-assembly redirects (`None` = primary).
-        assembly_index: Option<u8>,
+        assembly_index: Option<u32>,
         /// Method-level generic type arguments (`!!0`, `!!1`, ...) from MethodSpec.
         method_type_args: Option<Vec<Token>>,
     },

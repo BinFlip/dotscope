@@ -178,31 +178,20 @@ pub fn handle_ldsfld(
         }
     }
 
-    if let Some((type_token, flavor)) = context.get_field_type_info(field) {
-        if address_space.statics().is_type_initialized(type_token)? {
-            let default_value = match flavor {
-                CilFlavor::Boolean
-                | CilFlavor::Char
-                | CilFlavor::I1
-                | CilFlavor::U1
-                | CilFlavor::I2
-                | CilFlavor::U2
-                | CilFlavor::I4
-                | CilFlavor::U4 => EmValue::I32(0),
-                CilFlavor::I8 | CilFlavor::U8 => EmValue::I64(0),
-                CilFlavor::R4 => EmValue::F32(0.0),
-                CilFlavor::R8 => EmValue::F64(0.0),
-                CilFlavor::I | CilFlavor::U => EmValue::NativeInt(0),
-                _ => EmValue::Null,
-            };
-            thread.push(default_value)?;
-            return Ok(());
-        }
-    }
-
     // .NET zero-initializes all static fields before any code runs.
     // If we have type info, use the type-appropriate default; otherwise use Null
     // (correct for reference types, the common case for unknown-type fields).
+    //
+    // There is deliberately no branch on `is_type_initialized` here. A previous version called
+    // `get_field_type_info` twice — once inside an initialized-type check and once outside —
+    // and both arms computed the *same* default from the same flavor, so the check changed
+    // nothing observable while paying for a second lookup on every `ldsfld` of an
+    // uninitialized static. Reading a static before its `.cctor` has run yields the same zero
+    // value it would afterwards, which is exactly what the runtime guarantees.
+    //
+    // Note this deliberately differs from `EmValue::default_for_flavor`: on the CIL evaluation
+    // stack `bool` and the sub-word integers widen to `I32`, whereas that helper preserves
+    // `Bool`.
     if let Some((_type_token, flavor)) = context.get_field_type_info(field) {
         let default_value = match flavor {
             CilFlavor::Boolean

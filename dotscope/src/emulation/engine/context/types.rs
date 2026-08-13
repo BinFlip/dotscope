@@ -134,7 +134,7 @@ impl EmulationContext {
             if is_bcl_wrapper_token(source_token) && target_token.is_table(TableId::TypeDef) {
                 if let Some(target_type) = self.get_type(target_token) {
                     let name = target_type.fullname();
-                    if name == "System.Object" || name == "System.ValueType" {
+                    if &*name == "System.Object" || &*name == "System.ValueType" {
                         return true;
                     }
                     if target_type.is_interface() {
@@ -373,7 +373,7 @@ impl EmulationContext {
     #[must_use]
     pub fn format_type_token(&self, type_token: Token) -> String {
         if let Some(type_info) = self.get_type(type_token) {
-            type_info.fullname()
+            type_info.fullname().to_string()
         } else {
             format!("0x{:08X}", type_token.value())
         }

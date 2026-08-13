@@ -33,6 +33,7 @@ use std::collections::{BinaryHeap, HashMap};
 
 use crate::{
     emulation::{
+        engine::EmulationError,
         thread::{EmulationThread, ThreadPriority, ThreadState, WaitReason},
         EmValue, HeapRef, ThreadId,
     },
@@ -192,6 +193,12 @@ pub struct ThreadScheduler {
 
     /// Next thread ID to assign.
     next_thread_id: u32,
+
+    /// Maximum number of threads this scheduler will hold.
+    ///
+    /// Set from `EmulationLimits::max_threads`. `usize::MAX` means unlimited, which is the
+    /// default so that constructing a scheduler directly is unchanged.
+    max_threads: usize,
 }
 
 impl ThreadScheduler {
@@ -223,7 +230,15 @@ impl ThreadScheduler {
             total_instructions: 0,
             next_sequence: 0,
             next_thread_id: 2, // 1 is reserved for main thread
+            max_threads: usize::MAX,
         }
+    }
+
+    /// Sets the maximum number of threads this scheduler will hold.
+    ///
+    /// [`spawn`](Self::spawn) fails once the scheduler is at this many threads.
+    pub fn set_max_threads(&mut self, max: usize) {
+        self.max_threads = max;
     }
 
     /// Creates a scheduler with the default quantum of 1000 instructions.
@@ -288,12 +303,27 @@ impl ThreadScheduler {
     /// # Returns
     ///
     /// The thread ID of the spawned thread.
-    pub fn spawn(&mut self, thread: EmulationThread) -> ThreadId {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmulationError::ResourceLimitExceeded`] if the scheduler already holds
+    /// [`max_threads`](Self::set_max_threads) threads. Emulated code controls how many threads
+    /// it asks for, so this ceiling is what stops it from spawning without bound; note that
+    /// threads are counted in all states, including completed ones.
+    pub fn spawn(&mut self, thread: EmulationThread) -> Result<ThreadId> {
+        if self.threads.len() >= self.max_threads {
+            return Err(EmulationError::ResourceLimitExceeded(format!(
+                "thread limit reached ({} threads)",
+                self.max_threads
+            ))
+            .into());
+        }
+
         let id = thread.id();
         let priority = thread.priority();
         self.threads.insert(id, thread);
         self.enqueue_ready(id, priority);
-        id
+        Ok(id)
     }
 
     /// Allocates a new unique thread ID.
@@ -883,7 +913,7 @@ mod tests {
         let mut scheduler = ThreadScheduler::new(100);
         let thread = create_test_thread(1);
 
-        let id = scheduler.spawn(thread);
+        let id = scheduler.spawn(thread).unwrap();
 
         assert_eq!(id, ThreadId::new(1));
         assert_eq!(scheduler.thread_count(), 1);
@@ -896,8 +926,8 @@ mod tests {
         let thread1 = create_test_thread(1);
         let thread2 = create_test_thread(2);
 
-        scheduler.spawn(thread1);
-        scheduler.spawn(thread2);
+        scheduler.spawn(thread1).unwrap();
+        scheduler.spawn(thread2).unwrap();
 
         // First selection should get a thread
         let selected = scheduler.select_next();
@@ -913,7 +943,7 @@ mod tests {
         let mut scheduler = ThreadScheduler::new(3);
         let thread = create_test_thread(1);
 
-        scheduler.spawn(thread);
+        scheduler.spawn(thread).unwrap();
         scheduler.select_next();
 
         // Execute 3 instructions to exhaust quantum
@@ -937,9 +967,9 @@ mod tests {
         high_thread.set_priority(ThreadPriority::Highest);
 
         // Add low priority first
-        scheduler.spawn(low_thread);
+        scheduler.spawn(low_thread).unwrap();
         // Add high priority second
-        scheduler.spawn(high_thread);
+        scheduler.spawn(high_thread).unwrap();
 
         // High priority should be selected first
         let selected = scheduler.select_next();
@@ -951,7 +981,7 @@ mod tests {
         let mut scheduler = ThreadScheduler::new(100);
         let thread = create_test_thread(1);
 
-        scheduler.spawn(thread);
+        scheduler.spawn(thread).unwrap();
         scheduler.select_next();
 
         scheduler.complete_current(Some(EmValue::I32(42)));
@@ -966,7 +996,7 @@ mod tests {
         let mut scheduler = ThreadScheduler::new(100);
         let thread = create_test_thread(1);
 
-        scheduler.spawn(thread);
+        scheduler.spawn(thread).unwrap();
         assert!(!scheduler.all_completed());
 
         scheduler.select_next();
@@ -982,8 +1012,8 @@ mod tests {
         let thread1 = create_test_thread(1);
         let thread2 = create_test_thread(2);
 
-        scheduler.spawn(thread1);
-        scheduler.spawn(thread2);
+        scheduler.spawn(thread1).unwrap();
+        scheduler.spawn(thread2).unwrap();
 
         let first = scheduler.select_next();
         scheduler.yield_current();
@@ -998,7 +1028,7 @@ mod tests {
         let mut scheduler = ThreadScheduler::new(100);
         let thread = create_test_thread(1);
 
-        scheduler.spawn(thread);
+        scheduler.spawn(thread).unwrap();
         scheduler.select_next();
 
         // Block thread with sleep
@@ -1023,7 +1053,7 @@ mod tests {
         let mut scheduler = ThreadScheduler::new(100);
         let thread = create_test_thread(1);
 
-        scheduler.spawn(thread);
+        scheduler.spawn(thread).unwrap();
         scheduler.select_next();
 
         // Block thread (use a dummy HeapRef for the monitor object)

@@ -49,9 +49,12 @@
 //! }
 //! ```
 
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc, RwLock,
+use std::{
+    fmt,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, RwLock,
+    },
 };
 
 use log::{debug, warn};
@@ -66,7 +69,7 @@ use crate::{
         filesystem::VirtualFs,
         loader::{LoadedImage, MappedRegionInfo},
         memory::AddressSpace,
-        process::EmulationConfig,
+        process::{EmulationConfig, EmulationLimits},
         runtime::RuntimeState,
         thread::ThreadContext,
         tracer::TraceWriter,
@@ -590,7 +593,7 @@ impl EmulationProcess {
             .filter(move |t| {
                 let fqn = t.fullname();
                 fqn.ends_with(type_name)
-                    || fqn == type_name
+                    || &*fqn == type_name
                     || fqn.split('.').next_back() == Some(type_name)
             })
             .methods()
@@ -757,19 +760,30 @@ impl EmulationProcess {
     ///
     /// - **Address space**: Memory regions, managed heap, and static fields
     ///   are forked with per-page/per-object CoW semantics
+    /// - **Runtime state**: The fork gets its own `AppDomainState`, so assemblies it loads
+    ///   via `Assembly.Load(byte[])`, strings it interns and resolve handlers it registers
+    ///   are invisible to siblings. The `Arc<CilObject>` handles present at fork time are
+    ///   copied, not the metadata behind them
+    /// - **Virtual filesystem**: Forked, so writes stay local
     ///
     /// # What Gets Shared (Immutable)
     ///
     /// - **Assembly**: Metadata is read-only, shared via `Arc`
     /// - **Configuration**: Immutable after creation, shared via `Arc`
-    /// - **Runtime state**: Method stubs and type info, shared via `Arc`
-    /// - **Loaded image metadata**: List of loaded images (shallow copy)
-    /// - **Mapped region metadata**: List of mapped regions (shallow copy)
+    /// - **Hook manager**: Registered after construction and not mutated during execution
+    /// - **Native function registry**: Synthetic `GetProcAddress` addresses have to denote
+    ///   the same function in every fork
+    /// - **Synthetic method counter**: Shared so two forks cannot mint the same synthetic
+    ///   token for different method bodies
     ///
     /// # What Gets Fresh
     ///
     /// - **Capture context**: Each fork gets fresh captures so results don't mix
     /// - **Instruction count**: Reset to 0 for independent tracking
+    /// - **Synthetic methods**: Seeded from the parent, then independent
+    ///
+    /// Forks are run in real parallel by callers such as the constant decryption pass, so
+    /// "independent" here is a concurrency claim, not just a bookkeeping one.
     ///
     /// # Performance
     ///
@@ -816,6 +830,48 @@ impl EmulationProcess {
         Ok(Self {
             name: self.name.clone(),
             context: Arc::new(self.context.fork()?),
+            loaded_images: self.loaded_images.clone(),
+            mapped_regions: self.mapped_regions.clone(),
+            instruction_count: AtomicU64::new(0),
+            trace_writer: self.trace_writer.clone(),
+        })
+    }
+
+    /// The limits this process is currently running under.
+    ///
+    /// Callers building a derived budget for [`fork_with_limits`](Self::fork_with_limits)
+    /// should start from this rather than from [`EmulationLimits::default`]: that replacement
+    /// is wholesale, so every field the caller does not set explicitly comes from whatever it
+    /// started from. Deriving from the parent keeps a fork bounded by the same ceilings the
+    /// parent was warmed under.
+    #[must_use]
+    pub fn limits(&self) -> &EmulationLimits {
+        &self.context.config.limits
+    }
+
+    /// Forks this process, giving the fork its own execution limits.
+    ///
+    /// A template process is built once under whatever budget its *warmup* needs, and every
+    /// per-method execution is then forked from it. Those are different jobs with different
+    /// budgets, and [`fork`](Self::fork) cannot express that: it shares the configuration
+    /// `Arc`, so the fork silently inherits the warmup budget. Overriding the limits here is
+    /// preferable to mutating the shared configuration, which would retroactively change the
+    /// template's own budget and race with any sibling fork.
+    ///
+    /// `limits` replaces the fork's budget **wholesale**, so build it from
+    /// [`limits`](Self::limits) rather than from a default, or every field the caller does
+    /// not name silently reverts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the process state cannot be forked.
+    pub fn fork_with_limits(&self, limits: EmulationLimits) -> Result<Self> {
+        let mut config = (*self.context.config).clone();
+        config.limits = limits;
+
+        Ok(Self {
+            name: self.name.clone(),
+            context: Arc::new(self.context.fork_with_config(Arc::new(config))?),
             loaded_images: self.loaded_images.clone(),
             mapped_regions: self.mapped_regions.clone(),
             instruction_count: AtomicU64::new(0),
@@ -923,7 +979,7 @@ impl EmulationProcess {
     }
 }
 
-impl std::fmt::Debug for EmulationProcess {
+impl fmt::Debug for EmulationProcess {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EmulationProcess")
             .field("name", &self.name)
