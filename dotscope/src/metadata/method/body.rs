@@ -105,6 +105,8 @@
 
 use std::io::Write;
 
+use log::debug;
+
 use crate::{
     metadata::method::{
         encode_exception_handlers, ExceptionHandler, ExceptionHandlerFlags, MethodBodyFlags,
@@ -470,7 +472,38 @@ impl MethodBody {
 
                 let first_duo = read_le::<u16>(data)?;
 
-                let size_header = (first_duo >> 12).wrapping_mul(4);
+                // ECMA-335 II.25.4.3: the top nibble is the header size in dwords, and the
+                // spec mandates 3 (12 bytes).
+                //
+                // Only a value *below* 3 is actually dangerous: `size_code` is read from
+                // offset 4 and `localVarSigTok` from offset 8, so a shorter header would make
+                // the body start inside its own header and shift every downstream offset. That
+                // is refused.
+                //
+                // A value above 3 is non-conformant but not ambiguous, and it is what real
+                // runtimes accept: CoreCLR and dnlib both locate the IL at
+                // `4 * (flags >> 12)` rather than assuming 12. Rejecting those outright would
+                // make dotscope refuse assemblies the CLR happily executes — the wrong trade
+                // for a malware-analysis tool, whose input is by definition not
+                // spec-conformant. The declared size is honoured and the deviation is reported.
+                let header_dwords = first_duo >> 12;
+                if header_dwords < 3 {
+                    return Err(malformed_error!(
+                        "fat method header declares {} dwords, ECMA-335 II.25.4.3 requires at least 3",
+                        header_dwords
+                    ));
+                }
+                if header_dwords > 3 {
+                    debug!(
+                        "fat method header declares {header_dwords} dwords; ECMA-335 II.25.4.3 \
+                         mandates 3, honouring the declared size as CoreCLR and dnlib do"
+                    );
+                }
+
+                // Every downstream offset — the IL start, the `size_code` bounds check and the
+                // EH cursor — is derived from this, so it must be the declared size rather
+                // than a hard-coded 12.
+                let size_header: u16 = header_dwords.saturating_mul(4);
                 let size_code = read_le::<u32>(data.get(4..).ok_or(out_of_bounds_error!())?)?;
                 let total = (size_code as usize)
                     .checked_add(size_header as usize)
@@ -1300,5 +1333,71 @@ mod tests {
         let raw_body = MethodBody::from_raw(&data).unwrap();
         assert_eq!(raw_body.exception_handlers.len(), 1);
         assert_eq!(raw_body.exception_handlers[0].try_offset, 0xFFFF);
+    }
+
+    /// Builds a fat method body whose header-size nibble is `header_dwords`.
+    ///
+    /// `size_code` bytes of IL follow the header. The IL is a run of `nop` so a mis-located
+    /// start is visible as a wrong `size_code`/`size_header` rather than as a decode error.
+    fn build_fat_body_with_header_dwords(header_dwords: u16, size_code: u32) -> Vec<u8> {
+        let mut data = Vec::new();
+        // flags (fat, init-locals) in the low 12 bits, header size in the top nibble
+        let first_duo = (header_dwords << 12) | 0x0013;
+        data.extend_from_slice(&first_duo.to_le_bytes());
+        data.extend_from_slice(&1u16.to_le_bytes()); // max_stack
+        data.extend_from_slice(&size_code.to_le_bytes());
+        data.extend_from_slice(&0u32.to_le_bytes()); // local_var_sig_token
+
+        // Pad out to the declared header length, then the IL.
+        let header_len = (header_dwords as usize).saturating_mul(4);
+        data.resize(header_len, 0);
+        data.resize(header_len + size_code as usize, 0x00);
+        data
+    }
+
+    /// A header shorter than 3 dwords would overlap the code it precedes, so it is refused.
+    ///
+    /// `size_code` is read from offset 4 and `localVarSigTok` from offset 8; with a header
+    /// under 12 bytes the body starts inside its own header and every downstream offset is
+    /// wrong. This is the hazard the nibble check exists for.
+    #[test]
+    fn fat_header_below_three_dwords_is_refused() {
+        for dwords in 0..3u16 {
+            let data = build_fat_body_with_header_dwords(dwords, 4);
+            assert!(
+                MethodBody::from(&data).is_err(),
+                "a {dwords}-dword fat header must be refused"
+            );
+        }
+    }
+
+    /// A header larger than the mandated 3 dwords is honoured, not rejected and not normalised.
+    ///
+    /// ECMA-335 II.25.4.3 fixes the value at 3, but CoreCLR and dnlib both locate the IL at
+    /// `4 * (flags >> 12)`, so such a body is loadable in practice and a malware-analysis tool
+    /// has to read it the same way. Rejecting it refused files the CLR runs; normalising to 12
+    /// shifted the IL start, the `size_code` bounds check and the EH cursor by `4 * (n - 3)`
+    /// and decoded garbage.
+    #[test]
+    fn fat_header_above_three_dwords_is_honoured() {
+        let data = build_fat_body_with_header_dwords(4, 8);
+
+        let body = MethodBody::from(&data).expect("a 4-dword fat header must load");
+
+        assert!(body.is_fat);
+        assert_eq!(body.size_header, 16, "the declared header size is honoured");
+        assert_eq!(body.size_code, 8);
+        assert_eq!(body.max_stack, 1);
+    }
+
+    /// The mandated 3-dword header is unaffected by the above.
+    #[test]
+    fn fat_header_of_three_dwords_is_unchanged() {
+        let data = build_fat_body_with_header_dwords(3, 8);
+
+        let body = MethodBody::from(&data).expect("a conformant fat header must load");
+
+        assert_eq!(body.size_header, 12);
+        assert_eq!(body.size_code, 8);
     }
 }

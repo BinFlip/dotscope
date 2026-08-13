@@ -253,7 +253,7 @@ impl<'a> Parser<'a> {
     /// * `pos` - The position to move the cursor to
     ///
     /// # Errors
-    /// Returns [`crate::Error::OutOfBounds`] if position is beyond the data length.
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if position is beyond the data length.
     ///
     /// # Examples
     ///
@@ -280,7 +280,7 @@ impl<'a> Parser<'a> {
     /// Move the position forward by one byte.
     ///
     /// # Errors
-    /// Returns [`crate::Error::OutOfBounds`] if advancing would exceed the data length.
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if advancing would exceed the data length.
     ///
     /// # Examples
     ///
@@ -304,7 +304,7 @@ impl<'a> Parser<'a> {
     /// * `step` - Amount of bytes to advance
     ///
     /// # Errors
-    /// Returns [`crate::Error::OutOfBounds`] if advancing by step would exceed the data length.
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if advancing by step would exceed the data length.
     ///
     /// # Examples
     ///
@@ -364,7 +364,7 @@ impl<'a> Parser<'a> {
     /// Peek at the next byte without advancing the position.
     ///
     /// # Errors
-    /// Returns [`crate::Error::OutOfBounds`] if position is at or beyond the data length.
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if position is at or beyond the data length.
     ///
     /// # Examples
     ///
@@ -390,7 +390,7 @@ impl<'a> Parser<'a> {
     /// parser state, allowing inspection of upcoming data before deciding how to proceed.
     ///
     /// # Errors
-    /// Returns [`crate::Error::OutOfBounds`] if reading `T` would exceed the data length.
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if reading `T` would exceed the data length.
     ///
     /// # Examples
     ///
@@ -475,7 +475,7 @@ impl<'a> Parser<'a> {
     /// * `alignment` - The boundary to align to (must be a power of 2)
     ///
     /// # Errors
-    /// Returns [`crate::Error::OutOfBounds`] if aligning would exceed the data length.
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if aligning would exceed the data length.
     ///
     /// # Examples
     ///
@@ -506,7 +506,7 @@ impl<'a> Parser<'a> {
     /// Read a type `T` from the current position in little-endian format and advance the position.
     ///
     /// # Errors
-    /// Returns [`crate::Error::OutOfBounds`] if reading would exceed the data length.
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if reading would exceed the data length.
     ///
     /// # Examples
     ///
@@ -527,7 +527,7 @@ impl<'a> Parser<'a> {
     /// Read a type `T` from the current position in big-endian format and advance the position.
     ///
     /// # Errors
-    /// Returns [`crate::Error::OutOfBounds`] if reading would exceed the data length.
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if reading would exceed the data length.
     ///
     /// # Examples
     ///
@@ -553,8 +553,8 @@ impl<'a> Parser<'a> {
     /// - Values 16384-536870911: 4 bytes (11xxxxxx xxxxxxxx xxxxxxxx xxxxxxxx)
     ///
     /// # Errors
-    /// Returns [`crate::Error::OutOfBounds`] if reading would exceed the data length or
-    /// [`crate::Error::Malformed`] for invalid compressed uint format.
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if reading would exceed the data length or
+    /// [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`] for invalid compressed uint format.
     ///
     /// # Examples
     ///
@@ -608,8 +608,8 @@ impl<'a> Parser<'a> {
     /// but with the least significant bit indicating the sign and the remaining bits shifted right.
     ///
     /// # Errors
-    /// Returns [`crate::Error::OutOfBounds`] if reading would exceed the data length or
-    /// [`crate::Error::Malformed`] for invalid encoding.
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if reading would exceed the data length or
+    /// [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`] for invalid encoding.
     ///
     /// # Examples
     ///
@@ -663,8 +663,8 @@ impl<'a> Parser<'a> {
     /// Encountering this tag value indicates a malformed compressed token.
     ///
     /// # Errors
-    /// Returns [`crate::Error::OutOfBounds`] if reading would exceed the data length or
-    /// [`crate::Error::Malformed`] if tag 0x3 is encountered (invalid encoding).
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if reading would exceed the data length or
+    /// [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`] if tag 0x3 is encountered (invalid encoding).
     ///
     /// # Examples
     ///
@@ -711,8 +711,8 @@ impl<'a> Parser<'a> {
     /// concatenating the lower 7 bits of each byte in little-endian order.
     ///
     /// # Errors
-    /// Returns [`crate::Error::OutOfBounds`] if reading would exceed the data length or
-    /// [`crate::Error::Malformed`] for invalid encoding (overflow).
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if reading would exceed the data length or
+    /// [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`] for invalid encoding (overflow).
     ///
     /// # Examples
     ///
@@ -768,8 +768,8 @@ impl<'a> Parser<'a> {
     /// then decodes the bytes as UTF-8. The position is advanced past the null terminator.
     ///
     /// # Errors
-    /// Returns [`crate::Error::OutOfBounds`] if reading would exceed the data length or
-    /// [`crate::Error::Malformed`] for invalid UTF-8 encoding.
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if reading would exceed the data length or
+    /// [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`] for invalid UTF-8 encoding.
     ///
     /// # Examples
     ///
@@ -825,8 +825,8 @@ impl<'a> Parser<'a> {
     /// UTF-8 bytes. This format is commonly used in .NET metadata streams.
     ///
     /// # Errors
-    /// Returns [`crate::Error::OutOfBounds`] if reading would exceed the data length or
-    /// [`crate::Error::Malformed`] for invalid UTF-8 encoding.
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if reading would exceed the data length or
+    /// [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`] for invalid UTF-8 encoding.
     ///
     /// # Examples
     ///
@@ -877,8 +877,8 @@ impl<'a> Parser<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::OutOfBounds`] if reading would exceed the data length or
-    /// [`crate::Error::Malformed`] for invalid UTF-8 encoding.
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if reading would exceed the data length or
+    /// [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`] for invalid UTF-8 encoding.
     ///
     /// # Examples
     ///
@@ -917,8 +917,8 @@ impl<'a> Parser<'a> {
     /// security permissions, and other metadata structures that follow ECMA-335 blob format.
     ///
     /// # Errors
-    /// Returns [`crate::Error::OutOfBounds`] if reading would exceed the data length or
-    /// [`crate::Error::Malformed`] for invalid UTF-8 encoding.
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if reading would exceed the data length or
+    /// [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`] for invalid UTF-8 encoding.
     ///
     /// # Examples
     ///
@@ -984,7 +984,7 @@ impl<'a> Parser<'a> {
     /// * `needed` - The number of bytes required from the current position
     ///
     /// # Errors
-    /// Returns [`crate::Error::OutOfBounds`] if fewer than `needed` bytes remain.
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if fewer than `needed` bytes remain.
     ///
     /// # Examples
     ///
@@ -1015,7 +1015,7 @@ impl<'a> Parser<'a> {
     /// * `length` - The length to add to the current position
     ///
     /// # Errors
-    /// Returns [`crate::Error::OutOfBounds`] if the calculation would overflow
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if the calculation would overflow
     /// or if the resulting position exceeds the data length.
     ///
     /// # Examples
@@ -1052,7 +1052,7 @@ impl<'a> Parser<'a> {
     /// * `length` - The number of bytes to read
     ///
     /// # Errors
-    /// Returns [`crate::Error::OutOfBounds`] if reading `length` bytes would exceed the data.
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if reading `length` bytes would exceed the data.
     ///
     /// # Examples
     ///
@@ -1080,8 +1080,8 @@ impl<'a> Parser<'a> {
     /// character strings in .NET metadata.
     ///
     /// # Errors
-    /// Returns [`crate::Error::OutOfBounds`] if reading would exceed the data length or
-    /// [`crate::Error::Malformed`] for invalid UTF-16 encoding or odd byte length.
+    /// Returns [`crate::Error::Parse`] carrying [`crate::ParseFailure::OutOfBounds`] if reading would exceed the data length or
+    /// [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`] for invalid UTF-16 encoding or odd byte length.
     ///
     /// # Examples
     ///
