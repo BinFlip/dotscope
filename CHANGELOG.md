@@ -5,6 +5,129 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-08-14
+
+A security and correctness release. dotscope parses, emulates and rewrites
+hostile input, and this release closes the gap between what the resource limits
+claimed to enforce and what they actually did, along with a set of
+miscompilations in the SSA back end and layout defects in the PE writer.
+
+### Security
+
+- **Resource limits are enforced before the work happens, not after.** The
+  managed-heap ceiling was checked once the object was already materialised;
+  unmanaged allocation (`localloc`, `AllocHGlobal`, `AllocCoTaskMem`,
+  `VirtualAlloc`) had no budget at all, and `max_unmanaged_bytes` and
+  `max_heap_objects` were declared but never read. Allocation
+  now runs through a reservation that must succeed first, in-place mutation is
+  accounted, and forks inherit the ceiling instead of escaping it.
+- **Unbounded and quadratic work on attacker input.** Fixed in the inheritance
+  walker (a cyclic `extends` graph caused an uncatchable native stack overflow),
+  the x86 traversal (O(n²) to end of file), method-body decoding (disassembled
+  past the declared `code_size`), exception-handler association (O(H²·B) at load
+  time), DEFLATE/GZIP/LZMA expansion, and the signature parser (a blob could
+  build a ~61 000-deep type whose recursive drop overflowed the stack).
+- **Argument validation across the BCL hooks.** Negative or oversized lengths
+  reaching `Marshal.Copy`, `Stream.SetLength`, `StringBuilder.set_Length`,
+  `String.PadLeft`/`PadRight`, the `BinaryReader` readers and the PBKDF2
+  constructors reserved `usize::MAX`, ran multi-billion-iteration loops, or
+  drove a ~4.3-billion-round KDF. They now reject the value and raise the .NET
+  exception.
+- **Emulator forks were not isolated.** "Isolated" forks shared one mutable
+  runtime state, AppDomain and synthetic-method map while running concurrently.
+  `Assembly.Load(byte[])` is now bounded by `max_loaded_assemblies` and
+  `max_loaded_assembly_bytes`, and runtime-loaded assemblies parse with minimal
+  validation rather than the full pipeline over hostile bytes.
+- **Memory protection flags are enforced** on read and write, faulting through a
+  new catchable `AccessViolationException`, and region mappings are overlap-checked.
+- `deny(unsafe_code)` is enabled. One `unsafe` block remains, for the writer's
+  output mapping, with a targeted allow and a SAFETY note.
+- `SECURITY.md` now states the supported version, the real `EmulationLimits`
+  defaults and what is actually run. The previous text listed DoS protections as
+  "ToDo" and claimed Valgrind testing that does not exist.
+
+### Fixed
+
+- **Malformed table rows silently truncated a table.** The row iterators
+  reported a parse failure as end-of-iteration, and because the writer rebuilds
+  tables by iterating them, an unreadable row became *missing output* rather
+  than an error. Iterators now yield `Result`, `get` returns
+  `Result<Option<T>>`, and `MetadataTable::new` validates and truncates to the
+  declared extent.
+- **`MethodPtr`, `EventPtr` and `PropertyPtr` tokens used the wrong table id**,
+  so any assembly carrying a `*Ptr` table lost its method-bearing types.
+- **Three back-end miscompilations.** Full inlining placed the return-value copy
+  before the instruction defining it; switch and conditional-branch phi
+  trampolines fell through into the next edge's copies. Critical edges are now
+  split into real blocks by a dedicated out-of-SSA pass.
+- **Handler SSA used a "last block wins" snapshot** of try-scope definitions
+  because the CIL CFG carried no exception edges. Real EH edges make handler
+  entries ordinary join points.
+- **Linear-scan allocation computed live intervals with no liveness solve**, so
+  a value live across a back edge could have its slot clobbered.
+- **Four exception-unwind defects**: the caller's `finally` ran against the
+  grandparent frame, queued `finally` blocks were never drained once a catch was
+  selected, a `leave` out of nested `finally`s spun on `endfinally`, and a filter
+  returning zero terminated emulation instead of resuming the handler search.
+- **PE writer layout.** Heap offsets were computed twice from different inputs,
+  so offsets baked into tables and IL disagreed with where data was written;
+  heap index widths were inherited from the input and truncated above 0xFFFF;
+  section `SizeOfRawData` came from the virtual extent; and the input's
+  certificate directory offset was applied to the output, zeroing live `.text`
+  before the checksum was computed over the damage. `Output` now writes to a
+  temp file and renames.
+- **Cleanup deleted live metadata**: TypeRef liveness ignored `ResolutionScope`,
+  and the opaque-field pass folded any static-to-instance load and deleted the
+  owning type with no immutability precondition.
+- Byte-offset slicing of string literals panicked on multi-byte UTF-8;
+  `clippy::string_slice` is now denied, which surfaced ten genuine sites.
+- The fuzz crash-corpus regression test passed on any checkout without the
+  corpus, and CI ran `cargo test --lib`, so the integration tests never executed
+  on Windows or macOS. Both are fixed, and the 72 crash artifacts are committed.
+
+### Performance
+
+- `EmValue` drops from 200 to 104 bytes on x86-64 by boxing `CilFlavor::FnPtr`,
+  halving every value in the interpreter. Pinned by a static assertion.
+- `Method`, `CilType` and `Param` no longer eagerly allocate 8–11 `Arc<boxcar::Vec<_>>`
+  each; `LazyList<T>` defers to first use.
+- Type resolution: `get_by_fullname` no longer falls back to a linear scan of
+  every registered type (reachable once per custom-attribute argument), and
+  `fullname()` returns `Arc<str>` instead of allocating a fresh `String` at every
+  call site.
+- Declaring-type lookups are indexed rather than brute-force scans over every
+  type and member — they sat on the emulator's hottest paths.
+- Table loaders no longer take a shared `Mutex` once per row inside the rayon
+  loop; an inherent `try_for_each` had been shadowing rayon's in every loader.
+- Handler SSA no longer rebuilds a version-stack snapshot per exception
+  successor per block, and unmanaged access is a `BTreeMap` lookup rather than a
+  linear region scan that allocated a `Vec` for a 1–8 byte read.
+
+### Changed
+
+- **BREAKING**: `Error` is `#[non_exhaustive]` and derives `Clone`. The previous
+  hand-written `Clone` rewrote most variants into `Error::Other(String)`,
+  destroying the taxonomy for any caller that cloned.
+- **BREAKING**: `MetadataTable::get` returns `Result<Option<T>>` and the table
+  iterators yield `Result<T>`.
+- **BREAKING**: `CilType::fullname()` returns `Arc<str>`; `UserStrings::get`
+  returns an owned `U16String`; `derive_pbkdf2_key` returns `Result` and errors
+  on an unavailable algorithm instead of silently substituting SHA-256 for SHA-1.
+- `CaptureConfig` gains `max_items` and `max_total_bytes` ceilings (10 000 and
+  256 MB), and buffer capture is off under a default config, honouring the
+  documented "no capture by default" contract. `CaptureContext::new()` sets it
+  explicitly, so the "capture what is useful" constructor is unchanged.
+- Stale rustdoc `# Errors` contracts across the crate referenced `Error` variants
+  that had been deleted. They are rewritten to what the code returns, and
+  `deny(rustdoc::broken_intra_doc_links)` plus `RUSTDOCFLAGS: -Dwarnings` in CI
+  keeps them accurate — `RUSTFLAGS` does not reach rustdoc, which is why the
+  existing `-Dwarnings` never caught them.
+- Doc tests run under a concurrency cap: each fenced example is a whole-crate
+  fat-LTO link, and one per core exhausts memory on a many-core machine.
+- Five new fuzz targets beside `cilobject`, covering the assembly view, the
+  signature and custom-attribute blob parsers, method-body decode and bounded
+  emulation.
+
 ## [0.8.5] - 2026-08-09
 
 ### Fixed

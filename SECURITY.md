@@ -6,7 +6,11 @@ We actively support the following versions of dotscope with security updates:
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
+| 0.9.x   | :white_check_mark: |
+| < 0.9   | :x:                |
+
+dotscope is pre-1.0 and ships breaking changes in minor releases. Only the
+latest minor version receives security fixes; there are no backports.
 
 ## Reporting a Vulnerability
 
@@ -60,29 +64,53 @@ dotscope parses potentially untrusted .NET assemblies. We take several precautio
 
 - **Memory Safety**: Built on Rust's memory safety guarantees
 - **Bounds Checking**: All array and buffer accesses are bounds-checked  
-- **Fuzzing**: Continuous fuzzing with cargo-fuzz to find parsing edge cases
+- **Fuzzing**: `cargo-fuzz` targets covering the object, view, signature,
+  custom-attribute, method-body and emulation paths, run on demand via
+  `make fuzz`. Crash artifacts are committed and replayed by the test suite
 - **Input Validation**: Strict validation of metadata structures and bytecode
+
+Note that `ValidationConfig::disabled()` and the `lenient` presets do not
+disable bounds checking -- what they give up is *semantic* rejection, so
+incoherent metadata is analysed as if it were coherent.
 
 ### Denial of Service Protection
 
-- **Resource Limits**: ToDo
-- **Timeout Handling**: ToDo
+Emulation runs under `EmulationLimits`, enforced during execution rather than
+after the fact. Defaults:
+
+| Limit | Default |
+| ----- | ------- |
+| `max_instructions` | 10,000,000 |
+| `max_call_depth` | 1,000 |
+| `max_heap_objects` | 100,000 |
+| `max_heap_bytes` | 256 MB |
+| `max_unmanaged_bytes` | 64 MB |
+| `max_loaded_assemblies` | 64 |
+| `max_loaded_assembly_bytes` | 32 MB |
+| `timeout_ms` | 60,000 |
+
+- **Timeout Handling**: the wall-clock budget is checked between instructions
 - **Malformed Input**: Graceful handling of corrupted or crafted files
 
 ### Known Security Considerations
 
 1. **Memory-Mapped Files**: We use memory mapping for performance, which requires careful handling
-2. **Unsafe Code**: Limited use of `unsafe` code with careful review and testing
+2. **Unsafe Code**: the crate builds under `deny(unsafe_code)`. One block carries
+   a targeted allow, for the memory mapping of the writer's output file. The
+   primary load path maps input through the `cowfile` dependency
 3. **Dependency Chain**: Regular auditing of dependencies for vulnerabilities
 
 ## Security Testing
 
 Our security testing includes:
 
-- **Continuous Fuzzing**: Automated fuzzing with various input types
-- **Static Analysis**: Clippy and other static analysis tools
+- **Fuzzing**: six `cargo-fuzz` targets, run on demand and in CI, seeded from
+  the committed crash corpus
+- **Regression Corpus**: every crash artifact found by fuzzing is committed and
+  replayed by the test suite
+- **Static Analysis**: Clippy with `panic`, `unwrap`, `expect`, `indexing_slicing`,
+  `arithmetic_side_effects` and `string_slice` denied in the library crate
 - **Dependency Auditing**: Regular `cargo audit` runs
-- **Memory Safety**: Valgrind testing for memory leaks and corruption
 
 ## Acknowledgments
 
