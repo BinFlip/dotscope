@@ -16,7 +16,7 @@ use dashmap::DashMap;
 use crate::{
     emulation::{
         capture::CaptureContext,
-        engine::SyntheticMethodBody,
+        engine::{EmulationError, SyntheticMethodBody},
         fakeobjects::SharedFakeObjects,
         filesystem::VirtualFs,
         memory::{AddressSpace, ManagedHeap, StaticFieldStorage},
@@ -104,27 +104,80 @@ impl ThreadContext {
         token
     }
 
-    /// Forks this context with a forked address space.
+    /// Forks this context into an independent execution environment.
     ///
-    /// The forked context shares all `Arc`-wrapped resources except:
+    /// Everything emulated code can mutate is separated, so two forks running concurrently
+    /// cannot observe each other:
+    ///
     /// - `address_space` — forked with CoW semantics
-    /// - `capture` — fresh context (same config, empty captures)
+    /// - `runtime` — forked: the fork gets its own `AppDomainState`, so assemblies it loads
+    ///   and strings it interns stay local (see [`RuntimeState::fork`])
+    /// - `capture` — fresh context, same config, empty captures
     /// - `virtual_fs` — forked (falls back to shared on error)
+    /// - `synthetic_methods` — seeded from the parent, then independent, so a `DynamicMethod`
+    ///   emitted in one fork is not callable from another
+    ///
+    /// Genuinely immutable state is shared: `config`, `assembly`, `fake_objects` and the
+    /// hook manager inside the runtime.
+    ///
+    /// `synthetic_method_counter` stays shared on purpose. It is the one mutable thing that
+    /// must *not* be forked: two forks allocating from private counters would mint the same
+    /// synthetic token for different bodies, and those tokens outlive the fork in captured
+    /// output.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the address space cannot be forked, or if the parent's runtime
+    /// lock is poisoned.
     pub fn fork(&self) -> crate::Result<Self> {
+        self.fork_with_config(Arc::clone(&self.config))
+    }
+
+    /// Forks this context, giving the fork its own configuration.
+    ///
+    /// The configuration is the one thing a fork legitimately needs to *differ* on. A
+    /// template process is warmed up under a long budget because warmup genuinely takes it;
+    /// the per-method executions forked from it are supposed to run under the much smaller
+    /// per-method budget. Sharing the `Arc` makes that impossible to express, and mutating it
+    /// in place would retroactively change the template's own budget.
+    ///
+    /// See [`Self::fork`] for what else separates and what stays shared.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the address space cannot be forked, or if the parent's runtime
+    /// lock is poisoned.
+    pub fn fork_with_config(&self, config: Arc<EmulationConfig>) -> crate::Result<Self> {
         let virtual_fs = match self.virtual_fs.fork() {
             Ok(forked) => Arc::new(forked),
             Err(_) => Arc::clone(&self.virtual_fs),
         };
 
+        let runtime = self
+            .runtime
+            .read()
+            .map_err(|_| {
+                crate::Error::Emulation(Box::new(EmulationError::LockPoisoned {
+                    description: "runtime state",
+                }))
+            })?
+            .fork();
+
+        let synthetic_methods: DashMap<Token, SyntheticMethodBody> = self
+            .synthetic_methods
+            .iter()
+            .map(|entry| (*entry.key(), entry.value().clone()))
+            .collect();
+
         Ok(Self {
             address_space: Arc::new(self.address_space.fork()?),
-            runtime: Arc::clone(&self.runtime),
+            runtime: Arc::new(RwLock::new(runtime)),
             capture: Arc::new(CaptureContext::with_config(self.capture.config().clone())),
-            config: Arc::clone(&self.config),
+            config,
             assembly: self.assembly.clone(),
             fake_objects: self.fake_objects.clone(),
             virtual_fs,
-            synthetic_methods: Arc::clone(&self.synthetic_methods),
+            synthetic_methods: Arc::new(synthetic_methods),
             synthetic_method_counter: Arc::clone(&self.synthetic_method_counter),
         })
     }

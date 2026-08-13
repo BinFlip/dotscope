@@ -157,6 +157,20 @@ pub enum EmValue {
     Symbolic(SymbolicValue),
 }
 
+/// `EmValue` is the unit of currency in the interpreter: every `push`/`pop`, every local slot,
+/// argument slot, array element and inline field is one of these, and `EvaluationStack::new`
+/// preallocates up to 256 per thread. Its width is therefore a whole-interpreter cost, and it
+/// is set by whichever variant is widest — `Symbolic`, through the `CilFlavor` it carries.
+/// `CilFlavor::FnPtr` boxes its `SignatureMethod` for exactly this reason: embedding one by
+/// value costs every `EmValue` in the process 96 further bytes.
+///
+/// The bound below is the measured width, not a round number with slack in it: nothing else in
+/// the build would catch a newly added fat variant, and a loose bound would let one land
+/// silently.
+///
+/// If this assertion fails, box the offending variant rather than raising the bound.
+const _: () = assert!(std::mem::size_of::<EmValue>() <= 104);
+
 impl EmValue {
     /// Returns the type token for this value, if available.
     ///

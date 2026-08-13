@@ -149,9 +149,8 @@ pub use engine::{
 };
 // Re-export primary types from exception module
 pub use exception::{
-    ExceptionClause, ExceptionHandler, ExceptionInfo, FrameSearchInfo, HandlerMatch,
-    HandlerSearchState, InstructionLocation, MethodHandlerResult, PendingFinally, StackUnwinder,
-    ThreadExceptionState, UnwindSequenceBuilder, UnwindStepResult,
+    ExceptionClause, ExceptionInfo, HandlerMatch, InstructionLocation, PendingFinally,
+    ThreadExceptionState,
 };
 // Re-export primary types from fakeobjects module
 pub use fakeobjects::{FakeObjects, SharedFakeObjects};
@@ -163,10 +162,10 @@ pub use loader::{
 };
 // Re-export primary types from memory module
 pub use memory::{
-    AddressSpace, ArgumentStorage, DictionaryKey, EncodingType, EvaluationStack, HeapObject,
-    LocalVariables, ManagedHeap, MemoryProtection, MemoryRegion, Page, SectionInfo, SharedHeap,
-    StaticFieldStorage, ThreadId, TypeInitState, TypeWrapper, UnmanagedMemory, UnmanagedRef,
-    PAGE_SIZE,
+    AddressSpace, ArgumentStorage, DelegateEntry, DictionaryKey, EncodingType, EvaluationStack,
+    HeapObject, LocalVariables, ManagedHeap, MemoryProtection, MemoryRegion, Page, SectionInfo,
+    SharedHeap, StaticFieldStorage, ThreadId, TypeInitState, TypeWrapper, UnmanagedMemory,
+    UnmanagedRef, PAGE_SIZE,
 };
 // Re-export primary types from process module
 pub use process::{

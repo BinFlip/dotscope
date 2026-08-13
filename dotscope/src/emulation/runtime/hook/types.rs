@@ -380,6 +380,15 @@ impl PreHookResult {
         }
     }
 
+    /// Creates a `Throw` for `System.AccessViolationException`.
+    #[must_use]
+    pub fn throw_access_violation(msg: &str) -> Self {
+        Self::Throw {
+            exception_type: synthetic_exception::ACCESS_VIOLATION,
+            message: format!("AccessViolationException: {msg}"),
+        }
+    }
+
     /// Creates a `Throw` for `System.InvalidOperationException`.
     #[must_use]
     pub fn throw_invalid_operation(msg: &str) -> Self {

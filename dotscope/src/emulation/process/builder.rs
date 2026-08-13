@@ -137,6 +137,7 @@ fn populate_fieldrva_statics(assembly: &CilObject, address_space: &AddressSpace)
     let ptr_size = PointerSize::from_is_64bit(file.pe().is_64bit);
 
     for row in fieldrva_table {
+        let row = row?;
         if row.rva == 0 {
             continue;
         }
@@ -1122,13 +1123,28 @@ impl ProcessBuilder {
             "Creating emulation process: instruction_limit={}, call_depth={}",
             self.config.limits.max_instructions, self.config.limits.max_call_depth
         );
-        let heap_size = self.config.memory.max_heap_size;
+        // Two fields describe the same ceiling: `limits.max_heap_bytes` and
+        // `memory.max_heap_size`. Only `ProcessBuilder::with_max_heap_bytes` keeps them in sync,
+        // so a caller who builds `EmulationConfig` as a struct literal — the pattern the config
+        // module's own docs demonstrate — sets `max_heap_bytes` and silently gets the default.
+        // Honour the stricter of the two rather than picking one and ignoring the other.
+        let heap_size = self
+            .config
+            .memory
+            .max_heap_size
+            .min(self.config.limits.max_heap_bytes);
         let heap = SharedHeap::new(heap_size);
+        heap.heap()
+            .set_max_objects(self.config.limits.max_heap_objects);
 
         // Initialize fake BCL objects before anything else uses the heap
         let fake_objects = SharedFakeObjects::new(heap.heap());
 
         let address_space = Arc::new(AddressSpace::with_heap(heap));
+        // Apply the configured unmanaged ceiling. Unmanaged allocations bypass the managed
+        // heap budget entirely, so without this the `max_unmanaged_bytes` setting has no
+        // effect on anything.
+        address_space.set_max_unmanaged_bytes(self.config.limits.max_unmanaged_bytes);
 
         let mut config = self.config.clone();
         if !self.register_defaults {
@@ -1280,7 +1296,8 @@ impl ProcessBuilder {
                 let tables = assembly.tables()?;
                 let strings = assembly.strings()?;
                 let module_table = tables.table::<ModuleRaw>()?;
-                let module_row = module_table.iter().next()?;
+                // Module is RID 1 by definition (ECMA-335 II.22.30).
+                let module_row = module_table.get(1).ok().flatten()?;
                 strings.get(module_row.name as usize).ok().map(String::from)
             });
 

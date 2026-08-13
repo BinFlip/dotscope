@@ -117,6 +117,16 @@ pub struct PeLoaderConfig {
     /// its preferred base, the loader applies relocations to fix up absolute
     /// addresses in the code and data sections.
     pub apply_relocations: bool,
+
+    /// Ceiling on the image buffer this loader will materialise, in bytes.
+    ///
+    /// `SizeOfImage` is a `u32` taken verbatim from the optional header of an
+    /// attacker-supplied file, and it alone sizes the zero-initialised image buffer. A few
+    /// hundred bytes of input can therefore ask for 4 GiB. `alloc_zeroed` makes that cheap in
+    /// resident memory but not free: a hard cgroup limit, `vm.overcommit_memory=2`, Windows
+    /// commit charge, a 32-bit build, or enough concurrent loads all turn it into a real
+    /// failure.
+    pub max_image_size: u64,
 }
 
 impl Default for PeLoaderConfig {
@@ -125,6 +135,7 @@ impl Default for PeLoaderConfig {
             base_address: None,
             apply_permissions: true,
             apply_relocations: true,
+            max_image_size: 512 * 1024 * 1024,
         }
     }
 }
@@ -685,10 +696,48 @@ impl PeLoader {
         let mut sections = Vec::new();
         let mut section_infos = Vec::new();
 
+        // Validate the declared image size before committing an allocation to it.
+        //
+        // Two independent bounds, because either alone is too permissive: the configured
+        // ceiling caps the absolute cost, and the section extents catch a header that claims
+        // far more than its own sections describe. Sections are the authority on what the
+        // image actually needs — anything past the highest section end is memory no section
+        // maps into.
+        if size_of_image > self.config.max_image_size {
+            return Err(malformed_error!(
+                "SizeOfImage {} exceeds the {} byte loader limit",
+                size_of_image,
+                self.config.max_image_size
+            ));
+        }
+
+        let section_extent = pe
+            .sections
+            .iter()
+            .map(|section| {
+                u64::from(section.virtual_address).saturating_add(u64::from(
+                    section.virtual_size.max(section.size_of_raw_data),
+                ))
+            })
+            .max()
+            .unwrap_or(0);
+        // Rounded up generously: SizeOfImage is SectionAlignment-aligned and may legitimately
+        // exceed the last section's end by up to one alignment unit, plus the headers.
+        let plausible = section_extent.saturating_add(0x100_0000);
+        if section_extent > 0 && size_of_image > plausible {
+            return Err(malformed_error!(
+                "SizeOfImage {} is not plausible for sections ending at {}",
+                size_of_image,
+                section_extent
+            ));
+        }
+
         // Create the full image data buffer
         // ToDo: Switch this and the emulator to use mmap for having a disk-backed file if it is very large
-        #[allow(clippy::cast_possible_truncation)]
-        let mut image_data = vec![0u8; size_of_image as usize];
+        let image_size = usize::try_from(size_of_image).map_err(|_| {
+            malformed_error!("SizeOfImage {} exceeds the address width", size_of_image)
+        })?;
+        let mut image_data = vec![0u8; image_size];
 
         // Copy headers
         let headers_size = pe

@@ -195,6 +195,8 @@ pub struct EmulationConfig {
 /// | `max_heap_objects` | 100,000 |
 /// | `max_heap_bytes` | 256 MB |
 /// | `max_unmanaged_bytes` | 64 MB |
+/// | `max_loaded_assemblies` | 64 |
+/// | `max_loaded_assembly_bytes` | 32 MB |
 /// | `timeout_ms` | 60,000 (1 minute) |
 #[derive(Clone, Debug)]
 pub struct EmulationLimits {
@@ -227,6 +229,25 @@ pub struct EmulationLimits {
     /// Limits memory allocated via Marshal.AllocHGlobal and
     /// similar unmanaged allocation methods.
     pub max_unmanaged_bytes: usize,
+
+    /// Maximum number of assemblies emulated code may load at runtime.
+    ///
+    /// `Assembly.Load(byte[])` parses its payload into a `CilObject` that the AppDomain
+    /// retains for the lifetime of the emulation, for cross-assembly resolution. That
+    /// memory is host memory, so `max_heap_bytes` does not see it, and mutating a single
+    /// byte between calls defeats any content dedup while leaving the emulated heap
+    /// footprint unchanged. This bounds how many are kept.
+    ///
+    /// The value must stay below `u32::MAX` for the assembly index to remain
+    /// representable in a call frame.
+    pub max_loaded_assemblies: usize,
+
+    /// Maximum size in bytes of a single assembly payload accepted for parsing.
+    ///
+    /// Checked before `Assembly.Load(byte[])` hands the bytes to the metadata parser,
+    /// which is a full re-entry into attacker-controlled parsing from inside a hook and
+    /// so runs outside the instruction and timeout budgets.
+    pub max_loaded_assembly_bytes: usize,
 
     /// Timeout in milliseconds.
     ///
@@ -560,7 +581,7 @@ pub enum UnknownMethodBehavior {
 /// # Default Values
 ///
 /// By default, no capture is enabled to minimize overhead.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct CaptureConfig {
     /// Capture assemblies loaded via Assembly.Load.
     ///
@@ -591,6 +612,45 @@ pub struct CaptureConfig {
     /// Records socket operations, HTTP requests, and other network
     /// activity during emulation.
     pub network_operations: bool,
+
+    /// Capture raw byte buffers from memory operations and crypto transforms.
+    ///
+    /// Gated like every other capture kind, so a default config records no buffers and
+    /// `captured_buffers()` stays empty until this is set to `true`.
+    pub buffers: bool,
+
+    /// Maximum number of items retained in each capture collection.
+    ///
+    /// Capture is driven by hook invocations rather than heap allocations, and captured data
+    /// lives outside the managed heap, so `max_heap_bytes` does not see it. Emulated code can
+    /// allocate one array and then loop calling `set_Key`/`TransformFinalBlock` on it, appending
+    /// a full copy per iteration for a few instructions each. Without a ceiling, emulation
+    /// reaches a clean `Completed` outcome having consumed tens of gigabytes.
+    ///
+    /// Once reached, further captures of that kind are dropped. `usize::MAX` means unlimited.
+    pub max_items: usize,
+
+    /// Maximum total bytes retained across all captured buffers, strings and assemblies.
+    ///
+    /// Complements [`max_items`](Self::max_items): a small number of very large buffers is as
+    /// damaging as a large number of small ones. `usize::MAX` means unlimited.
+    pub max_total_bytes: usize,
+}
+
+impl Default for CaptureConfig {
+    /// No capture enabled, with ceilings applied to whatever the caller does enable.
+    fn default() -> Self {
+        Self {
+            assemblies: false,
+            memory_regions: Vec::new(),
+            strings: false,
+            file_operations: false,
+            network_operations: false,
+            buffers: false,
+            max_items: 10_000,
+            max_total_bytes: 256 * 1024 * 1024,
+        }
+    }
 }
 
 /// Environment simulation configuration.
@@ -728,7 +788,9 @@ impl Default for EmulationLimits {
             max_heap_objects: 100_000,
             max_heap_bytes: 256 * 1024 * 1024,     // 256 MB
             max_unmanaged_bytes: 64 * 1024 * 1024, // 64 MB
-            timeout_ms: 60_000,                    // 1 minute
+            max_loaded_assemblies: 64,
+            max_loaded_assembly_bytes: 32 * 1024 * 1024, // 32 MB
+            timeout_ms: 60_000,                          // 1 minute
         }
     }
 }
@@ -1136,6 +1198,36 @@ impl EmulationLimits {
     #[must_use]
     pub fn with_max_heap_bytes(mut self, max: usize) -> Self {
         self.max_heap_bytes = max;
+        self
+    }
+
+    /// Sets the maximum number of assemblies emulated code may load at runtime.
+    ///
+    /// # Arguments
+    ///
+    /// * `max` - Maximum retained runtime-loaded assemblies
+    ///
+    /// # Returns
+    ///
+    /// Returns `self` for method chaining.
+    #[must_use]
+    pub fn with_max_loaded_assemblies(mut self, max: usize) -> Self {
+        self.max_loaded_assemblies = max;
+        self
+    }
+
+    /// Sets the maximum size of a single runtime-loaded assembly payload.
+    ///
+    /// # Arguments
+    ///
+    /// * `max` - Maximum payload size in bytes
+    ///
+    /// # Returns
+    ///
+    /// Returns `self` for method chaining.
+    #[must_use]
+    pub fn with_max_loaded_assembly_bytes(mut self, max: usize) -> Self {
+        self.max_loaded_assembly_bytes = max;
         self
     }
 

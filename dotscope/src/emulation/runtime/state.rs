@@ -267,6 +267,36 @@ impl RuntimeState {
         self.unknown_method_behavior
     }
 
+    /// Creates an independent runtime state for a forked execution.
+    ///
+    /// # What separates
+    ///
+    /// The [`AppDomainState`] is cloned by value. It is the mutable half of this type:
+    /// emulated code appends to it through `Assembly.Load(byte[])`, interns strings into it
+    /// and registers resolve handlers on it. Forks execute in real parallel — the constant
+    /// decryption pass drives them from a rayon iterator — so a shared domain lets a type
+    /// planted by one fork steer method resolution in another, and lets every fork's loads
+    /// accumulate against one budget. Cloning `Vec<Arc<CilObject>>` copies the handles, not
+    /// the parsed metadata, so the assemblies present at fork time stay shared while
+    /// additions stay local.
+    ///
+    /// # What stays shared
+    ///
+    /// `hooks` and `config` are immutable after construction. `native_functions` is a
+    /// handle onto `Arc`-shared maps and is deliberately kept shared: it assigns the
+    /// synthetic addresses returned by `GetProcAddress`, and those must mean the same
+    /// function in every fork for a pointer captured in one to be interpretable in another.
+    #[must_use]
+    pub fn fork(&self) -> Self {
+        Self {
+            hooks: Arc::clone(&self.hooks),
+            app_domain: self.app_domain.clone(),
+            unknown_method_behavior: self.unknown_method_behavior,
+            config: Arc::clone(&self.config),
+            native_functions: self.native_functions.clone(),
+        }
+    }
+
     /// Sets the behavior for unknown method calls.
     ///
     /// This controls what happens when a method call is encountered

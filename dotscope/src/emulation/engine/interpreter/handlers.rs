@@ -552,9 +552,13 @@ impl Interpreter {
                     length: 0,
                 })
             })?,
+            // `usize::try_from(u64)` is infallible on a 64-bit host, so this arm imposes no
+            // bound of its own — any value up to u64::MAX reaches the allocator. The heap
+            // budget in `ManagedHeap::alloc_array` is what actually rejects it; this cast is
+            // only here to normalise the width.
             EmValue::NativeUInt(v) => usize::try_from(v).map_err(|_| {
                 Error::from(EmulationError::ArrayIndexOutOfBounds {
-                    index: v as i64,
+                    index: i64::try_from(v).unwrap_or(i64::MAX),
                     length: 0,
                 })
             })?,
@@ -1547,42 +1551,18 @@ impl Interpreter {
                     _ => unreachable!(),
                 };
 
-                // Helper: read an exact-sized little-endian array from the address space.
-                // The address_space.read API returns the requested number of bytes on
-                // success; a length mismatch indicates an internal invariant violation.
-                let read_exact = |size: usize| -> Result<Vec<u8>> {
-                    let bytes = address_space.read(ptr_addr, size)?;
-                    if bytes.len() != size {
-                        return Err(EmulationError::InternalError {
-                            description: format!(
-                                "address space read returned {} bytes, expected {}",
-                                bytes.len(),
-                                size
-                            ),
-                        }
-                        .into());
-                    }
-                    Ok(bytes)
-                };
-                let read_array_2 = || -> Result<[u8; 2]> {
-                    let bytes = read_exact(2)?;
-                    <[u8; 2]>::try_from(bytes.as_slice()).map_err(|_| out_of_bounds_error!())
-                };
-                let read_array_4 = || -> Result<[u8; 4]> {
-                    let bytes = read_exact(4)?;
-                    <[u8; 4]>::try_from(bytes.as_slice()).map_err(|_| out_of_bounds_error!())
-                };
-                let read_array_8 = || -> Result<[u8; 8]> {
-                    let bytes = read_exact(8)?;
-                    <[u8; 8]>::try_from(bytes.as_slice()).map_err(|_| out_of_bounds_error!())
-                };
+                // These fill a stack array. `AddressSpace::read` hands back an owned `Vec`,
+                // which would put a malloc and a free on every `ldind` — the interpreter's
+                // innermost loop — for a load of at most eight bytes.
+                let read_array_2 = || address_space.read_exact::<2>(ptr_addr);
+                let read_array_4 = || address_space.read_exact::<4>(ptr_addr);
+                let read_array_8 = || address_space.read_exact::<8>(ptr_addr);
 
                 // Read from address space based on read_size and expected_type
                 let value = match (expected_type, read_size) {
                     // Small integer reads (1 or 2 bytes) that widen to I32
                     (&CilFlavor::I4, 1) => {
-                        let bytes = read_exact(1)?;
-                        let b0 = *bytes.first().ok_or(out_of_bounds_error!())?;
+                        let b0 = address_space.read_u8(ptr_addr)?;
                         let val = if signed {
                             // Intentional wrap-around for sign extension from u8 to i8
                             i32::from(b0.cast_signed())
