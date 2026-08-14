@@ -208,14 +208,6 @@ impl Default for DecryptorHeuristics {
 /// CFF unflattening thresholds.
 #[derive(Debug, Clone)]
 pub struct UnflatteningThresholds {
-    /// Minimum switch cases to consider as potential flattening dispatcher.
-    pub min_switch_cases: usize,
-    /// Maximum states to enumerate per case when solving dispatcher.
-    pub max_states_per_case: usize,
-    /// Maximum iterations when tracing execution through flattened CFG.
-    pub max_trace_iterations: usize,
-    /// Threshold for large constant detection in state encoding.
-    pub large_constant_threshold: i64,
     /// Maximum BFS depth for back-edge transitive reachability check.
     pub max_backedge_depth: usize,
     /// Confidence scoring weights for CFF dispatcher detection.
@@ -225,10 +217,6 @@ pub struct UnflatteningThresholds {
 impl Default for UnflatteningThresholds {
     fn default() -> Self {
         Self {
-            min_switch_cases: 4,
-            max_states_per_case: 15,
-            max_trace_iterations: 500,
-            large_constant_threshold: 100_000,
             max_backedge_depth: 10,
             confidence_weights: DetectionWeights::default(),
         }
