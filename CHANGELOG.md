@@ -84,6 +84,28 @@ miscompilations in the SSA back end and layout defects in the PE writer.
 - The fuzz crash-corpus regression test passed on any checkout without the
   corpus, and CI ran `cargo test --lib`, so the integration tests never executed
   on Windows or macOS. Both are fixed, and the 72 crash artifacts are committed.
+- **An array signature's rank was never bounded**, and it was the only ceiling on
+  the lower-bound count that follows it, so a declared rank of 0x400000 made that
+  check permissive rather than protective and the dimension list grew to the
+  declared count before any read could run out of input. This accounted for every
+  out-of-memory artifact found by fuzzing.
+- **Type-name validation rejected legitimate compiler-generated names.** It
+  matched a hand-written list of prefixes, so `<Module>{GUID}` failed on untouched
+  input as well as on rewritten output; the closed angle bracket the C# compiler
+  guarantees is the real invariant. Validation failures also reported only how
+  many validators failed, discarding the messages saying why.
+- **Cleanup deleted enclosing types whose nested types were still referenced**,
+  leaving a NestedClass row pointing at a TypeDef that no longer existed.
+  Reachability now walks the nesting relation to a fixed point.
+- **Reachability used the SSA call graph alone**, so every method without SSA
+  looked unreachable and the live set was under-approximated. SSA edges are now
+  preferred where they exist and the static graph fills in where they do not.
+- **Opaque static fields were only folded when every write came from a `.cctor`.**
+  Obfuscators route initialization through helpers, so those fields stayed opaque
+  and their predicates survived. A write site now counts when every caller of the
+  writing method is itself initialization-only; a method with no known caller is
+  not admitted. .NET Reactor string samples go from 223 decryption failures to
+  none.
 
 ### Performance
 
@@ -105,6 +127,37 @@ miscompilations in the SSA back end and layout defects in the PE writer.
 
 ### Changed
 
+- **BREAKING**: **CFF unflattening resolves dispatcher edges from SSA instead of
+  enumerating execution paths.** The old tracer walked the method from entry and
+  forked at every conditional, which is exponential in the number of branches and
+  re-explored the whole method once per dispatcher. The state reaching a
+  dispatcher is a phi whose operands are indexed by predecessor, so the value on
+  each edge can simply be read; recovering it is linear in the number of edges.
+  Encodings that derive each state from the previous one are resolved by a fixed
+  point over states — one iteration per original block, not per path.
+
+  On one .NET Reactor sample the tree cost 108.8 million nodes and 62 seconds
+  across 40 dispatchers; the same work now takes 0.16. `reactor_full` drops from
+  615 to 154 seconds, of which unflattening is 1.1. The tracer and the patch-plan
+  reconstruction are deleted, roughly 3 400 lines net.
+
+  Edges are only rewired when the answer is provable: the case index is obtained
+  by evaluating the dispatcher's own switch operand rather than a reconstructed
+  transform, arithmetic folds at the operand's width because state encodings rely
+  on int32 wraparound, and a block is skippable only when everything it computes
+  feeds the state machine and nothing else. An edge that cannot be resolved keeps
+  routing through the dispatcher, so coverage degrades rather than correctness,
+  and blocks holding a call, a store or a string are never removed on the strength
+  of an analysis that is allowed to be incomplete.
+
+  `unflatten` and `unflatten_with_dispatchers` no longer take a config or an
+  assembly, `CffReconstructionPass::new` takes only the context, and the patch
+  plan API is gone. `UnflattenConfig` and `UnflatteningThresholds` lose the knobs
+  that drove path enumeration; the ones that remain are now actually applied by
+  detection, which previously built a config and then ignored it.
+- The workspace declares `rust-version = "1.95"`, and the minimal-features CI job
+  is pinned to it — and extended with a default-feature workspace check — so the
+  MSRV is verified rather than merely stated.
 - **BREAKING**: `Error` is `#[non_exhaustive]` and derives `Clone`. The previous
   hand-written `Clone` rewrote most variants into `Error::Other(String)`,
   destroying the taxonomy for any caller that cloned.
