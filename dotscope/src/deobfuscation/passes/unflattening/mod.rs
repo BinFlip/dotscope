@@ -375,7 +375,22 @@ impl SsaPass<CilTarget, CompilerContext> for CffReconstructionPass {
         let started = std::time::Instant::now();
         match unflatten_with_dispatchers(ssa, dispatchers) {
             Some(mut patched) => {
-                patched.rebuild_ssa()?;
+                // Rewiring can leave a value defined on a path the bypass no
+                // longer takes. The guards in `resolve` exist to prevent that,
+                // and `rebuild_ssa` is what proves it: it re-derives the phi
+                // graph and rejects a definition that no longer reaches its
+                // uses. Treat a rejection as "this method cannot be unflattened
+                // safely" and leave it flattened — an unrecovered method is a
+                // gap in the analysis, whereas propagating the error abandons
+                // every remaining method in the assembly as well.
+                if let Err(error) = patched.rebuild_ssa() {
+                    log::warn!(
+                        "CFF {:08x}: rewired form failed SSA validation ({error}); \
+                         leaving the method flattened",
+                        method_token.value()
+                    );
+                    return Ok(false);
+                }
                 log::debug!(
                     "CFF {:08x}: {} block(s), {}ms",
                     method_token.value(),
