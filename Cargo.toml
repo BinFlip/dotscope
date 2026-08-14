@@ -5,6 +5,7 @@ resolver = "2"
 
 [workspace.package]
 edition = "2021"
+rust-version = "1.95"
 license = "Apache-2.0"
 repository = "https://github.com/ATRAPSLLC/dotscope"
 homepage = "https://github.com/ATRAPSLLC/dotscope"

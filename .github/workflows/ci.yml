@@ -109,9 +109,11 @@ jobs:
         RUSTDOCFLAGS: "-Dwarnings"
       run: cargo doc -p dotscope --all-features --no-deps
 
-  # Ensures the crate compiles and tests pass without legacy-crypto feature (Linux only)
+  # Compiles and tests without the legacy-crypto feature (Linux only). Pinned to the declared
+  # MSRV so this job also guards `rust-version`; the workspace check covers the default-feature
+  # path, which `--no-default-features` alone would not.
   minimal-features:
-    name: Minimal Features
+    name: Minimal Features & MSRV
     runs-on: ubuntu-latest
 
     steps:
@@ -119,12 +121,15 @@ jobs:
       uses: actions/checkout@v7
 
     - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@1.95.0
 
     - name: Setup Rust cache
       uses: Swatinem/rust-cache@v2
       with:
         key: minimal-features
+
+    - name: Check compilation (default features, whole workspace)
+      run: cargo check --workspace --all-targets
 
     - name: Check compilation (no default features)
       run: cargo check -p dotscope --no-default-features
