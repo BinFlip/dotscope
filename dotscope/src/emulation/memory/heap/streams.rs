@@ -348,7 +348,7 @@ impl ManagedHeap {
                 // Crediting those back with a wrapping subtract would underflow the counter to
                 // near `usize::MAX` and make every later allocation fail.
                 let refund = old_length.saturating_sub(new_length);
-                let _ = self.current_size.fetch_update(
+                let _ = self.current_size.try_update(
                     Ordering::Relaxed,
                     Ordering::Relaxed,
                     |current| Some(current.saturating_sub(refund)),

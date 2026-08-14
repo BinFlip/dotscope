@@ -243,7 +243,7 @@ impl DecryptorContext {
             return true;
         }
         self.emulations_performed
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
                 if n >= max {
                     None
                 } else {
