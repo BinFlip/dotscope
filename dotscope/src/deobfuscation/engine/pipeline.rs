@@ -571,7 +571,9 @@ impl<'a> PipelineRun<'a> {
             .map_err(|e| Error::SsaError(e.0))?;
         }
 
-        let ssa_call_graph = ctx.build_ssa_call_graph();
+        // Effective, not SSA-only: this graph decides what gets deleted, and a method whose
+        // body never converted to SSA must read as "unknown callees", not "no callees".
+        let ssa_call_graph = ctx.build_effective_call_graph();
         let mut merged_cleanup = build_cleanup_request(
             self.engine,
             &ctx,

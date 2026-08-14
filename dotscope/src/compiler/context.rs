@@ -510,7 +510,10 @@ impl CompilerContext {
     /// transformations that may have removed or added calls since the
     /// initial static call graph was built.
     ///
-    /// Used by both dead method elimination and cleanup request building.
+    /// Note this graph only has entries for methods that *have* an SSA function. A method whose
+    /// body never converted contributes no edges at all, which reads as "calls nothing" rather
+    /// than "unknown". Reachability consumers must use [`Self::build_effective_call_graph`];
+    /// this one is for consumers that specifically want the post-transformation view.
     #[must_use]
     pub fn build_ssa_call_graph(&self) -> BTreeMap<Token, BTreeSet<Token>> {
         let mut call_graph = BTreeMap::new();
@@ -535,6 +538,29 @@ impl CompilerContext {
                 }
             }
             call_graph.insert(caller_token, callees);
+        }
+        call_graph
+    }
+
+    /// Builds a call graph safe to drive reachability and deletion from.
+    ///
+    /// [`Self::build_ssa_call_graph`] is the post-transformation view, and it is the right
+    /// input wherever inlining and devirtualization must be reflected. It is the wrong input
+    /// for deciding what to *delete*: it only has entries for methods that converted to SSA,
+    /// so a method whose body never converted -- an encrypted or native body, or one that
+    /// failed to decode -- contributes no edges, and everything it references reads as
+    /// unreachable. Deleting on that basis strips types the surviving body still names, which
+    /// produces a structurally invalid assembly rather than a smaller one.
+    ///
+    /// So SSA edges win where they exist, and the static call graph fills in for every method
+    /// that has none. This mirrors what `CtxWorld::callees` does for dead-method elimination.
+    #[must_use]
+    pub fn build_effective_call_graph(&self) -> BTreeMap<Token, BTreeSet<Token>> {
+        let mut call_graph = self.build_ssa_call_graph();
+        for node in self.call_graph.nodes() {
+            call_graph
+                .entry(node.token)
+                .or_insert_with(|| self.call_graph.callees(node.token).into_iter().collect());
         }
         call_graph
     }
