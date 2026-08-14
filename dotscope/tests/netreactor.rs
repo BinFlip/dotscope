@@ -418,6 +418,21 @@ fn test_all_netreactor_samples() {
             continue;
         }
 
+        // A native-stub build is an x86 executable that carries the .NET image
+        // as payload rather than being one, so it never reaches the point where
+        // deobfuscation could be judged — it is rejected at load. That is the
+        // documented limit of what this crate reads, not a deobfuscation
+        // result, and `test_netreactor_samples_load` already asserts the load
+        // error is the expected one. Measuring it here would only restate that.
+        if sample.expected_protections.has_native_exe {
+            eprintln!(
+                "  [SKIP] {} — native exe stub, not a supported input format",
+                sample.filename
+            );
+            skipped += 1;
+            continue;
+        }
+
         results.push(run_deobfuscation_test(
             sample,
             SAMPLES_DIR,
