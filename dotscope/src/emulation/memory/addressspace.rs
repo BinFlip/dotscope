@@ -1134,7 +1134,7 @@ impl AddressSpace {
             // unmanaged allocation without having been charged here (a forked address space
             // carries regions over, for instance), and a wrapping subtract would underflow the
             // counter to near `usize::MAX` and reject every later allocation.
-            let _ = self.unmanaged_bytes.fetch_update(
+            let _ = self.unmanaged_bytes.try_update(
                 Ordering::Relaxed,
                 Ordering::Relaxed,
                 |current| Some(current.saturating_sub(size)),
@@ -1209,7 +1209,7 @@ impl AddressSpace {
             // Another thread may have moved the cursor further along already; never rewind it.
             let _ = self
                 .next_address
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
                     if current >= next {
                         None
                     } else {
