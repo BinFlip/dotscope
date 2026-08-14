@@ -106,6 +106,18 @@ miscompilations in the SSA back end and layout defects in the PE writer.
   writing method is itself initialization-only; a method with no known caller is
   not admitted. .NET Reactor string samples go from 223 decryption failures to
   none.
+- **Parameters removed with their method left dangling references behind them.**
+  `Constant`, `FieldMarshal` and `CustomAttribute` rows name a parameter through
+  a coded index and are dropped by asking whether their parent was deleted, but a
+  parameter discarded along with its method never entered that record — what had
+  been deleted was the method. The rows outlived the parameters they named and
+  the output failed raw validation with an out-of-range `Param` RID. Removed
+  parameters are now cascaded to all three tables.
+- **Unflattening could emit a function that failed SSA validation**, which
+  aborted deobfuscation for the whole assembly rather than the method. Rewiring a
+  dispatcher edge can skip a definition that a surviving block still reads; the
+  guards that prevent this have gaps, so the rebuilt form is now checked and a
+  method that cannot be rewired safely is left flattened.
 
 ### Performance
 
