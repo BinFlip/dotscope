@@ -77,7 +77,15 @@ impl Technique for GenericFlattening {
     }
 
     fn detect_ssa(&self, ctx: &AnalysisContext, _assembly: &CilObject) -> Detection {
-        let min_confidence = UnflattenConfig::default().min_confidence;
+        // Detection is the only consumer of these thresholds, so build them from
+        // the engine configuration here rather than defaulting and discarding
+        // what the caller asked for.
+        let config = UnflattenConfig {
+            max_backedge_depth: ctx.config.unflattening.max_backedge_depth,
+            confidence_weights: ctx.config.unflattening.confidence_weights.clone(),
+            ..UnflattenConfig::default()
+        };
+        let min_confidence = config.min_confidence;
         let mut dispatchers_by_method: HashMap<Token, Vec<Dispatcher>> = HashMap::new();
         let mut total_dispatchers = 0usize;
 
@@ -88,7 +96,7 @@ impl Technique for GenericFlattening {
             // Use the same CffDetector that CffReconstructionPass uses.
             // This gives us full structural analysis with confidence scoring,
             // dominance verification, state variable identification, etc.
-            let mut detector = CffDetector::new(ssa);
+            let mut detector = CffDetector::with_config(ssa, &config);
             let all_dispatchers = detector.detect_all_dispatchers();
 
             // Two-tier confidence filtering: high-confidence dispatchers must
@@ -143,13 +151,7 @@ impl Technique for GenericFlattening {
         detection: &Detection,
         _assembly: &Arc<CilObject>,
     ) -> Vec<Box<dyn SsaPass<CilTarget, CompilerContext>>> {
-        let cff_config = UnflattenConfig {
-            max_states: ctx.config.unflattening.max_states_per_case,
-            max_tree_depth: ctx.config.unflattening.max_trace_iterations,
-            ..UnflattenConfig::default()
-        };
-
-        let mut cff_pass = CffReconstructionPass::new(ctx, cff_config);
+        let mut cff_pass = CffReconstructionPass::new(ctx);
         if let Some(findings) = detection.findings::<FlatteningFindings>() {
             cff_pass = cff_pass.with_pre_detected(findings.dispatchers.clone());
         }

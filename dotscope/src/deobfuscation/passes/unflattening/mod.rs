@@ -20,27 +20,26 @@
 //!    instruction backwards through the SSA to find the PHI node carrying state
 //! 3. **Dispatcher Classification** ([`dispatcher`]): Determine type (switch with
 //!    optional XOR/modulo transform, if-else chain, computed jump)
-//! 4. **Tracing** ([`tracer`]): Evaluate the method from entry, following state
-//!    transitions through the dispatcher while forking at user branches to build
-//!    a tree of all execution paths
-//! 5. **Reconstruction** ([`reconstruction`]): Extract a patch plan from the trace
-//!    tree (redirects, block clones, state instruction removal) and apply it to
-//!    the SSA, eliminating the dispatcher
+//! 4. **Resolution** ([`resolve`]): Read the state travelling along each edge into
+//!    the dispatcher out of the SSA phi graph, and rewire that edge straight to
+//!    the block the dispatcher would have selected
 //!
 //! # Design Principles
 //!
 //! - **Structure-based detection**: Uses graph properties, not opcode patterns
-//! - **Concrete evaluation**: SSA evaluator resolves state transitions at trace
-//!   time — no solver needed for standard arithmetic encodings
-//! - **Graceful degradation**: Works partially even when full recovery isn't possible
+//! - **Edges, not paths**: The state on an edge is a property of the edge, which
+//!   SSA already records per predecessor. Recovering it costs one pass over the
+//!   dispatcher's edges rather than an enumeration of execution paths, whose
+//!   number grows exponentially with the method's conditionals
+//! - **Graceful degradation**: An edge whose state cannot be determined keeps
+//!   routing through the dispatcher, so partial recovery is always safe
 //! - **Clean separation**: Each phase is isolated for testability
 
 mod detection;
 mod dispatcher;
-mod reconstruction;
+mod resolve;
 mod spill;
 mod statevar;
-mod tracer;
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -48,44 +47,30 @@ use dashmap::DashSet;
 pub use detection::CffDetector;
 pub use dispatcher::Dispatcher;
 use rayon::prelude::*;
-pub use reconstruction::{apply_patch_plan, extract_patch_plan, merge_patch_plans};
 
 use crate::{
     analysis::{CilTarget, MethodRef, SsaFunction},
     compiler::{CompilerContext, PassCapability, SsaPass},
-    deobfuscation::{
-        config::DetectionWeights,
-        context::AnalysisContext,
-        passes::unflattening::tracer::{trace_for_dispatcher, TracedDispatcher},
-    },
+    deobfuscation::{config::DetectionWeights, context::AnalysisContext},
     metadata::{token::Token, typesystem::PointerSize},
-    CilObject,
 };
 
-/// High-level API: Unflatten a method using tree-based tracing and patching.
+/// High-level API: unflatten a method by rewiring its dispatcher edges.
 ///
-/// This is the main entry point for the trace-based unflattening approach.
-/// It detects ALL CFF dispatchers in the method (there may be independent
-/// dispatchers in different exception handler regions), traces each one
-/// independently, merges the patch plans, and applies them all at once
-/// before a single `rebuild_ssa()`. This avoids the block renumbering
-/// corruption that occurs when dispatchers are processed iteratively
-/// with intermediate SSA rebuilds.
+/// Detects every CFF dispatcher in the method — there may be independent ones
+/// per exception handler region — resolves all of their edges against the
+/// unmodified function, and applies the whole set at once so a single
+/// `rebuild_ssa()` sees the final graph.
 ///
 /// # Arguments
 ///
 /// * `ssa` - The SSA function to unflatten.
-/// * `config` - Configuration controlling tracing limits and behavior.
-/// * `assembly` - Optional assembly for predicate method resolution during tracing.
+/// * `config` - Detection thresholds and target pointer size.
 ///
 /// # Returns
-/// - `Some(ssa)` if unflattening succeeded (patched clone)
-/// - `None` if method doesn't appear to be CFF-protected
-pub fn unflatten(
-    ssa: &SsaFunction,
-    config: &UnflattenConfig,
-    assembly: Option<&CilObject>,
-) -> Option<SsaFunction> {
+/// - `Some(ssa)` if at least one edge was rewired (patched clone)
+/// - `None` if the method doesn't appear to be CFF-protected
+pub fn unflatten(ssa: &SsaFunction, config: &UnflattenConfig) -> Option<SsaFunction> {
     let mut detector = CffDetector::with_config(ssa, config);
     let dispatchers: Vec<_> = detector
         .detect_all_dispatchers()
@@ -93,7 +78,7 @@ pub fn unflatten(
         .filter(|d| d.confidence >= config.min_confidence)
         .collect();
 
-    unflatten_with_dispatchers(ssa, config, assembly, dispatchers)
+    unflatten_with_dispatchers(ssa, dispatchers)
 }
 
 /// Unflatten a method using pre-detected dispatchers.
@@ -109,126 +94,93 @@ pub fn unflatten(
 /// # Arguments
 ///
 /// * `ssa` - The SSA function to unflatten.
-/// * `config` - Configuration controlling tracing limits and behavior.
-/// * `assembly` - Optional assembly for predicate method resolution during tracing.
 /// * `dispatchers` - Pre-detected dispatchers (already confidence-filtered).
 ///
 /// # Returns
-/// - `Some(ssa)` if unflattening succeeded (patched clone)
-/// - `None` if no dispatchers provided or tracing produced no changes
+/// - `Some(ssa)` if at least one edge was rewired (patched clone)
+/// - `None` if no dispatchers were given or none of their edges resolved
 pub fn unflatten_with_dispatchers(
     ssa: &SsaFunction,
-    config: &UnflattenConfig,
-    assembly: Option<&CilObject>,
     dispatchers: Vec<Dispatcher>,
 ) -> Option<SsaFunction> {
     if dispatchers.is_empty() {
         return None;
     }
 
-    // Trace dispatchers in parallel and extract patch plans.
-    // Each dispatcher trace is independent (shared &SsaFunction, own evaluator).
-    // Pass other dispatcher block indices so forks at foreign dispatchers
-    // don't consume tree depth budget (Problem A from §15.5).
-    let all_dispatcher_blocks: Vec<usize> = dispatchers.iter().map(|d| d.block).collect();
-
-    let plans: Vec<_> = dispatchers
+    // Resolve each dispatcher's edges against the unmodified function. This is
+    // a pure read, so the dispatchers are independent and can run in parallel.
+    let per_dispatcher: Vec<Vec<resolve::Rewire>> = dispatchers
         .par_iter()
-        .filter_map(|d| {
-            let traced = TracedDispatcher {
-                block: d.block,
-                switch_var: d.switch_var,
-                targets: d.cases.clone(),
-                default: d.default,
-                state_var: d.state_phi,
-                initial_state: d.initial_state,
-            };
-
-            let others: Vec<usize> = all_dispatcher_blocks
-                .iter()
-                .copied()
-                .filter(|&b| b != d.block)
-                .collect();
-            let tree = trace_for_dispatcher(ssa, config, assembly, traced, &others);
-
-            tree.dispatcher.as_ref()?;
-
-            extract_patch_plan(&tree, ssa).filter(|plan| plan.state_transitions_removed > 0)
+        .map(|d| {
+            let (rewires, stats) = resolve::resolve_dispatch_edges(ssa, d);
+            log::debug!(
+                "CFF resolve b{}: {} edge(s) resolved, {} unresolved, {} conflicting \
+                 (table {} incl. {} overflow)",
+                d.block,
+                stats.resolved,
+                stats.unresolved,
+                stats.conflicts,
+                stats.table_size,
+                stats.overflow_entries
+            );
+            if stats.unresolved > 0 {
+                log::debug!(
+                    "CFF reasons b{}: no_target={} not_constant={} impure_chain={}",
+                    d.block,
+                    stats.reasons.no_target,
+                    stats.reasons.not_constant,
+                    stats.reasons.impure_chain
+                );
+            }
+            rewires
         })
         .collect();
 
-    if plans.is_empty() {
+    let (rewires, conflicts) = resolve::merge_rewires(per_dispatcher);
+    if conflicts > 0 {
+        log::debug!("CFF resolve: {conflicts} edge(s) dropped across dispatchers");
+    }
+    if rewires.is_empty() {
         return None;
     }
 
-    // Step 3: Merge all patch plans into a single combined plan
-    let merged = merge_patch_plans(plans);
-
-    if merged.state_transitions_removed == 0 {
-        return None;
-    }
-
-    // Step 4: Clone the SSA, give every cross-block value a storage location,
-    // then apply the combined patches once.
+    // Give every cross-block value a storage location before the CFG changes.
     //
-    // The promotion must happen before any terminator is rewired. Patching
-    // invalidates the phi nodes that record which SSA names denote the same
-    // value across a merge, and for edges the patch creates no phi ever recorded
-    // anything at all — so a value carried between blocks in a stack temporary
-    // becomes unreconstructible the moment the CFG changes. Promoting those
-    // values to local slots first gives `rebuild_ssa` a storage location to
-    // resolve them against, which is what makes the rebuild well-defined for an
-    // arbitrarily rewired CFG.
+    // Rewiring replaces `case -> dispatcher -> next` with `case -> next`, so a
+    // value that used to be merged by a phi at the dispatcher now arrives along
+    // an edge no phi ever described. `rebuild_ssa` can reconstruct such a value
+    // only if it has an identity independent of control flow — a local slot.
+    // Promoting first is what makes the rebuild well-defined for the rewired
+    // graph.
     let mut patched = ssa.clone();
     let spilled = spill::promote_cross_block_values(&mut patched);
     if spilled > 0 {
         log::debug!("Promoted {spilled} cross-block value(s) to locals before unflattening");
     }
-    let _result = apply_patch_plan(&mut patched, &merged);
 
-    // Note: we do NOT reject based on dispatcher_still_needed. With multiple
-    // dispatchers, some may be fully resolved while others are only partial
-    // (e.g., handler CFF that depends on the outer CFF state). apply_patch_plan
-    // already handles this correctly: it only clears dispatchers that are fully
-    // resolved, leaving partial ones intact for later passes or as harmless
-    // residual. Rejecting the entire result would prevent the fully-resolved
-    // main body CFF from being applied.
+    let applied = resolve::apply_rewires(&mut patched, &rewires);
+    if applied == 0 {
+        return None;
+    }
+    let cleared = resolve::clear_unreachable(&mut patched);
+    log::debug!("CFF: rewired {applied} edge(s) past the dispatcher, {cleared} block(s) now dead");
 
+    // Dispatchers whose edges did not all resolve keep their remaining
+    // predecessors and stay in the graph — partial recovery, not corruption.
+    // The state constants and the dispatcher itself become unreachable once
+    // every edge is rewired, and the ordinary dead-code passes remove them.
     Some(patched)
 }
 
 /// Configuration for the CFF reconstruction pass.
 #[derive(Debug, Clone)]
 pub struct UnflattenConfig {
-    /// Maximum states to explore before giving up.
-    ///
-    /// CFF typically has dozens to hundreds of states. If we exceed this
-    /// limit, the method likely has unusual structure or isn't CFF.
-    pub max_states: usize,
-
-    /// Reserved: enable solver for complex state encodings.
-    ///
-    /// Placeholder for future solver integration. Currently unused — state
-    /// resolution relies entirely on concrete evaluation via the SSA evaluator.
-    pub enable_solver: bool,
-
-    /// Reserved: maximum solver time per query in milliseconds.
-    ///
-    /// Placeholder for future solver integration. Currently unused.
-    pub solver_timeout_ms: u64,
-
     /// Minimum confidence score to attempt unflattening (0.0 - 1.0).
     ///
     /// Detection assigns confidence based on how strongly the method
     /// matches CFF patterns. Lower values catch more CFF but may
     /// produce false positives.
     pub min_confidence: f64,
-
-    /// Maximum depth for constant propagation evaluation.
-    ///
-    /// Limits how deeply we trace through SSA definitions when
-    /// evaluating state values.
-    pub max_eval_depth: usize,
 
     /// Maximum BFS depth for back-edge transitive reachability check.
     ///
@@ -239,36 +191,17 @@ pub struct UnflattenConfig {
     /// Confidence scoring weights for CFF dispatcher detection.
     pub confidence_weights: DetectionWeights,
 
-    /// Maximum number of blocks to visit during tracing.
-    ///
-    /// Prevents infinite loops when tracing through the CFG. If exceeded,
-    /// tracing stops with a `StopReason::MaxVisitsExceeded`.
-    pub max_block_visits: usize,
-
-    /// Maximum nesting depth for the trace tree.
-    ///
-    /// Limits how deeply nested the tree can become from forking at user
-    /// branches. Prevents exponential tree growth in methods with many
-    /// independent conditionals.
-    pub max_tree_depth: usize,
-
     /// Target pointer size for SSA evaluation.
     ///
-    /// Derived from the PE header. Used by the SSA evaluator for
-    /// pointer-sized arithmetic during tracing.
+    /// Derived from the PE header. Used when detection evaluates the
+    /// dispatcher's initial state.
     pub pointer_size: PointerSize,
 }
 
 impl Default for UnflattenConfig {
     fn default() -> Self {
         Self {
-            max_states: 1000,
-            enable_solver: true,
-            solver_timeout_ms: 100,
             min_confidence: 0.6,
-            max_eval_depth: 30,
-            max_block_visits: 50000,
-            max_tree_depth: 500,
             pointer_size: PointerSize::Bit32,
             max_backedge_depth: 10,
             confidence_weights: DetectionWeights::default(),
@@ -279,46 +212,33 @@ impl Default for UnflattenConfig {
 impl UnflattenConfig {
     /// Creates a configuration optimized for ConfuserEx samples.
     ///
-    /// ConfuserEx uses predictable arithmetic encoding that constant
-    /// propagation can always resolve, so we can be more aggressive
-    /// with lower state limits and no solver.
+    /// ConfuserEx's arithmetic encoding is always resolvable, so detection can
+    /// accept a lower confidence without risking wasted work.
     ///
     /// # Returns
     ///
-    /// An `UnflattenConfig` with reduced limits and the solver disabled.
+    /// An `UnflattenConfig` with a reduced confidence threshold.
     #[must_use]
     pub fn confuserex() -> Self {
         Self {
-            max_states: 500,
-            enable_solver: false,
-            solver_timeout_ms: 50,
             min_confidence: 0.5,
-            max_eval_depth: 25,
-            max_block_visits: 5000,
-            max_tree_depth: 75,
             ..Self::default()
         }
     }
 
     /// Creates a configuration for aggressive analysis.
     ///
-    /// Useful for heavily obfuscated code where detection may have
-    /// lower confidence. Uses higher limits and a lower confidence
-    /// threshold to catch more CFF patterns at the cost of longer
-    /// analysis time.
+    /// Useful for heavily obfuscated code where detection may have lower
+    /// confidence. Accepts weaker matches and looks further for back edges, at
+    /// the cost of attempting more methods.
     ///
     /// # Returns
     ///
-    /// An `UnflattenConfig` with increased limits and the solver enabled.
+    /// An `UnflattenConfig` with a lower confidence threshold.
     #[must_use]
     pub fn aggressive() -> Self {
         Self {
-            max_states: 2000,
-            solver_timeout_ms: 200,
             min_confidence: 0.4,
-            max_eval_depth: 50,
-            max_block_visits: 20000,
-            max_tree_depth: 150,
             max_backedge_depth: 15,
             ..Self::default()
         }
@@ -335,8 +255,13 @@ impl UnflattenConfig {
 /// dispatchers directly instead of re-running detection. This avoids duplicate
 /// structural analysis (dominance, SCCs, confidence scoring) for methods
 /// already analyzed during the detection phase's SSA pass.
+///
+/// The pass itself takes no configuration: it consumes dispatchers the detection
+/// phase already found and scored, and resolving their edges has no thresholds
+/// to tune. [`UnflattenConfig`] belongs to detection, which is where it is now
+/// applied.
+#[derive(Default)]
 pub struct CffReconstructionPass {
-    config: UnflattenConfig,
     /// Successfully unflattened dispatcher methods (shared with deob engine).
     unflattened_dispatchers: Arc<DashSet<Token>>,
     /// All detected dispatcher methods (shared with deob engine).
@@ -344,17 +269,6 @@ pub struct CffReconstructionPass {
     /// Pre-detected dispatchers from the detection phase (method → dispatchers).
     /// When populated, `run_on_method` uses these instead of re-running detection.
     pre_detected: HashMap<Token, Vec<Dispatcher>>,
-}
-
-impl Default for CffReconstructionPass {
-    fn default() -> Self {
-        Self {
-            config: UnflattenConfig::default(),
-            unflattened_dispatchers: Arc::new(DashSet::new()),
-            dispatchers: Arc::new(DashSet::new()),
-            pre_detected: HashMap::new(),
-        }
-    }
 }
 
 impl CffReconstructionPass {
@@ -366,16 +280,13 @@ impl CffReconstructionPass {
     /// # Arguments
     ///
     /// * `ctx` - The analysis context providing shared dispatcher tracking sets.
-    /// * `config` - Configuration controlling tracing limits, confidence thresholds,
-    ///   and solver usage.
     ///
     /// # Returns
     ///
     /// A new `CffReconstructionPass` ready for pipeline execution.
     #[must_use]
-    pub fn new(ctx: &AnalysisContext, config: UnflattenConfig) -> Self {
+    pub fn new(ctx: &AnalysisContext) -> Self {
         Self {
-            config,
             unflattened_dispatchers: Arc::clone(&ctx.unflattened_dispatchers),
             dispatchers: Arc::clone(&ctx.dispatchers),
             pre_detected: HashMap::new(),
@@ -448,14 +359,8 @@ impl SsaPass<CilTarget, CompilerContext> for CffReconstructionPass {
         method: &MethodRef,
         host: &CompilerContext,
     ) -> analyssa::Result<bool> {
-        let assembly_arc = host
-            .assembly()
-            .ok_or_else(|| analyssa::Error::new("CffReconstructionPass requires an assembly"))?;
-        let assembly: &CilObject = &assembly_arc;
         let ctx = host;
         let method_token = method.0;
-        let mut config = self.config.clone();
-        config.pointer_size = PointerSize::from_is_64bit(assembly.file().pe().is_64bit);
 
         // Use pre-detected dispatcher block indices from detect_ssa phase, but
         // refresh variable IDs from the current SSA. Earlier passes (opaque field
@@ -467,9 +372,16 @@ impl SsaPass<CilTarget, CompilerContext> for CffReconstructionPass {
             .map(|pre| pre.iter().filter_map(|d| d.refresh(ssa)).collect())
             .unwrap_or_default();
 
-        match unflatten_with_dispatchers(ssa, &config, Some(assembly), dispatchers) {
+        let started = std::time::Instant::now();
+        match unflatten_with_dispatchers(ssa, dispatchers) {
             Some(mut patched) => {
                 patched.rebuild_ssa()?;
+                log::debug!(
+                    "CFF {:08x}: {} block(s), {}ms",
+                    method_token.value(),
+                    patched.blocks().len(),
+                    started.elapsed().as_millis()
+                );
 
                 *ssa = patched;
 
