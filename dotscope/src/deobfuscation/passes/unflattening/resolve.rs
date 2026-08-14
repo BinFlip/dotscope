@@ -735,7 +735,9 @@ fn pure_chain_between(
             // a use further on would have no definition. State encoding is
             // consumed by the dispatcher itself and dies with it, which is why
             // the usual chain passes this.
-            return chain.iter().all(|&block| defs_stay_within(ssa, block, &chain, end));
+            return chain
+                .iter()
+                .all(|&block| defs_stay_within(ssa, block, &chain, end));
         }
         let Some(block) = ssa.block(current) else {
             return false;
@@ -865,8 +867,11 @@ fn state_phi_at<'s>(ssa: &'s SsaFunction, dispatcher: &Dispatcher) -> Option<&'s
 /// the same value for actual work would not be struck out, and bypassing would
 /// then be unsafe.
 fn state_only_values(ssa: &SsaFunction, dispatcher_block: usize) -> BTreeSet<SsaVarId> {
-    let mut state_only: BTreeSet<SsaVarId> =
-        ssa.variables().iter().map(|variable| variable.id()).collect();
+    let mut state_only: BTreeSet<SsaVarId> = ssa
+        .variables()
+        .iter()
+        .map(|variable| variable.id())
+        .collect();
 
     loop {
         let mut struck = false;
@@ -1008,7 +1013,15 @@ pub fn resolve_dispatch_edges(
     // reachable — including states found behind a merge, which is the only way
     // a case block reached solely through a conditional becomes visible.
     if !unresolved.is_empty() {
-        let (recovered, covered) = propagate_states(ssa, &table, dispatcher, phi, &mut folder, &states, &state_only);
+        let (recovered, covered) = propagate_states(
+            ssa,
+            &table,
+            dispatcher,
+            phi,
+            &mut folder,
+            &states,
+            &state_only,
+        );
         for pred in covered {
             unresolved.remove(&pred);
         }
@@ -1142,8 +1155,7 @@ fn propagate_states(
                 let Some(branch) = folder.fold_bound(operand, [pinned, None]) else {
                     continue;
                 };
-                let Some(next) =
-                    folder.fold_bound(value, [pinned, Some((phi_result, branch))])
+                let Some(next) = folder.fold_bound(value, [pinned, Some((phi_result, branch))])
                 else {
                     continue;
                 };
@@ -1304,9 +1316,7 @@ fn resolve_merge(
             let Some(branch) = folder.fold_bound(operand, [outer, None]) else {
                 continue;
             };
-            let Some(state) =
-                folder.fold_bound(value, [outer, Some((phi_result, branch))])
-            else {
+            let Some(state) = folder.fold_bound(value, [outer, Some((phi_result, branch))]) else {
                 continue;
             };
             let Some(target) = table.lookup(folder, state) else {
@@ -1475,9 +1485,7 @@ pub fn apply_rewires(ssa: &mut SsaFunction, rewires: &[Rewire]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::{
-        DefSite, PhiOperand, SsaBlock, SsaInstruction, SsaType, VariableOrigin,
-    };
+    use crate::analysis::{DefSite, PhiOperand, SsaBlock, SsaInstruction, SsaType, VariableOrigin};
 
     /// Appends an instruction to `block`, creating its destination variable with
     /// the def site the folder needs to find it again.
@@ -1598,12 +1606,8 @@ mod tests {
         // Default arm: `if state == 700 goto 2` then fall through to block 3.
         // The state must be opaque here — a link whose both sides fold is a
         // comparison already decided, not a dispatch.
-        let state = ssa.create_variable(
-            VariableOrigin::Local(0),
-            0,
-            DefSite::entry(),
-            SsaType::I32,
-        );
+        let state =
+            ssa.create_variable(VariableOrigin::Local(0), 0, DefSite::entry(), SsaType::I32);
         let probe = constant(&mut ssa, 0, 700);
         terminate(
             &mut ssa,
@@ -1641,8 +1645,7 @@ mod tests {
         assert_eq!(stats.resolved, 2);
 
         // State 1 selects targets[1] = block 3; state 0 selects targets[0] = 4.
-        let mut targets: Vec<(usize, usize)> =
-            rewires.iter().map(|r| (r.from, r.new)).collect();
+        let mut targets: Vec<(usize, usize)> = rewires.iter().map(|r| (r.from, r.new)).collect();
         targets.sort_unstable();
         assert_eq!(targets, vec![(0, 3), (3, 4)]);
     }

@@ -1134,11 +1134,11 @@ impl AddressSpace {
             // unmanaged allocation without having been charged here (a forked address space
             // carries regions over, for instance), and a wrapping subtract would underflow the
             // counter to near `usize::MAX` and reject every later allocation.
-            let _ = self.unmanaged_bytes.try_update(
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-                |current| Some(current.saturating_sub(size)),
-            );
+            let _ =
+                self.unmanaged_bytes
+                    .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                        Some(current.saturating_sub(size))
+                    });
             Ok(())
         } else {
             Err(EmulationError::InvalidAddress {
