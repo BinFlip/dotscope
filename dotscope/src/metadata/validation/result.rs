@@ -370,12 +370,23 @@ impl ValidationResult {
             let errors = self.errors().into_iter().cloned().collect::<Vec<_>>();
             let error_count = errors.len();
 
-            let validator_names: Vec<_> = failures.iter().map(|f| f.validator_name()).collect();
+            // Name *and* message. The errors are carried in `errors` either way, but the
+            // summary is what reaches a caller that only prints the error, so a name alone
+            // makes a failure report which validator objected without saying to what.
+            // The error's own Display already names the validator, so it is used alone rather
+            // than prefixed with the name again.
+            let details: Vec<String> = failures
+                .iter()
+                .map(|f| match f.error() {
+                    Some(err) => err.to_string(),
+                    None => f.validator_name().to_string(),
+                })
+                .collect();
             let summary = format!(
                 "{} of {} validators failed: {}",
                 error_count,
                 self.validator_count,
-                validator_names.join(", ")
+                details.join("; ")
             );
 
             Err(Error::ValidationStage2Failed {

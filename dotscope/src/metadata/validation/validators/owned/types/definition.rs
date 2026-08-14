@@ -177,22 +177,17 @@ impl OwnedTypeDefinitionValidator {
 
                 // Validate special naming patterns (but allow legitimate compiler-generated types)
                 if type_entry.name.starts_with('<') && !type_entry.name.ends_with('>') {
-                    // Allow compiler-generated patterns:
-                    // - '<>c' (closures)
-                    // - '<MethodName>d__N' (async state machines)
-                    // - '<>c__DisplayClassN' (closure display classes)
-                    // - '<MethodName>b__N' (lambda expressions)
-                    // - '<phReserved>e__FixedBuffer' (fixed buffer struct)
-                    // - '<<MethodName>g__LocalFunction|N_N>d' (async local function state machines)
-                    // - '<Module>' (global/module type)
-                    let is_compiler_generated = type_entry.name.starts_with("<>")
-                    || type_entry.name.contains(">d__")
-                    || type_entry.name.contains(">b__")
-                    || type_entry.name.contains(">c__")
-                    || type_entry.name.contains(">e__FixedBuffer")
-                    || type_entry.name.contains(">g__") // Local function patterns
-                    || type_entry.name.ends_with(">d") // Async state machines ending with >d
-                    || type_entry.name == "<Module>"; // Global module type
+                    // A leading '<' opens a compiler- or tool-generated name, and the property
+                    // that makes such a name well formed is that the bracket is *closed*. What
+                    // follows the '>' is chosen by whatever emitted it, so enumerating suffixes
+                    // cannot be exhaustive: Roslyn appends 'd__N'/'b__N'/'c__DisplayClassN', and
+                    // both Roslyn and .NET Reactor append '{GUID}' to '<PrivateImplementationDetails>'
+                    // and '<Module>'. The previous allowlist rejected that last shape, which is
+                    // present in shipped assemblies and in every .NET Reactor sample -- so real
+                    // input failed validation, before any rewriting was involved.
+                    //
+                    // An unterminated '<' is still rejected, which is what this check is for.
+                    let is_compiler_generated = type_entry.name.contains('>');
 
                     if !is_compiler_generated {
                         return Err(Error::ValidationOwnedFailed {
