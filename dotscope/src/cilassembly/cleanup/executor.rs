@@ -10,7 +10,7 @@
 //! The executor ensures deletions are applied in the correct order to maintain
 //! referential integrity and avoid RID shifting issues.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::{
     cilassembly::{
@@ -29,7 +29,7 @@ use crate::{
     metadata::{
         tables::{
             skip_unreadable, CustomAttributeRaw, FieldRaw, InterfaceImplRaw, MethodDefRaw,
-            MethodImplRaw, MethodSemanticsRaw, MethodSpecRaw, TableId, TypeDefRaw,
+            MethodImplRaw, MethodSemanticsRaw, MethodSpecRaw, NestedClassRaw, TableId, TypeDefRaw,
         },
         token::Token,
     },
@@ -182,6 +182,15 @@ pub fn execute_cleanup(
         .filter(|t| t.is_table(TableId::TypeDef))
         .map(|t| t.row())
         .collect();
+
+    // Keeping a nested type alive means keeping its enclosing chain alive with it: a nested
+    // type cannot exist without its enclosing type (ECMA-335 II.22.32), and the cascade below
+    // deletes any nested type whose enclosing type went away. Without this expansion the
+    // enclosing type is deleted here, the cascade takes the nested type with it, and the
+    // signature that named the nested type is left pointing at a row that no longer exists --
+    // which the writer cannot repair, because `typedef_remap` deliberately declines to remap
+    // references to deleted types onto surviving rows.
+    let sig_referenced_typedefs = expand_with_enclosing_types(assembly, sig_referenced_typedefs);
 
     // 2d: Remove types (in descending RID order)
     for type_token in request.types() {
@@ -437,6 +446,45 @@ pub fn execute_cleanup(
     stats.sections_excluded = request.excluded_sections().len();
 
     Ok(stats)
+}
+
+/// Adds the transitive enclosing chain of every nested type in `rids`.
+///
+/// Nesting is transitive, so the walk runs to a fixed point: a type nested two levels deep
+/// keeps both of its ancestors alive, not just its immediate parent.
+///
+/// # Arguments
+///
+/// * `assembly` - The assembly to read the `NestedClass` table from
+/// * `rids` - TypeDef RIDs that must survive
+///
+/// # Returns
+///
+/// `rids` plus every TypeDef RID that encloses one of them.
+fn expand_with_enclosing_types(assembly: &CilAssembly, mut rids: HashSet<u32>) -> HashSet<u32> {
+    let view = assembly.view();
+    let Some(tables) = view.tables() else {
+        return rids;
+    };
+    let Some(nested_table) = tables.table::<NestedClassRaw>() else {
+        return rids;
+    };
+
+    let mut enclosing_of: HashMap<u32, u32> = HashMap::new();
+    for nested in nested_table.iter().filter_map(skip_unreadable) {
+        enclosing_of.insert(nested.nested_class, nested.enclosing_class);
+    }
+
+    let mut worklist: Vec<u32> = rids.iter().copied().collect();
+    while let Some(rid) = worklist.pop() {
+        if let Some(&enclosing) = enclosing_of.get(&rid) {
+            if rids.insert(enclosing) {
+                worklist.push(enclosing);
+            }
+        }
+    }
+
+    rids
 }
 
 /// Expands type deletions to include all their members.
