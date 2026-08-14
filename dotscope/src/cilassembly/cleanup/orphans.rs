@@ -169,20 +169,33 @@ where
 ///
 /// Parameters belong to methods via the `param_list` field in MethodDef.
 /// When a method is deleted, its parameters become orphaned.
-pub(super) fn remove_orphan_params(assembly: &mut CilAssembly, ctx: &DeletionContext) -> usize {
+///
+/// Returns the removed Param RIDs alongside the count. Rows in other tables
+/// point at parameters through a coded index — `Constant` for a default value,
+/// `FieldMarshal` for marshalling information, `CustomAttribute` for anything
+/// applied to the parameter — and those rows are dropped by asking
+/// [`DeletionContext`] whether their parent went away. A parameter removed here
+/// never enters that context: what was deleted is the *method*, and the context
+/// is immutable by the time this runs. Without the RIDs, every such dependent
+/// outlives the parameter it names and leaves a reference to a row that no
+/// longer exists.
+pub(super) fn remove_orphan_params(
+    assembly: &mut CilAssembly,
+    ctx: &DeletionContext,
+) -> (usize, HashSet<u32>) {
     // Collect param RIDs that belong to deleted methods (immutable borrow scope)
     let mut orphan_params: Vec<u32> = {
         let view = assembly.view();
         let Some(tables) = view.tables() else {
-            return 0;
+            return (0, HashSet::new());
         };
 
         let Some(methoddef_table) = tables.table::<MethodDefRaw>() else {
-            return 0;
+            return (0, HashSet::new());
         };
 
         if tables.table::<ParamRaw>().is_none() {
-            return 0;
+            return (0, HashSet::new());
         }
 
         let method_count = methoddef_table.row_count;
@@ -214,13 +227,24 @@ pub(super) fn remove_orphan_params(assembly: &mut CilAssembly, ctx: &DeletionCon
     orphan_params.dedup();
 
     let mut removed_count: usize = 0;
+    let mut removed_rids: HashSet<u32> = HashSet::new();
     for rid in orphan_params {
         if try_remove(assembly, TableId::Param, rid) {
             removed_count = removed_count.saturating_add(1);
+            removed_rids.insert(rid);
         }
     }
 
-    removed_count
+    (removed_count, removed_rids)
+}
+
+/// Whether `parent` names one of the parameters removed by
+/// [`remove_orphan_params`].
+///
+/// The coded index carries the table in the token, so a RID collision with
+/// another table cannot be mistaken for a match.
+fn names_removed_param(parent: Token, removed_params: &HashSet<u32>) -> bool {
+    parent.table() == TableId::Param.token_type() && removed_params.contains(&parent.row())
 }
 
 /// Removes orphaned CustomAttribute entries for deleted tokens.
@@ -228,10 +252,19 @@ pub(super) fn remove_orphan_params(assembly: &mut CilAssembly, ctx: &DeletionCon
 /// Custom attributes reference their parent via the `parent` coded index,
 /// and their constructor via the `constructor` coded index.
 /// When either the parent or constructor is deleted, the attribute becomes orphaned.
-pub(super) fn remove_orphan_attributes(assembly: &mut CilAssembly, ctx: &DeletionContext) -> usize {
+pub(super) fn remove_orphan_attributes(
+    assembly: &mut CilAssembly,
+    ctx: &DeletionContext,
+    removed_params: &HashSet<u32>,
+) -> usize {
     remove_orphan_entries::<CustomAttributeRaw>(assembly, |attr| {
         // Remove if parent is deleted
         if ctx.is_deleted(attr.parent.token) {
+            return true;
+        }
+        // A parameter dropped with its method is gone without being recorded as
+        // deleted, so it has to be matched separately.
+        if names_removed_param(attr.parent.token, removed_params) {
             return true;
         }
         // Also remove if constructor method is deleted (MethodDef or MemberRef)
@@ -346,18 +379,27 @@ pub(super) fn remove_orphan_methodsemantics(
     })
 }
 
-/// Removes orphaned Constant entries for deleted fields.
-pub(super) fn remove_orphan_constant(assembly: &mut CilAssembly, ctx: &DeletionContext) -> usize {
-    remove_orphan_entries::<ConstantRaw>(assembly, |constant| ctx.is_deleted(constant.parent.token))
+/// Removes orphaned Constant entries for deleted fields, properties or params.
+pub(super) fn remove_orphan_constant(
+    assembly: &mut CilAssembly,
+    ctx: &DeletionContext,
+    removed_params: &HashSet<u32>,
+) -> usize {
+    remove_orphan_entries::<ConstantRaw>(assembly, |constant| {
+        ctx.is_deleted(constant.parent.token)
+            || names_removed_param(constant.parent.token, removed_params)
+    })
 }
 
-/// Removes orphaned FieldMarshal entries for deleted fields.
+/// Removes orphaned FieldMarshal entries for deleted fields or params.
 pub(super) fn remove_orphan_fieldmarshal(
     assembly: &mut CilAssembly,
     ctx: &DeletionContext,
+    removed_params: &HashSet<u32>,
 ) -> usize {
     remove_orphan_entries::<FieldMarshalRaw>(assembly, |marshal| {
         ctx.is_deleted(marshal.parent.token)
+            || names_removed_param(marshal.parent.token, removed_params)
     })
 }
 
@@ -904,7 +946,7 @@ pub(super) fn remove_type_dependents(
     );
     stats.add(
         TableId::CustomAttribute,
-        remove_orphan_attributes(assembly, ctx),
+        remove_orphan_attributes(assembly, ctx, &HashSet::new()),
     );
     stats.add(
         TableId::ClassLayout,
@@ -951,12 +993,13 @@ pub(super) fn remove_parent_child_dependents(
     let mut stats = CleanupStats::new();
 
     // 1. Params (depend on methods)
-    stats.add(TableId::Param, remove_orphan_params(assembly, ctx));
+    let (params, removed_params) = remove_orphan_params(assembly, ctx);
+    stats.add(TableId::Param, params);
 
-    // 2. Custom attributes (can target anything)
+    // 2. Custom attributes (can target anything, parameters included)
     stats.add(
         TableId::CustomAttribute,
-        remove_orphan_attributes(assembly, ctx),
+        remove_orphan_attributes(assembly, ctx, &removed_params),
     );
 
     // 3. Type-related tables
@@ -1030,9 +1073,12 @@ pub(super) fn remove_parent_child_dependents(
     );
     stats.add(
         TableId::FieldMarshal,
-        remove_orphan_fieldmarshal(assembly, ctx),
+        remove_orphan_fieldmarshal(assembly, ctx, &removed_params),
     );
-    stats.add(TableId::Constant, remove_orphan_constant(assembly, ctx));
+    stats.add(
+        TableId::Constant,
+        remove_orphan_constant(assembly, ctx, &removed_params),
+    );
 
     // 6. Generic params (and cascade to constraints)
     let (genericparams, removed_gp_rids) = remove_orphan_genericparam(assembly, ctx);
