@@ -123,24 +123,69 @@ fn collect_field_stores(ssa: &SsaFunction) -> HashSet<Token> {
     stored
 }
 
-/// Returns whether `token` names a field marked `initonly` (C# `readonly`).
+/// Collects methods that only ever execute as part of type initialization.
 ///
-/// Resolves `MemberRef` tokens through the assembly resolver first, so a field referenced
-/// indirectly is judged on the definition's flags rather than skipped.
-fn field_is_init_only(assembly: &CilObject, token: Token) -> bool {
-    let resolved = if token.is_table(TableId::MemberRef) {
-        assembly.resolver().resolve_field(token).unwrap_or(token)
-    } else {
-        token
-    };
+/// Stores made while a type initializes must not count against a field's immutability —
+/// that store is what gives the field its constant value. Matching the `.cctor` name alone
+/// is too narrow: an obfuscator can put the stores in a plain static helper and call it from
+/// `.cctor`, which is exactly what .NET Reactor does with its key containers. A method whose
+/// every caller is itself initialization-only runs only during initialization too, so the set
+/// is closed under that rule and grown to a fixed point.
+///
+/// A method with no recorded callers is not admitted: unreachable in the SSA call graph is not
+/// the same as reachable only from `.cctor`, and assuming otherwise would admit any method the
+/// analysis simply failed to see a caller for.
+fn collect_initialization_only_methods(
+    ctx: &AnalysisContext,
+    assembly: &CilObject,
+) -> HashSet<Token> {
+    let mut callers: HashMap<Token, HashSet<Token>> = HashMap::new();
+    let mut methods: Vec<Token> = Vec::new();
 
-    assembly.types().iter().any(|entry| {
-        entry
-            .value()
-            .fields
-            .iter()
-            .any(|(_, field)| field.token == resolved && field.flags.is_init_only())
-    })
+    for entry in ctx.ssa_functions.iter() {
+        let caller = *entry.key();
+        methods.push(caller);
+        for block in entry.value().blocks() {
+            for instr in block.instructions() {
+                let callee = match instr.op() {
+                    SsaOp::Call { method, .. }
+                    | SsaOp::CallVirt { method, .. }
+                    | SsaOp::LoadFunctionPtr { method, .. }
+                    | SsaOp::LoadVirtFunctionPtr { method, .. } => method.token(),
+                    SsaOp::NewObj { ctor, .. } => ctor.token(),
+                    _ => continue,
+                };
+                callers.entry(callee).or_default().insert(caller);
+            }
+        }
+    }
+
+    let mut init_only: HashSet<Token> = methods
+        .iter()
+        .copied()
+        .filter(|token| is_static_constructor(assembly, *token))
+        .collect();
+
+    loop {
+        let mut grew = false;
+        for &method in &methods {
+            if init_only.contains(&method) {
+                continue;
+            }
+            let Some(method_callers) = callers.get(&method) else {
+                continue;
+            };
+            if !method_callers.is_empty() && method_callers.iter().all(|c| init_only.contains(c)) {
+                init_only.insert(method);
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+
+    init_only
 }
 
 /// Returns whether `token` names a static constructor.
@@ -167,7 +212,7 @@ fn is_static_constructor(assembly: &CilObject, token: Token) -> bool {
 /// an opaque predicate — `ldsfld; ldfld` is not an obfuscation signature. Folding an unfiltered
 /// match set freezes mutable state at its constructor-time value, turning branches that depend
 /// on runtime state into unconditional jumps to the wrong successor. Every caller therefore
-/// filters through [`field_is_init_only`] and [`collect_field_stores`].
+/// filters through [`collect_field_stores`].
 fn collect_field_load_sources(ssa: &SsaFunction) -> HashSet<Token> {
     let defs = build_def_map(ssa);
 
@@ -356,17 +401,20 @@ impl Technique for GenericOpaquePredicates {
         // be assembly-wide rather than per-method — and it must be collected before any
         // folding decision is made.
         //
-        // `.cctor`s are excluded deliberately, and the gate below does not work without it.
-        // That gate admits a field only when it is `initonly` *and* absent from this set, but
-        // an `initonly` static can only ever be assigned in its declaring type's `.cctor` —
-        // so counting `.cctor` stores made the two conditions mutually exclusive, left
-        // `all_field_loads` permanently empty, and silently disabled Variant A's field-load
-        // detection entirely. The pass warms those `.cctor`s up precisely so their values are
-        // known constants; a store there is what makes the field foldable, not what
-        // disqualifies it.
+        // Initialization is excluded deliberately, and the gate below does not work without
+        // it: the pass warms those initializers up precisely so their values are known
+        // constants, so a store there is what makes a field foldable, not what disqualifies
+        // it. Counting them would leave `all_field_loads` permanently empty and silently
+        // disable Variant A's field-load detection entirely.
+        //
+        // The exclusion covers every initialization-only method, not just `.cctor` itself —
+        // see [`collect_initialization_only_methods`]. .NET Reactor's `.cctor` calls a plain
+        // static helper that does the stores, so a name-based test counts them and judges the
+        // key fields mutable.
+        let init_only = collect_initialization_only_methods(ctx, assembly);
         let mut stored_fields: HashSet<Token> = HashSet::new();
         for entry in ctx.ssa_functions.iter() {
-            if is_static_constructor(assembly, *entry.key()) {
+            if init_only.contains(entry.key()) {
                 continue;
             }
             stored_fields.extend(collect_field_stores(entry.value()));
@@ -377,15 +425,21 @@ impl Technique for GenericOpaquePredicates {
             let predicate_fields = collect_predicate_static_fields(entry.value());
 
             // `collect_field_load_sources` matches the ordinary singleton idiom as well as
-            // opaque predicates, so admit a field only when it is provably immutable: marked
-            // `initonly`, and never stored outside the `.cctor`s this pass warms up (see the
-            // `.cctor` exclusion where `stored_fields` is built). Without both conditions the
-            // fold silently freezes runtime-mutated state.
+            // opaque predicates, so admit a field only when it is provably immutable: never
+            // stored outside the `.cctor`s this pass warms up (see the `.cctor` exclusion
+            // where `stored_fields` is built). Without that condition the fold silently
+            // freezes runtime-mutated state.
+            //
+            // Absence from `stored_fields` is the whole proof. Requiring the `initonly` flag
+            // as well proves nothing extra -- an `initonly` field is a field the compiler
+            // already refused to store outside the initializer, so it is a subset of what the
+            // scan admits -- while excluding every obfuscator that assigns in `.cctor` without
+            // setting the flag. .NET Reactor is one: its string-decryptor key fields are
+            // `static` (0x0013) with `initonly` (0x20) clear, so demanding the flag refused
+            // every fold and left the decryptor's arguments non-constant.
             let all_field_loads: HashSet<Token> = collect_field_load_sources(entry.value())
                 .into_iter()
-                .filter(|token| {
-                    !stored_fields.contains(token) && field_is_init_only(assembly, *token)
-                })
+                .filter(|token| !stored_fields.contains(token))
                 .collect();
 
             let combined: HashSet<Token> =
