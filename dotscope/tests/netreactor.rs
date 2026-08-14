@@ -459,14 +459,35 @@ fn test_all_netreactor_samples() {
             continue;
         }
 
-        // Over-cleanup guard. Virtualized samples are not devirtualized by any
-        // technique, so the VM interpreter and its handler types remain live
-        // code — the stubs left in the virtualized methods still call into
-        // them. Cleanup reachability analysis must follow candidate-to-candidate
-        // call edges transitively to see that; a single-step version reads the
-        // handler cluster as isolated infrastructure and strips the assembly
-        // down to its application methods (854 -> 45 on reactor_virtualization).
-        if result.success && result.sample.expected_protections.has_virtualization {
+        // The contract cleanup must satisfy is structural validity, not a survival ratio.
+        // An assembly that fails validation has had something deleted out from under a
+        // reference that still names it, which is over-cleanup by definition. A ratio only
+        // correlates with that loosely — samples have been observed at 82% survival and
+        // still invalid, and it says nothing about *which* methods went.
+        assert!(
+            result.success,
+            "{}: deobfuscation did not complete: {}",
+            result.sample.filename,
+            result.error.as_deref().unwrap_or("unknown error")
+        );
+        assert!(
+            result.assembly_valid,
+            "{}: deobfuscated output failed validation: {}",
+            result.sample.filename,
+            result.error.as_deref().unwrap_or("no error recorded")
+        );
+        assert!(
+            result.roundtrip_ok,
+            "{}: deobfuscated output does not round-trip: {}",
+            result.sample.filename,
+            result.error.as_deref().unwrap_or("no error recorded")
+        );
+
+        // Coarse backstop, and only that. Validity catches deletions that leave a dangling
+        // reference; it cannot catch deleting code nothing statically references — a VM
+        // handler reached only through computed dispatch, say. Those samples are kept for
+        // later analysis, so losing their real code silently is the failure this guards.
+        if result.sample.expected_protections.has_virtualization {
             assert!(
                 result.methods_after * 2 > result.methods_before,
                 "{}: cleanup removed {} of {} methods — the VM runtime is still \
