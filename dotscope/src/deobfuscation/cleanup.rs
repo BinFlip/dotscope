@@ -270,6 +270,17 @@ pub fn execute_cleanup(
 
     if types_count > 0 || methods_count > 0 || fields_count > 0 {
         log::info!("Cleanup: {types_count} types, {methods_count} methods, {fields_count} fields");
+        // Counts alone cannot answer "why is this still here" or "what took that away",
+        // which is the question any cleanup investigation starts from.
+        if log::log_enabled!(log::Level::Debug) {
+            let fmt = |it: &mut dyn Iterator<Item = &Token>| {
+                it.map(|t| format!("0x{:08x}", t.value()))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            log::debug!("Cleanup types:   {}", fmt(&mut request.types()));
+            log::debug!("Cleanup methods: {}", fmt(&mut request.methods()));
+        }
     }
 
     for section_name in request.excluded_sections() {
