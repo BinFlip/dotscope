@@ -101,13 +101,15 @@ bench:
 # with `make fuzz FUZZ_TARGETS=signatures`, or the duration with `FUZZ_TIME=300`.
 FUZZ_TARGETS ?= cilobject assemblyview signatures customattributes methodbody emulation
 FUZZ_TIME ?= 60
+FUZZ_RSS_LIMIT_MB ?= 4096
 
 fuzz:
 	@for t in $(FUZZ_TARGETS); do \
 		echo "=== fuzzing $$t ==="; \
 		mkdir -p dotscope/fuzz/corpus/$$t; \
 		cp dotscope/tests/samples/fuzz-regressions/* dotscope/fuzz/corpus/$$t/ 2>/dev/null || true; \
-		(cd dotscope/fuzz && cargo +nightly fuzz run $$t -- -max_total_time=$(FUZZ_TIME)) || exit 1; \
+		(cd dotscope/fuzz && cargo +nightly fuzz run $$t -- \
+			-max_total_time=$(FUZZ_TIME) -rss_limit_mb=$(FUZZ_RSS_LIMIT_MB)) || exit 1; \
 	done
 
 # Install development tools
