@@ -644,7 +644,21 @@ impl<'a> SignatureParser<'a> {
                             self.parse_type_simple()?; // Skip element type
 
                             // Read array metadata
+                            //
+                            // `rank` is bounded here and not merely stored: it is the only
+                            // ceiling on `num_lo_bounds` below, so an unbounded rank makes that
+                            // check permissive rather than protective, and the lower-bound
+                            // extension loop then grows `dimensions` to the declared count
+                            // before any read can run out of input.
                             let rank = self.parser.read_compressed_uint()?;
+                            if rank > MAX_ARRAY_DIMENSIONS {
+                                return Err(malformed_error!(
+                                    "Array signature has too many dimensions: rank {} (max: {})",
+                                    rank,
+                                    MAX_ARRAY_DIMENSIONS
+                                ));
+                            }
+
                             let num_sizes = self.parser.read_compressed_uint()?;
                             if num_sizes > MAX_ARRAY_DIMENSIONS {
                                 return Err(malformed_error!(
@@ -2341,6 +2355,22 @@ mod tests {
             assert_eq!(array.rank, 2);
             assert_eq!(array.dimensions.len(), 0)
         }
+
+        // An overlarge rank is rejected on the declared value, before anything is sized from
+        // it. `rank` is the only ceiling on `num_lo_bounds`, and the lower-bound extension
+        // loop grows `dimensions` to that count before any read can run out of input -- so an
+        // unbounded rank is an allocation bomb, not just an implausible array.
+        let mut parser = SignatureParser::new(&[
+            0x14, // ARRAY
+            0x08, // I4 (element type)
+            0xC0, 0x40, 0x00, 0x00, // rank 0x400000, a 4-byte compressed uint
+            0x00, // num_sizes 0
+            0x00, // num_lo_bounds 0
+        ]);
+        assert!(
+            parser.parse_type().is_err(),
+            "an array rank above MAX_ARRAY_DIMENSIONS must be rejected"
+        );
 
         // Multi-dimensional array int[2,3] with rank 2, with sizes
         let mut parser = SignatureParser::new(&[
