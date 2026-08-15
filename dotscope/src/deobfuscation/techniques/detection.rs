@@ -6,7 +6,7 @@
 
 use std::{
     any::Any,
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
 };
 
 use crate::{cilassembly::CleanupRequest, metadata::token::Token};
@@ -279,9 +279,22 @@ impl Detections {
     /// Merges all cleanup contributions into a single result.
     #[must_use]
     pub fn merged_cleanup(&self) -> CleanupRequest {
+        self.merged_cleanup_excluding(&BTreeSet::new())
+    }
+
+    /// Merges cleanup contributions, skipping the named techniques.
+    ///
+    /// A technique fills its cleanup request during detection, before it knows
+    /// whether the transform those deletions depend on will succeed. When the
+    /// transform then fails, merging the request removes metadata that nothing
+    /// replaced — the infrastructure is deleted while the code that needs it is
+    /// still there in its protected form. Excluding the technique leaves the
+    /// obfuscation in place, which is the better of the two outcomes.
+    #[must_use]
+    pub fn merged_cleanup_excluding(&self, excluded: &BTreeSet<&str>) -> CleanupRequest {
         let mut request = CleanupRequest::new();
-        for detection in self.entries.values() {
-            if detection.detected {
+        for (id, detection) in &self.entries {
+            if detection.detected && !excluded.contains(id.as_str()) {
                 request.merge(&detection.cleanup);
             }
         }

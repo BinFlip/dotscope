@@ -76,6 +76,7 @@ use crate::{
     cilassembly::CleanupRequest,
     compiler::{CompilerContext, EventLog, PassPhase, SsaPass},
     deobfuscation::{config::EngineConfig, context::AnalysisContext},
+    metadata::token::Token,
     CilObject, Result,
 };
 
@@ -272,6 +273,22 @@ pub trait Technique: Send + Sync {
     /// Tokens / sections to clean up after all passes complete.
     fn cleanup(&self, _detection: &Detection) -> Option<CleanupRequest> {
         None
+    }
+
+    /// Methods this technique was responsible for restoring, reported when its
+    /// transform did not succeed.
+    ///
+    /// A technique that rewrites method bodies — decrypting them, unpacking
+    /// them — leaves those methods in their protected form when it fails. Such a
+    /// method carries no calls, so nothing it references looks reachable and
+    /// cleanup reads the whole region as dead. It is not dead: it is the
+    /// original code, and the sample is kept precisely to analyse it later.
+    ///
+    /// Only consulted when the technique is detected and its transform did not
+    /// complete, so an implementation may return its full candidate set without
+    /// checking whether the run succeeded.
+    fn unrecovered_methods(&self, _detection: &Detection) -> Vec<Token> {
+        Vec::new()
     }
 
     /// Declares the technique's capability patterns.

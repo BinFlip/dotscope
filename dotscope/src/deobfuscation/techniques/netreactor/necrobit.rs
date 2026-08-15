@@ -514,6 +514,17 @@ impl Technique for NetReactorNecroBit {
         Some(Ok(events))
     }
 
+    /// The stub methods, which are exactly the ones whose bodies this technique
+    /// exists to decrypt. When decryption fails they still hold the
+    /// `nop;nop;X;ret` stub the protection wrote, and the real code is encrypted
+    /// in the resource rather than gone.
+    fn unrecovered_methods(&self, detection: &Detection) -> Vec<Token> {
+        detection
+            .findings::<NecroBitFindings>()
+            .map(|findings| findings.stub_method_tokens.clone())
+            .unwrap_or_default()
+    }
+
     fn requires_regeneration(&self) -> bool {
         true
     }

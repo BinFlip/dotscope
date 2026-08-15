@@ -42,7 +42,10 @@ use crate::{
     },
     compiler::{EventKind, ProxyDevirtualizationPass},
     deobfuscation::{
-        context::AnalysisContext, engine::DeobfuscationEngine, renamer, techniques::Detections,
+        context::AnalysisContext,
+        engine::DeobfuscationEngine,
+        renamer,
+        techniques::{Detections, Technique, TechniqueCapability},
     },
     metadata::{
         tables::{
@@ -81,7 +84,6 @@ fn decryptors_still_called(
     }
     still_called
 }
-
 /// Builds a complete cleanup request from detection results and analysis state.
 ///
 /// This consolidates all cleanup sources into a single request:
@@ -111,7 +113,58 @@ pub(crate) fn build_cleanup_request(
 ) -> CleanupRequest {
     // Start with technique-merged cleanup
     let registry = engine.technique_registry();
-    let mut request = detections.merged_cleanup();
+
+    // Byte transforms that were detected but did not succeed.
+    //
+    // A byte transform rewrites the assembly before SSA is built — decrypting
+    // method bodies, unpacking resources. When one fails, the assembly still
+    // holds the protected form, but every technique's cleanup request was
+    // already filled during detection on the assumption it would not. Merging
+    // those requests deletes the infrastructure the protected code still needs.
+    //
+    // Failure is recorded by omission: the pipeline calls `mark_transformed`
+    // only on success and logs the error, so "detected, declares a byte
+    // transform, not transformed" is the signal. Techniques without the
+    // capability are never marked and must not be caught by this.
+    let failed: Vec<&dyn Technique> = registry
+        .sorted_techniques(detections)
+        .into_iter()
+        .filter(|tech| {
+            tech.capabilities()
+                .contains(&TechniqueCapability::ByteTransform)
+                && detections.is_detected(tech.id())
+                && !detections.is_transformed(tech.id())
+        })
+        .collect();
+    let failed_byte_transforms: BTreeSet<&str> = failed.iter().map(|tech| tech.id()).collect();
+
+    let mut request = detections.merged_cleanup_excluding(&failed_byte_transforms);
+
+    for tech in &failed {
+        log::warn!(
+            "Withholding cleanup for {}: it declares a byte transform that did not succeed, \
+             so the metadata it would delete is still in use",
+            tech.id()
+        );
+
+        // Whatever the technique was meant to restore is still in its protected
+        // form. Such a method carries no calls, so nothing it references looks
+        // reachable — see the suppression of type-level deletion below — and it
+        // is itself real code that must survive for later analysis.
+        let Some(detection) = detections.get(tech.id()) else {
+            continue;
+        };
+        let unrecovered = tech.unrecovered_methods(detection);
+        if !unrecovered.is_empty() {
+            log::warn!(
+                "Protecting {} method(s) {} could not restore",
+                unrecovered.len(),
+                tech.id()
+            );
+            request.protect_tokens(unrecovered);
+        }
+    }
+
     let still_called = decryptors_still_called(ctx, ssa_call_graph);
     for tech in registry.sorted_techniques(detections) {
         if !detections.is_detected(tech.id()) {
@@ -180,9 +233,26 @@ pub(crate) fn build_cleanup_request(
     // This uses cluster analysis: candidate types that only reference each
     // other (and already-deleted entities) are detected as isolated
     // infrastructure and removed.
-    let unreferenced_types = find_unreferenced_types(assembly, ssa_call_graph, &request);
-    for type_token in unreferenced_types {
-        request.add_type(type_token);
+    //
+    // Skipped entirely when a byte transform failed. The analysis decides a type
+    // is unreferenced by asking the call graph who names it, and a method whose
+    // body is still encrypted contributes no edges at all — neither the SSA
+    // graph, which never converted it, nor the static graph, which was built
+    // from the same stub. Almost every non-public type then looks unrooted and
+    // the assembly is gutted rather than cleaned. Protection cannot save it
+    // either: this analysis does not consult the protected set, and deleting a
+    // type takes its members with it.
+    if failed_byte_transforms.is_empty() {
+        let unreferenced_types = find_unreferenced_types(assembly, ssa_call_graph, &request);
+        for type_token in unreferenced_types {
+            request.add_type(type_token);
+        }
+    } else {
+        log::warn!(
+            "Skipping unreferenced-type removal: {} byte transform(s) failed, so the call \
+             graph cannot distinguish unreachable from undecrypted",
+            failed_byte_transforms.len()
+        );
     }
 
     // Add dead methods from analysis (aggressive mode only)
