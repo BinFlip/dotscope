@@ -113,6 +113,39 @@ miscompilations in the SSA back end and layout defects in the PE writer.
   been deleted was the method. The rows outlived the parameters they named and
   the output failed raw validation with an out-of-range `Param` RID. Removed
   parameters are now cascaded to all three tables.
+- **.NET Reactor NecroBit recovered nothing from full-protection binaries.**
+  Every encrypted body was lost on both such samples — 0 of 59 and 0 of 562 —
+  while necrobit-only binaries were unaffected. The cause was not in the
+  decryption: a protection that resolves `VirtualProtect` through
+  `LoadLibrary`/`GetProcAddress` and calls it through a delegate never reached
+  the hook that implements it, so the pages holding the method bodies stayed
+  read-only and the write-back faulted on the first body. Both samples now
+  restore every stub and validate.
+- **A native function resolved at runtime never reached its hook.** Hook matching
+  required a declared P/Invoke, so any function obtained through `GetProcAddress`
+  and invoked through `Marshal.GetDelegateForFunctionPointer` bypassed it — the
+  delegate path answered from a small table of hardcoded return values instead,
+  reporting success without performing the call's effect. Such calls now carry
+  their arguments and dispatch through the ordinary hook path. `LoadLibrary`
+  hands out a distinct handle per module so the resolved function can be matched
+  against the library it came from.
+- **A refused write was retried as a fresh mapping.** `Marshal`'s write path
+  treated "mapped, but not writable" the same as "not mapped" and tried to
+  materialise a window at the enclosing 64KB boundary. For an address inside a
+  loaded image that is the image base, so the attempt collided with the image and
+  reported an overlap — turning a recoverable permission error into a fatal one
+  that named the wrong cause. The two cases are now distinguished.
+- **A failed body-decryption transform caused cleanup to delete the code it
+  could not decrypt.** A technique fills its cleanup request during detection,
+  before it knows whether the transform those deletions depend on will run. When
+  a byte transform fails, the bodies it was meant to restore stay encrypted;
+  such a method contributes no call edges, so everything it references reads as
+  unreachable and the type-level sweep removes it. One .NET Reactor sample fell
+  from 1181 methods to 87. Techniques now report what they could not restore
+  (`Technique::unrecovered_methods`), cleanup protects those methods, withholds
+  the failed technique's own request, and skips unreferenced-type removal for the
+  run — the call graph cannot tell unreachable from undecrypted. The same sample
+  now keeps 946 methods and validates.
 - **Unflattening could emit a function that failed SSA validation**, which
   aborted deobfuscation for the whole assembly rather than the method. Rewiring a
   dispatcher edge can skip a definition that a surviving block still reads; the
