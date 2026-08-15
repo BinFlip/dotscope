@@ -109,16 +109,36 @@ use crate::{
     Result,
 };
 
+/// A native function resolved at runtime, and the module it came from.
+///
+/// The module matters because hooks are registered against a `(dll, function)`
+/// pair. A function resolved through `GetProcAddress` only reaches its hook if
+/// the library that produced the handle is known, so the name is carried
+/// alongside the function rather than reconstructed later.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeFunction {
+    /// Owning module, as passed to `LoadLibrary` (e.g. `"kernel32.dll"`).
+    ///
+    /// `None` when the handle did not come from an observed `LoadLibrary` — the
+    /// function is still dispatchable, but only against hooks that do not
+    /// constrain the module.
+    pub dll: Option<Arc<str>>,
+    /// Exported function name, as passed to `GetProcAddress`.
+    pub name: Arc<str>,
+}
+
 /// Shared registry that maps fake function pointer addresses to their names
 /// and native function tokens to their names. This allows the full chain
-/// (GetProcAddress → GetDelegateForFunctionPointer → delegate dispatch) to
-/// preserve function identity.
+/// (`LoadLibrary` → `GetProcAddress` → `GetDelegateForFunctionPointer` →
+/// delegate dispatch) to preserve function identity.
 #[derive(Clone, Debug)]
 pub struct NativeFunctionRegistry {
-    address_to_name: Arc<DashMap<u64, Arc<str>>>,
-    token_to_name: Arc<DashMap<u32, Arc<str>>>,
+    address_to_name: Arc<DashMap<u64, NativeFunction>>,
+    token_to_name: Arc<DashMap<u32, NativeFunction>>,
+    module_handles: Arc<DashMap<u64, Arc<str>>>,
     next_address: Arc<AtomicU64>,
     next_token_id: Arc<AtomicU64>,
+    next_module: Arc<AtomicU64>,
 }
 
 impl NativeFunctionRegistry {
@@ -126,63 +146,93 @@ impl NativeFunctionRegistry {
         Self {
             address_to_name: Arc::new(DashMap::new()),
             token_to_name: Arc::new(DashMap::new()),
+            module_handles: Arc::new(DashMap::new()),
             next_address: Arc::new(AtomicU64::new(native_addresses::PROC_ADDRESS_BASE)),
             next_token_id: Arc::new(AtomicU64::new(1)),
+            next_module: Arc::new(AtomicU64::new(
+                native_addresses::LOADED_LIBRARY.cast_unsigned(),
+            )),
         }
     }
 
-    /// Registers a native function name and returns a unique fake address for it.
-    pub fn register_proc(&self, name: &str) -> u64 {
+    /// Registers a loaded module and returns the handle standing in for it.
+    ///
+    /// Handles are distinct per module so a later `GetProcAddress` can name the
+    /// library its function came from. Loading the same module twice returns the
+    /// same handle, as the real loader does.
+    pub fn register_module(&self, name: &str) -> u64 {
         let name: Arc<str> = Arc::from(name);
+        for entry in self.module_handles.iter() {
+            if *entry.value() == name {
+                return *entry.key();
+            }
+        }
+        let handle = self
+            .next_module
+            .fetch_add(native_addresses::PROC_ADDRESS_PAGE, Ordering::Relaxed);
+        self.module_handles.insert(handle, name);
+        handle
+    }
+
+    /// Looks up the module registered for a handle.
+    pub fn lookup_module(&self, handle: u64) -> Option<Arc<str>> {
+        self.module_handles
+            .get(&handle)
+            .map(|v| Arc::clone(v.value()))
+    }
+
+    /// Registers a native function and returns a unique fake address for it.
+    pub fn register_proc(&self, dll: Option<&str>, name: &str) -> u64 {
+        let function = NativeFunction {
+            dll: dll.map(Arc::from),
+            name: Arc::from(name),
+        };
         // Check if already registered
         for entry in self.address_to_name.iter() {
-            if *entry.value() == name {
+            if *entry.value() == function {
                 return *entry.key();
             }
         }
         let addr = self
             .next_address
             .fetch_add(native_addresses::PROC_ADDRESS_PAGE, Ordering::Relaxed);
-        self.address_to_name.insert(addr, name);
+        self.address_to_name.insert(addr, function);
         addr
     }
 
-    /// Looks up the function name for a given fake address.
-    pub fn lookup_by_address(&self, addr: u64) -> Option<Arc<str>> {
-        self.address_to_name
-            .get(&addr)
-            .map(|v| Arc::clone(v.value()))
+    /// Looks up the function registered at a given fake address.
+    pub fn lookup_by_address(&self, addr: u64) -> Option<NativeFunction> {
+        self.address_to_name.get(&addr).map(|v| v.value().clone())
     }
 
-    /// Allocates a unique native function pointer token for a function name and
-    /// returns the token. If a token was already allocated for this name, returns
+    /// Allocates a unique native function pointer token for a function and
+    /// returns the token. If a token was already allocated for it, returns
     /// the existing one.
-    pub fn allocate_token(&self, name: &str) -> Token {
-        let name: Arc<str> = Arc::from(name);
+    pub fn allocate_token(&self, function: &NativeFunction) -> Token {
         for entry in self.token_to_name.iter() {
-            if *entry.value() == name {
+            if entry.value() == function {
                 return tokens::native::token_for_id(*entry.key());
             }
         }
         let id = self.next_token_id.fetch_add(1, Ordering::Relaxed);
-        self.token_to_name.insert(id as u32, name);
+        self.token_to_name.insert(id as u32, function.clone());
         tokens::native::token_for_id(id as u32)
     }
 
     /// Finds the fake address registered for the given function name.
     pub fn lookup_address_by_name(&self, name: &str) -> Option<u64> {
         for entry in self.address_to_name.iter() {
-            if entry.value().as_ref() == name {
+            if entry.value().name.as_ref() == name {
                 return Some(*entry.key());
             }
         }
         None
     }
 
-    /// Looks up the function name for a native function pointer token.
-    pub fn lookup_by_token(&self, token: Token) -> Option<Arc<str>> {
+    /// Looks up the function for a native function pointer token.
+    pub fn lookup_by_token(&self, token: Token) -> Option<NativeFunction> {
         let id = token.value() & 0x0000_FFFF;
-        self.token_to_name.get(&id).map(|v| Arc::clone(v.value()))
+        self.token_to_name.get(&id).map(|v| v.value().clone())
     }
 }
 
@@ -225,7 +275,7 @@ pub fn register(manager: &HookManager, registry: &NativeFunctionRegistry) -> Res
     // Module loading hooks
     register_get_module_handle(manager)?;
     register_get_proc_address(manager, registry)?;
-    register_load_library(manager)?;
+    register_load_library(manager, registry)?;
 
     // Anti-debug bypass hooks
     register_is_debugger_present(manager)?;
@@ -535,19 +585,38 @@ fn register_get_proc_address(
             .match_native("kernel32", "GetProcAddress")
             .pre(move |ctx, thread| {
                 // GetProcAddress(hModule, lpProcName)
-                let func_name = ctx
+                let func_name = ctx.args.get(1).and_then(|arg| match arg {
+                    EmValue::ObjectRef(href) => {
+                        thread.heap().get_string(*href).ok().map(|s| s.to_string())
+                    }
+                    _ => None,
+                });
+
+                // An unreadable name cannot be told apart from any other
+                // unreadable name. Registering them all under one label would
+                // collapse them onto a single address and dispatch the wrong
+                // function; leave the resolution to fail instead.
+                let Some(func_name) = func_name else {
+                    log::debug!("GetProcAddress: could not read the requested name");
+                    return PreHookResult::Bypass(Some(EmValue::NativeInt(0)));
+                };
+
+                let dll = ctx
                     .args
-                    .get(1)
+                    .first()
                     .and_then(|arg| match arg {
-                        EmValue::ObjectRef(href) => {
-                            thread.heap().get_string(*href).ok().map(|s| s.to_string())
-                        }
+                        EmValue::NativeInt(v) => Some((*v).cast_unsigned()),
+                        EmValue::NativeUInt(v) => Some(*v),
+                        EmValue::UnmanagedPtr(v) => Some(*v),
                         _ => None,
                     })
-                    .unwrap_or_else(|| "unknown".to_string());
+                    .and_then(|handle| registry.lookup_module(handle));
 
-                let addr = registry.register_proc(&func_name);
-                log::debug!("GetProcAddress({func_name}) → 0x{addr:X}");
+                let addr = registry.register_proc(dll.as_deref(), &func_name);
+                log::debug!(
+                    "GetProcAddress({}!{func_name}) → 0x{addr:X}",
+                    dll.as_deref().unwrap_or("?")
+                );
                 PreHookResult::Bypass(Some(EmValue::NativeInt(addr as i64)))
             }),
     )?;
@@ -560,31 +629,48 @@ fn register_get_proc_address(
 /// Some obfuscators (e.g., .NET Reactor) use the unsuffixed `LoadLibrary`
 /// import name in their P/Invoke declarations, which doesn't match the
 /// standard `LoadLibraryA`/`LoadLibraryW` exports.
-fn register_load_library(manager: &HookManager) -> Result<()> {
-    let load_library_handler =
-        |_ctx: &HookContext<'_>, _thread: &mut EmulationThread| -> PreHookResult {
-            PreHookResult::Bypass(Some(EmValue::NativeInt(native_addresses::LOADED_LIBRARY)))
-        };
+fn register_load_library(manager: &HookManager, registry: &NativeFunctionRegistry) -> Result<()> {
+    // Each library gets its own handle so a later `GetProcAddress` can name the
+    // module its function came from — which is what lets the resolved function
+    // reach a hook registered against a `(dll, function)` pair.
+    let make_handler = |registry: NativeFunctionRegistry| {
+        move |ctx: &HookContext<'_>, thread: &mut EmulationThread| -> PreHookResult {
+            let module = ctx.args.first().and_then(|arg| match arg {
+                EmValue::ObjectRef(href) => {
+                    thread.heap().get_string(*href).ok().map(|s| s.to_string())
+                }
+                _ => None,
+            });
+            let Some(module) = module else {
+                return PreHookResult::Bypass(Some(EmValue::NativeInt(
+                    native_addresses::LOADED_LIBRARY,
+                )));
+            };
+            let handle = registry.register_module(&module);
+            log::debug!("LoadLibrary({module}) → 0x{handle:X}");
+            PreHookResult::Bypass(Some(EmValue::NativeInt(handle as i64)))
+        }
+    };
 
     manager.register(
         Hook::new("native-load-library-a")
             .with_priority(HookPriority::HIGH)
             .match_native("kernel32", "LoadLibraryA")
-            .pre(load_library_handler),
+            .pre(make_handler(registry.clone())),
     )?;
 
     manager.register(
         Hook::new("native-load-library-w")
             .with_priority(HookPriority::HIGH)
             .match_native("kernel32", "LoadLibraryW")
-            .pre(load_library_handler),
+            .pre(make_handler(registry.clone())),
     )?;
 
     manager.register(
         Hook::new("native-load-library")
             .with_priority(HookPriority::HIGH)
             .match_native("kernel32", "LoadLibrary")
-            .pre(load_library_handler),
+            .pre(make_handler(registry.clone())),
     )?;
 
     Ok(())
@@ -710,6 +796,68 @@ mod tests {
 
         // Should have at least 12 hooks (one for each function, with A/W variants)
         assert!(manager.len() >= 12);
+    }
+
+    /// A function resolved through `GetProcAddress` only reaches its hook if the
+    /// module that produced the handle is known, because hooks are registered
+    /// against a `(dll, function)` pair.
+    #[test]
+    fn resolved_function_remembers_its_module() {
+        let registry = NativeFunctionRegistry::new();
+
+        let handle = registry.register_module("kernel32.dll");
+        assert_eq!(
+            registry.lookup_module(handle).as_deref(),
+            Some("kernel32.dll")
+        );
+
+        let dll = registry.lookup_module(handle);
+        let addr = registry.register_proc(dll.as_deref(), "VirtualProtect");
+
+        let resolved = registry
+            .lookup_by_address(addr)
+            .expect("the address just registered must resolve");
+        assert_eq!(resolved.name.as_ref(), "VirtualProtect");
+        assert_eq!(resolved.dll.as_deref(), Some("kernel32.dll"));
+
+        // The token carried through GetDelegateForFunctionPointer must round-trip
+        // to the same pair, which is what the delegate dispatch matches on.
+        let token = registry.allocate_token(&resolved);
+        assert_eq!(registry.lookup_by_token(token), Some(resolved));
+    }
+
+    /// Loading the same module twice yields one handle, as the real loader does;
+    /// distinct modules must not collide, or a function would be attributed to
+    /// whichever library was loaded last.
+    #[test]
+    fn module_handles_are_stable_and_distinct() {
+        let registry = NativeFunctionRegistry::new();
+
+        let kernel32 = registry.register_module("kernel32.dll");
+        let user32 = registry.register_module("user32.dll");
+
+        assert_eq!(registry.register_module("kernel32.dll"), kernel32);
+        assert_ne!(kernel32, user32);
+        assert_eq!(
+            registry.lookup_module(user32).as_deref(),
+            Some("user32.dll")
+        );
+    }
+
+    /// The same exported name in two libraries is two different functions, and
+    /// must not share one fake address.
+    #[test]
+    fn same_name_in_two_modules_stays_distinct() {
+        let registry = NativeFunctionRegistry::new();
+
+        let a = registry.register_proc(Some("kernel32.dll"), "Sleep");
+        let b = registry.register_proc(Some("winmm.dll"), "Sleep");
+
+        assert_ne!(a, b);
+        assert_eq!(
+            registry.lookup_by_address(a).and_then(|f| f.dll),
+            Some("kernel32.dll".into())
+        );
     }
 
     #[test]
