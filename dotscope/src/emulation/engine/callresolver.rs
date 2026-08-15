@@ -854,8 +854,16 @@ impl CallResolver {
                             // Look up the function name and return an
                             // appropriate value for each native API.
                             if tokens::is_native_function_pointer(target_token) {
-                                let return_value =
-                                    resolve_native_delegate_return(target_token, thread, context);
+                                // Element 0 is the delegate itself; the rest are
+                                // the arguments the native function was called
+                                // with, and a hook needs them to do its work.
+                                let native_args: Vec<EmValue> =
+                                    arg_values.iter().skip(1).cloned().collect();
+                                let return_value = self.dispatch_native_delegate(
+                                    target_token,
+                                    &native_args,
+                                    thread,
+                                )?;
                                 return Ok(CallResolution::HookedBypass { return_value });
                             }
 
@@ -1328,6 +1336,72 @@ impl CallResolver {
 
         // Phase 3+4: Build context and execute hook.
         self.execute_hook_with_resolved(context, method_token, thread, &info)
+    }
+
+    /// Dispatches a native function reached through a function pointer.
+    ///
+    /// A protection that wants its native calls to go unnoticed does not declare
+    /// them: it resolves the address with `GetProcAddress` and calls it through a
+    /// delegate. Nothing about the call site says "P/Invoke", so
+    /// [`Self::try_native_call`] — which starts from a `MethodDef` with an
+    /// ImplMap — never sees it, and the hooks registered for that function never
+    /// run. .NET Reactor resolves `VirtualProtect` exactly this way.
+    ///
+    /// The identity survives the round trip: `GetProcAddress` records the
+    /// function against a fake address, `GetDelegateForFunctionPointer` turns
+    /// that address back into a token, and the token names the function here. So
+    /// the call is given the same shape a declared P/Invoke would have and run
+    /// through the ordinary hook path, which is what makes the *effect* happen
+    /// rather than merely the return value.
+    ///
+    /// Falls back to a plausible return value when no hook matches, so a
+    /// protection calling something unimplemented still makes progress.
+    fn dispatch_native_delegate(
+        &self,
+        target_token: Token,
+        args: &[EmValue],
+        thread: &mut EmulationThread,
+    ) -> Result<Option<EmValue>> {
+        let function = thread
+            .runtime_state()
+            .read()
+            .ok()
+            .and_then(|rt| rt.native_functions().lookup_by_token(target_token));
+
+        let Some(function) = function else {
+            log::debug!(
+                "Native delegate invoke: token 0x{:08X} names no known function",
+                target_token.value()
+            );
+            return Ok(Some(EmValue::I32(0)));
+        };
+
+        // A function whose module was never observed can still match a hook that
+        // does not constrain the DLL, so dispatch is attempted either way.
+        let dll = function.dll.as_deref().unwrap_or_default();
+        let hook_context =
+            HookContext::native(target_token, dll, &function.name, self.config.pointer_size)
+                .with_args(args);
+
+        match self.hooks.execute(&hook_context, thread, |_| None)? {
+            HookOutcome::NoMatch => Ok(native_delegate_fallback(
+                &function.name,
+                thread,
+                target_token,
+            )),
+            HookOutcome::Handled(result)
+            | HookOutcome::ReflectionInvoke {
+                bypass_value: result,
+                ..
+            } => {
+                log::debug!("Native delegate invoke: {dll}!{} handled", function.name);
+                Ok(result)
+            }
+            HookOutcome::ThrewException { message, .. } => Err(EmulationError::HookError(format!(
+                "native delegate hook threw CLR exception: {message}"
+            ))
+            .into()),
+        }
     }
 
     /// Tries to execute a method call via a native (P/Invoke) stub.
@@ -1894,26 +1968,18 @@ fn zero_initialize_static_fields(
     Ok(())
 }
 
-/// Resolves the return value for a native function pointer delegate invocation.
+/// Returns a plausible value for a native API that no hook implements.
 ///
-/// Looks up the function name from the native function registry and returns a
-/// type-appropriate value. For known Win32 APIs, returns the correct type
-/// (e.g., BOOL for VirtualProtect, pointer for VirtualAlloc). For unknown
-/// functions, returns I32(0) as a safe default.
-fn resolve_native_delegate_return(
-    target_token: Token,
+/// A last resort. It reports success without performing the call's effect, so
+/// anything whose effect matters — a memory protection change, a write through a
+/// pointer — belongs in a hook, not here.
+fn native_delegate_fallback(
+    name: &str,
     thread: &EmulationThread,
-    _context: &EmulationContext,
+    target_token: Token,
 ) -> Option<EmValue> {
-    let func_name = thread
-        .runtime_state()
-        .read()
-        .ok()
-        .and_then(|rt| rt.native_functions().lookup_by_token(target_token));
-
-    let name = func_name.as_deref().unwrap_or("unknown");
     log::debug!(
-        "Native delegate invoke: {name} (token 0x{:08X})",
+        "Native delegate invoke: {name} (token 0x{:08X}) has no hook, returning a default",
         target_token.value()
     );
 

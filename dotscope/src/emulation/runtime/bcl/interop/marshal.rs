@@ -1146,10 +1146,12 @@ fn marshal_get_delegate_for_function_pointer_pre(
         runtime
             .as_ref()
             .and_then(|rt| {
-                let name = rt.native_functions().lookup_by_address(addr)?;
-                let token = rt.native_functions().allocate_token(&name);
+                let function = rt.native_functions().lookup_by_address(addr)?;
+                let token = rt.native_functions().allocate_token(&function);
                 log::debug!(
-                    "GetDelegateForFunctionPointer(0x{addr:X}) → {name} → token 0x{:08X}",
+                    "GetDelegateForFunctionPointer(0x{addr:X}) → {}!{} → token 0x{:08X}",
+                    function.dll.as_deref().unwrap_or("?"),
+                    function.name,
                     token.value()
                 );
                 Some(token)
@@ -1198,9 +1200,12 @@ fn marshal_get_function_pointer_for_delegate_pre(
                 let method_token = entry.method_token;
                 if tokens::is_native_function_pointer(method_token) {
                     if let Ok(rt) = thread.runtime_state().read() {
-                        if let Some(name) = rt.native_functions().lookup_by_token(method_token) {
-                            if let Some(addr) = rt.native_functions().lookup_address_by_name(&name)
+                        if let Some(function) = rt.native_functions().lookup_by_token(method_token)
+                        {
+                            if let Some(addr) =
+                                rt.native_functions().lookup_address_by_name(&function.name)
                             {
+                                let name = &function.name;
                                 log::debug!("GetFunctionPointerForDelegate → {name} at 0x{addr:X}");
                                 return PreHookResult::Bypass(Some(EmValue::NativeInt(
                                     addr as i64,
