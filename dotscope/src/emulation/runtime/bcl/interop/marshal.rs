@@ -72,10 +72,10 @@ use crate::{
         thread::EmulationThread,
         tokens,
         value::{ManagedPointer, PointerTarget},
-        EmValue, HeapObject,
+        EmValue, EmulationError, HeapObject,
     },
     metadata::token::Token,
-    Result,
+    Error, Result,
 };
 
 /// Extracts a memory address from a hook argument.
@@ -365,8 +365,22 @@ const AUTO_ALLOC_SIZE: usize = 0x1_0000; // 64KB
 /// budget is exhausted, or the range collides with an existing mapping — or when the write
 /// itself fails.
 fn write_with_auto_alloc(thread: &EmulationThread, addr: u64, data: &[u8]) -> Result<()> {
-    if thread.address_space().write(addr, data).is_ok() {
-        return Ok(());
+    let failure = match thread.address_space().write(addr, data) {
+        Ok(()) => return Ok(()),
+        Err(failure) => failure,
+    };
+
+    // A refusal is not an absence. `AccessViolation` means the page is mapped
+    // and rejected the write — a PE section carrying no `IMAGE_SCN_MEM_WRITE`
+    // is the common case, and a protection writing decrypted method bodies back
+    // into `.text` lands there. Materialising a window would try to map over the
+    // image the address already belongs to, fail on the overlap, and report that
+    // instead of the permission that actually stopped the write.
+    if matches!(
+        &failure,
+        Error::Emulation(inner) if matches!(**inner, EmulationError::AccessViolation { .. })
+    ) {
+        return Err(failure);
     }
 
     let page_base = addr & !0xFFFF;
