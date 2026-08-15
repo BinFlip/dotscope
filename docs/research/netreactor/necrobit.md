@@ -2,11 +2,18 @@
 
 Analysis of .NET Reactor 7.5.0 NecroBit protection based on reverse engineering
 `reactor_necrobit.exe` (70,144 bytes, 258 methods) against `original.exe` (14,336 bytes,
-35 methods) using dotscope disassembly.
+35 methods) using dotscope disassembly. The named tokens and RVAs throughout are
+from that sample; `reactor_full.exe` and `reactor_virtualization_full.exe`
+provide the full-protection layout, whose runtime is split across more methods
+and whose storage differs (see *Two Operating Modes*).
 
 NecroBit is .NET Reactor's most critical protection. It encrypts all method bodies,
 replacing them with stubs. Without reversing NecroBit first, all other deobfuscation
 stages operate on encrypted bytecode and produce no results.
+
+Both storage variants are fully supported — see *Support Status* for the
+per-sample recovery counts, and *What the Emulator Must Provide* for what
+reversing them depends on.
 
 ## File-Level Changes
 
@@ -242,24 +249,23 @@ Instead, it resolves and calls VirtualProtect dynamically:
    - Signature: `int32 Invoke(native int, int32, int32, int32&)` — matches
      `BOOL VirtualProtect(LPVOID, SIZE_T, DWORD, PDWORD)`
 
-### Emulation Impact of VirtualProtect
+### Why the VirtualProtect Return Value Matters
 
-The VirtualProtect delegate invocation is **critical for CFF path selection**.
-The init method checks the VirtualProtect return value to determine which
-CFF switch cases to execute. If the delegate invocation fails (returns
-Symbolic instead of `TRUE`/`1`), the CFF flow takes incorrect branches and
-skips the Hashtable population code path entirely.
+The delegate's return value drives **CFF path selection** inside the init
+method, not just the success of the memory-protection call. The init checks it to
+decide which switch cases to execute:
 
-Observed behavior when VirtualProtect delegate fails:
-- The init method takes the **direct-write mode**: writes individual method
-  table fields via `Marshal.WriteInt32` (872 calls to 368 addresses)
-- Skips the **Hashtable mode**: never creates the Hashtable, never calls
-  `Hashtable.Add`, never stores complete method bodies
-- The direct-write mode writes to CLR runtime addresses that don't exist
-  in the emulated address space, producing no usable data
-- The emulation terminates with `EndOfStreamException` from `BinaryReader`
-  after processing all entries (this is the normal loop termination signal)
+- **Returns `TRUE`**: the init proceeds through the Hashtable-population path,
+  building the per-method records and writing the decrypted bodies back.
+- **Returns anything else** (including a symbolic value, when the call is not
+  modelled): the flow takes different branches, skips Hashtable population
+  entirely, and falls into a direct-write path whose `Marshal.WriteInt32` calls
+  target CLR runtime addresses that do not exist in an emulated process.
 
+So an emulator that cannot resolve this call does not merely lose the protection
+change — it steers the protection down a path that produces no usable data at
+all. This is why the resolution chain has to be modelled end to end rather than
+short-circuited with a plausible return value.
 
 ## Injected Type Inventory (33 new types)
 
@@ -318,9 +324,11 @@ At runtime, the NecroBit protection works as follows:
 
 ## Deobfuscation Strategy
 
-### Emulation-Based Approach (dotscope) — Verified Working
+### Emulation-Based Approach (dotscope)
 
-Our approach uses emulation to let the protection's own code do the decryption:
+Rather than reimplementing the cipher, dotscope runs the protection's own
+initialization under emulation and reads the result out of the emulated process.
+Both storage variants are recovered this way — see *Support Status*.
 
 1. **Detect** via structural patterns (stub methods, .cctor fan-in, trial check
    pattern, body patcher pattern) — no hardcoded names
@@ -330,13 +338,17 @@ Our approach uses emulation to let the protection's own code do the decryption:
    - Injected .cctors bypassed to prevent re-entrancy
    - Full BCL hook coverage for Marshal, Process, Module, crypto, streams
    - Transparent pinned array support for managed/native shared backing
-3. **Extract decrypted bodies** via two strategies (best result wins):
-   - **Heap extraction**: Find a byte array on the managed heap matching the
-     NecroBit data format (see Data Format below). Parses Variant A (with group
-     entries) or Variant B (inline complete bodies).
-   - **PE image extraction**: Read patched method bodies directly from the PE
-     image in the address space. In full-protection binaries, the init method
-     writes decrypted bodies to PE RVAs via `Marshal.WriteInt32`.
+3. **Extract decrypted bodies** via one of two strategies, chosen by variant —
+   not "best result wins": the heap path is tried first and the image path is
+   the fallback when it declines.
+   - **Heap extraction** (variant A): Find a byte array on the managed heap
+     matching the NecroBit data format (see Data Format below).
+     `find_variant_a_blob` skips `group_count == 0`, because variant B's
+     authoritative bodies are in the address space rather than the heap.
+   - **PE image extraction** (variant B): Read patched method bodies directly
+     from the PE image in the address space. The init method writes decrypted
+     bodies to PE RVAs via `Marshal.WriteInt32`, which requires the emulated
+     `VirtualProtect` to have made those pages writable.
 4. **Store restored bodies**: Use `CilAssembly::store_method_body()` to replace
    stub RVAs with real method body data.
 5. **Regenerate PE**: Rebuild the assembly.
@@ -391,22 +403,96 @@ The init method reads a **data format flag** from the decrypted data stream
   via `IntPtr` addresses and `Marshal.WriteInt32`. Extraction reads from the PE
   image in the address space.
 
-Both modes work generically — no version-specific logic is needed.
+### Support Status
 
-### Critical Emulation Fixes
+Both variants are fully recovered.
 
-Two bugs in `IntPtr` BCL hooks caused all method body writes to target address 0:
+| Sample | Variant | Stubs | Restored |
+|---|---|---|---|
+| `reactor_necrobit.exe` | A | 45 | 45 |
+| `reactor_necrobit_strings_cff.exe` | A | 56 | 56 |
+| `reactor_full.exe` | B | 59 | 59 |
+| `reactor_virtualization_full.exe` | B | 562 | 562 |
 
-1. **`IntPtr.ToInt64`** did not handle `ManagedPointer` as `this` (from
-   `ldloca + call` on a value type local). Fix: dereference the managed pointer
-   to extract the NativeInt value.
+Asserted per variant by `restores_every_stub_in_a_necrobit_only_binary` and
+`restores_every_stub_in_a_full_protection_binary` in `necrobit.rs`. Both count
+restored bodies rather than checking that the transform returned `Ok` — a
+transform that recovers *some* bodies reports success, so a count is the only
+assertion that distinguishes full recovery from partial, or from none.
 
-2. **`IntPtr..ctor`** did not store the value when `this` was `ObjectRef` (from
-   `newobj` allocating a heap object). Fix: store the value as a synthetic field
-   on the heap object.
+### What the Emulator Must Provide
 
-Without these fixes, all `Marshal.WriteInt32` calls wrote to address 0 instead
-of the correct PE image RVAs, and no method bodies were recoverable.
+NecroBit is decrypted by running the protection's own code, so recovery depends
+on the emulator being faithful in a few specific places. Each of these is load
+bearing: without it, extraction yields nothing rather than less.
+
+**A working `VirtualProtect`, reached through dynamic resolution.**
+Variant B's bodies are written into `.text`, which the PE loader maps
+`READ|EXECUTE` from the section characteristics. The write only succeeds because
+the protection calls `VirtualProtect` first — and it never declares that
+P/Invoke, resolving it through `LoadLibrary`/`GetProcAddress` and calling it
+through a delegate (see *VirtualProtect Resolution Chain*). Hook matching keyed
+on declared P/Invoke alone therefore never sees it.
+
+dotscope preserves identity across the whole chain: `LoadLibrary` returns a
+distinct handle per module, `GetProcAddress` records the resolved function
+against that module, `GetDelegateForFunctionPointer` turns the fake address into
+a token, and the delegate invocation reconstructs a native call context from it.
+The call then runs through the ordinary hook path with its real arguments, so the
+`kernel32!VirtualProtect` hook installs a page protection override — the *effect*,
+not merely a `TRUE` return value. Returning success without applying the
+protection is indistinguishable from working right up until the first write.
+
+**Writes into a mapped-but-unwritable page must report that.**
+A write refused on protection is not the same as a write to unmapped memory.
+Treating them alike — materialising a fresh region at the enclosing 64KB
+boundary — maps over the loaded image, because for an image address that
+boundary is the image base. The resulting overlap error names the wrong cause and
+is fatal. `AccessViolation` is propagated; only genuinely unmapped addresses are
+auto-allocated.
+
+**`IntPtr` values must survive both construction forms.** The body patcher builds
+its target addresses through `IntPtr`, from a value-type local (`ldloca + call`)
+and from `newobj`. See *IntPtr Construction Forms* below.
+
+**Cleanup must not run ahead of decryption.** A method whose body is still an
+encrypted stub contributes no call edges, so everything it references reads as
+unreachable. If the transform fails, deleting on that basis removes the original
+code — the reason the sample was kept. Techniques report what they could not
+restore via `Technique::unrecovered_methods`; cleanup protects those methods,
+withholds the failed technique's own request, and skips type-level
+unreferenced-type removal, since the call graph cannot then distinguish
+unreachable from undecrypted.
+
+### On the Variant B Heap Blob
+
+A blob shaped like the NecroBit data format is present on the managed heap during
+a variant-B run, and `is_necrobit_data_array` accepts it. `find_variant_a_blob`
+discards it (`group_count == 0`) and extraction reads the address space instead,
+which is correct: variant B's authoritative bodies are the ones written into the
+image.
+
+Note that the variant-B branch of that shape check is weak — `len >= 36`, a
+MethodDef token byte at offset 0, and one method-body header byte at offset 32.
+It gates nothing today because variant B never parses from the heap. Anything
+that starts parsing heap blobs should validate by walking the record chain
+instead: each RVA resolving to a known method, each `MethodBody::from` succeeding,
+and the walk terminating at the buffer's end.
+
+### IntPtr Construction Forms
+
+The body patcher computes its write targets through `IntPtr`, reaching the BCL
+hooks in two shapes that must both be handled:
+
+1. **`IntPtr.ToInt64` with a `ManagedPointer` as `this`**, from `ldloca + call`
+   on a value-type local. The pointer has to be dereferenced to reach the
+   `NativeInt` value.
+
+2. **`IntPtr..ctor` with an `ObjectRef` as `this`**, from `newobj` allocating a
+   heap object. The value is stored as a synthetic field on that object.
+
+Handling only one of them leaves every `Marshal.WriteInt32` writing to address 0
+rather than a PE image RVA, and no bodies are recoverable.
 
 ### Comparison with NRS Approach
 

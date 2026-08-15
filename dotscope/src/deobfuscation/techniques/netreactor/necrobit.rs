@@ -18,10 +18,19 @@
 //! The decryption pipeline:
 //! 1. Find `<Module>::.cctor` and trial check methods via structural analysis
 //! 2. Register a hook to bypass trial checks (avoids needing DateTime BCL hooks)
-//! 3. Emulate `<Module>::.cctor` — the protection's own code decrypts method
-//!    bodies and writes them back to the virtual image via `Marshal.Copy`
-//! 4. Extract all method bodies from the decrypted virtual image
+//! 3. Emulate `<Module>::.cctor` — the protection's own code does the decryption,
+//!    so the cipher is never reimplemented and version changes to it cost nothing
+//! 4. Extract the decrypted bodies from wherever that run left them, which
+//!    depends on the storage variant (see the format notes below): variant A
+//!    builds a structured blob on the managed heap, variant B writes complete
+//!    bodies into the image at each method's RVA
 //! 5. Rebuild the assembly with restored method bodies
+//!
+//! Step 3 is only faithful if the emulator models the protection's dynamically
+//! resolved `VirtualProtect`. Variant B's writes land in `.text`, which is mapped
+//! read-only, and the return value also steers the init's control flow — a call
+//! that answers without applying the protection sends it down a path that stores
+//! nothing. `docs/research/netreactor/necrobit.md` covers the requirements.
 
 use std::{
     any::Any,
@@ -1067,40 +1076,72 @@ mod tests {
         );
     }
 
-    #[test]
-    #[ignore]
-    fn test_byte_transform() {
-        let path = "tests/samples/packers/netreactor/7.5.0/reactor_necrobit.exe";
-        if !Path::new(path).exists() {
-            eprintln!("Skipping test: sample not found at {path}");
-            return;
-        }
-
-        let _ = env_logger::builder()
-            .filter_level(log::LevelFilter::Info)
-            .is_test(true)
-            .try_init();
-
-        let assembly = load_sample("reactor_necrobit.exe");
+    /// Decrypts `sample` and returns how many of its stubs were restored.
+    ///
+    /// Counting matters: the transform reports success as long as it restored
+    /// *something*, so asserting only that it returned `Ok` cannot tell a full
+    /// recovery from a partial one — and for a whole storage variant it could
+    /// not tell recovery from nothing at all.
+    fn restore_stub_bodies(sample: &str) -> (usize, usize) {
+        let assembly = load_sample(sample);
         let technique = NetReactorNecroBit;
         let detection = technique.detect(&assembly);
-        assert!(detection.is_detected(), "Should detect NecroBit");
+        assert!(detection.is_detected(), "{sample}: should detect NecroBit");
+
+        let stub_count = detection
+            .findings::<NecroBitFindings>()
+            .map(|f| f.stub_method_tokens.len())
+            .unwrap_or(0);
 
         let mut working = WorkingAssembly::new(assembly);
         let detections = Detections::new();
-        let result = technique.byte_transform(&mut working, &detection, &detections);
+        let events = match technique.byte_transform(&mut working, &detection, &detections) {
+            Some(Ok(events)) => events,
+            Some(Err(e)) => panic!("{sample}: byte_transform returned error: {e}"),
+            None => panic!("{sample}: byte_transform returned None (skipped)"),
+        };
 
-        match result {
-            Some(Ok(events)) => {
-                eprintln!("byte_transform succeeded with {} events", events.len());
-            }
-            Some(Err(e)) => {
-                panic!("byte_transform returned error: {e}");
-            }
-            None => {
-                panic!("byte_transform returned None (skipped)");
-            }
+        let restored = events
+            .iter()
+            .filter(|event| event.kind == EventKind::MethodBodyDecrypted && event.method.is_some())
+            .count();
+        (restored, stub_count)
+    }
+
+    /// Variant A: bodies live in a structured blob on the managed heap.
+    #[test]
+    fn restores_every_stub_in_a_necrobit_only_binary() {
+        if !Path::new("tests/samples/packers/netreactor/7.5.0/reactor_necrobit.exe").exists() {
+            eprintln!("Skipping test: sample not found");
+            return;
         }
+
+        let (restored, stubs) = restore_stub_bodies("reactor_necrobit.exe");
+        assert!(stubs > 0, "the sample must actually have stubs");
+        assert_eq!(
+            restored, stubs,
+            "every encrypted body should come back, got {restored} of {stubs}"
+        );
+    }
+
+    /// Variant B: the init writes bodies into the image at each method's RVA,
+    /// which only works once the dynamically-resolved `VirtualProtect` has made
+    /// those pages writable. Recovering nothing here is the exact regression
+    /// this asserts against — it went unnoticed while the only check was that
+    /// the transform returned `Ok`.
+    #[test]
+    fn restores_every_stub_in_a_full_protection_binary() {
+        if !Path::new("tests/samples/packers/netreactor/7.5.0/reactor_full.exe").exists() {
+            eprintln!("Skipping test: sample not found");
+            return;
+        }
+
+        let (restored, stubs) = restore_stub_bodies("reactor_full.exe");
+        assert!(stubs > 0, "the sample must actually have stubs");
+        assert_eq!(
+            restored, stubs,
+            "every encrypted body should come back, got {restored} of {stubs}"
+        );
     }
 
     #[test]
