@@ -27,7 +27,9 @@ checksum = "250f629c0161ad8107cf89319e990051fae62832fd343083bea452d93e2205fd"
 
 [[package]]
 name = "analyssa"
-version = "0.5.0"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f9547a6316defcd8b3e6fcb49caaa7c93b27305a6c25824ae475e1461ea3660"
 dependencies = [
  "boxcar",
  "dashmap",
@@ -296,7 +298,7 @@ dependencies = [
 
 [[package]]
 name = "dotscope"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "aes",
  "analyssa",
@@ -598,9 +600,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.33"
+version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
+checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "lzma-rs"
@@ -799,9 +801,9 @@ dependencies = [
 
 [[package]]
 name = "quick-xml"
-version = "0.41.0"
+version = "0.42.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
+checksum = "41b1177fdf999d2321d3fb46ff47159d9c1fb9ad66a4879f8c50a0b504615e9b"
 dependencies = [
  "memchr",
 ]
@@ -1346,59 +1348,3 @@ name = "zmij"
 version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
-
-[[patch.unused]]
-name = "analysir"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "autoit-rs"
-version = "0.1.1"
-
-[[patch.unused]]
-name = "darwinscope"
-version = "0.1.1"
-
-[[patch.unused]]
-name = "gobin"
-version = "0.4.1"
-
-[[patch.unused]]
-name = "innospect"
-version = "0.1.3"
-
-[[patch.unused]]
-name = "mallabel"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "nimrod"
-version = "0.3.1"
-
-[[patch.unused]]
-name = "nsis"
-version = "0.3.1"
-
-[[patch.unused]]
-name = "pascalscript"
-version = "0.1.2"
-
-[[patch.unused]]
-name = "securs-fleet"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "securs-spec"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "securs-wg"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "undelphi"
-version = "0.3.2"
-
-[[patch.unused]]
-name = "visualbasic"
-version = "0.3.1"
