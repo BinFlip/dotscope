@@ -451,12 +451,16 @@ impl CilPrimitiveData {
                     .into());
                 }
 
-                let mut utf16_chars: Vec<u16> = Vec::with_capacity(data.len() / 2);
-                for chunk in data.chunks_exact(2) {
-                    let b0 = *chunk.first().ok_or(primitives_oob())?;
-                    let b1 = *chunk.get(1).ok_or(primitives_oob())?;
-                    utf16_chars.push(u16::from_le_bytes([b0, b1]));
-                }
+                // `data.len()` is even (rejected above otherwise), so `as_chunks::<2>`
+                // consumes it fully. It yields the two-byte arrays themselves, so the
+                // per-byte bounds checks the pair used to need are gone with them.
+                let utf16_chars: Vec<u16> = data
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .copied()
+                    .map(u16::from_le_bytes)
+                    .collect();
 
                 match String::from_utf16(&utf16_chars) {
                     Ok(utf_string) => Ok(CilPrimitiveData::String(utf_string)),
