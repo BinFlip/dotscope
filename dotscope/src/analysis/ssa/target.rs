@@ -12,15 +12,23 @@
 // Re-export so existing `crate::analysis::ssa::target::Target` import paths
 // in the rest of dotscope continue to resolve. The trait itself lives in
 // `analyssa::target`.
+use std::fmt;
+
 pub use analyssa::target::Target;
-use analyssa::{ir::value::ConstValue, PointerSize};
+use analyssa::{
+    ir::{value::ConstValue, HandlerKind},
+    PointerSize,
+};
 
 #[cfg(feature = "compiler")]
 use crate::compiler::CilCapability;
 use crate::{
     analysis::ssa::types::{FieldRef, MethodRef, SigRef, SsaType, TypeRef},
     assembly::{FlowType, Instruction, InstructionCategory, Operand, StackBehavior},
-    metadata::{method::ExceptionHandlerFlags, signatures::SignatureLocalVariable},
+    metadata::{
+        method::{ExceptionHandlerFlags, ExceptionHandlerKind},
+        signatures::SignatureLocalVariable,
+    },
 };
 
 /// `Target` impl for .NET CIL.
@@ -62,11 +70,29 @@ impl Default for CilTarget {
     }
 }
 
+/// The symbol space CIL does not have.
+///
+/// Every CIL entity is named by a metadata token, which the `TypeRef` /
+/// `MethodRef` / `FieldRef` references already carry — there is no separate
+/// space of addressable symbols to model. Declaring the associated type as an
+/// uninhabited enum states that: a `ConstValue::Symbol` cannot be constructed
+/// for this target at all, rather than merely being left unused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NoSymbol {}
+
+impl fmt::Display for NoSymbol {
+    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Unreachable by construction: the type has no values.
+        match *self {}
+    }
+}
+
 impl Target for CilTarget {
     type TypeRef = TypeRef;
     type MethodRef = MethodRef;
     type FieldRef = FieldRef;
     type SigRef = SigRef;
+    type SymbolRef = NoSymbol;
     type ExceptionKind = ExceptionHandlerFlags;
     type Type = SsaType;
     type OriginalInstruction = Instruction;
@@ -149,8 +175,19 @@ impl Target for CilTarget {
         instr.rva
     }
 
-    fn is_filter_handler(flags: &Self::ExceptionKind) -> bool {
-        *flags == ExceptionHandlerFlags::FILTER
+    fn handler_kind(flags: &Self::ExceptionKind) -> HandlerKind {
+        // `ExceptionHandlerFlags::kind` already performs the ECMA-335 §II.25.4.6
+        // bitwise classification, so this arm only renames the four cases into
+        // analyssa's taxonomy. Going through it rather than comparing against
+        // the flag constants means a clause carrying an unrecognised bit is
+        // classified the same way every other CIL reader in the crate classifies
+        // it, instead of silently falling into a different default here.
+        match flags.kind() {
+            ExceptionHandlerKind::Catch => HandlerKind::Catch,
+            ExceptionHandlerKind::Filter => HandlerKind::Filter,
+            ExceptionHandlerKind::Finally => HandlerKind::Finally,
+            ExceptionHandlerKind::Fault => HandlerKind::Fault,
+        }
     }
 
     fn field_member_index(field: &Self::FieldRef) -> Option<u32> {
@@ -170,6 +207,8 @@ impl Target for CilTarget {
 
     fn result_type_for_const(value: &ConstValue<Self>) -> Option<Self::Type> {
         Some(match value {
+            // Uninhabited for this target: CIL has no symbol space.
+            ConstValue::Symbol(symbol) => match *symbol {},
             ConstValue::I8(_) => SsaType::I8,
             ConstValue::I16(_) => SsaType::I16,
             ConstValue::I32(_) => SsaType::I32,

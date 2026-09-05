@@ -36,8 +36,8 @@ use rayon::prelude::*;
 
 use crate::{
     analysis::{
-        AnalysisResults, DataFlowSolver, LiveVariables, LivenessResult, SsaCfg, SsaFunction, SsaOp,
-        SsaType, SsaVarId, VariableOrigin,
+        AnalysisResults, DataFlowSolver, EhCfg, LiveVariables, LivenessResult, SsaCfg, SsaFunction,
+        SsaOp, SsaType, SsaVarId, VariableOrigin,
     },
     Error, Result,
 };
@@ -184,8 +184,14 @@ impl LocalCoalescer {
             interference.set_type(var.id(), var.var_type().clone());
         }
 
-        // Build CFG for dataflow analysis
-        let cfg = SsaCfg::from_ssa(ssa);
+        // Build CFG for dataflow analysis.
+        //
+        // The solver must run over the exception-aware view: a traversal seeded
+        // from terminator edges alone never reaches a handler block, so every
+        // variable live only across a protected region would come back dead.
+        // The extra edges only widen liveness, which is a may-analysis, so a
+        // value reported live across an exceptional edge is conservative.
+        let cfg = EhCfg::from_ssa(ssa);
 
         // Run liveness analysis
         let analysis = LiveVariables::new(ssa);

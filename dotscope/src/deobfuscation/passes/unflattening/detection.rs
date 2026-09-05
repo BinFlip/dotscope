@@ -25,14 +25,14 @@ use std::{
 use analyssa::{
     graph::{
         algorithms::{compute_dominators, DominatorTree},
-        GraphBase, NodeId, Successors,
+        NodeId,
     },
     BitSet,
 };
 use rayon::prelude::*;
 
 use crate::{
-    analysis::{ControlFlow, SsaEvaluator, SsaFunction, SsaOp, SsaVarId, VariableOrigin},
+    analysis::{ControlFlow, SsaCfg, SsaEvaluator, SsaFunction, SsaOp, SsaVarId, VariableOrigin},
     deobfuscation::passes::unflattening::{
         dispatcher::{analyze_switch_dispatcher, Dispatcher, DispatcherInfo},
         statevar::{identify_state_variable, StateVariable},
@@ -143,39 +143,6 @@ impl EntryPoint {
     }
 }
 
-/// Adapter to use SsaFunction with graph algorithms.
-///
-/// This implements the `Successors` trait so we can compute dominators
-/// and other graph properties on the SSA CFG.
-struct SsaGraphAdapter<'a> {
-    ssa: &'a SsaFunction,
-}
-
-impl<'a> SsaGraphAdapter<'a> {
-    fn new(ssa: &'a SsaFunction) -> Self {
-        Self { ssa }
-    }
-}
-
-impl GraphBase for SsaGraphAdapter<'_> {
-    fn node_count(&self) -> usize {
-        self.ssa.block_count()
-    }
-
-    fn node_ids(&self) -> impl Iterator<Item = NodeId> {
-        (0..self.ssa.block_count()).map(NodeId::new)
-    }
-}
-
-impl Successors for SsaGraphAdapter<'_> {
-    fn successors(&self, node: NodeId) -> impl Iterator<Item = NodeId> {
-        self.ssa
-            .block_successors(node.index())
-            .into_iter()
-            .map(NodeId::new)
-    }
-}
-
 /// Detected CFF pattern with analysis metadata.
 #[derive(Debug, Clone)]
 pub struct CffPattern {
@@ -265,6 +232,10 @@ impl CffPattern {
 /// CFF detection engine.
 pub struct CffDetector<'a> {
     ssa: &'a SsaFunction,
+    /// The terminator-derived CFG relation. `SsaFunction` no longer answers
+    /// predecessor or successor questions itself, so the view is built once
+    /// here and shared by every query in this module.
+    cfg: SsaCfg<'a>,
     config: UnflattenConfig,
     /// Cached dominator tree (computed lazily)
     dom_tree: Option<DominatorTree>,
@@ -276,6 +247,7 @@ impl<'a> CffDetector<'a> {
     pub fn new(ssa: &'a SsaFunction) -> Self {
         Self {
             ssa,
+            cfg: SsaCfg::from_ssa(ssa),
             config: UnflattenConfig::default(),
             dom_tree: None,
         }
@@ -286,6 +258,7 @@ impl<'a> CffDetector<'a> {
     pub fn with_config(ssa: &'a SsaFunction, config: &UnflattenConfig) -> Self {
         Self {
             ssa,
+            cfg: SsaCfg::from_ssa(ssa),
             config: config.clone(),
             dom_tree: None,
         }
@@ -293,11 +266,8 @@ impl<'a> CffDetector<'a> {
 
     /// Gets or computes the dominator tree.
     fn get_dom_tree(&mut self) -> &DominatorTree {
-        let ssa = self.ssa;
-        self.dom_tree.get_or_insert_with(|| {
-            let adapter = SsaGraphAdapter::new(ssa);
-            compute_dominators(&adapter, NodeId::new(0))
-        })
+        let Self { cfg, dom_tree, .. } = self;
+        dom_tree.get_or_insert_with(|| compute_dominators(cfg, NodeId::new(0)))
     }
 
     /// Detects the best CFF dispatcher in the function.
@@ -555,16 +525,11 @@ impl<'a> CffDetector<'a> {
             }
 
             // Check predecessor count (should have many back edges).
-            // block_predecessors excludes self-loops, but a switch targeting itself
-            // is a valid CFF back-edge (e.g., x86-resolved CFF where case blocks
-            // were folded into the dispatcher). Count it separately.
-            let pred_count = self.ssa.block_predecessors(block_idx).len();
-            let has_self_loop = block
-                .instructions()
-                .iter()
-                .any(|i| i.op().successors().contains(&block_idx));
-            let effective_preds = pred_count.saturating_add(usize::from(has_self_loop));
-            return effective_preds >= 2;
+            // A switch targeting itself is a valid CFF back-edge (e.g.,
+            // x86-resolved CFF where case blocks were folded into the
+            // dispatcher); `SsaCfg` reports that self-edge like any other, so
+            // it needs no separate accounting.
+            return self.cfg.block_predecessors(block_idx).len() >= 2;
         }
 
         // Also consider blocks with conditional branches that could be if-else chains
@@ -574,7 +539,7 @@ impl<'a> CffDetector<'a> {
             .any(|instr| matches!(instr.op(), SsaOp::Branch { .. }));
 
         if has_branch {
-            let pred_count = self.ssa.block_predecessors(block_idx).len();
+            let pred_count = self.cfg.block_predecessors(block_idx).len();
             // If-else dispatchers typically have even more predecessors
             return pred_count >= 3;
         }
@@ -641,7 +606,7 @@ impl<'a> CffDetector<'a> {
 
         // Check successors of case blocks that don't go back to dispatcher
         for case_block in case_blocks.iter() {
-            for succ in self.ssa.block_successors(case_block) {
+            for &succ in self.cfg.block_successors(case_block) {
                 if succ != dispatcher_block && !case_blocks.contains(succ) {
                     exits.insert(succ);
                 }
@@ -653,11 +618,11 @@ impl<'a> CffDetector<'a> {
 
     /// Finds the entry block (predecessor of dispatcher that isn't a case block).
     fn find_entry_block(&self, dispatcher_block: usize) -> Option<usize> {
-        let preds = self.ssa.block_predecessors(dispatcher_block);
+        let preds = self.cfg.block_predecessors(dispatcher_block);
 
         // Entry block is typically block 0 or the first predecessor
         // that doesn't look like it came from a case block
-        for pred in preds {
+        for &pred in preds {
             if pred == 0 {
                 return Some(pred);
             }
@@ -683,7 +648,7 @@ impl<'a> CffDetector<'a> {
         state_var: Option<&StateVariable>,
     ) -> Vec<EntryPoint> {
         let mut entries = Vec::new();
-        let preds = self.ssa.block_predecessors(dispatcher_block);
+        let preds = self.cfg.block_predecessors(dispatcher_block);
 
         // Collect non-case-block predecessors as potential entry points
         let entry_blocks: Vec<usize> = preds
@@ -951,9 +916,9 @@ impl<'a> CffDetector<'a> {
         _all_entries: &[usize],
     ) -> Option<EntryCondition> {
         // Look for blocks that branch to this entry
-        let preds = self.ssa.block_predecessors(entry_block);
+        let preds = self.cfg.block_predecessors(entry_block);
 
-        for pred in preds {
+        for &pred in preds {
             let Some(pred_block) = self.ssa.block(pred) else {
                 continue;
             };
@@ -1053,7 +1018,7 @@ impl<'a> CffDetector<'a> {
         }
 
         // Signal 3: Dispatcher has many predecessors (back edges)
-        let pred_count = ssa.block_predecessors(dispatcher_block).len();
+        let pred_count = self.cfg.block_predecessors(dispatcher_block).len();
         if pred_count >= case_count / 2 {
             score += w.predecessor_ratio;
         }
@@ -1069,7 +1034,7 @@ impl<'a> CffDetector<'a> {
             .iter()
             .filter(|&b| {
                 can_reach_dispatcher(
-                    ssa,
+                    &self.cfg,
                     b,
                     dispatcher_block,
                     dispatcher_node,
@@ -1139,7 +1104,7 @@ impl<'a> CffDetector<'a> {
 /// blocks) before eventually reaching the dispatcher. This function does
 /// bounded BFS to detect these transitive paths.
 fn can_reach_dispatcher(
-    ssa: &SsaFunction,
+    cfg: &SsaCfg,
     from: usize,
     dispatcher_block: usize,
     dispatcher_node: NodeId,
@@ -1147,14 +1112,14 @@ fn can_reach_dispatcher(
     max_depth: usize,
 ) -> bool {
     // Direct check first (fast path)
-    if ssa.block_successors(from).contains(&dispatcher_block) {
+    if cfg.block_successors(from).contains(&dispatcher_block) {
         return true;
     }
 
     let mut queue = VecDeque::new();
-    let mut visited = BitSet::new(ssa.block_count());
+    let mut visited = BitSet::new(cfg.block_count());
 
-    for succ in ssa.block_successors(from) {
+    for &succ in cfg.block_successors(from) {
         if succ != from {
             queue.push_back((succ, 1));
         }
@@ -1172,7 +1137,7 @@ fn can_reach_dispatcher(
         if !dom_tree.dominates(dispatcher_node, NodeId::new(block)) {
             continue;
         }
-        for succ in ssa.block_successors(block) {
+        for &succ in cfg.block_successors(block) {
             if !visited.contains(succ) {
                 queue.push_back((succ, depth.saturating_add(1)));
             }

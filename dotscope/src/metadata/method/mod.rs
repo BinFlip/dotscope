@@ -109,7 +109,9 @@ pub use iter::InstructionIterator;
 pub use types::*;
 
 use crate::{
-    analysis::{ControlFlowGraph, SsaConverter, SsaExceptionHandler, SsaFunction, TypeContext},
+    analysis::{
+        BlockRange, ControlFlowGraph, SsaConverter, SsaExceptionHandler, SsaFunction, TypeContext,
+    },
     assembly::{self, BasicBlock, InstructionEncoder},
     file::File,
     metadata::{
@@ -1644,14 +1646,14 @@ impl Method {
 
                     // Map offsets to block indices (add base_offset to convert relative to absolute)
                     let try_start_block = Self::find_block_at_offset(blocks, try_offset_abs);
-                    let try_end_block = Self::find_block_at_offset(blocks, try_end_abs);
+                    let try_end_block = Self::find_region_end_block(blocks, try_end_abs);
 
-                    // For handler blocks, use the handler_entry info from decoder if available
-                    let handler_start_block = Self::find_handler_entry_block(blocks, handler_idx)
-                        .or_else(|| Self::find_block_at_offset(blocks, handler_offset_abs));
-                    let handler_end_block = Self::find_block_at_offset(blocks, handler_end_abs);
-
-                    let filter_start_block = if eh.flags == ExceptionHandlerFlags::FILTER {
+                    // The filter expression is resolved first because the handler's own
+                    // start depends on it: the decoder marks the filter's entry block with
+                    // the same handler index as the handler body's, and the filter comes
+                    // first in layout order, so a search by index alone answers with the
+                    // filter block for every filter clause.
+                    let filter_start_block = if eh.flags.kind() == ExceptionHandlerKind::Filter {
                         let filter_offset_abs = base_offset
                             .checked_add(eh.filter_offset as usize)
                             .ok_or_else(|| {
@@ -1662,13 +1664,26 @@ impl Method {
                         None
                     };
 
+                    // For handler blocks, use the handler_entry info from decoder if available
+                    let handler_start_block =
+                        Self::find_handler_entry_block(blocks, handler_idx, filter_start_block)
+                            .or_else(|| Self::find_block_at_offset(blocks, handler_offset_abs));
+                    let handler_end_block = Self::find_region_end_block(blocks, handler_end_abs);
+
                     // Get the class token for catch handlers
-                    let class_token_or_filter = if eh.flags == ExceptionHandlerFlags::EXCEPTION {
-                        eh.handler.as_ref().map_or(0, |t| t.token.value())
-                    } else if eh.flags == ExceptionHandlerFlags::FILTER {
-                        eh.filter_offset
-                    } else {
-                        0
+                    let class_token_or_filter = match eh.flags.kind() {
+                        ExceptionHandlerKind::Catch => {
+                            eh.handler.as_ref().map_or(0, |t| t.token.value())
+                        }
+                        ExceptionHandlerKind::Filter => eh.filter_offset,
+                        ExceptionHandlerKind::Finally | ExceptionHandlerKind::Fault => 0,
+                    };
+
+                    // Each part is a half-open block range or nothing at all: a start
+                    // without an end never described a region anyone could regenerate an
+                    // IL table from, and `BlockRange` makes that state unrepresentable.
+                    let range = |start: Option<usize>, end: Option<usize>| {
+                        start.zip(end).and_then(|(s, e)| BlockRange::new(s, e))
                     };
 
                     ssa_handlers.push(SsaExceptionHandler {
@@ -1678,11 +1693,15 @@ impl Method {
                         handler_offset: eh.handler_offset,
                         handler_length: eh.handler_length,
                         class_token_or_filter,
-                        try_start_block,
-                        try_end_block,
-                        handler_start_block,
-                        handler_end_block,
-                        filter_start_block,
+                        protected_range: range(try_start_block, try_end_block),
+                        handler_range: range(handler_start_block, handler_end_block),
+                        // A CIL filter expression occupies [filter_offset, handler_offset),
+                        // so its exclusive end is wherever the handler begins. Taking the
+                        // handler's resolved start rather than re-deriving one from
+                        // `handler_offset_abs` keeps the two parts from claiming the same
+                        // block when the decoder's marker and the IL offset disagree — an
+                        // overlap analyssa reports as a malformed clause.
+                        filter_range: range(filter_start_block, handler_start_block),
                     });
                 }
 
@@ -1759,12 +1778,39 @@ impl Method {
             .position(|b| offset >= b.offset && offset < b.offset.saturating_add(b.size))
     }
 
+    /// Finds the exclusive end block of a region ending at `offset`.
+    ///
+    /// `offset` is one past the region's last IL byte, so the answer is the block
+    /// that begins there. A region running to the end of the method body has no
+    /// such block; its exclusive end is one past the last block, which is what
+    /// distinguishes "the region ends with the method" from "the region's end
+    /// could not be mapped at all".
+    fn find_region_end_block(blocks: &[BasicBlock], offset: usize) -> Option<usize> {
+        if let Some(idx) = Self::find_block_at_offset(blocks, offset) {
+            return Some(idx);
+        }
+
+        let body_end = blocks.last().map_or(0, |b| b.offset.saturating_add(b.size));
+        (offset >= body_end).then_some(blocks.len())
+    }
+
     /// Finds the block that is marked as an entry point for the given handler index.
-    fn find_handler_entry_block(blocks: &[BasicBlock], handler_index: usize) -> Option<usize> {
-        blocks.iter().position(|b| {
-            b.handler_entry
+    ///
+    /// A filter clause marks two blocks with the same handler index — the filter
+    /// expression's entry and the handler body's — and the filter is laid out
+    /// first, so `filter_block` names the one to skip. Without it the handler
+    /// body of every filter clause would resolve to its filter expression.
+    fn find_handler_entry_block(
+        blocks: &[BasicBlock],
+        handler_index: usize,
+        filter_block: Option<usize>,
+    ) -> Option<usize> {
+        blocks.iter().enumerate().find_map(|(idx, b)| {
+            let marks_this_handler = b
+                .handler_entry
                 .as_ref()
-                .is_some_and(|info| info.handler_index == handler_index)
+                .is_some_and(|info| info.handler_index == handler_index);
+            (marks_this_handler && Some(idx) != filter_block).then_some(idx)
         })
     }
 

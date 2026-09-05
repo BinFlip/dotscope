@@ -306,6 +306,8 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                 ConstValue::F64(_) => SsaType::F64,
                 ConstValue::String(_) | ConstValue::DecryptedString(_) => SsaType::String,
                 ConstValue::DecryptedArray { .. } => SsaType::Object,
+                // Uninhabited for this target: CIL has no symbol space.
+                ConstValue::Symbol(symbol) => match *symbol {},
                 // SIMD vector constant from the native substrate — no CIL type.
                 ConstValue::Vector(_) => SsaType::Unknown,
                 ConstValue::Null => SsaType::Null,
@@ -529,7 +531,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             | SsaOp::InitObj { .. }
             | SsaOp::CopyObj { .. }
             | SsaOp::Nop
-            | SsaOp::Break
+            | SsaOp::Break(_)
             | SsaOp::Constrained { .. }
             | SsaOp::Volatile
             | SsaOp::Unaligned { .. }
@@ -2974,7 +2976,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 
                     if let Some(block) = self.function.block_mut(block_idx) {
                         if let Some(instr) = block.instruction_mut(instr_idx) {
-                            instr.op_mut().set_dest(new_var);
+                            instr.op_mut().replace_def(sim_var, new_var);
                         }
                     }
                 }

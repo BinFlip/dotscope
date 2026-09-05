@@ -47,7 +47,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use rustc_hash::FxHashMap;
 
 use crate::{
-    analysis::{CmpKind, ConstValue, PhiNode, SsaFunction, SsaInstruction, SsaOp, SsaVarId},
+    analysis::{
+        CmpKind, ConstValue, PhiNode, SsaCfg, SsaFunction, SsaInstruction, SsaOp, SsaVarId,
+    },
     deobfuscation::passes::unflattening::dispatcher::Dispatcher,
 };
 
@@ -219,7 +221,7 @@ impl DispatchTable {
                 true_target,
                 false_target,
                 ..
-            }) = block.terminator_op()
+            }) = block.control_terminator()
             else {
                 self.fallthrough = Some(current);
                 return;
@@ -951,7 +953,7 @@ fn region_from(ssa: &SsaFunction, start: usize, stop: usize, budget: usize) -> B
         if seen.len() > budget {
             break;
         }
-        if let Some(op) = ssa.block(current).and_then(|b| b.terminator_op()) {
+        if let Some(op) = ssa.block(current).and_then(|b| b.control_terminator()) {
             frontier.extend(op.successors());
         }
     }
@@ -973,7 +975,9 @@ pub fn resolve_dispatch_edges(
         // Without a state phi there is nothing per-edge to read: the switch
         // operand is computed inside the dispatcher from something that is not
         // merged at its entry.
-        stats.unresolved = ssa.block_predecessors(dispatcher.block).len();
+        stats.unresolved = SsaCfg::from_ssa(ssa)
+            .block_predecessors(dispatcher.block)
+            .len();
         return (Vec::new(), stats);
     };
 
@@ -1421,9 +1425,8 @@ pub fn clear_unreachable(ssa: &mut SsaFunction) -> usize {
 
     let mut roots: Vec<usize> = vec![0];
     for handler in ssa.exception_handlers() {
-        roots.extend(handler.handler_start_block);
-        roots.extend(handler.filter_start_block);
-        roots.extend(handler.try_start_block);
+        roots.extend(handler.entry_blocks());
+        roots.extend(handler.protected_range.map(|range| range.start()));
     }
 
     let mut reachable = vec![false; block_count];
@@ -1436,7 +1439,7 @@ pub fn clear_unreachable(ssa: &mut SsaFunction) -> usize {
             continue;
         }
         *slot = true;
-        if let Some(op) = ssa.block(current).and_then(|b| b.terminator_op()) {
+        if let Some(op) = ssa.block(current).and_then(|b| b.control_terminator()) {
             frontier.extend(op.successors());
         }
     }
@@ -1657,7 +1660,7 @@ mod tests {
 
         assert_eq!(apply_rewires(&mut ssa, &rewires), 2);
         assert!(
-            ssa.block_predecessors(2).is_empty(),
+            SsaCfg::from_ssa(&ssa).block_predecessors(2).is_empty(),
             "no edge should still reach the dispatcher"
         );
 
@@ -1701,7 +1704,7 @@ mod tests {
         for rewire in &rewires {
             let successors = ssa
                 .block(rewire.from)
-                .and_then(|b| b.terminator_op())
+                .and_then(|b| b.control_terminator())
                 .map(SsaOp::successors)
                 .unwrap_or_default();
             assert!(
@@ -1765,8 +1768,8 @@ mod tests {
 
         apply_rewires(&mut ssa, &rewires);
         assert_eq!(
-            ssa.block_predecessors(2),
-            vec![0],
+            SsaCfg::from_ssa(&ssa).block_predecessors(2),
+            [0],
             "the unresolved edge keeps using the dispatcher"
         );
         assert_eq!(

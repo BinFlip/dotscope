@@ -40,7 +40,7 @@ use analyssa::BitSet;
 use crate::{
     analysis::{
         conv_op_for_target, simplify_op, CilTarget, CmpKind, ConstValue, ConstValueCilExt,
-        ConstantPropagation, MethodRef, SccpResult, SimplifyResult, SsaCfg, SsaEvaluator,
+        ConstantPropagation, EhCfg, MethodRef, SccpResult, SimplifyResult, SsaEvaluator,
         SsaFunction, SsaOp, SsaType, SsaVarId,
     },
     compiler::{
@@ -281,8 +281,13 @@ impl ConstantPropagationPass {
         // which can cause SCCP to miss re-evaluating instructions when phi values change.
         ssa.recompute_uses();
 
-        // Build CFG from SSA and run SCCP analysis using the dataflow framework
-        let cfg = SsaCfg::from_ssa(ssa);
+        // Build CFG from SSA and run SCCP analysis using the dataflow framework.
+        //
+        // SCCP is rooted at the entry and walks forward, so it needs the
+        // exception-aware view: over terminator edges alone a handler block is
+        // unreachable, and every value defined in one would be left Top and
+        // folded as if it were a constant nobody wrote.
+        let cfg = EhCfg::from_ssa(ssa);
         let mut sccp = ConstantPropagation::new(ptr_size);
         let mut sccp_result = sccp.analyze(ssa, &cfg);
 
@@ -308,7 +313,7 @@ impl ConstantPropagationPass {
         );
         if constants.len() > pre_fold_count {
             ssa.recompute_uses();
-            let cfg = SsaCfg::from_ssa(ssa);
+            let cfg = EhCfg::from_ssa(ssa);
             let mut sccp2 = ConstantPropagation::new(ptr_size);
             let sccp_result2 = sccp2.analyze(ssa, &cfg);
             for (var, c) in sccp_result2.constants() {
@@ -1610,7 +1615,7 @@ impl ConstantPropagationPass {
         // trampoline may be threaded to the switch block itself. These
         // self-loops won't be caught by the higher-index scan below.
         if let Some(block) = ssa.block(block_idx) {
-            if let Some(op) = block.terminator_op() {
+            if let Some(op) = block.control_terminator() {
                 let self_targets = match op {
                     SsaOp::Switch {
                         targets, default, ..
@@ -1626,7 +1631,7 @@ impl ConstantPropagationPass {
         // Check for back-edges from blocks with higher indices.
         for bi in block_idx.saturating_add(1)..ssa.block_count() {
             if let Some(block) = ssa.block(bi) {
-                if let Some(op) = block.terminator_op() {
+                if let Some(op) = block.control_terminator() {
                     let targets_block = match op {
                         SsaOp::Jump { target } => *target == block_idx,
                         SsaOp::Leave { target } => *target == block_idx,
@@ -1679,7 +1684,7 @@ impl ConstantPropagationPass {
 
             // First pass: analyze the terminator without mutable borrow
             let simplification = if let Some(block) = ssa.block(block_idx) {
-                if let Some(op) = block.terminator_op() {
+                if let Some(op) = block.control_terminator() {
                     match op {
                         SsaOp::Branch {
                             condition,

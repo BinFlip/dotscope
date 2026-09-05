@@ -8,7 +8,7 @@ use analyssa::ir::ops::SsaOp as AnalyssaSsaOp;
 // `BinaryOpInfo`/`UnaryOpInfo` aren't re-exported (the original dotscope
 // `ops.rs` didn't surface them either; direct callers go through
 // `analyssa::ir::ops` if they need them).
-pub use analyssa::ir::ops::{BinaryOpKind, CmpKind, UnaryOpKind};
+pub use analyssa::ir::ops::{BinaryOpKind, BreakpointOp, CmpKind, UnaryOpKind};
 
 use crate::{analysis::ssa::target::CilTarget, metadata::token::Token};
 

@@ -766,6 +766,8 @@ impl From<&ConstValue> for EmValue {
     #[allow(clippy::cast_possible_wrap)] // U32->I32 and U64->I64 are intentional bit-preserving casts
     fn from(value: &ConstValue) -> Self {
         match value {
+            // Uninhabited for this target: CIL has no symbol space.
+            ConstValue::Symbol(symbol) => match *symbol {},
             // Signed integers - promote small types to I32 using infallible From
             ConstValue::I8(v) => EmValue::I32(i32::from(*v)),
             ConstValue::I16(v) => EmValue::I32(i32::from(*v)),

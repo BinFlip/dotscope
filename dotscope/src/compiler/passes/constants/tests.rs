@@ -455,7 +455,7 @@ fn test_pass_branch_simplification() {
 
     // Check that branch was simplified to jump
     let block = ssa.block(0).unwrap();
-    if let Some(SsaOp::Jump { target }) = block.terminator_op() {
+    if let Some(SsaOp::Jump { target }) = block.control_terminator() {
         assert_eq!(*target, 1);
     } else {
         panic!("Expected Jump instruction");
@@ -488,7 +488,7 @@ fn test_pass_switch_simplification() {
 
     // Check that switch was simplified to jump to target 2 (index 1)
     let block = ssa.block(0).unwrap();
-    if let Some(SsaOp::Jump { target }) = block.terminator_op() {
+    if let Some(SsaOp::Jump { target }) = block.control_terminator() {
         assert_eq!(*target, 2);
     } else {
         panic!("Expected Jump instruction");
@@ -717,7 +717,7 @@ fn test_branch_false_condition() {
 
     // Check that branch was simplified to jump to false branch (target 2)
     let block = ssa.block(0).unwrap();
-    if let Some(SsaOp::Jump { target }) = block.terminator_op() {
+    if let Some(SsaOp::Jump { target }) = block.control_terminator() {
         assert_eq!(*target, 2);
     } else {
         panic!("Expected Jump instruction");
@@ -750,7 +750,7 @@ fn test_switch_out_of_range_uses_default() {
 
     // Check that switch was simplified to jump to default (target 4)
     let block = ssa.block(0).unwrap();
-    if let Some(SsaOp::Jump { target }) = block.terminator_op() {
+    if let Some(SsaOp::Jump { target }) = block.control_terminator() {
         assert_eq!(*target, 4);
     } else {
         panic!("Expected Jump instruction");

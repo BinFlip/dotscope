@@ -473,10 +473,10 @@ fn find_phase_boundaries(ssa: &SsaFunction, assembly: &CilObject) -> (Vec<usize>
 
     // Exception handler entries are phase boundaries
     for handler in ssa.exception_handlers() {
-        if let Some(handler_start) = handler.handler_start_block {
+        if let Some(handler_start) = handler.handler_range.map(|range| range.start()) {
             boundaries.insert(handler_start);
         }
-        if let Some(try_start) = handler.try_start_block {
+        if let Some(try_start) = handler.protected_range.map(|range| range.start()) {
             boundaries.insert(try_start);
         }
     }
@@ -556,7 +556,7 @@ fn build_phases_from_boundaries(
 
         // Check if this range is an exception handler
         for handler in ssa.exception_handlers() {
-            if handler.handler_start_block == Some(start) {
+            if handler.handler_range.map(|range| range.start()) == Some(start) {
                 structure = Some("try/catch".to_string());
             }
         }

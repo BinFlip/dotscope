@@ -24,8 +24,8 @@ use std::collections::HashMap;
 use common::{build_cfg, build_ssa, TestTypeProvider};
 use dotscope::{
     analysis::{
-        ConstValue, ControlFlowGraph, SsaConverter, SsaExceptionHandler, SsaExceptionHandlerCilExt,
-        SsaFunction, SsaOp, SsaVarId, SymbolicEvaluator, SymbolicExpr,
+        BlockRange, ConstValue, ControlFlowGraph, SsaConverter, SsaExceptionHandler,
+        SsaExceptionHandlerCilExt, SsaFunction, SsaOp, SsaVarId, SymbolicEvaluator, SymbolicExpr,
     },
     assembly::{decode_blocks, InstructionAssembler},
     metadata::{
@@ -2110,11 +2110,9 @@ fn test_ssa_exception_handler_preservation() -> Result<()> {
             handler_offset: handler.handler_offset,
             handler_length: handler.handler_length,
             class_token_or_filter: handler.filter_offset,
-            try_start_block: Some(0),
-            try_end_block: Some(1),
-            handler_start_block: Some(1),
-            handler_end_block: Some(2),
-            filter_start_block: None,
+            protected_range: BlockRange::new(0, 1),
+            handler_range: BlockRange::new(1, 2),
+            filter_range: None,
         };
         ssa.set_exception_handlers(vec![ssa_handler]);
     }
@@ -2132,8 +2130,8 @@ fn test_ssa_exception_handler_preservation() -> Result<()> {
 
     let eh = &ssa.exception_handlers()[0];
     assert_eq!(eh.flags, ExceptionHandlerFlags::EXCEPTION);
-    assert_eq!(eh.try_start_block, Some(0));
-    assert_eq!(eh.handler_start_block, Some(1));
+    assert_eq!(eh.protected_range.map(|range| range.start()), Some(0));
+    assert_eq!(eh.handler_range.map(|range| range.start()), Some(1));
     assert!(
         eh.has_block_mapping(),
         "Handler should have block mapping set"
@@ -2186,11 +2184,9 @@ fn test_ssa_finally_handler() -> Result<()> {
             handler_offset: handler.handler_offset,
             handler_length: handler.handler_length,
             class_token_or_filter: handler.filter_offset,
-            try_start_block: Some(0),
-            try_end_block: Some(1),
-            handler_start_block: Some(1),
-            handler_end_block: Some(2),
-            filter_start_block: None,
+            protected_range: BlockRange::new(0, 1),
+            handler_range: BlockRange::new(1, 2),
+            filter_range: None,
         };
         ssa.set_exception_handlers(vec![ssa_handler]);
     }
@@ -2262,11 +2258,9 @@ fn test_ssa_nested_exception_handlers() -> Result<()> {
             handler_offset: handler.handler_offset,
             handler_length: handler.handler_length,
             class_token_or_filter: handler.filter_offset,
-            try_start_block: Some(i),
-            try_end_block: Some(i + 1),
-            handler_start_block: Some(i + 1),
-            handler_end_block: Some(i + 2),
-            filter_start_block: None,
+            protected_range: BlockRange::new(i, i + 1),
+            handler_range: BlockRange::new(i + 1, i + 2),
+            filter_range: None,
         };
         ssa_handlers.push(ssa_handler);
     }
@@ -2367,16 +2361,16 @@ fn test_ssa_pipeline_preserves_exception_handlers() {
                         i, method.name
                     );
 
-                    // Verify block indices are set (not None)
+                    // Verify block ranges are set (not None)
                     assert!(
-                        ssa_eh.try_start_block.is_some(),
-                        "Handler {} try_start_block should be mapped in '{}'",
+                        ssa_eh.protected_range.is_some(),
+                        "Handler {} protected_range should be mapped in '{}'",
                         i,
                         method.name
                     );
                     assert!(
-                        ssa_eh.handler_start_block.is_some(),
-                        "Handler {} handler_start_block should be mapped in '{}'",
+                        ssa_eh.handler_range.is_some(),
+                        "Handler {} handler_range should be mapped in '{}'",
                         i,
                         method.name
                     );
@@ -2457,14 +2451,14 @@ fn test_decrypt_secret_handler_content() {
                 println!("\nException handlers:");
                 for (i, eh) in ssa.exception_handlers().iter().enumerate() {
                     println!(
-                        "  EH {}: flags={:?}, try_start={:?}, handler_start={:?}",
-                        i, eh.flags, eh.try_start_block, eh.handler_start_block
+                        "  EH {}: flags={:?}, protected={:?}, handler={:?}",
+                        i, eh.flags, eh.protected_range, eh.handler_range
                     );
                 }
 
                 // Verify handler block has content
                 if let Some(eh) = ssa.exception_handlers().first() {
-                    if let Some(handler_block_idx) = eh.handler_start_block {
+                    if let Some(handler_block_idx) = eh.handler_range.map(|range| range.start()) {
                         let handler_block = ssa
                             .block(handler_block_idx)
                             .expect("Handler block should exist");
@@ -2554,16 +2548,16 @@ fn test_try_region_block_decoding() {
 
             let ssa_eh = &ssa.exception_handlers()[0];
             assert!(
-                ssa_eh.try_start_block.is_some(),
-                "Try start block should be mapped"
+                ssa_eh.protected_range.is_some(),
+                "Protected range should be mapped"
             );
             assert!(
-                ssa_eh.handler_start_block.is_some(),
-                "Handler start block should be mapped"
+                ssa_eh.handler_range.is_some(),
+                "Handler range should be mapped"
             );
 
             // Verify try block has actual content
-            if let Some(try_start) = ssa_eh.try_start_block {
+            if let Some(try_start) = ssa_eh.protected_range.map(|range| range.start()) {
                 let try_block = ssa.block(try_start).expect("Try block should exist");
                 assert!(
                     !try_block.instructions().is_empty(),

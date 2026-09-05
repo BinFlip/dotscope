@@ -633,10 +633,12 @@ impl<'a> InliningContext<'a> {
     ) -> SsaOp {
         let mut cloned = op.clone();
 
-        // Remap destination
-        if let Some(dest) = cloned.dest() {
-            let new_dest = Self::get_or_create_var(dest, var_remap, callee_ssa, caller_ssa);
-            cloned.set_dest(new_dest);
+        // Remap every definition, not just the primary destination: an operation
+        // with secondary or flag outputs defines those too, and a callee variable
+        // left unremapped would collide with the caller's numbering.
+        for def in op.defs() {
+            let new_def = Self::get_or_create_var(def, var_remap, callee_ssa, caller_ssa);
+            cloned.replace_def(def, new_def);
         }
 
         // Remap uses

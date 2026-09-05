@@ -108,14 +108,16 @@ pub(crate) use ssa::conv_op_for_target;
 pub use ssa::Z3Solver;
 pub use ssa::{
     address, pointsto, resolve_corelib_valuetype, AbstractValue, AliasResult, ArrayIndex,
-    BinaryOpKind, CilTarget, CmpKind, ConstEvaluator, ConstValue, ConstValueCilExt, ControlFlow,
-    DefSite, EvaluatorMark, FieldRef, IndirectLocation, MemoryDefSite, MemoryLocation, MemoryOp,
-    MemoryPhi, MemoryPhiOperand, MemorySsa, MemorySsaStats, MemoryVersion, MethodPurity, MethodRef,
-    PhiAnalyzer, PhiNode, PhiOperand, ReturnInfo, SsaBlock, SsaCfg, SsaConverter, SsaEvaluator,
-    SsaExceptionHandler, SsaExceptionHandlerCilExt, SsaFunction, SsaFunctionBuilder,
-    SsaFunctionCilExt, SsaFunctionSemanticsExt, SsaInstruction, SsaOp, SsaOpCilExt, SsaType,
-    SsaVarId, SsaVariable, SymbolicEvaluator, SymbolicExpr, SymbolicOp, Target, TypeClass,
-    TypeContext, TypeProvider, TypeRef, UnaryOpKind, UseSite, ValueResolver, VariableOrigin,
+    BinaryOpKind, BlockRange, BreakpointOp, CilTarget, ClauseLayout, ClausePart, CmpKind,
+    ConstEvaluator, ConstValue, ConstValueCilExt, ControlFlow, DefSite, EhCfg, EvaluatorMark,
+    ExceptionBlocks, ExceptionTableError, FieldRef, HandlerKind, IndirectLocation, LaidOutHandler,
+    MemoryDefSite, MemoryLocation, MemoryOp, MemoryPhi, MemoryPhiOperand, MemorySsa,
+    MemorySsaStats, MemoryVersion, MethodPurity, MethodRef, PhiAnalyzer, PhiNode, PhiOperand,
+    ReturnInfo, SsaBlock, SsaCfg, SsaConverter, SsaEvaluator, SsaExceptionHandler,
+    SsaExceptionHandlerCilExt, SsaFunction, SsaFunctionBuilder, SsaFunctionCilExt,
+    SsaFunctionSemanticsExt, SsaInstruction, SsaOp, SsaOpCilExt, SsaType, SsaVarId, SsaVariable,
+    SymbolicEvaluator, SymbolicExpr, SymbolicOp, Target, TypeClass, TypeContext, TypeProvider,
+    TypeRef, UnaryOpKind, UseSite, ValueResolver, VariableOrigin,
 };
 pub use taint::{
     cff_taint_config, find_token_dependencies, PhiTaintMode, TaintAnalysis, TaintConfig,
