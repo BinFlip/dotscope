@@ -703,10 +703,10 @@ impl PermissionSet {
         loop {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => match e.name().as_ref() {
-                    b"PermissionSet" => {
+                    "PermissionSet" => {
                         in_permission_set = true;
                     }
-                    b"IPermission" if in_permission_set => {
+                    "IPermission" if in_permission_set => {
                         permissions
                             .push(Self::parse_permission_from_xml_attributes(e.attributes())?);
                     }
@@ -714,11 +714,11 @@ impl PermissionSet {
                 },
                 // Handle self-closing tags like <IPermission ... />
                 Ok(Event::Empty(ref e))
-                    if e.name().as_ref() == b"IPermission" && in_permission_set =>
+                    if e.name().as_ref() == "IPermission" && in_permission_set =>
                 {
                     permissions.push(Self::parse_permission_from_xml_attributes(e.attributes())?);
                 }
-                Ok(Event::End(ref e)) if e.name().as_ref() == b"PermissionSet" => {
+                Ok(Event::End(ref e)) if e.name().as_ref() == "PermissionSet" => {
                     in_permission_set = false;
                 }
                 Ok(Event::Eof) => break,
@@ -742,10 +742,8 @@ impl PermissionSet {
         for attr_result in attributes {
             let attr = attr_result.map_err(|e| malformed_error!("Invalid XML attribute: {}", e))?;
 
-            let key = std::str::from_utf8(attr.key.as_ref())
-                .map_err(|_| malformed_error!("Invalid UTF-8 in XML attribute key"))?;
-            let value = std::str::from_utf8(&attr.value)
-                .map_err(|_| malformed_error!("Invalid UTF-8 in XML attribute value"))?;
+            let key = attr.key.as_ref();
+            let value = attr.value.as_ref();
 
             match key {
                 "class" => class_name = value.to_string(),

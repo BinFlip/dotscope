@@ -457,7 +457,7 @@ impl SsaPass<CilTarget, CompilerContext> for OpaqueFieldPredicatePass {
         // Each entry: (block_idx, jump_target, dropped_target)
         let mut replacements: Vec<(usize, usize, usize)> = Vec::new();
         for (block_idx, block) in ssa.blocks().iter().enumerate() {
-            let Some(terminator) = block.terminator_op() else {
+            let Some(terminator) = block.control_terminator() else {
                 continue;
             };
 

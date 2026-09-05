@@ -67,7 +67,7 @@ use std::{
 use analyssa::{
     graph::{
         algorithms::{compute_dominators, DominatorTree},
-        GraphBase, NodeId, RootedGraph,
+        GraphBase, NodeId,
     },
     ir::value::DecryptedArrayData,
 };
@@ -808,7 +808,7 @@ impl DecryptionPass {
     fn build_cfg_info(ssa: &SsaFunction) -> CfgInfoOwned {
         let cfg = SsaCfg::from_ssa(ssa);
         let node_count = cfg.node_count();
-        let entry = cfg.entry();
+        let entry = NodeId::new(0);
         let dom_tree = compute_dominators(&cfg, entry);
 
         let predecessors: Vec<Vec<usize>> = (0..node_count)

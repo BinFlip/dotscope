@@ -70,6 +70,8 @@ impl ConstValueCilExt for AnalyssaConstValue<CilTarget> {
             | AnalyssaConstValue::DecryptedString(_)
             | AnalyssaConstValue::Vector(_)
             | AnalyssaConstValue::DecryptedArray { .. } => SsaType::Object,
+            // Uninhabited for this target: CIL has no symbol space.
+            AnalyssaConstValue::Symbol(symbol) => match *symbol {},
         }
     }
 
@@ -94,6 +96,8 @@ impl TryFrom<&AnalyssaConstValue<CilTarget>> for Immediate {
     #[allow(clippy::cast_possible_wrap)] // Intentional bit-preserving casts for CIL semantics
     fn try_from(value: &AnalyssaConstValue<CilTarget>) -> Result<Self, Self::Error> {
         match value {
+            // Uninhabited for this target: CIL has no symbol space.
+            AnalyssaConstValue::Symbol(symbol) => match *symbol {},
             AnalyssaConstValue::I8(v) => Ok(Immediate::Int8(*v)),
             AnalyssaConstValue::I16(v) => Ok(Immediate::Int16(*v)),
             AnalyssaConstValue::I32(v) => Ok(Immediate::Int32(*v)),

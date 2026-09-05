@@ -1,7 +1,8 @@
 use crate::{
     analysis::{
-        ConstValue, DefSite, FieldRef, MethodRef, PhiNode, PhiOperand, SsaBlock, SsaFunction,
-        SsaFunctionBuilder, SsaInstruction, SsaOp, SsaType, SsaVarId, TypeRef, VariableOrigin,
+        BreakpointOp, ConstValue, DefSite, FieldRef, MethodRef, PhiNode, PhiOperand, SsaBlock,
+        SsaFunction, SsaFunctionBuilder, SsaInstruction, SsaOp, SsaType, SsaVarId, TypeRef,
+        VariableOrigin,
     },
     assembly::decode_stream,
     compiler::codegen::{SsaCodeGenerator, VarStorage},
@@ -919,7 +920,9 @@ fn test_nop_instruction() {
 fn test_break_instruction() {
     let mut ssa = SsaFunction::new(0, 0);
     let mut block = SsaBlock::new(0);
-    block.add_instruction(SsaInstruction::synthetic(SsaOp::Break));
+    block.add_instruction(SsaInstruction::synthetic(SsaOp::Break(
+        BreakpointOp::Breakpoint,
+    )));
     block.add_instruction(SsaInstruction::synthetic(SsaOp::Return { value: None }));
     ssa.add_block(block);
     assert_generates(&ssa, &["break", "ret"]);

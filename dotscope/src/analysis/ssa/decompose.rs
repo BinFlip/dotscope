@@ -29,7 +29,7 @@
 use crate::{
     analysis::ssa::{
         conv_op_for_target,
-        ops::{CmpKind, SsaOp},
+        ops::{BreakpointOp, CmpKind, SsaOp},
         types::{FieldRef, MethodRef, SigRef, SsaType, TypeRef},
         value::ConstValue,
         SsaVarId,
@@ -1032,8 +1032,10 @@ fn decompose_standard_instruction(
         // =====================================================================
         // Misc
         // =====================================================================
-        0x00 => Some(SsaOp::Nop),   // nop
-        0x01 => Some(SsaOp::Break), // break
+        0x00 => Some(SsaOp::Nop), // nop
+        // CIL `break` is a debugger breakpoint, the same operation MIPS
+        // spells `break`.
+        0x01 => Some(SsaOp::Break(BreakpointOp::Breakpoint)),
 
         0x72 => {
             // ldstr
@@ -2468,7 +2470,7 @@ mod tests {
     fn test_decompose_break() {
         let instr = make_instruction(0x01, 0, "break", Operand::None, 0, 0);
         let op = decompose_instruction(&instr, &[], None, &[], None);
-        assert_eq!(op.unwrap(), SsaOp::Break);
+        assert_eq!(op.unwrap(), SsaOp::Break(BreakpointOp::Breakpoint));
     }
 
     #[test]

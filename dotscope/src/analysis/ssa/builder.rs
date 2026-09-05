@@ -1008,7 +1008,10 @@ mod tests {
 
         // Verify block 0 has branch
         let block0 = ssa.block(0).unwrap();
-        assert!(matches!(block0.terminator_op(), Some(SsaOp::Branch { .. })));
+        assert!(matches!(
+            block0.control_terminator(),
+            Some(SsaOp::Branch { .. })
+        ));
     }
 
     #[test]
@@ -1048,7 +1051,10 @@ mod tests {
 
         // Verify block 0 has switch
         let block0 = ssa.block(0).unwrap();
-        assert!(matches!(block0.terminator_op(), Some(SsaOp::Switch { .. })));
+        assert!(matches!(
+            block0.control_terminator(),
+            Some(SsaOp::Switch { .. })
+        ));
     }
 
     #[test]

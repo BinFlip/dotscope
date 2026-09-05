@@ -55,14 +55,14 @@ fn crc32_hash(data: &[u8]) -> u32 {
 
 use crate::{
     analysis::{
-        CmpKind, ConstValue, SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaType, SsaVarId,
-        SsaVariable, VariableOrigin,
+        CmpKind, ConstValue, HandlerKind, SsaBlock, SsaExceptionHandler, SsaFunction,
+        SsaInstruction, SsaOp, SsaType, SsaVarId, SsaVariable, VariableOrigin,
     },
     assembly::{Immediate, InstructionEncoder, Operand},
     cilassembly::CilAssembly,
     compiler::codegen::coalescing::LocalCoalescer,
     metadata::{
-        method::{ExceptionHandler, ExceptionHandlerFlags},
+        method::ExceptionHandler,
         signatures::{
             encode_field_signature, CustomModifiers, SignatureField, SignatureLocalVariable,
             TypeSignature,
@@ -560,51 +560,41 @@ impl SsaCodeGenerator {
         let mut handlers = Vec::new();
 
         for eh in ssa.exception_handlers() {
+            let offset_of = |block: usize| self.block_offsets.get(&block).copied();
+
             let try_offset = eh
-                .try_start_block
-                .and_then(|b| self.block_offsets.get(&b).copied())
+                .protected_range
+                .and_then(|range| offset_of(range.start()))
                 .unwrap_or(eh.try_offset);
 
             let handler_offset = eh
-                .handler_start_block
-                .and_then(|b| self.block_offsets.get(&b).copied())
+                .handler_range
+                .and_then(|range| offset_of(range.start()))
                 .unwrap_or(eh.handler_offset);
 
             let try_end = eh
-                .try_end_block
-                .and_then(|b| self.block_offsets.get(&b).copied())
-                .or_else(|| {
-                    // If try_start has a valid mapping but try_end doesn't,
-                    // the try region extends to the handler start
-                    if eh.try_start_block.is_some() {
-                        Some(handler_offset)
-                    } else {
-                        None
-                    }
+                .protected_range
+                .and_then(|range| {
+                    // The exclusive end can be one past the last block, which has
+                    // no offset of its own; the try region then runs to wherever
+                    // the handler begins.
+                    offset_of(range.end()).or(Some(handler_offset))
                 })
                 .unwrap_or(eh.try_offset.saturating_add(eh.try_length));
 
             let handler_end = eh
-                .handler_end_block
-                .and_then(|b| self.block_offsets.get(&b).copied())
-                .or_else(|| {
-                    // If handler_start has a valid mapping but handler_end doesn't,
-                    // the handler extends to the end of bytecode
-                    if eh.handler_start_block.is_some() {
-                        Some(bytecode_len)
-                    } else {
-                        None
-                    }
+                .handler_range
+                .and_then(|range| {
+                    // Likewise: a handler ending with the method has no block
+                    // after it, so it extends to the end of the bytecode.
+                    offset_of(range.end()).or(Some(bytecode_len))
                 })
                 .unwrap_or(eh.handler_offset.saturating_add(eh.handler_length));
 
-            let filter_offset = if eh.flags == ExceptionHandlerFlags::FILTER {
-                eh.filter_start_block
-                    .and_then(|b| self.block_offsets.get(&b).copied())
-                    .unwrap_or(eh.class_token_or_filter)
-            } else {
-                eh.class_token_or_filter
-            };
+            let filter_offset = eh
+                .filter_range
+                .and_then(|range| offset_of(range.start()))
+                .unwrap_or(eh.class_token_or_filter);
 
             // Drop handlers with empty try or handler regions. This happens
             // legitimately when optimization eliminates the guarded code — the
@@ -786,21 +776,19 @@ impl SsaCodeGenerator {
         // Catch and filter handlers start with the exception object already on the stack.
         for handler in ssa.exception_handlers() {
             // Catch handler entry: exception object is on the stack (depth 1)
-            if let Some(handler_block) = handler.handler_start_block {
-                if handler.flags == ExceptionHandlerFlags::EXCEPTION
-                    || handler.flags == ExceptionHandlerFlags::FILTER
-                {
+            if let Some(handler_block) = handler.handler_range.map(|range| range.start()) {
+                if matches!(handler.kind(), HandlerKind::Catch | HandlerKind::Filter) {
                     if let Some(label) = self.block_labels.get(&handler_block) {
                         encoder.set_label_stack_depth(label, 1);
                     }
                 }
             }
-            // Filter block entry: exception object is on the stack (depth 1)
-            if let Some(filter_block) = handler.filter_start_block {
-                if handler.flags == ExceptionHandlerFlags::FILTER {
-                    if let Some(label) = self.block_labels.get(&filter_block) {
-                        encoder.set_label_stack_depth(label, 1);
-                    }
+            // Filter block entry: exception object is on the stack (depth 1).
+            // A filter range only exists on a filter clause, so its presence is
+            // the kind test.
+            if let Some(filter_block) = handler.filter_range.map(|range| range.start()) {
+                if let Some(label) = self.block_labels.get(&filter_block) {
+                    encoder.set_label_stack_depth(label, 1);
                 }
             }
         }
@@ -1362,16 +1350,17 @@ impl SsaCodeGenerator {
         // handler block before its try block, producing inverted byte offsets
         // (e.g. try=93..60) that violate ECMA-335 EH semantics.
         //
-        // For each handler_start_block, collect all try_start_blocks that must
+        // For each handler entry, collect the protected-region entries that must
         // precede it (a handler block may serve multiple EH regions).
         let mut handler_requires_try: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-        // Map try_start_block → handler_start_block for scheduling handlers
+        // Map protected-region entry → handler entry for scheduling handlers
         // after their try bodies.
         let mut try_to_handler: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
         for eh in ssa.exception_handlers() {
-            if let (Some(try_block), Some(handler_block)) =
-                (eh.try_start_block, eh.handler_start_block)
-            {
+            if let (Some(try_block), Some(handler_block)) = (
+                eh.protected_range.map(|range| range.start()),
+                eh.handler_range.map(|range| range.start()),
+            ) {
                 handler_requires_try
                     .entry(handler_block)
                     .or_default()
@@ -1388,7 +1377,7 @@ impl SsaCodeGenerator {
             .blocks()
             .iter()
             .filter_map(|b| {
-                if let Some(SsaOp::Leave { target }) = b.terminator_op() {
+                if let Some(SsaOp::Leave { target }) = b.control_terminator() {
                     Some(*target)
                 } else {
                     None
@@ -1403,9 +1392,10 @@ impl SsaCodeGenerator {
         // region, so we don't follow their targets.
         let mut eh_region_blocks: BTreeSet<usize> = BTreeSet::new();
         for eh in ssa.exception_handlers() {
-            let starts: Vec<usize> = [eh.try_start_block, eh.handler_start_block]
+            let starts: Vec<usize> = [eh.protected_range, eh.handler_range]
                 .into_iter()
                 .flatten()
+                .map(|range| range.start())
                 .collect();
             for start in starts {
                 let mut bfs_queue = vec![start];
@@ -1414,7 +1404,7 @@ impl SsaCodeGenerator {
                         continue;
                     }
                     if let Some(block) = ssa.block(b) {
-                        if let Some(term) = block.terminator_op() {
+                        if let Some(term) = block.control_terminator() {
                             // Only follow internal control flow. Leave exits the
                             // try region, EndFinally/EndFilter exit the handler,
                             // and Throw/Rethrow/Return exit everything.
@@ -1496,7 +1486,7 @@ impl SsaCodeGenerator {
                 // EndFinally/etc. which exit the region.
                 if eh_region_blocks.contains(&block_id) {
                     if let Some(block) = ssa.block(block_id) {
-                        if let Some(term) = block.terminator_op() {
+                        if let Some(term) = block.control_terminator() {
                             let targets: Vec<usize> = match term {
                                 SsaOp::Jump { target } => vec![*target],
                                 SsaOp::Branch {
@@ -1636,7 +1626,7 @@ impl SsaCodeGenerator {
 
             // Preferred successor first, matching `compute_block_layout::preferred_successor`,
             // so the edge block that can be reached by fall-through is the adjacent one.
-            let edge_targets: Vec<usize> = match block.terminator_op() {
+            let edge_targets: Vec<usize> = match block.control_terminator() {
                 Some(
                     SsaOp::Branch {
                         true_target,
@@ -1695,7 +1685,7 @@ impl SsaCodeGenerator {
         let handler_entry_blocks: BTreeSet<usize> = ssa
             .exception_handlers()
             .iter()
-            .filter_map(|h| h.handler_start_block)
+            .filter_map(|h| h.handler_range.map(|range| range.start()))
             .collect();
 
         // Phase 2: Pre-allocate all live phi results to local slots.
@@ -2724,9 +2714,11 @@ impl SsaCodeGenerator {
         // so that define_label resets the stack depth to the expected handler entry depth
         // (e.g., 1 for catch/filter) rather than conflicting with the previous block's
         // fallthrough depth.
-        let is_handler_entry = ssa.exception_handlers().iter().any(|h| {
-            h.handler_start_block == Some(block_idx) || h.filter_start_block == Some(block_idx)
-        });
+        let is_handler_entry = ssa
+            .exception_handlers()
+            .iter()
+            .flat_map(SsaExceptionHandler::entry_blocks)
+            .any(|entry| entry == block_idx);
         if is_handler_entry {
             encoder.mark_unreachable();
         }
@@ -2797,7 +2789,7 @@ impl SsaCodeGenerator {
             // mark as unreachable so the stack depth doesn't leak to the next block in the layout.
             // This is critical for empty exception handler entry blocks whose pre-set depth (1 for
             // catch/filter) would otherwise propagate incorrectly to unrelated successor blocks.
-            if block.terminator_op().is_none() {
+            if block.control_terminator().is_none() {
                 encoder.mark_unreachable();
             }
             return Ok(());
@@ -2813,16 +2805,16 @@ impl SsaCodeGenerator {
         // on the stack when execution enters the handler. Pop instructions that pop
         // this exception object should NOT try to load it first - it's already there.
         //
-        // We identify handler entry blocks by checking if this block is a handler_start_block
-        // for an EXCEPTION or FILTER handler.
+        // We identify handler entry blocks by checking if this block begins the
+        // handler range of a catch or filter clause.
         let is_exception_handler_entry = ssa.exception_handlers().iter().any(|h| {
-            h.handler_start_block == Some(block_idx)
-                && (h.flags == ExceptionHandlerFlags::EXCEPTION
-                    || h.flags == ExceptionHandlerFlags::FILTER)
+            h.handler_range.map(|range| range.start()) == Some(block_idx)
+                && matches!(h.kind(), HandlerKind::Catch | HandlerKind::Filter)
         });
-        let is_filter_entry = ssa.exception_handlers().iter().any(|h| {
-            h.filter_start_block == Some(block_idx) && h.flags == ExceptionHandlerFlags::FILTER
-        });
+        let is_filter_entry = ssa
+            .exception_handlers()
+            .iter()
+            .any(|h| h.filter_range.map(|range| range.start()) == Some(block_idx));
 
         if is_exception_handler_entry || is_filter_entry {
             // Clear operands for Pop instructions that consume the exception object.
@@ -3629,7 +3621,7 @@ impl SsaCodeGenerator {
                 encoder.emit_instruction("nop", None)?;
             }
 
-            SsaOp::Break => {
+            SsaOp::Break(_) => {
                 encoder.emit_instruction("break", None)?;
             }
 
@@ -4626,7 +4618,8 @@ impl SsaCodeGenerator {
             ConstValue::FieldHandle(field_ref) => {
                 encoder.emit_instruction("ldtoken", Some(Operand::Token(field_ref.token())))?;
             }
-
+            // Uninhabited for this target: CIL has no symbol space.
+            ConstValue::Symbol(symbol) => match *symbol {},
             // Decrypted arrays: emit newarr + individual element stores.
             // Decrypted arrays: emit newarr + InitializeArray using FieldRVA data.
             // Produces the same compact pattern as the C# compiler:

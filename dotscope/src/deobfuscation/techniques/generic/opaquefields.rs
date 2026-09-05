@@ -77,7 +77,7 @@ fn collect_predicate_static_fields(ssa: &SsaFunction) -> HashSet<Token> {
 
     let mut static_fields = HashSet::new();
     for block in ssa.blocks() {
-        let Some(terminator) = block.terminator_op() else {
+        let Some(terminator) = block.control_terminator() else {
             continue;
         };
 
@@ -257,7 +257,7 @@ fn identify_sentinel_method(ssa: &SsaFunction) -> Option<Token> {
     let block = ssa.blocks().first()?;
 
     // Find the Return terminator
-    let terminator = block.terminator_op()?;
+    let terminator = block.control_terminator()?;
     let return_var = match terminator {
         SsaOp::Return { value: Some(v) } => *v,
         _ => return None,

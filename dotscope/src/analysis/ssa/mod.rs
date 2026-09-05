@@ -98,9 +98,12 @@ pub use analyssa::ir::function::MethodPurity;
 pub(crate) use builder::conv_op_for_target;
 pub use builder::SsaFunctionBuilder;
 pub use converter::SsaConverter;
-pub use exception::{SsaExceptionHandler, SsaExceptionHandlerCilExt};
+pub use exception::{
+    BlockRange, ClauseLayout, ClausePart, ExceptionBlocks, ExceptionTableError, HandlerKind,
+    LaidOutHandler, SsaExceptionHandler, SsaExceptionHandlerCilExt,
+};
 pub use function::{SsaFunctionCilExt, SsaFunctionSemanticsExt};
-pub use ops::{BinaryOpKind, CmpKind, SsaOp, SsaOpCilExt, UnaryOpKind};
+pub use ops::{BinaryOpKind, BreakpointOp, CmpKind, SsaOp, SsaOpCilExt, UnaryOpKind};
 /// CIL-defaulted alias of [`analyssa::ir::function::SsaFunction`].
 pub type SsaFunction<T = CilTarget> = analyssa::ir::function::SsaFunction<T>;
 /// CIL-defaulted alias of [`analyssa::ir::function::ReturnInfo`].
@@ -141,6 +144,15 @@ pub type SsaInstruction<T = CilTarget> = analyssa::ir::instruction::SsaInstructi
 pub type SsaVariable<T = CilTarget> = analyssa::ir::variable::SsaVariable<T>;
 /// CIL-defaulted alias of [`analyssa::analysis::SsaCfg`].
 pub type SsaCfg<'a, T = CilTarget> = analyssa::analysis::cfg::SsaCfg<'a, T>;
+/// CIL-defaulted alias of [`analyssa::analysis::exceptions::EhCfg`].
+///
+/// The exception-aware flow view. `SsaCfg` carries only the edges a terminator
+/// takes, so a handler block is unreachable in it; this is the view rooted at
+/// handler and filter entries as well as the function entry, and the only one
+/// that implements `RootedGraph` and `DataFlowCfg`. Any solver-based or
+/// dominance-rooted analysis over CIL — which routinely carries protected
+/// regions — belongs here rather than on `SsaCfg`.
+pub type EhCfg<'a, T = CilTarget> = analyssa::analysis::exceptions::EhCfg<'a, T>;
 /// CIL-defaulted alias of [`analyssa::analysis::consts::ConstEvaluator`].
 pub type ConstEvaluator<'a, T = CilTarget> = analyssa::analysis::consts::ConstEvaluator<'a, T>;
 /// CIL-defaulted alias of [`analyssa::analysis::evaluator::SsaEvaluator`].

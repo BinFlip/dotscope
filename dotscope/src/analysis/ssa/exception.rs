@@ -5,6 +5,13 @@
 //! metadata types that analyssa doesn't see.
 
 use analyssa::ir::exception::SsaExceptionHandler as AnalyssaSsaExceptionHandler;
+// The vocabulary a clause is read in. Re-exported here so a caller reaching for
+// dotscope's `SsaExceptionHandler` finds the range, part and kind types it
+// answers in without also depending on analyssa by name.
+pub use analyssa::ir::exception::{
+    BlockRange, ClauseLayout, ClausePart, ExceptionBlocks, ExceptionTableError, HandlerKind,
+    LaidOutHandler,
+};
 
 use crate::{
     analysis::ssa::target::CilTarget,
@@ -41,11 +48,12 @@ pub fn from_exception_handler(handler: &ExceptionHandler) -> SsaExceptionHandler
         handler_offset: handler.handler_offset,
         handler_length: handler.handler_length,
         class_token_or_filter,
-        try_start_block: None,
-        try_end_block: None,
-        handler_start_block: None,
-        handler_end_block: None,
-        filter_start_block: None,
+        // Block ranges are established by SSA construction, which is the only
+        // place block indices exist; a clause built straight from the method
+        // body maps none of them yet.
+        protected_range: None,
+        handler_range: None,
+        filter_range: None,
     }
 }
 
@@ -68,141 +76,75 @@ impl SsaExceptionHandlerCilExt for AnalyssaSsaExceptionHandler<CilTarget> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::method::ExceptionHandlerFlags;
+    use analyssa::ir::HandlerKind;
 
-    // Lock T to CilTarget for tests; they construct `SsaExceptionHandler` with
-    // CIL flags directly.
-    type SsaExceptionHandler = super::SsaExceptionHandler<CilTarget>;
-
-    #[test]
-    fn test_remap_block_indices_basic() {
-        let mut handler = SsaExceptionHandler {
-            flags: ExceptionHandlerFlags::EXCEPTION,
+    /// A method-body clause with the given flags and dual-purpose field.
+    ///
+    /// `handler` is left `None`, which is the state of every clause before type
+    /// resolution runs: `filter_offset` then carries the caught type's token for
+    /// an `EXCEPTION` clause and the filter's IL offset for a `FILTER` one, which
+    /// is precisely the ambiguity `from_exception_handler` resolves.
+    fn cil_handler(flags: ExceptionHandlerFlags, filter_offset: u32) -> ExceptionHandler {
+        ExceptionHandler {
+            flags,
             try_offset: 0,
             try_length: 10,
             handler_offset: 10,
             handler_length: 5,
-            class_token_or_filter: 0x01000001,
-            try_start_block: Some(0),
-            try_end_block: Some(2),
-            handler_start_block: Some(3),
-            handler_end_block: Some(4),
-            filter_start_block: None,
-        };
-
-        // Simulate block compaction: blocks 0, 2, 3, 4 kept; block 1 removed
-        // Old: [0, 1, 2, 3, 4] -> New: [0, -, 1, 2, 3]
-        let block_remap = vec![Some(0), None, Some(1), Some(2), Some(3)];
-
-        handler.remap_block_indices(&block_remap);
-
-        assert_eq!(handler.try_start_block, Some(0)); // 0 -> 0
-        assert_eq!(handler.try_end_block, Some(1)); // 2 -> 1
-        assert_eq!(handler.handler_start_block, Some(2)); // 3 -> 2
-        assert_eq!(handler.handler_end_block, Some(3)); // 4 -> 3
+            filter_offset,
+            handler: None,
+        }
     }
 
     #[test]
-    fn test_remap_block_indices_removed_block() {
-        let mut handler = SsaExceptionHandler {
-            flags: ExceptionHandlerFlags::EXCEPTION,
-            try_offset: 0,
-            try_length: 10,
-            handler_offset: 10,
-            handler_length: 5,
-            class_token_or_filter: 0x01000001,
-            try_start_block: Some(1), // This block will be removed
-            try_end_block: Some(2),
-            handler_start_block: Some(3),
-            handler_end_block: None,
-            filter_start_block: None,
-        };
+    fn from_exception_handler_maps_no_block_yet() {
+        let converted =
+            from_exception_handler(&cil_handler(ExceptionHandlerFlags::EXCEPTION, 0x0100_0001));
 
-        // Block 1 is removed
-        let block_remap = vec![Some(0), None, Some(1), Some(2)];
-
-        handler.remap_block_indices(&block_remap);
-
-        assert_eq!(handler.try_start_block, None); // Block was removed
-        assert_eq!(handler.try_end_block, Some(1)); // 2 -> 1
-        assert_eq!(handler.handler_start_block, Some(2)); // 3 -> 2
+        assert_eq!(converted.protected_range, None);
+        assert_eq!(converted.handler_range, None);
+        assert_eq!(converted.filter_range, None);
+        assert!(!converted.has_block_mapping());
     }
 
     #[test]
-    fn test_remap_block_indices_filter_handler() {
-        let mut handler = SsaExceptionHandler {
-            flags: ExceptionHandlerFlags::FILTER,
-            try_offset: 0,
-            try_length: 10,
-            handler_offset: 15,
-            handler_length: 5,
-            class_token_or_filter: 10, // Filter offset
-            try_start_block: Some(0),
-            try_end_block: Some(1),
-            handler_start_block: Some(3),
-            handler_end_block: Some(4),
-            filter_start_block: Some(2), // Filter block
-        };
+    fn catch_carries_its_class_token() {
+        let converted =
+            from_exception_handler(&cil_handler(ExceptionHandlerFlags::EXCEPTION, 0x0100_0001));
 
-        // All blocks shift by -1 except block 0
-        let block_remap = vec![Some(0), Some(1), Some(2), Some(3), Some(4)];
-
-        handler.remap_block_indices(&block_remap);
-
-        assert_eq!(handler.try_start_block, Some(0));
-        assert_eq!(handler.filter_start_block, Some(2));
-        assert_eq!(handler.handler_start_block, Some(3));
+        assert_eq!(converted.kind(), HandlerKind::Catch);
+        assert_eq!(converted.class_token(), Some(Token::new(0x0100_0001)));
+        assert_eq!(
+            converted.filter_offset(),
+            None,
+            "a catch clause has no filter offset to read"
+        );
     }
 
     #[test]
-    fn test_remap_end_block_finds_next_surviving() {
-        let mut handler = SsaExceptionHandler {
-            flags: ExceptionHandlerFlags::EXCEPTION,
-            try_offset: 0,
-            try_length: 10,
-            handler_offset: 10,
-            handler_length: 5,
-            class_token_or_filter: 0x01000001,
-            try_start_block: Some(0),
-            try_end_block: Some(2), // Block 2 is removed
-            handler_start_block: Some(3),
-            handler_end_block: Some(5), // Block 5 is removed
-            filter_start_block: None,
-        };
+    fn filter_carries_its_offset() {
+        let converted = from_exception_handler(&cil_handler(ExceptionHandlerFlags::FILTER, 0x20));
 
-        // Blocks 2 and 5 removed; next surviving after 2 is block 3 (new idx 1),
-        // next surviving after 5 is block 6 (new idx 3)
-        let block_remap = vec![Some(0), None, None, Some(1), None, None, Some(3)];
-
-        handler.remap_block_indices(&block_remap);
-
-        assert_eq!(handler.try_start_block, Some(0));
-        assert_eq!(handler.try_end_block, Some(1)); // Found next surviving (block 3 -> 1)
-        assert_eq!(handler.handler_start_block, Some(1));
-        assert_eq!(handler.handler_end_block, Some(3)); // Found next surviving (block 6 -> 3)
+        assert_eq!(converted.kind(), HandlerKind::Filter);
+        assert_eq!(converted.class_token(), None);
+        assert_eq!(converted.filter_offset(), Some(0x20));
     }
 
     #[test]
-    fn test_remap_end_block_none_when_no_surviving() {
-        let mut handler = SsaExceptionHandler {
-            flags: ExceptionHandlerFlags::EXCEPTION,
-            try_offset: 0,
-            try_length: 10,
-            handler_offset: 10,
-            handler_length: 5,
-            class_token_or_filter: 0x01000001,
-            try_start_block: Some(0),
-            try_end_block: Some(1),
-            handler_start_block: Some(2),
-            handler_end_block: Some(3), // Last block, removed, no surviving after it
-            filter_start_block: None,
-        };
+    fn finally_and_fault_are_neither() {
+        for (flags, expected) in [
+            (ExceptionHandlerFlags::FINALLY, HandlerKind::Finally),
+            (ExceptionHandlerFlags::FAULT, HandlerKind::Fault),
+        ] {
+            let converted = from_exception_handler(&cil_handler(flags, 0x20));
 
-        // Block 3 removed, nothing after it
-        let block_remap = vec![Some(0), Some(1), Some(2), None];
-
-        handler.remap_block_indices(&block_remap);
-
-        assert_eq!(handler.handler_end_block, None); // No surviving block after 3
+            assert_eq!(converted.kind(), expected);
+            assert_eq!(converted.class_token(), None);
+            assert_eq!(
+                converted.filter_offset(),
+                None,
+                "only a filter clause reads the dual-purpose field as an offset"
+            );
+        }
     }
 }

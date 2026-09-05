@@ -336,7 +336,7 @@ impl<'a, T: Target> SemanticAnalyzer<'a, T> {
 
         // Dispatcher (switch with many targets that loop back)
         if has_switch {
-            if let Some(SsaOp::Switch { targets, .. }) = block.terminator_op() {
+            if let Some(SsaOp::Switch { targets, .. }) = block.control_terminator() {
                 if targets.len() >= 4 {
                     semantics.role = BlockRole::Dispatcher;
                     semantics.confidence = 0.8;
@@ -605,7 +605,7 @@ impl<'a, T: Target> SemanticAnalyzer<'a, T> {
         // Start from condition block's true target if it's a body block
         if let Some(cond) = loop_info.find_condition_in_body(self.ssa) {
             if let Some(block) = self.ssa.block(cond.index()) {
-                if let Some(SsaOp::Branch { true_target, .. }) = block.terminator_op() {
+                if let Some(SsaOp::Branch { true_target, .. }) = block.control_terminator() {
                     if *true_target < block_count && body_set.contains(*true_target) {
                         self.dfs_order(*true_target, &body_set, &mut visited, &mut ordered);
                     }
@@ -640,7 +640,7 @@ impl<'a, T: Target> SemanticAnalyzer<'a, T> {
 
         // Follow successors that are in the allowed set
         if let Some(b) = self.ssa.block(block) {
-            if let Some(op) = b.terminator_op() {
+            if let Some(op) = b.control_terminator() {
                 for succ in op.successors() {
                     self.dfs_order(succ, allowed, visited, order);
                 }
