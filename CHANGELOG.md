@@ -5,6 +5,124 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-09-04
+
+A dependency release, and the defects that adopting the dependency exposed.
+analyssa 0.6.0 reshapes how an exception clause is represented and takes away
+the CFG relations `SsaFunction` used to answer itself — which forced every
+analysis to say which graph it wanted, and three of them turned out to have been
+reading one that contains no handlers. The rest of the set shares that shape: an
+exception clause read through fields that could not say what the clause meant.
+
+### Fixed
+
+- **Liveness ran over a graph in which no handler is reachable.** The local
+  coalescer built its dataflow CFG from terminator edges alone, and nothing
+  branches to a handler entry — the runtime dispatches into it. A variable live
+  only across a protected region therefore came back dead, and the coalescer was
+  free to give its slot to something else. It now solves over the
+  exception-aware view; the extra edges only widen liveness, which is a
+  may-analysis, so nothing that was correct becomes wrong.
+
+- **SCCP folded values defined in handlers as constants nobody wrote.** The same
+  graph, the same reason, the opposite direction: constant propagation is rooted
+  at the entry and walks forward, so a handler block was simply never visited
+  and every value defined in one stayed at `Top` — the lattice element meaning
+  "no definition has reached this yet", which the fold reads as a constant. Both
+  SCCP rounds now run over the exception-aware view.
+
+- **A filter clause's handler body resolved to its filter expression.** The
+  decoder marks the filter's entry block and the handler body's entry block with
+  the same handler index, and the filter is laid out first, so the search that
+  took the first match answered with the filter block for every `catch … when`
+  clause — a wrong `handler_offset` in the regenerated exception table. The
+  filter is now resolved first and excluded from the handler's own search.
+
+- **Full inlining remapped only an operation's primary destination.** An
+  operation defining a secondary or flag output would have carried the callee's
+  variable id for it into the caller, where it means something else. Latent for
+  a CIL front-end, whose operations define one variable each, and repaired
+  rather than left to a future one: every definition the operand walk reports is
+  now remapped. That disagreement is why analyssa removed the
+  single-destination setter this used.
+
+- **One malformed PE resource discarded an assembly's entire metadata.** goblin
+  walks the resource directory in strict mode by default, so a single bad
+  `ResourceString` in a `VS_VERSIONINFO` block aborted the whole PE parse and
+  took every byte of CIL metadata with it. Nothing in dotscope reads that
+  directory — a .NET assembly's own resources live in the managed metadata — so
+  it is no longer parsed.
+
+- **CFF dispatcher detection counted a self-loop by hand.** It compensated for a
+  predecessor relation that dropped self-edges by scanning the block's
+  instructions for one. The relation it now asks reports a self-edge like any
+  other, so the compensation is gone and predecessor counts agree with what phi
+  validation sees.
+
+### Changed
+
+- **BREAKING**: **An exception clause is three optional block ranges, not five
+  loose block indices.** `SsaExceptionHandler` carries `protected_range`,
+  `handler_range` and `filter_range` — each a half-open `BlockRange` or nothing —
+  in place of `try_start_block`, `try_end_block`, `handler_start_block`,
+  `handler_end_block` and `filter_start_block`. A part can no longer be half of
+  itself: a region that began somewhere and ended nowhere was a state the old
+  five fields could hold and no check could refuse.
+
+  A CIL filter's extent is now recorded rather than inferred. It is
+  `[filter_offset, handler_offset)` — the blocks between the filter's entry and
+  the handler's — so a filter clause finally says where its expression is
+  instead of leaving every reader to guess it from the neighbouring parts.
+
+  `BlockRange`, `ClausePart`, `ClauseLayout`, `LaidOutHandler`, `HandlerKind`,
+  `ExceptionBlocks` and `ExceptionTableError` are re-exported from
+  `dotscope::analysis`, so a caller holding a dotscope exception handler has the
+  vocabulary it answers in without naming analyssa.
+
+- **BREAKING**: **`SsaBlock::terminator_op` is `SsaBlock::control_terminator`.**
+  The old name was positional — the block's last instruction, whatever it was —
+  while every call site was asking a control-flow question. The rename is
+  analyssa's; dotscope's call sites now ask the control question, so a block
+  whose last instruction is not a terminator contributes no edges rather than
+  edges leaving from an instruction control cannot reach.
+
+- **BREAKING**: **`SsaFunction` no longer answers predecessor or successor
+  questions.** `block_predecessors` and `block_successors` are gone;
+  `SsaCfg::from_ssa` is the terminator-derived relation and `EhCfg::from_ssa`
+  the exception-aware one, and which one an analysis needs is now a decision it
+  has to state.
+
+- **BREAKING**: **`SsaOp::Break` carries a `BreakpointOp`.** CIL `break` is
+  `SsaOp::Break(BreakpointOp::Breakpoint)`. `BreakpointOp` is re-exported from
+  `dotscope::analysis`.
+
+- **BREAKING**: **`ConstValue` gained a `Symbol` variant, so exhaustive matches
+  on it need one more arm.** CIL has no symbol space — every entity is named by
+  a metadata token that the type, method and field references already carry — so
+  `CilTarget::SymbolRef` is an uninhabited type and the arm is unreachable by
+  construction.
+
+- **`Target::handler_kind` replaces `Target::is_filter_handler`.** `CilTarget`
+  classifies through the existing `ExceptionHandlerFlags::kind`, so the
+  ECMA-335 §II.25.4.6 bit classification has one definition in the crate rather
+  than two that can disagree.
+
+- **UTF-16 and UTF-32 decoding takes the chunks as arrays.** Seven sites cut a
+  byte slice into fixed-width units by hand: six paired `chunks_exact(N)` with a
+  fallible conversion back to `[u8; N]`, and one indexed the chunk byte by byte.
+  Each carried a fallback for a case that cannot arise — a dropped code unit, a
+  zero, an error return. `as_chunks` yields the arrays themselves, so the
+  fallbacks and the bounds checks are gone with them.
+
+### Dependencies
+
+- `analyssa` 0.5.0 → 0.6.0
+- `quick-xml` 0.41.0 → 0.42.0. Element names and attribute keys are `&str`
+  rather than `&[u8]`, so `PermissionSet`'s XML reader compares them directly
+  instead of decoding each one and reporting a UTF-8 error the parser has
+  already ruled out.
+- `z3` 0.20.2 → 0.21.0
+
 ## [0.9.0] - 2026-08-15
 
 A security and correctness release. dotscope parses, emulates and rewrites
