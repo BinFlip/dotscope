@@ -1229,9 +1229,11 @@ pub fn write_prefixed_string_utf16(value: &str, buffer: &mut Vec<u8>) {
 #[must_use]
 pub fn decode_utf16le(bytes: &[u8]) -> Option<String> {
     let mut utf16_chars = Vec::new();
-    for pair in bytes.chunks_exact(2) {
-        let arr: [u8; 2] = pair.try_into().ok()?;
-        let ch = u16::from_le_bytes(arr);
+    // `as_chunks` hands back the two-byte arrays themselves, so there is no
+    // fallible conversion to answer for; a trailing odd byte lands in the
+    // remainder, which a UTF-16 unit cannot be built from anyway.
+    for &pair in bytes.as_chunks::<2>().0 {
+        let ch = u16::from_le_bytes(pair);
         if ch == 0 {
             break;
         }

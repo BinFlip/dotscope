@@ -887,8 +887,10 @@ fn unicode_get_string_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
             }
 
             let u16s: Vec<u16> = bytes
-                .chunks_exact(2)
-                .filter_map(|chunk| <[u8; 2]>::try_from(chunk).ok())
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .copied()
                 .map(u16::from_le_bytes)
                 .collect();
 
@@ -962,8 +964,10 @@ fn decode_bytes(bytes: &[u8], encoding_type: EncodingType) -> String {
                 return String::new();
             }
             let u16s: Vec<u16> = bytes
-                .chunks_exact(2)
-                .filter_map(|chunk| <[u8; 2]>::try_from(chunk).ok())
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .copied()
                 .map(u16::from_le_bytes)
                 .collect();
             String::from_utf16_lossy(&u16s)
@@ -973,8 +977,10 @@ fn decode_bytes(bytes: &[u8], encoding_type: EncodingType) -> String {
                 return String::new();
             }
             let u16s: Vec<u16> = bytes
-                .chunks_exact(2)
-                .filter_map(|chunk| <[u8; 2]>::try_from(chunk).ok())
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .copied()
                 .map(u16::from_be_bytes)
                 .collect();
             String::from_utf16_lossy(&u16s)
@@ -984,8 +990,10 @@ fn decode_bytes(bytes: &[u8], encoding_type: EncodingType) -> String {
                 return String::new();
             }
             bytes
-                .chunks_exact(4)
-                .filter_map(|chunk| <[u8; 4]>::try_from(chunk).ok())
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .copied()
                 .map(u32::from_le_bytes)
                 .filter_map(char::from_u32)
                 .collect()

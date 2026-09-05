@@ -230,13 +230,15 @@ impl<'a> UserStrings<'a> {
         // hardware behaves. It also reads native-endian, while ECMA-335 §II.24.2.4 specifies
         // little-endian, so the same input would decode differently on a big-endian target.
         //
-        // `utf16_data.len()` is even (rejected above otherwise), so `chunks_exact(2)` consumes it
-        // fully with no remainder.
+        // `utf16_data.len()` is even (rejected above otherwise), so `as_chunks::<2>` consumes it
+        // fully and its remainder is empty. It yields the two-byte arrays themselves, so there is
+        // no fallible conversion and no indexing that could panic.
         let code_units: Vec<u16> = utf16_data
-            .chunks_exact(2)
-            // `chunks_exact(2)` yields only two-byte chunks, so the conversion cannot fail; the
-            // fallback exists so this stays free of indexing that could panic.
-            .map(|pair| <[u8; 2]>::try_from(pair).map_or(0, u16::from_le_bytes))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .copied()
+            .map(u16::from_le_bytes)
             .collect();
 
         Ok(U16String::from_vec(code_units))
