@@ -125,7 +125,7 @@ pub mod repair;
 use std::path::Path;
 
 use cowfile::CowFile;
-use goblin::pe::PE;
+use goblin::pe::{options::ParseOptions, PE};
 use pe::{DataDirectory, DataDirectoryType, Pe};
 
 use crate::{
@@ -395,7 +395,18 @@ impl File {
             cowfile.commit()?;
         }
 
-        let goblin_pe = PE::parse(cowfile.data()).map_err(Error::from)?;
+        // Resources are parsed off. Nothing here reads them: `Pe::from_goblin_pe`
+        // takes the headers, sections, imports, exports, libraries and data
+        // directories, and a .NET assembly's own resources live in the managed
+        // metadata (`ManifestResource` / the `.resources` streams), not in the
+        // PE resource directory. What the directory does hold for an assembly is
+        // `VS_VERSIONINFO`, dialogs and string tables — and goblin walks that
+        // tree in `ParseMode::Strict` by default, so one malformed
+        // `ResourceString` in any of it aborts the whole parse and takes every
+        // bit of CIL metadata with it. The relocation-side directory walk this
+        // crate needs is its own, in `file::pe`.
+        let opts = ParseOptions::default().with_parse_resources(false);
+        let goblin_pe = PE::parse_with_opts(cowfile.data(), &opts).map_err(Error::from)?;
         let pe = Pe::from_goblin_pe(&goblin_pe)?;
 
         Ok(File {
