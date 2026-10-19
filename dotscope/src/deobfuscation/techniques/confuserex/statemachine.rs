@@ -38,7 +38,8 @@ use dashmap::DashSet;
 
 use crate::{
     analysis::{
-        ConstValue, PhiTaintMode, SsaFunction, SsaOp, SsaVarId, TaintAnalysis, TaintConfig,
+        ConstValue, PhiTaintMode, SsaFunction, SsaInstruction, SsaOp, SsaVarId, TaintAnalysis,
+        TaintConfig,
     },
     assembly::Operand,
     compiler::CompilerContext,
@@ -194,8 +195,12 @@ impl StateMachineProvider for ConfuserExStateMachine {
 
         for (block_idx, block) in ssa.iter_blocks() {
             for (instr_idx, instr) in block.instructions().iter().enumerate() {
-                if let SsaOp::Call { method, args, dest } | SsaOp::CallVirt { method, args, dest } =
-                    instr.op()
+                if let SsaOp::Call {
+                    method, args, dest, ..
+                }
+                | SsaOp::CallVirt {
+                    method, args, dest, ..
+                } = instr.op()
                 {
                     if method.token() == update_method_token {
                         // CFGCtx.Next takes 3 args: &this, flag (byte), increment (uint)
@@ -237,9 +242,12 @@ impl StateMachineProvider for ConfuserExStateMachine {
         for (block_idx, block) in ssa.iter_blocks() {
             for (instr_idx, instr) in block.instructions().iter().enumerate() {
                 let (call_target, args, dest) = match instr.op() {
-                    SsaOp::Call { method, args, dest } | SsaOp::CallVirt { method, args, dest } => {
-                        (method.token(), args, *dest)
+                    SsaOp::Call {
+                        method, args, dest, ..
                     }
+                    | SsaOp::CallVirt {
+                        method, args, dest, ..
+                    } => (method.token(), args, *dest),
                     _ => continue,
                 };
 
@@ -294,6 +302,10 @@ impl StateMachineProvider for ConfuserExStateMachine {
                 call_sites.push(StateMachineCallSite {
                     block_idx,
                     instr_idx,
+                    instr_id: ssa
+                        .block(block_idx)
+                        .and_then(|block| block.instructions().get(instr_idx))
+                        .and_then(SsaInstruction::id),
                     dest,
                     decryptor: resolved_target,
                     call_target,

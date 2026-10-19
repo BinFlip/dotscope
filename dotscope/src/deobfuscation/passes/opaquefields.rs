@@ -35,7 +35,7 @@
 //!
 //! # Safety
 //!
-//! If no warmup `.cctor` succeeds, the pass becomes a no-op for all methods —
+//! If no warmup `.cctor` succeeds, the pass becomes a no-op for all methods -
 //! no false positives are possible. Unresolved fields return `None` from
 //! `get_static()`, so unmatched predicates are safely skipped.
 
@@ -50,7 +50,10 @@ use log::debug;
 use crate::{
     analysis::{CilTarget, ConstValue, MethodRef, SsaFunction, SsaOp, SsaVarId},
     compiler::{CompilerContext, EventKind, ModificationScope, PassCapability, SsaPass},
-    deobfuscation::{utils::build_def_map, EmulationTemplatePool, ProcessCell},
+    deobfuscation::{
+        utils::{build_def_map, remove_unread_static_loads},
+        EmulationTemplatePool, ProcessCell,
+    },
     emulation::{EmValue, EmulationProcess, HeapRef},
     metadata::token::Token,
     CilObject, Result,
@@ -60,11 +63,11 @@ use crate::{
 ///
 /// This pass targets two patterns:
 ///
-/// **Variant A** — Static field chain: a conditional branch depends on a field loaded
+/// **Variant A** - Static field chain: a conditional branch depends on a field loaded
 /// from a singleton object stored in a static field. Resolved by reading the instance
 /// field from the emulated heap.
 ///
-/// **Variant B** — Sentinel null-check: a `Call` to a tiny bool method that checks
+/// **Variant B** - Sentinel null-check: a `Call` to a tiny bool method that checks
 /// `ldsfld → ldnull → ceq → ret` (always returns true if the sentinel field is null).
 /// Resolved by reading the sentinel field from the emulator and computing `ceq(val, null)`.
 ///
@@ -338,7 +341,7 @@ impl<'a> FieldResolver<'a> {
     ///
     /// # Returns
     ///
-    /// `Some(bool)` — `true` if the field is null (or unset), `false` otherwise.
+    /// `Some(bool)` - `true` if the field is null (or unset), `false` otherwise.
     ///
     /// # Errors
     ///
@@ -360,7 +363,7 @@ impl<'a> FieldResolver<'a> {
 /// is the field from the starting `LoadField` instruction.
 ///
 /// Returns `None` if the chain doesn't terminate at a `LoadStaticField` or exceeds
-/// the maximum depth (10 hops — more than any known obfuscator uses).
+/// the maximum depth (10 hops - more than any known obfuscator uses).
 ///
 /// # Arguments
 ///
@@ -383,7 +386,7 @@ fn trace_field_chain(
                 current_op = defs.get(object)?;
             }
             SsaOp::LoadStaticField { field, .. } => {
-                // Reached the root — reverse chain so it's in traversal order
+                // Reached the root - reverse chain so it's in traversal order
                 chain.reverse();
                 return Some((field.token(), chain));
             }
@@ -476,7 +479,7 @@ impl SsaPass<CilTarget, CompilerContext> for OpaqueFieldPredicatePass {
                 continue;
             };
 
-            // --- Variant A: LoadStaticField → LoadField+ → Branch ---
+            // Variant A: LoadStaticField → LoadField+ → Branch
             // Trace backward through nested LoadField chains (supports arbitrary depth).
             // PureLogs uses multi-level chains: static → instance → instance → condition.
             if let Some((static_token, field_chain)) = trace_field_chain(cond_def, &defs) {
@@ -494,7 +497,7 @@ impl SsaPass<CilTarget, CompilerContext> for OpaqueFieldPredicatePass {
                 }
             }
 
-            // --- Variant B: Call(sentinel_method) → Branch ---
+            // Variant B: Call(sentinel_method) → Branch
             if let SsaOp::Call { method, .. } = cond_def {
                 if let Some(sentinel_field) = self.sentinel_methods.get(&method.token()) {
                     if let Some(is_truthy) = resolver.resolve_sentinel(*sentinel_field)? {
@@ -509,7 +512,7 @@ impl SsaPass<CilTarget, CompilerContext> for OpaqueFieldPredicatePass {
             }
         }
 
-        // --- Variant B: Call(sentinel_method) → non-branch uses (stloc, CFF state) ---
+        // Variant B: Call(sentinel_method) → non-branch uses (stloc, CFF state)
         // Replace sentinel calls with constant true/false so downstream passes
         // (constant propagation, CFF) can fold the values.
         let mut sentinel_call_replacements: Vec<(usize, usize, SsaOp)> = Vec::new();
@@ -543,7 +546,7 @@ impl SsaPass<CilTarget, CompilerContext> for OpaqueFieldPredicatePass {
             }
         }
 
-        // --- Field constant injection: LoadField+ → Const ---
+        // Field constant injection: LoadField+ → Const
         // For each LoadField, trace the chain back to a LoadStaticField and
         // resolve the value from the emulated heap. Supports nested chains.
         let mut const_replacements: Vec<(usize, usize, SsaOp)> = Vec::new();
@@ -583,30 +586,8 @@ impl SsaPass<CilTarget, CompilerContext> for OpaqueFieldPredicatePass {
             }
         }
 
-        // Find dead LoadStaticField instructions whose dest is only used by
-        // the LoadField instructions we're replacing with constants.
-        let mut dead_static_loads: Vec<(usize, usize)> = Vec::new();
-        for (block_idx, block) in ssa.blocks().iter().enumerate() {
-            for (instr_idx, instr) in block.instructions().iter().enumerate() {
-                let SsaOp::LoadStaticField { dest, .. } = instr.op() else {
-                    continue;
-                };
-                if !replaced_object_vars.contains(dest) {
-                    continue;
-                }
-                if let Some(variable) = ssa.variable(*dest) {
-                    let all_uses_replaced = variable.uses().iter().all(|use_site| {
-                        const_replacements
-                            .iter()
-                            .any(|(b, i, _)| *b == use_site.block && *i == use_site.instruction)
-                    });
-                    if all_uses_replaced {
-                        dead_static_loads.push((block_idx, instr_idx));
-                    }
-                }
-            }
-        }
-
+        // LoadStaticField instructions feeding the LoadFields replaced with
+        // constants. They go once nothing reads them any more.
         // Must drop the read guard before mutating ssa
         drop(guard);
 
@@ -630,7 +611,7 @@ impl SsaPass<CilTarget, CompilerContext> for OpaqueFieldPredicatePass {
             if dropped != target {
                 if let Some(dropped_block) = ssa.block_mut(dropped) {
                     for phi in dropped_block.phi_nodes_mut() {
-                        phi.retain_operands(|pred| pred != block_idx);
+                        phi.retain_operands(|operand| operand.predecessor() != block_idx);
                     }
                 }
             }
@@ -662,14 +643,8 @@ impl SsaPass<CilTarget, CompilerContext> for OpaqueFieldPredicatePass {
             }
         }
 
-        // NOP out dead LoadStaticField instructions
-        for (block_idx, instr_idx) in &dead_static_loads {
-            if let Some(block) = ssa.block_mut(*block_idx) {
-                if let Some(instr) = block.instructions_mut().get_mut(*instr_idx) {
-                    instr.set_op(SsaOp::Nop);
-                }
-            }
-        }
+        // NOP out the LoadStaticField instructions nothing reads any more
+        remove_unread_static_loads(ssa, &replaced_object_vars);
 
         let changed = !replacements.is_empty()
             || !const_replacements.is_empty()

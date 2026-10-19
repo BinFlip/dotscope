@@ -21,10 +21,9 @@
 use std::any::Any;
 
 use crate::{
-    assembly::{Immediate, Operand},
     compiler::{EventKind, EventLog},
     deobfuscation::techniques::{
-        Detection, Detections, Evidence, Technique, TechniqueCategory, WorkingAssembly,
+        Detection, Evidence, Technique, TechniqueCategory, WorkingAssembly,
     },
     CilObject, Result,
 };
@@ -72,8 +71,12 @@ impl Technique for BitMonoJunk {
             // BitMethodDotnet inserts br.s that jumps over 1-10 bytes of junk.
             if let Some(first) = instructions.first() {
                 if first.mnemonic == "br.s" {
-                    let is_small_forward_jump =
-                        matches!(first.operand, Operand::Immediate(Immediate::Int8(1..=10)));
+                    // The bytes skipped: from the end of the `br.s` to where it lands.
+                    let is_small_forward_jump = first
+                        .get_branch_target()
+                        .zip(first.rva.checked_add(first.size))
+                        .and_then(|(target, next)| target.checked_sub(next))
+                        .is_some_and(|skipped| (1..=10).contains(&skipped));
                     if is_small_forward_jump {
                         junk_method_count = junk_method_count.saturating_add(1);
                     }
@@ -98,8 +101,7 @@ impl Technique for BitMonoJunk {
     fn byte_transform(
         &self,
         _assembly: &mut WorkingAssembly,
-        detection: &Detection,
-        _detections: &Detections,
+        detection: &mut Detection,
     ) -> Option<Result<EventLog>> {
         let events = EventLog::new();
 

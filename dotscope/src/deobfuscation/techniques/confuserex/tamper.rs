@@ -87,8 +87,7 @@ use crate::{
     compiler::{EventKind, EventLog},
     deobfuscation::{
         techniques::{
-            confuserex::helpers, Detection, Detections, Evidence, Technique, TechniqueCategory,
-            WorkingAssembly,
+            confuserex::helpers, Detection, Evidence, Technique, TechniqueCategory, WorkingAssembly,
         },
         utils::find_methods_calling_apis,
     },
@@ -301,8 +300,7 @@ impl Technique for ConfuserExAntiTamper {
     fn byte_transform(
         &self,
         assembly: &mut WorkingAssembly,
-        detection: &Detection,
-        _detections: &Detections,
+        detection: &mut Detection,
     ) -> Option<Result<EventLog>> {
         let events = EventLog::new();
 

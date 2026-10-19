@@ -104,8 +104,12 @@ impl SsaPass<CilTarget, CompilerContext> for ResourceRestorationPass {
         for (block_idx, block) in ssa.blocks().iter().enumerate() {
             for (instr_idx, instr) in block.instructions().iter().enumerate() {
                 let (dest, method_token, args) = match instr.op() {
-                    SsaOp::Call { dest, method, args } => (dest, method.token(), args),
-                    SsaOp::CallVirt { dest, method, args } => (dest, method.token(), args),
+                    SsaOp::Call {
+                        dest, method, args, ..
+                    } => (dest, method.token(), args),
+                    SsaOp::CallVirt {
+                        dest, method, args, ..
+                    } => (dest, method.token(), args),
                     _ => continue,
                 };
 
@@ -115,12 +119,14 @@ impl SsaPass<CilTarget, CompilerContext> for ResourceRestorationPass {
                             dest: *dest,
                             method: MethodRef::new(target.target_token),
                             args: args.clone(),
+                            effects: None,
                         }
                     } else {
                         SsaOp::Call {
                             dest: *dest,
                             method: MethodRef::new(target.target_token),
                             args: args.clone(),
+                            effects: None,
                         }
                     };
                     replacements.push((block_idx, instr_idx, new_op));

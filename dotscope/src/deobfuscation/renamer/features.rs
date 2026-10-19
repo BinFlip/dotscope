@@ -11,12 +11,11 @@
 
 use std::collections::HashSet;
 
+#[cfg(any(feature = "smart-rename", test))]
+use crate::deobfuscation::renamer::context::ApiCallInfo;
 use crate::{
     analysis::{ConstValue, SsaFunction, SsaOp},
-    deobfuscation::{
-        renamer::context::{ApiCallInfo, OpcodeProfile},
-        utils::is_obfuscated_name,
-    },
+    deobfuscation::{renamer::context::OpcodeProfile, utils::is_obfuscated_name},
     metadata::token::Token,
     CilObject,
 };
@@ -237,6 +236,7 @@ pub fn build_opcode_profile(ssa: &SsaFunction) -> OpcodeProfile {
 /// # Returns
 ///
 /// A list of [`ApiCallInfo`] entries, one per argument of each resolved call.
+#[cfg(any(feature = "smart-rename", test))]
 pub fn extract_anchors(ssa: &SsaFunction, assembly: &CilObject) -> Vec<ApiCallInfo> {
     let mut anchors = Vec::new();
 
@@ -283,6 +283,7 @@ pub fn extract_anchors(ssa: &SsaFunction, assembly: &CilObject) -> Vec<ApiCallIn
 /// # Returns
 ///
 /// A tuple of `(nearby_strings, return_usage)`.
+#[cfg(any(feature = "smart-rename", test))]
 pub fn collect_call_site_context(
     caller_ssa: &SsaFunction,
     callee_token: Token,

@@ -392,7 +392,7 @@ impl Technique for GenericOpaquePredicates {
     }
 
     fn detect_ssa(&self, ctx: &AnalysisContext, assembly: &CilObject) -> Detection {
-        // --- Variant A: Static field chain predicates ---
+        // Variant A: Static field chain predicates
         let mut affected_fields: HashSet<Token> = HashSet::new();
         let mut affected_methods: HashSet<Token> = HashSet::new();
 
@@ -450,7 +450,7 @@ impl Technique for GenericOpaquePredicates {
             }
         }
 
-        // --- Variant B: Sentinel null-check methods ---
+        // Variant B: Sentinel null-check methods
         let (sentinel_methods, sentinel_call_sites) = collect_sentinel_info(&ctx.ssa_functions);
 
         // Merge sentinel call site methods into affected_methods

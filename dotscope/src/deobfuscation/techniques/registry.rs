@@ -24,8 +24,8 @@ use crate::deobfuscation::techniques::{
         JiejieNetArrays, JiejieNetConstants, JiejieNetResources, JiejieNetStrings, JiejieNetTypeOf,
     },
     netreactor::{
-        NetReactorAntiTamp, NetReactorAntiTrial, NetReactorLicenseCheck, NetReactorNecroBit,
-        NetReactorPrivateImpl, NetReactorResources,
+        NetReactorAntiTamp, NetReactorAntiTrial, NetReactorEmptyResource, NetReactorLicenseCheck,
+        NetReactorNecroBit, NetReactorPrivateImpl, NetReactorResources,
     },
     obfuscar::ObfuscarStrings,
     AttributionResult, Detections, Technique,
@@ -98,7 +98,7 @@ impl TechniqueRegistry {
     pub fn with_config(nop_threshold: usize) -> Self {
         let mut registry = Self::new();
 
-        // === Generic techniques ===
+        // Generic techniques
         registry.register(Box::new(GenericMetadata));
         registry.register(Box::new(GenericIldasm));
         registry.register(Box::new(GenericHandlers));
@@ -111,7 +111,7 @@ impl TechniqueRegistry {
         registry.register(Box::new(GenericOpaquePredicates));
         registry.register(Box::new(GenericDelegateProxy));
 
-        // === ConfuserEx techniques ===
+        // ConfuserEx techniques
         registry.register(Box::new(ConfuserExMarker));
         registry.register(Box::new(ConfuserExMetadata));
         registry.register(Box::new(ConfuserExAntiTamper));
@@ -122,7 +122,7 @@ impl TechniqueRegistry {
         registry.register(Box::new(ConfuserExAntiDebug));
         registry.register(Box::new(ConfuserExAntiDump));
 
-        // === BitMono techniques ===
+        // BitMono techniques
         registry.register(Box::new(BitMonoPeRepair));
         registry.register(Box::new(BitMonoHooks));
         registry.register(Box::new(BitMonoJunk));
@@ -133,21 +133,22 @@ impl TechniqueRegistry {
         registry.register(Box::new(BitMonoNops::new(nop_threshold)));
         registry.register(Box::new(BitMonoRenamer));
 
-        // === JIEJIE.NET techniques ===
+        // JIEJIE.NET techniques
         registry.register(Box::new(JiejieNetConstants));
         registry.register(Box::new(JiejieNetStrings));
         registry.register(Box::new(JiejieNetTypeOf));
         registry.register(Box::new(JiejieNetArrays));
         registry.register(Box::new(JiejieNetResources));
 
-        // === Obfuscar techniques ===
+        // Obfuscar techniques
         registry.register(Box::new(ObfuscarStrings));
 
-        // === .NET Reactor techniques ===
+        // .NET Reactor techniques
         registry.register(Box::new(NetReactorNecroBit));
         registry.register(Box::new(NetReactorAntiTrial));
         registry.register(Box::new(NetReactorAntiTamp));
         registry.register(Box::new(NetReactorLicenseCheck));
+        registry.register(Box::new(NetReactorEmptyResource));
         registry.register(Box::new(NetReactorPrivateImpl));
         registry.register(Box::new(NetReactorResources));
 
@@ -638,7 +639,7 @@ mod tests {
         }
     }
 
-    // === TechniqueRegistry tests ===
+    // TechniqueRegistry tests
 
     #[test]
     fn test_registry_new_is_empty() {
@@ -754,7 +755,7 @@ mod tests {
         assert!(r.techniques().len() >= 30);
     }
 
-    // === ObfuscatorMatcher tests ===
+    // ObfuscatorMatcher tests
 
     #[test]
     fn test_compute_attribution_no_match() {

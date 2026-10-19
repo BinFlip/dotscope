@@ -17,6 +17,7 @@
 
 mod antitamp;
 mod antitrial;
+mod emptyresource;
 mod helpers;
 mod hooks;
 mod licensecheck;
@@ -26,6 +27,7 @@ mod resources;
 
 pub(crate) use antitamp::NetReactorAntiTamp;
 pub(crate) use antitrial::NetReactorAntiTrial;
+pub(crate) use emptyresource::NetReactorEmptyResource;
 pub(crate) use helpers::find_resources_referenced_by_methods;
 pub(crate) use licensecheck::NetReactorLicenseCheck;
 pub(crate) use necrobit::NetReactorNecroBit;
@@ -82,7 +84,6 @@ mod tests {
     // Runs the full deobfuscation pipeline on the NR string-encrypted sample.
     // Validates: detection fires, strings are decrypted, decrypted strings match original.
     #[test]
-    #[ignore]
     fn test_nr_string_decryption() {
         if !sample_exists("reactor_strings.exe") {
             eprintln!("Skipping: reactor_strings.exe not found");
@@ -183,7 +184,6 @@ mod tests {
 
     // Same test but for the combined necrobit + strings sample.
     #[test]
-    #[ignore]
     fn test_nr_necrobit_strings_decryption() {
         if !sample_exists("reactor_necrobit_strings.exe") {
             eprintln!("Skipping: reactor_necrobit_strings.exe not found");

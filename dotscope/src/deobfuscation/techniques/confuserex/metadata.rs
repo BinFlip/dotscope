@@ -43,7 +43,7 @@ use std::any::Any;
 use crate::{
     compiler::{EventKind, EventLog},
     deobfuscation::techniques::{
-        Detection, Detections, Evidence, Technique, TechniqueCategory, WorkingAssembly,
+        Detection, Evidence, Technique, TechniqueCategory, WorkingAssembly,
     },
     metadata::tables::{
         AssemblyRaw, DeclSecurityRaw, EncLogRaw, EncMapRaw, ModuleRaw, TableId, TypeRefRaw,
@@ -246,8 +246,7 @@ impl Technique for ConfuserExMetadata {
     fn byte_transform(
         &self,
         assembly: &mut WorkingAssembly,
-        detection: &Detection,
-        _detections: &Detections,
+        detection: &mut Detection,
     ) -> Option<Result<EventLog>> {
         let events = EventLog::new();
 

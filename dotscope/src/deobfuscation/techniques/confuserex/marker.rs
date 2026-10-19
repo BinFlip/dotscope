@@ -28,9 +28,7 @@ use std::any::Any;
 use crate::{
     compiler::{EventKind, EventLog},
     deobfuscation::{
-        techniques::{
-            Detection, Detections, Evidence, Technique, TechniqueCategory, WorkingAssembly,
-        },
+        techniques::{Detection, Evidence, Technique, TechniqueCategory, WorkingAssembly},
         utils::resolve_custom_attr_type,
     },
     metadata::{
@@ -157,8 +155,7 @@ impl Technique for ConfuserExMarker {
     fn byte_transform(
         &self,
         _assembly: &mut WorkingAssembly,
-        detection: &Detection,
-        _detections: &Detections,
+        detection: &mut Detection,
     ) -> Option<Result<EventLog>> {
         let events = EventLog::new();
 

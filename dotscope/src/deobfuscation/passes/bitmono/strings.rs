@@ -24,6 +24,7 @@
 //! 3. Derive AES key material per `(salt_token, key_token)` pair via PBKDF2
 //! 4. Decrypt the encrypted field's FieldRVA data using AES-256-CBC
 //! 5. Replace `Call` with `Const(DecryptedString(...))` and NOP the `LoadStaticField`s
+//!    nothing else reads
 //!
 //! # Example
 //!
@@ -211,6 +212,7 @@ impl SsaPass<CilTarget, CompilerContext> for StringDecryptionPass {
         let ctx = host;
         let method_token = method.0;
         let mut changed = false;
+        let mut field_loads: Vec<(usize, usize)> = Vec::new();
 
         // Build LoadStaticField index once for the entire method
         let ldsfld_index = build_ldsfld_index(ssa);
@@ -260,14 +262,9 @@ impl SsaPass<CilTarget, CompilerContext> for StringDecryptionPass {
                     }
                 }
 
-                // NOP the LoadStaticField instructions (may be in different blocks)
-                for &(ldsfld_block, ldsfld_idx) in ldsfld_locations {
-                    if let Some(block) = ssa.block_mut(ldsfld_block) {
-                        if let Some(instr) = block.instruction_mut(ldsfld_idx) {
-                            instr.set_op(SsaOp::Nop);
-                        }
-                    }
-                }
+                // The LoadStaticField instructions (may be in different
+                // blocks) go once nothing reads them.
+                field_loads.extend(ldsfld_locations.iter().copied());
                 changed = true;
             }
 
@@ -280,6 +277,11 @@ impl SsaPass<CilTarget, CompilerContext> for StringDecryptionPass {
                     block_idx,
                 ));
         }
+
+        // A field load another call still reads stays: a site whose decryption
+        // failed, or one sharing the salt or key load with a site that
+        // succeeded.
+        ssa.remove_unread_instructions(field_loads);
 
         Ok(changed)
     }
@@ -346,7 +348,9 @@ fn find_decryption_sites(
     for (i, instr) in block.instructions().iter().enumerate() {
         // Look for Call to a decryptor method
         let (call_dest, call_token, args) = match instr.op() {
-            SsaOp::Call { dest, method, args } => {
+            SsaOp::Call {
+                dest, method, args, ..
+            } => {
                 let Some(d) = dest else { continue };
                 (*d, method.token(), args.clone())
             }
@@ -501,8 +505,90 @@ fn decrypt_string(encrypted: &[u8], key: &[u8], iv: &[u8]) -> Result<String> {
 
 #[cfg(all(test, feature = "legacy-crypto"))]
 mod tests {
-    use super::decrypt_string;
-    use crate::utils::{apply_crypto_transform, derive_key_iv, CryptoParameters};
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::{
+        analysis::{CallGraph, FieldRef, SsaFunctionBuilder, SsaInstruction, SsaType},
+        test::helpers::test_assembly_arc,
+    };
+
+    /// A site whose decryption fails keeps the salt and key loads it shares
+    /// with a site that succeeded; the successful site's own load goes.
+    #[test]
+    fn test_shared_field_loads_stay_while_read() {
+        let decryptor = Token::new(0x0600_0002);
+        let field = |row: u32| FieldRef::new(Token::new(0x0400_7000 | row));
+        let mut ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                let loads: Vec<SsaVarId> = (0..4).map(|_| f.var()).collect();
+                f.block(0, |b| {
+                    for (row, &dest) in (1..).zip(&loads[..3]) {
+                        b.op(SsaOp::LoadStaticField {
+                            dest,
+                            field: field(row),
+                        });
+                    }
+                    let _ = b.call(MethodRef::new(decryptor), &loads[..3], SsaType::String);
+                    b.op(SsaOp::LoadStaticField {
+                        dest: loads[3],
+                        field: field(4),
+                    });
+                    let _ = b.call(
+                        MethodRef::new(decryptor),
+                        &[loads[3], loads[1], loads[2]],
+                        SsaType::String,
+                    );
+                    b.ret();
+                });
+            })
+            .unwrap();
+        let pass = StringDecryptionPass {
+            decryptor_tokens: HashSet::from([decryptor]),
+            field_rva_map: OnceLock::new(),
+            key_cache: Mutex::new(HashMap::new()),
+            // Only the first site's field decrypts; the second has no data.
+            string_cache: Mutex::new(HashMap::from([(
+                Token::new(0x0400_7001),
+                "Hello".to_string(),
+            )])),
+            crypto_params: CryptoParameters::default(),
+        };
+        let ctx = CompilerContext::new(Arc::new(CallGraph::new()));
+        ctx.set_assembly(test_assembly_arc());
+        let changed = pass
+            .run_on_method(&mut ssa, &MethodRef::new(Token::new(0x0600_0001)), &ctx)
+            .unwrap();
+
+        assert!(changed, "the first site decrypts");
+        let ops: Vec<&SsaOp> = ssa
+            .block(0)
+            .unwrap()
+            .instructions()
+            .iter()
+            .map(SsaInstruction::op)
+            .collect();
+        assert!(
+            matches!(ops[0], SsaOp::Nop),
+            "the first site's own load goes"
+        );
+        assert!(
+            matches!(ops[1], SsaOp::LoadStaticField { .. })
+                && matches!(ops[2], SsaOp::LoadStaticField { .. }),
+            "the salt and key loads the failed site reads stay"
+        );
+        assert!(matches!(
+            ops[3],
+            SsaOp::Const {
+                value: ConstValue::DecryptedString(_),
+                ..
+            }
+        ));
+        assert!(
+            matches!(ops[5], SsaOp::Call { .. }),
+            "the failed site is untouched"
+        );
+    }
 
     #[test]
     fn test_derive_key_iv_zeros() {

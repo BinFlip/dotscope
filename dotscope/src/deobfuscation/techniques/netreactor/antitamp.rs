@@ -11,9 +11,6 @@
 //! and continues to throw `TypeInitializationException` at assembly load.
 //! This technique removes the init call too.
 //!
-//! See `docs/research/netreactor/anti-tamper.md` for the full structural
-//! analysis.
-//!
 //! # Detection
 //!
 //! Detection is fully structural — no hardcoded type names. Three
@@ -137,8 +134,11 @@ impl Technique for NetReactorAntiTamp {
             .and_then(|m| m.declaring_type_rc())
             .map(|t| t.token);
 
-        let classification =
-            helpers::classify_injected_cctors(assembly, init_method_token, &fan_in.calling_cctors);
+        let classification = helpers::classify_injected_cctors(
+            assembly,
+            &fan_in.initializers,
+            &fan_in.calling_cctors,
+        );
 
         let resolver = helpers::find_nr_token_resolver(assembly);
         let mut accessor_tokens: Vec<Token> = Vec::new();
@@ -206,7 +206,11 @@ impl Technique for NetReactorAntiTamp {
             Some(Box::new(findings) as Box<dyn Any + Send + Sync>),
         );
 
-        detection.cleanup_mut().add_method(init_method_token);
+        // The init calls sit in `.cctor`s that also hold the program's own
+        // initialization; those calls go with the runtime.
+        for &initializer in &fan_in.initializers {
+            detection.cleanup_mut().add_protection_method(initializer);
+        }
         if let Some(rt) = runtime_type_token {
             detection.cleanup_mut().add_type(rt);
         }
@@ -319,6 +323,58 @@ mod tests {
             !findings.guid_module_type_tokens.is_empty(),
             "Should find a <Module>{{GUID}} marker type"
         );
+    }
+
+    /// .NET Reactor calls two initializers of its runtime from each protected
+    /// type's `.cctor`. Both are protection, and both go with their call
+    /// sites; taking one winner by hash order left the other's calls in place
+    /// on some runs and not others.
+    #[test]
+    fn every_runtime_initializer_is_protection() {
+        let Some(assembly) = try_load_sample("reactor_full.exe") else {
+            return;
+        };
+        let initializers = [Token::new(0x0600_005C), Token::new(0x0600_0067)];
+
+        let fan_in = helpers::find_cctor_fan_in_target(&assembly).expect("injected .cctors");
+        assert_eq!(fan_in.initializers, initializers);
+
+        let detection = NetReactorAntiTamp.detect(&assembly);
+        assert!(detection.is_detected());
+        for initializer in initializers {
+            assert!(
+                detection.cleanup().strips_call_sites(initializer),
+                "{initializer:?} and its call sites stay"
+            );
+        }
+    }
+
+    /// .NET Reactor pads the resolver's accessors with a jump over junk
+    /// bytes. Matching the laid-out instructions missed every accessor, so no
+    /// `typeof` hidden behind one was restored, and the raw tokens they pass
+    /// named other types once cleanup renumbered the rows.
+    #[test]
+    fn padded_token_accessors_are_found() {
+        let Some(assembly) = try_load_sample("reactor_full.exe") else {
+            return;
+        };
+        let resolver = helpers::find_nr_token_resolver(&assembly).expect("the token resolver");
+        assert!(
+            resolver
+                .type_handle_accessors
+                .contains(&Token::new(0x0600_0151)),
+            "{:?}",
+            resolver.type_handle_accessors
+        );
+        assert!(!resolver.field_handle_accessors.is_empty());
+
+        let accessor = assembly
+            .method(&Token::new(0x0600_0151))
+            .expect("the accessor");
+        let executed: Vec<&str> = helpers::executed_path(&accessor)
+            .map(|instruction| instruction.mnemonic)
+            .collect();
+        assert_eq!(executed, ["ldsflda", "ldarg.0", "call", "ret"]);
     }
 
     #[test]

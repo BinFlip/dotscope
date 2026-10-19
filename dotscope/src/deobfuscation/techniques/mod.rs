@@ -211,12 +211,14 @@ pub trait Technique: Send + Sync {
     /// or `None` if this technique has no byte transform.
     ///
     /// Byte transforms run before SSA is built and can patch raw bytes,
-    /// decrypt method bodies, or unpack resources.
+    /// decrypt method bodies, or unpack resources. A transform can add to its
+    /// detection's cleanup what it learned while running, such as a resource
+    /// it consumed that detection could not name; cleanup requests accumulate
+    /// across re-detection, where findings are replaced.
     fn byte_transform(
         &self,
         _assembly: &mut WorkingAssembly,
-        _detection: &Detection,
-        _detections: &Detections,
+        _detection: &mut Detection,
     ) -> Option<Result<EventLog>> {
         None
     }

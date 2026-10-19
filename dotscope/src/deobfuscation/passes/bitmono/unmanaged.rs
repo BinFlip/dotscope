@@ -15,6 +15,7 @@
 //!    method token
 //! 2. Look for a subsequent `NewObj` string constructor that consumes the call result
 //! 3. Replace the `NewObj` with `Const(DecryptedString(...))` and NOP the `Call`
+//!    unless something else still reads its result
 //!
 //! # Example
 //!
@@ -49,6 +50,9 @@ use crate::{
 /// v2 = Const { value: DecryptedString("...") }  (was NewObj)
 /// ```
 ///
+/// The `Call` stays when another instruction still reads the pointer it
+/// returned.
+///
 /// The codegen pipeline handles `DecryptedString` constants by pre-interning them
 /// to the #US heap and emitting proper `ldstr` instructions.
 pub struct UnmanagedStringReversalPass {
@@ -75,7 +79,7 @@ impl SsaPass<CilTarget, CompilerContext> for UnmanagedStringReversalPass {
         _method: &MethodRef,
         ctx: &CompilerContext,
     ) -> analyssa::Result<bool> {
-        let mut changed = false;
+        let mut native_calls: Vec<(usize, usize)> = Vec::new();
 
         for block_idx in 0..ssa.blocks().len() {
             let sites = find_unmanaged_string_sites(ssa, block_idx, &self.native_string_map);
@@ -83,41 +87,37 @@ impl SsaPass<CilTarget, CompilerContext> for UnmanagedStringReversalPass {
                 continue;
             }
 
-            // Apply in reverse order to keep indices valid
             let block = match ssa.block_mut(block_idx) {
                 Some(b) => b,
                 None => continue,
             };
 
-            for site in sites.iter().rev() {
-                // Replace NewObj with DecryptedString constant
+            // Replace each NewObj with its DecryptedString constant
+            for site in &sites {
                 if let Some(instr) = block.instruction_mut(site.newobj_idx) {
                     instr.set_op(SsaOp::Const {
                         dest: site.newobj_dest,
                         value: ConstValue::DecryptedString(site.decrypted.clone().into()),
                     });
                 }
-
-                // NOP the Call instruction
-                if let Some(instr) = block.instruction_mut(site.call_idx) {
-                    instr.set_op(SsaOp::Nop);
-                }
-
-                changed = true;
+                native_calls.push((block_idx, site.call_idx));
             }
 
-            if !sites.is_empty() {
-                ctx.events
-                    .record(EventKind::StringDecrypted)
-                    .message(format!(
-                        "BitMonoUnmanagedString: reversed {} call+newobj sites in block {}",
-                        sites.len(),
-                        block_idx,
-                    ));
-            }
+            ctx.events
+                .record(EventKind::StringDecrypted)
+                .message(format!(
+                    "BitMonoUnmanagedString: reversed {} call+newobj sites in block {}",
+                    sites.len(),
+                    block_idx,
+                ));
         }
 
-        Ok(changed)
+        // The native call goes once the constructor no longer reads its
+        // result. Anything else that reads the pointer keeps it: the search
+        // above deliberately looks past other readers to find the constructor.
+        ssa.remove_unread_instructions(native_calls.iter().copied());
+
+        Ok(!native_calls.is_empty())
     }
 }
 
@@ -178,7 +178,7 @@ fn find_unmanaged_string_sites(
         };
 
         // Look for NewObj in subsequent instructions that uses the call result.
-        // Only stop on a NewObj consuming call_dest — other uses (e.g., debug
+        // Only stop on a NewObj consuming call_dest - other uses (e.g., debug
         // traces) should not prevent finding the actual string constructor.
         // Limit search distance to avoid O(n²) behaviour across many call sites.
         const MAX_SEARCH_DISTANCE: usize = 20;
@@ -203,4 +203,54 @@ fn find_unmanaged_string_sites(
     }
 
     sites
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::analysis::{CallGraph, SsaFunctionBuilder, SsaType};
+
+    /// The fake native call goes once its string is a constant, and stays
+    /// while another instruction still reads the pointer it returned.
+    #[test]
+    fn native_call_is_removed_only_when_unread() {
+        let native = Token::new(0x0600_0002);
+        let ctor = MethodRef::new(Token::new(0x0A00_0001));
+        let trace = MethodRef::new(Token::new(0x0A00_0002));
+        let native_call_kept = |traced: bool| {
+            let mut ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        let pointer = b.call(MethodRef::new(native), &[], SsaType::NativeInt);
+                        let _ = b.newobj(ctor, &[pointer]);
+                        if traced {
+                            b.call_void(trace, &[pointer]);
+                        }
+                        b.ret();
+                    });
+                })
+                .unwrap();
+            let pass = UnmanagedStringReversalPass {
+                native_string_map: HashMap::from([(native, "Hello".to_string())]),
+            };
+            let ctx = CompilerContext::new(Arc::new(CallGraph::new()));
+            let changed = pass
+                .run_on_method(&mut ssa, &MethodRef::new(Token::new(0x0600_0001)), &ctx)
+                .unwrap();
+            assert!(changed, "the constructor becomes a constant");
+            let instructions = ssa.block(0).unwrap().instructions();
+            assert!(matches!(
+                instructions[1].op(),
+                SsaOp::Const {
+                    value: ConstValue::DecryptedString(_),
+                    ..
+                }
+            ));
+            matches!(instructions[0].op(), SsaOp::Call { .. })
+        };
+        assert!(!native_call_kept(false), "an unread native call is removed");
+        assert!(native_call_kept(true), "a native call still read is kept");
+    }
 }

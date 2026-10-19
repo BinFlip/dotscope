@@ -50,7 +50,6 @@ use crate::{
             ReflectionDevirtualizationPass,
         },
         techniques::{Detection, Evidence, Technique, TechniqueCategory},
-        utils::is_method_named,
     },
     metadata::token::Token,
     CilObject,
@@ -438,12 +437,14 @@ fn count_reflection_api_calls(ssa: &SsaFunction, assembly: &CilObject) -> usize 
             let Some(name) = assembly.resolve_method_name(method_token) else {
                 continue;
             };
+            let declaring = assembly.resolve_method_declaring_type(method_token);
+            let declared_by = |fullname: &str| declaring.as_deref() == Some(fullname);
 
             // P2/P3: MethodInfo.Invoke with 3 args (this, obj, params[])
             if name == "Invoke" && arg_count == 3 {
                 // Verify this is MethodBase/MethodInfo.Invoke, not Delegate.Invoke
-                if is_method_named(assembly, method_token, "MethodBase")
-                    || is_method_named(assembly, method_token, "MethodInfo")
+                if declared_by("System.Reflection.MethodBase")
+                    || declared_by("System.Reflection.MethodInfo")
                 {
                     count = count.saturating_add(1);
                     continue;
@@ -451,16 +452,14 @@ fn count_reflection_api_calls(ssa: &SsaFunction, assembly: &CilObject) -> usize 
             }
 
             // P5: Activator.CreateInstance
-            if name.contains("CreateInstance")
-                && is_method_named(assembly, method_token, "Activator")
-            {
+            if name.contains("CreateInstance") && declared_by("System.Activator") {
                 count = count.saturating_add(1);
                 continue;
             }
 
             // P6: FieldInfo.GetValue / SetValue
             if (name == "GetValue" || name == "SetValue")
-                && is_method_named(assembly, method_token, "FieldInfo")
+                && declared_by("System.Reflection.FieldInfo")
             {
                 count = count.saturating_add(1);
             }
@@ -471,13 +470,15 @@ fn count_reflection_api_calls(ssa: &SsaFunction, assembly: &CilObject) -> usize 
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::{
+        analysis::{MethodRef, SsaFunctionBuilder},
         compiler::PassPhase,
         deobfuscation::techniques::{
             generic::delegates::{CallIndirectionFindings, GenericDelegateProxy},
             Technique, TechniqueCategory,
         },
-        test::helpers::load_sample,
+        test::helpers::{load_sample, method_token, mono_mscorlib},
     };
 
     #[test]
@@ -531,5 +532,40 @@ mod tests {
             Some(PassPhase::Inline),
             "GenericDelegateProxy should run in the Inline SSA phase"
         );
+    }
+
+    /// Reflection calls count by the type that declares them: `MethodBase.Invoke`,
+    /// `Activator.CreateInstance` and `FieldInfo.GetValue` do, and a delegate's
+    /// `Invoke` of the same arity does not. The check once asked whether the
+    /// method's *name* contained the type's, which no reflection call's does,
+    /// so none was counted.
+    #[test]
+    fn reflection_calls_count_by_their_declaring_type() {
+        let mscorlib = mono_mscorlib();
+        let count = |token: Token, args: usize| {
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        let args: Vec<SsaVarId> = (0..args).map(|_| b.const_i32(0)).collect();
+                        b.op(SsaOp::Call {
+                            dest: None,
+                            method: MethodRef::new(token),
+                            args,
+                            effects: None,
+                        });
+                        b.ret();
+                    });
+                })
+                .unwrap();
+            count_reflection_api_calls(&ssa, &mscorlib)
+        };
+        let invoke = method_token(&mscorlib, "System.Reflection.MethodBase", "Invoke", 2);
+        let create = method_token(&mscorlib, "System.Activator", "CreateInstance", 1);
+        let get_value = method_token(&mscorlib, "System.Reflection.FieldInfo", "GetValue", 1);
+        let func_invoke = method_token(&mscorlib, "System.Func`3", "Invoke", 2);
+        assert_eq!(count(invoke, 3), 1, "MethodBase.Invoke");
+        assert_eq!(count(create, 1), 1, "Activator.CreateInstance");
+        assert_eq!(count(get_value, 2), 1, "FieldInfo.GetValue");
+        assert_eq!(count(func_invoke, 3), 0, "a delegate's Invoke");
     }
 }

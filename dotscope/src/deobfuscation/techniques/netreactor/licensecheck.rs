@@ -19,7 +19,7 @@
 //! after `<Module>::.cctor` is cleaned up the binary still trips on the
 //! license check the first time user code instantiates one of the affected
 //! types (e.g. `reactor_obfuscation` fails in `t8JubRuTexuLxLeNiE..ctor`
-//! post-Stage 1).
+//! once its NecroBit bodies are restored).
 //!
 //! # Detection
 //!
@@ -118,7 +118,7 @@ impl Technique for NetReactorLicenseCheck {
         );
 
         for token in &method_tokens {
-            detection.cleanup_mut().add_method(*token);
+            detection.cleanup_mut().add_protection_method(*token);
         }
 
         detection

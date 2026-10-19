@@ -39,10 +39,10 @@ use std::{any::Any, collections::HashMap};
 use crate::{
     compiler::{EventKind, EventLog},
     deobfuscation::techniques::{
-        Detection, Detections, Evidence, Technique, TechniqueCategory, WorkingAssembly,
+        Detection, Evidence, Technique, TechniqueCategory, WorkingAssembly,
     },
     metadata::{
-        signatures::{SignatureMethod, TypeSignature},
+        signatures::TypeSignature,
         tables::{MemberRefRaw, TableId},
         token::Token,
         typesystem::wellknown,
@@ -260,8 +260,7 @@ impl Technique for BitMonoHooks {
     fn byte_transform(
         &self,
         assembly: &mut WorkingAssembly,
-        detection: &Detection,
-        _detections: &Detections,
+        detection: &mut Detection,
     ) -> Option<Result<EventLog>> {
         let events = EventLog::new();
 
@@ -809,7 +808,7 @@ fn compute_target_offset(
                     continue;
                 }
             }
-            if signatures_match(&method.signature, &dummy_method.signature) {
+            if method.signature.has_same_shape(&dummy_method.signature) {
                 candidates.push(method.token);
             }
         }
@@ -831,34 +830,6 @@ fn compute_target_offset(
         .into_iter()
         .max_by_key(|(_, count)| *count)
         .map(|(offset, _)| offset)
-}
-
-/// Returns `true` if two method signatures have the same return type and parameters.
-///
-/// Ignores calling convention flags since DotNetHook copies the full signature
-/// blob from the original method to the static dummy, which may alter flags
-/// without changing the structural shape.
-///
-/// # Arguments
-///
-/// * `a` - First method signature.
-/// * `b` - Second method signature.
-///
-/// # Returns
-///
-/// `true` if both signatures have identical return type base and all parameter
-/// type bases match pairwise.
-fn signatures_match(a: &SignatureMethod, b: &SignatureMethod) -> bool {
-    if a.return_type.base != b.return_type.base {
-        return false;
-    }
-    if a.params.len() != b.params.len() {
-        return false;
-    }
-    a.params
-        .iter()
-        .zip(b.params.iter())
-        .all(|(pa, pb)| pa.base == pb.base)
 }
 
 /// Returns `true` if `token` is a `MemberRef` that resolves to the same declaring

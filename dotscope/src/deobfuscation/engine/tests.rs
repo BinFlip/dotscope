@@ -222,8 +222,9 @@ fn test_analyze_purity_impure_throw() {
 }
 
 #[test]
-fn test_analyze_purity_readonly() {
-    // Create SSA with only field reads
+fn test_analyze_purity_field_read_may_throw() {
+    // A field read writes nothing, but faults on a null object: a call to it
+    // may be inlined, not deleted.
     let mut ssa: SsaFunction = SsaFunction::new(0, 0);
     let mut block = SsaBlock::new(0);
 
@@ -243,7 +244,9 @@ fn test_analyze_purity_readonly() {
     ssa.add_block(block);
 
     let result = ssa.purity();
-    assert!(matches!(result, MethodPurity::ReadOnly));
+    assert!(matches!(result, MethodPurity::MayThrow));
+    assert!(result.can_inline());
+    assert!(!result.can_eliminate_if_unused());
 }
 
 #[test]
@@ -258,6 +261,7 @@ fn test_analyze_purity_unknown_calls() {
             dest: Some(dest),
             method: MethodRef::new(Token::new(0x06000001)),
             args: vec![],
+            effects: None,
         })
         .with_result_type(SsaType::I32),
     );

@@ -117,7 +117,10 @@ impl SsaPass<CilTarget, CompilerContext> for TypeOfRestorationPass {
 
         for (block_idx, block) in ssa.blocks().iter().enumerate() {
             for (instr_idx, instr) in block.instructions().iter().enumerate() {
-                if let SsaOp::Call { dest, method, args } = instr.op() {
+                if let SsaOp::Call {
+                    dest, method, args, ..
+                } = instr.op()
+                {
                     if method.token() != self.accessor_token {
                         continue;
                     }
@@ -162,7 +165,7 @@ impl SsaPass<CilTarget, CompilerContext> for TypeOfRestorationPass {
         for (block_idx, instr_idx, type_token, orig_dest) in &replacements {
             // Create a temporary variable for the RuntimeTypeHandle (LoadToken result).
             // Resolve the corelib TypeRef now so the SSA variable carries a
-            // proper `valuetype [mscorlib]System.RuntimeTypeHandle` token —
+            // proper `valuetype [mscorlib]System.RuntimeTypeHandle` token -
             // a tokenless placeholder would produce invalid CIL if this
             // variable ever spilled to a local slot downstream.
             let handle_type = resolve_corelib_valuetype(assembly, "System.RuntimeTypeHandle");
@@ -189,6 +192,7 @@ impl SsaPass<CilTarget, CompilerContext> for TypeOfRestorationPass {
                 dest: Some(*orig_dest),
                 method: MethodRef::new(self.get_type_from_handle_token),
                 args: vec![handle_var],
+                effects: None,
             });
 
             let block = ssa.blocks_mut().get_mut(*block_idx).ok_or_else(|| {

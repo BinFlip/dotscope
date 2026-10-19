@@ -4,19 +4,19 @@
 //! the original `ManifestResource` rows, the protected user code still
 //! routes through two NR shims:
 //!
-//! - **Lazy init** — `Main` and every protector-injected `.cctor` start
+//! - **Lazy init** - `Main` and every protector-injected `.cctor` start
 //!   with `call <lazy_init>;`. Once the resources are real
 //!   `ManifestResource` rows, the resolver type's runtime registration is
-//!   pure overhead — there is nothing to resolve. We replace the call
+//!   pure overhead - there is nothing to resolve. We replace the call
 //!   with `Nop` so the resolver type can be deleted by the cleanup
 //!   pipeline.
 //!
-//! - **`GetManifestResourceNames` shim** — user code calls
+//! - **`GetManifestResourceNames` shim** - user code calls
 //!   `<resolver>::eBxqprrF8(Assembly) -> string[]` instead of
 //!   `Assembly::GetManifestResourceNames()`. Same arity, same return
 //!   type. We rewrite the `Call` to a `CallVirt` against the BCL
 //!   MemberRef (resolved at construction time from the assembly's import
-//!   table — every NR resources sample already references that
+//!   table - every NR resources sample already references that
 //!   MemberRef inside the resolver type body).
 //!
 //! After both rewrites land the resolver type is unreferenced from user
@@ -27,7 +27,7 @@
 //! # Pipeline Position
 //!
 //! Runs in the **Value** phase, like the other NR-specific shim
-//! folders. Pure intra-method rewrite, no CFG changes —
+//! folders. Pure intra-method rewrite, no CFG changes -
 //! [`ModificationScope::InstructionsOnly`].
 //!
 //! [`netreactor.resources`]: crate::deobfuscation::techniques::netreactor::NetReactorResources
@@ -59,7 +59,7 @@ pub struct ResourceShimRewritePass {
 impl ResourceShimRewritePass {
     /// Builds the pass from detection findings.
     ///
-    /// `shim_method_tokens` is empty when no shims were found — the pass
+    /// `shim_method_tokens` is empty when no shims were found - the pass
     /// still runs but only the lazy-init NOP rewrites apply. Same for an
     /// empty `bcl_get_manifest_resource_names` (zero token): shim
     /// rewrites are skipped, lazy-init NOPs still run.
@@ -98,7 +98,7 @@ impl SsaPass<CilTarget, CompilerContext> for ResourceShimRewritePass {
         ctx: &CompilerContext,
     ) -> analyssa::Result<bool> {
         let method_token = method.0;
-        // Skip work for the resolver's own methods — the cleanup pipeline
+        // Skip work for the resolver's own methods - the cleanup pipeline
         // deletes them wholesale, so rewriting here would be wasted.
         if self.shim_method_tokens.contains(&method_token) || self.lazy_init_token == method_token {
             return Ok(false);
@@ -119,9 +119,10 @@ impl SsaPass<CilTarget, CompilerContext> for ResourceShimRewritePass {
                     continue;
                 };
                 let new_op = match instr.op() {
-                    SsaOp::Call { dest, method, args }
-                        if self.shim_method_tokens.contains(&method.token())
-                            && self.bcl_get_manifest_resource_names.value() != 0 =>
+                    SsaOp::Call {
+                        dest, method, args, ..
+                    } if self.shim_method_tokens.contains(&method.token())
+                        && self.bcl_get_manifest_resource_names.value() != 0 =>
                     {
                         // Same arity (Assembly arg → instance receiver),
                         // same return type (string[]). The shim's stack
@@ -131,14 +132,16 @@ impl SsaPass<CilTarget, CompilerContext> for ResourceShimRewritePass {
                             dest: *dest,
                             method: bcl_target,
                             args: args.clone(),
+                            effects: None,
                         };
                         shim_rewrites = shim_rewrites.saturating_add(1);
                         Some(new)
                     }
-                    SsaOp::Call { dest, method, args }
-                        if method.token() == self.lazy_init_token
-                            && dest.is_none()
-                            && args.is_empty() =>
+                    SsaOp::Call {
+                        dest, method, args, ..
+                    } if method.token() == self.lazy_init_token
+                        && dest.is_none()
+                        && args.is_empty() =>
                     {
                         init_nops = init_nops.saturating_add(1);
                         Some(SsaOp::Nop)
@@ -304,7 +307,7 @@ mod tests {
                 &ctx.compiler,
             )
             .unwrap();
-        // Shim left intact — fallback is to leave the call alone.
+        // Shim left intact - fallback is to leave the call alone.
         assert!(!changed);
     }
 }

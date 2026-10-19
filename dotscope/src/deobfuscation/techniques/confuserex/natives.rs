@@ -38,9 +38,7 @@ use crate::{
     compiler::{EventKind, EventLog},
     deobfuscation::{
         passes::NativeMethodConversionPass,
-        techniques::{
-            Detection, Detections, Evidence, Technique, TechniqueCategory, WorkingAssembly,
-        },
+        techniques::{Detection, Evidence, Technique, TechniqueCategory, WorkingAssembly},
     },
     metadata::{tables::ImplMapRaw, token::Token, validation::ValidationConfig},
     CilObject, Result,
@@ -149,8 +147,7 @@ impl Technique for ConfuserExNativeHelpers {
     fn byte_transform(
         &self,
         assembly: &mut WorkingAssembly,
-        detection: &Detection,
-        _detections: &Detections,
+        detection: &mut Detection,
     ) -> Option<Result<EventLog>> {
         let events = EventLog::new();
 

@@ -21,9 +21,9 @@
 //! obfuscator. Each is created by its corresponding detection technique via
 //! [`Technique::create_pass`](super::techniques::Technique::create_pass).
 //!
-//! - [`jiejienet`] — JIEJIE.NET value-level passes (constants, strings, typeof, arrays)
-//! - [`bitmono`] — BitMono passes (string decryption, unmanaged strings, anti-debug)
-//! - [`netreactor`] — .NET Reactor passes (anti-tamper token resolver)
+//! - [`jiejienet`] - JIEJIE.NET value-level passes (constants, strings, typeof, arrays)
+//! - [`bitmono`] - BitMono passes (string decryption, unmanaged strings, anti-debug)
+//! - [`netreactor`] - .NET Reactor passes (anti-tamper token resolver)
 //!
 //! # Relationship to Compiler Passes
 //!
@@ -57,5 +57,8 @@ pub use self::{
     opaquefields::OpaqueFieldPredicatePass,
     reflection::{count_resolve_method_calli_sites, ReflectionDevirtualizationPass},
     staticfields::{I32Extractor, StaticFieldResolutionPass, StringExtractor},
-    unflattening::{CffDetector, CffReconstructionPass, Dispatcher, UnflattenConfig},
+    unflattening::{
+        unflatten, CffDetector, CffPattern, CffReconstructionPass, Dispatcher, EntryCondition,
+        EntryPoint, UnflattenConfig,
+    },
 };

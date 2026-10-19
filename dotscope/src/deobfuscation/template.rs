@@ -9,7 +9,7 @@
 //! # Lifecycle
 //!
 //! 1. Created after technique initialization (Phase 3.5)
-//! 2. Warmed up once — runs `<Module>.cctor` and all registered warmup methods
+//! 2. Warmed up once - runs `<Module>.cctor` and all registered warmup methods
 //! 3. Stored in [`AnalysisContext::template_pool`]
 //! 4. Passes call [`fork()`](EmulationTemplatePool::fork) to get independent copies
 //! 5. Released after the SSA pipeline completes
@@ -80,7 +80,7 @@ pub struct EmulationTemplatePool {
 impl EmulationTemplatePool {
     /// Creates a new template pool.
     ///
-    /// Does **not** perform warmup — call [`warmup()`](Self::warmup) separately.
+    /// Does **not** perform warmup - call [`warmup()`](Self::warmup) separately.
     ///
     /// # Arguments
     ///
@@ -115,8 +115,8 @@ impl EmulationTemplatePool {
     /// Creates an [`EmulationProcess`] with all technique hooks, maps the
     /// original PE into the virtual filesystem, then runs:
     ///
-    /// 1. `<Module>.cctor` — initializes delegate proxy tables, opaque fields, etc.
-    /// 2. All registered warmup methods — multi-pass fork-based warmup handles
+    /// 1. `<Module>.cctor` - initializes delegate proxy tables, opaque fields, etc.
+    /// 2. All registered warmup methods - multi-pass fork-based warmup handles
     ///    dependency chains between .cctors and decryptor init calls
     ///
     /// After warmup, the template is stored and subsequent [`fork()`](Self::fork)
@@ -125,7 +125,7 @@ impl EmulationTemplatePool {
     /// # Errors
     ///
     /// Returns an error if process creation fails. Warmup method failures are
-    /// tolerated (partial state is adopted) — only process creation failure is fatal.
+    /// tolerated (partial state is adopted) - only process creation failure is fatal.
     pub fn warmup(&self) -> Result<()> {
         let assembly = self
             .assembly
@@ -205,7 +205,7 @@ impl EmulationTemplatePool {
 
         let mut process = builder.build()?;
 
-        // Run Module.cctor first — initializes delegate proxy tables, opaque
+        // Run Module.cctor first - initializes delegate proxy tables, opaque
         // fields, and other runtime state that decryptors depend on.
         if let Some(module_cctor) = assembly.types().module_cctor() {
             let fork = process.fork()?;
@@ -219,14 +219,14 @@ impl EmulationTemplatePool {
                 }
                 Ok(outcome) => {
                     debug!(
-                        "Template warmup: <Module>.cctor did not complete: {} — adopting partial state",
+                        "Template warmup: <Module>.cctor did not complete: {} - adopting partial state",
                         outcome
                     );
                     process = fork;
                 }
                 Err(e) => {
                     debug!(
-                        "Template warmup: <Module>.cctor error: {} — adopting partial state",
+                        "Template warmup: <Module>.cctor error: {} - adopting partial state",
                         e
                     );
                     process = fork;
@@ -295,7 +295,7 @@ impl EmulationTemplatePool {
         let guard = self.template.read().ok()?;
         let template = guard.as_ref()?;
         // Targeted warmup runs extra `.cctor`s on the fork, so it gets the warmup budget
-        // rather than the per-method one — that is what the longer budget is *for*.
+        // rather than the per-method one - that is what the longer budget is *for*.
         let mut process = match template.fork() {
             Ok(p) => p,
             Err(e) => {
@@ -338,7 +338,7 @@ impl EmulationTemplatePool {
                     }
                     Ok(EmulationOutcome::UnhandledException { instructions, .. }) => {
                         debug!(
-                            "Targeted warmup: .cctor 0x{:08X} threw after {} instructions — adopting partial state (pass {})",
+                            "Targeted warmup: .cctor 0x{:08X} threw after {} instructions - adopting partial state (pass {})",
                             cctor.value(), instructions, pass
                         );
                         process = fork;
@@ -347,7 +347,7 @@ impl EmulationTemplatePool {
                     }
                     Ok(EmulationOutcome::LimitReached { ref limit, .. }) => {
                         debug!(
-                            "Targeted warmup: .cctor 0x{:08X} hit limit: {} — adopting partial state (pass {})",
+                            "Targeted warmup: .cctor 0x{:08X} hit limit: {} - adopting partial state (pass {})",
                             cctor.value(), limit, pass
                         );
                         process = fork;
@@ -472,7 +472,7 @@ impl EmulationTemplatePool {
                     }
                     Ok(EmulationOutcome::UnhandledException { instructions, .. }) => {
                         debug!(
-                            "Template warmup: 0x{:08X} threw after {} instructions — adopting partial state (pass {})",
+                            "Template warmup: 0x{:08X} threw after {} instructions - adopting partial state (pass {})",
                             warmup_token.value(), instructions, pass
                         );
                         *process = fork;
@@ -481,7 +481,7 @@ impl EmulationTemplatePool {
                     }
                     Ok(EmulationOutcome::LimitReached { ref limit, .. }) => {
                         debug!(
-                            "Template warmup: 0x{:08X} hit limit: {} — adopting partial state (pass {})",
+                            "Template warmup: 0x{:08X} hit limit: {} - adopting partial state (pass {})",
                             warmup_token.value(), limit, pass
                         );
                         *process = fork;
@@ -509,7 +509,7 @@ impl EmulationTemplatePool {
                         );
                         if is_resource_limit {
                             debug!(
-                                "Template warmup: 0x{:08X} hit resource limit: {} — adopting partial state (pass {})",
+                                "Template warmup: 0x{:08X} hit resource limit: {} - adopting partial state (pass {})",
                                 warmup_token.value(), e, pass
                             );
                             *process = fork;

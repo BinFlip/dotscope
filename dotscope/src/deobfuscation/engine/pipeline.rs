@@ -5,11 +5,12 @@
 //! `api` can access its fields without visibility qualifiers.
 
 use std::{
+    collections::HashMap,
     sync::{atomic::Ordering, Arc},
     time::{Duration, Instant},
 };
 
-use analyssa::scheduling::SsaPass as AnalyssaSsaPass;
+use analyssa::scheduling::{run_pass_with_repair, PassEnv, SsaPass as AnalyssaSsaPass};
 use log::{debug, info, warn};
 
 use crate::{
@@ -17,9 +18,9 @@ use crate::{
     cilassembly::{expand_type_tokens, CleanupRequest},
     compiler::{CompilerContext, DeadMethodEliminationPass, EventLog, PassScheduler},
     deobfuscation::{
-        cleanup::{build_cleanup_request, execute_cleanup},
+        cleanup::{build_cleanup_request, execute_cleanup, retract_referenced_removals},
         context::AnalysisContext,
-        engine::{DeobfuscationEngine, PipelineRun},
+        engine::{codegen::GeneratedCode, DeobfuscationEngine, PipelineRun},
         passes::NeutralizationPass,
         result::DeobfuscationResult,
         techniques::{Detections, TechniqueResult, TechniqueResults, WorkingAssembly},
@@ -34,7 +35,7 @@ impl<'a> PipelineRun<'a> {
     /// Creates a new pipeline run backed by the given engine.
     ///
     /// All mutable state (detections, results, iteration count) starts empty.
-    /// The assembly is not stored here — it flows through phase methods as
+    /// The assembly is not stored here - it flows through phase methods as
     /// an owned value.
     pub(super) fn new(engine: &'a DeobfuscationEngine) -> Self {
         Self {
@@ -42,6 +43,8 @@ impl<'a> PipelineRun<'a> {
             detections: Detections::new(),
             results: TechniqueResults::new(),
             start: Instant::now(),
+            transforms_applied: 0,
+            failed_transforms: HashMap::new(),
             iterations: 0,
         }
     }
@@ -49,9 +52,9 @@ impl<'a> PipelineRun<'a> {
     /// Runs the complete deobfuscation pipeline on an assembly.
     ///
     /// Two top-level phases:
-    /// 1. [`detect_and_transform`](Self::detect_and_transform) — IL detection,
+    /// 1. [`detect_and_transform`](Self::detect_and_transform) - IL detection,
     ///    byte transforms, post-transform re-detection
-    /// 2. [`run_ssa_pipeline`](Self::run_ssa_pipeline) — SSA construction,
+    /// 2. [`run_ssa_pipeline`](Self::run_ssa_pipeline) - SSA construction,
     ///    fixpoint optimization, and finalization (may loop for byte-transform
     ///    re-requests)
     pub(super) fn execute(
@@ -165,6 +168,8 @@ impl<'a> PipelineRun<'a> {
     fn run_byte_transforms(&mut self, assembly: CilObject) -> Result<CilObject> {
         let mut working = WorkingAssembly::new(assembly);
         let sorted = self.engine.registry.sorted_techniques(&self.detections);
+        // Whether a transform has already rewritten the image in this round.
+        let mut rewritten = false;
         for tech in sorted {
             if !self.detections.is_detected(tech.id()) {
                 continue;
@@ -176,13 +181,22 @@ impl<'a> PipelineRun<'a> {
             if self.detections.is_transformed(tech.id()) {
                 continue;
             }
-            let Some(detection) = self.detections.get(tech.id()) else {
+            if self.failed_transforms.get(tech.id()) == Some(&self.transforms_applied) {
+                continue;
+            }
+            // A transform that ran before this one may have changed what this
+            // technique finds: NecroBit restores the bodies the others read,
+            // and a detection taken while they were still encrypted describes
+            // stubs. Detect again on the assembly about to be transformed.
+            if rewritten {
+                let fresh = tech.detect(working.cilobject()?);
+                self.detections.merge(tech.id(), fresh);
+            }
+            let Some(detection) = self.detections.get_mut(tech.id()) else {
                 continue;
             };
             let tech_start = Instant::now();
-            let Some(transform_result) =
-                tech.byte_transform(&mut working, detection, &self.detections)
-            else {
+            let Some(transform_result) = tech.byte_transform(&mut working, detection) else {
                 continue;
             };
             let evidence = detection.evidence().to_vec();
@@ -200,13 +214,32 @@ impl<'a> PipelineRun<'a> {
                     if tech.requires_regeneration() {
                         working.commit()?;
                     }
+                    rewritten = true;
+                    self.transforms_applied = self.transforms_applied.saturating_add(1);
                 }
                 Err(e) => {
                     warn!("[technique] {} transform failed: {}", tech.name(), e);
+                    self.failed_transforms
+                        .insert(tech.id(), self.transforms_applied);
                 }
             }
         }
         working.into_cilobject()
+    }
+
+    /// Whether a detected technique still has a byte transform to run.
+    ///
+    /// A technique has one when it is detected, not yet transformed, declares
+    /// `requires_regeneration()`, and has not already failed on the assembly
+    /// as it stands: rerunning the pipeline for a transform that will fail the
+    /// same way rebuilds every method's SSA for nothing.
+    fn has_pending_byte_transforms(&self) -> bool {
+        self.engine.registry.techniques().iter().any(|tech| {
+            self.detections.is_detected(tech.id())
+                && !self.detections.is_transformed(tech.id())
+                && tech.requires_regeneration()
+                && self.failed_transforms.get(tech.id()) != Some(&self.transforms_applied)
+        })
     }
 
     /// Re-detects techniques on the post-transform assembly.
@@ -339,7 +372,7 @@ impl<'a> PipelineRun<'a> {
             }
         }
 
-        if self.engine.has_pending_byte_transforms(&self.detections) {
+        if self.has_pending_byte_transforms() {
             ctx.needs_byte_transform.store(true, Ordering::Release);
         }
 
@@ -373,7 +406,7 @@ impl<'a> PipelineRun<'a> {
         self.engine
             .initialize_techniques(&ctx, assembly_arc, &self.detections);
 
-        if self.engine.has_pending_byte_transforms(&self.detections) {
+        if self.has_pending_byte_transforms() {
             ctx.needs_byte_transform.store(true, Ordering::Release);
         }
 
@@ -420,7 +453,7 @@ impl<'a> PipelineRun<'a> {
     /// 5. Run pass scheduler to convergence (inner fixpoint)
     /// 6. Check for new work items submitted during passes
     /// 7. Engine-driven detection re-scan (only if passes made progress)
-    /// 8. Convergence check — break if no pending work
+    /// 8. Convergence check - break if no pending work
     ///
     /// Accumulates pass iteration counts into `self.iterations`.
     fn run_ssa_fixpoint(
@@ -517,11 +550,11 @@ impl<'a> PipelineRun<'a> {
     /// Applies drained work items to the analysis context.
     ///
     /// Processes items by category:
-    /// - `BuildSsa` — marks methods in `needs_ssa_build`
-    /// - `InjectSsa` — inserts externally-produced SSA, marks method dirty
-    /// - `RedetectMethods` — populates `newly_detected`
-    /// - `RedetectTypes` — populates `newly_detected` + marks type dirty
-    /// - `RedetectAssembly` — marks assembly dirty
+    /// - `BuildSsa` - marks methods in `needs_ssa_build`
+    /// - `InjectSsa` - inserts externally-produced SSA, marks method dirty
+    /// - `RedetectMethods` - populates `newly_detected`
+    /// - `RedetectTypes` - populates `newly_detected` + marks type dirty
+    /// - `RedetectAssembly` - marks assembly dirty
     fn apply_work_items(items: DrainedWorkItems, ctx: &AnalysisContext) {
         for token in items.build_ssa {
             ctx.processing_state.mark_needs_ssa_build(token);
@@ -547,11 +580,11 @@ impl<'a> PipelineRun<'a> {
     /// Sequence:
     /// 1. Dead method elimination (if configured)
     /// 2. Build cleanup request from technique detections + SSA call graph
-    /// 3. Neutralization — remove references to deleted protection tokens,
+    /// 3. Neutralization - remove references to deleted protection tokens,
     ///    then re-run the pass scheduler if any changes were made
     /// 4. Canonicalize SSA and release emulation template pool
-    /// 5. Code generation — emit CIL bytecode from optimized SSA
-    /// 6. Cleanup — remove dead types, methods, fields, metadata artifacts
+    /// 5. Code generation - emit CIL bytecode from optimized SSA
+    /// 6. Cleanup - remove dead types, methods, fields, metadata artifacts
     /// 7. Build final [`DeobfuscationResult`] with attribution and timing
     fn finalize(
         mut self,
@@ -587,8 +620,28 @@ impl<'a> PipelineRun<'a> {
         ctx.canonicalize_all_ssa();
         let assembly = Self::unwrap_assembly(&ctx, assembly_arc)?;
 
-        let (final_assembly, methods_regenerated, _, protected_tokens) =
-            DeobfuscationEngine::generate_code(assembly, &ctx)?;
+        let GeneratedCode {
+            assembly: final_assembly,
+            regenerated: methods_regenerated,
+            protected_tokens,
+            kept_original,
+            ..
+        } = DeobfuscationEngine::generate_code(assembly, &ctx)?;
+        // The request was built on the assumption that every converted method
+        // is emitted from its SSA, where neutralization stripped the calls into
+        // what cleanup deletes. A method whose regenerated code was refused
+        // ships its original body instead, which still calls the decryptors,
+        // loads the fields and instantiates the generic methods the request is
+        // about to delete.
+        if !kept_original.is_empty() {
+            retract_referenced_removals(
+                &final_assembly,
+                &mut merged_cleanup,
+                &ssa_call_graph,
+                &ctx,
+                &kept_original,
+            );
+        }
         info!(
             "Code generation: {} method bodies regenerated",
             methods_regenerated
@@ -653,20 +706,43 @@ impl<'a> PipelineRun<'a> {
         // reach it through the analyssa host trait.
         ctx.set_assembly(assembly_arc.clone());
         for method_token in &method_tokens {
+            // A method cleanup deletes is discarded whole, so stripping its
+            // references buys nothing - and it would leave a body that no
+            // longer does what the method does for every pass that reads a
+            // callee's SSA to decide what a call does.
+            if all_tokens.contains(method_token) {
+                continue;
+            }
             if let Some(mut ssa) = ctx.ssa_functions.get_mut(method_token) {
                 let method_ref = MethodRef::from(*method_token);
-                if AnalyssaSsaPass::<CilTarget, CompilerContext>::run_on_method(
-                    &pass,
-                    &mut ssa,
-                    &method_ref,
-                    ctx,
-                )
-                .map_err(|e| Error::SsaError(e.0))?
-                {
+                // Neutralization is `CfgModifying` and runs here, outside the
+                // scheduler that would otherwise repair after it. Without the
+                // repair every method it touches keeps phis and definition
+                // sites describing control flow it has just removed, and the
+                // next pass group to read the method fails its boundary check
+                // and rolls the whole method back - so the neutralization is
+                // silently undone and the tokens it was meant to strip stay in
+                // the output.
+                //
+                // What made that masking load-bearing, and no longer does: the
+                // cleanup request could mark a method for removal while live
+                // code still called it, and neutralization would then remove
+                // every one of those calls - for a proxy that a method
+                // forwards through, the entire body. `build_cleanup_request`
+                // now withdraws any removal surviving code still names, so a
+                // token reaching this pass is one nothing live refers to.
+                let env: PassEnv<'_, CilTarget> = PassEnv::from_host(&method_ref, &**ctx);
+                if run_pass_with_repair(&pass, &mut ssa, &env).map_err(|e| {
+                    // The reconstruction reports what is wrong with the
+                    // function but not which function it is, and one failure
+                    // out of several hundred methods is not findable without
+                    // the token.
+                    Error::SsaError(format!("neutralizing {method_token}: {}", e.0))
+                })? {
                     neutralized = true;
                     // Ensure neutralized methods get code-generated. Without this,
                     // methods modified only by neutralization keep their original IL
-                    // which still references deleted tokens — causing the executor's
+                    // which still references deleted tokens - causing the executor's
                     // dead definition elimination to keep those tokens alive.
                     ctx.processed_methods.insert(*method_token);
                 }

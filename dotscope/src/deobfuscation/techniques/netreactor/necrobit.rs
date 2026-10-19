@@ -30,7 +30,7 @@
 //! resolved `VirtualProtect`. Variant B's writes land in `.text`, which is mapped
 //! read-only, and the return value also steers the init's control flow — a call
 //! that answers without applying the protection sends it down a path that stores
-//! nothing. `docs/research/netreactor/necrobit.md` covers the requirements.
+//! nothing.
 
 use std::{
     any::Any,
@@ -43,8 +43,7 @@ use crate::{
     compiler::{EventKind, EventLog},
     deobfuscation::techniques::{
         netreactor::{helpers, hooks},
-        Detection, Detections, Evidence, Technique, TechniqueCapability, TechniqueCategory,
-        WorkingAssembly,
+        Detection, Evidence, Technique, TechniqueCapability, TechniqueCategory, WorkingAssembly,
     },
     emulation::{EmValue, EmulationOutcome, EmulationProcess, HeapObject, ProcessBuilder},
     error::Error,
@@ -182,7 +181,7 @@ impl Technique for NetReactorNecroBit {
         let (purely_injected_cctors, modified_cctors) = if let Some(ref fan_in_result) = fan_in {
             let classification = helpers::classify_injected_cctors(
                 assembly,
-                fan_in_result.target_token,
+                &fan_in_result.initializers,
                 &fan_in_result.calling_cctors,
             );
             (classification.purely_injected, classification.modified)
@@ -253,14 +252,21 @@ impl Technique for NetReactorNecroBit {
         if let Some(rt_token) = runtime_type_token {
             detection.cleanup_mut().add_type(rt_token);
         }
+        // The initializers every protected type's `.cctor` calls decrypt the
+        // bodies at run time, which this deobfuscation has already done: the
+        // calls go with them, from the `.cctor`s that also hold the program's
+        // own initialization.
+        for &initializer in fan_in.iter().flat_map(|f| &f.initializers) {
+            detection.cleanup_mut().add_protection_method(initializer);
+        }
         for &cctor_token in &purely_injected_cctors {
             detection.cleanup_mut().add_method(cctor_token);
         }
         for &trial_token in &trial_check_tokens {
-            detection.cleanup_mut().add_method(trial_token);
+            detection.cleanup_mut().add_protection_method(trial_token);
         }
         if let Some(patcher_token) = body_patcher {
-            detection.cleanup_mut().add_method(patcher_token);
+            detection.cleanup_mut().add_protection_method(patcher_token);
         }
 
         detection
@@ -269,8 +275,7 @@ impl Technique for NetReactorNecroBit {
     fn byte_transform(
         &self,
         assembly: &mut WorkingAssembly,
-        detection: &Detection,
-        _detections: &Detections,
+        detection: &mut Detection,
     ) -> Option<Result<EventLog>> {
         let events = EventLog::new();
 
@@ -1018,7 +1023,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        deobfuscation::techniques::{Detections, Technique, WorkingAssembly},
+        deobfuscation::techniques::{Technique, WorkingAssembly},
         metadata::validation::ValidationConfig,
         CilObject,
     };
@@ -1085,7 +1090,7 @@ mod tests {
     fn restore_stub_bodies(sample: &str) -> (usize, usize) {
         let assembly = load_sample(sample);
         let technique = NetReactorNecroBit;
-        let detection = technique.detect(&assembly);
+        let mut detection = technique.detect(&assembly);
         assert!(detection.is_detected(), "{sample}: should detect NecroBit");
 
         let stub_count = detection
@@ -1094,8 +1099,7 @@ mod tests {
             .unwrap_or(0);
 
         let mut working = WorkingAssembly::new(assembly);
-        let detections = Detections::new();
-        let events = match technique.byte_transform(&mut working, &detection, &detections) {
+        let events = match technique.byte_transform(&mut working, &mut detection) {
             Some(Ok(events)) => events,
             Some(Err(e)) => panic!("{sample}: byte_transform returned error: {e}"),
             None => panic!("{sample}: byte_transform returned None (skipped)"),

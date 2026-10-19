@@ -117,7 +117,10 @@ impl SsaPass<CilTarget, CompilerContext> for ArrayInitRestorationPass {
 
         for (block_idx, block) in ssa.blocks().iter().enumerate() {
             for (instr_idx, instr) in block.instructions().iter().enumerate() {
-                if let SsaOp::Call { dest, method, args } = instr.op() {
+                if let SsaOp::Call {
+                    dest, method, args, ..
+                } = instr.op()
+                {
                     let method_token = method.token();
 
                     // Case 1: GetHandle accessor replacement
@@ -167,6 +170,7 @@ impl SsaPass<CilTarget, CompilerContext> for ArrayInitRestorationPass {
                                         dest: *dest,
                                         method: MethodRef::new(init_target),
                                         args: vec![a0, a1],
+                                        effects: None,
                                     },
                                 ));
                             }

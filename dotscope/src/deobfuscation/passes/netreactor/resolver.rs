@@ -14,7 +14,7 @@
 //!
 //! Runs in the **Value** phase, alongside other constant-resolution passes
 //! (string decryption, JIEJIE.NET typeof restoration). The pass is purely
-//! intra-method and `InstructionsOnly` — it does not change CFG structure.
+//! intra-method and `InstructionsOnly` - it does not change CFG structure.
 
 use std::collections::HashSet;
 
@@ -73,7 +73,10 @@ impl SsaPass<CilTarget, CompilerContext> for TokenResolverPass {
 
         for (block_idx, block) in ssa.blocks().iter().enumerate() {
             for (instr_idx, instr) in block.instructions().iter().enumerate() {
-                if let SsaOp::Call { dest, method, args } = instr.op() {
+                if let SsaOp::Call {
+                    dest, method, args, ..
+                } = instr.op()
+                {
                     if !self.accessor_tokens.contains(&method.token()) {
                         continue;
                     }

@@ -15,7 +15,7 @@
 //! # Algorithm Overview
 //!
 //! 1. **Detection** ([`detection`]): Identify CFF dispatchers via structural graph
-//!    analysis — dominance, predecessor counts, back-edge ratios, method coverage
+//!    analysis - dominance, predecessor counts, back-edge ratios, method coverage
 //! 2. **State Variable Identification** ([`statevar`]): Trace from the switch
 //!    instruction backwards through the SSA to find the PHI node carrying state
 //! 3. **Dispatcher Classification** ([`dispatcher`]): Determine type (switch with
@@ -41,10 +41,13 @@ mod resolve;
 mod spill;
 mod statevar;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{BTreeSet, HashMap},
+    sync::Arc,
+};
 
 use dashmap::DashSet;
-pub use detection::CffDetector;
+pub use detection::{CffDetector, CffPattern, EntryCondition, EntryPoint};
 pub use dispatcher::Dispatcher;
 use rayon::prelude::*;
 
@@ -57,8 +60,8 @@ use crate::{
 
 /// High-level API: unflatten a method by rewiring its dispatcher edges.
 ///
-/// Detects every CFF dispatcher in the method — there may be independent ones
-/// per exception handler region — resolves all of their edges against the
+/// Detects every CFF dispatcher in the method - there may be independent ones
+/// per exception handler region - resolves all of their edges against the
 /// unmodified function, and applies the whole set at once so a single
 /// `rebuild_ssa()` sees the final graph.
 ///
@@ -78,7 +81,23 @@ pub fn unflatten(ssa: &SsaFunction, config: &UnflattenConfig) -> Option<SsaFunct
         .filter(|d| d.confidence >= config.min_confidence)
         .collect();
 
-    unflatten_with_dispatchers(ssa, dispatchers)
+    unflatten_with_dispatchers(ssa, dispatchers, None)
+}
+
+/// Reads a callee's body out of the compiler context.
+///
+/// State folding may need the body of a method the encoding calls - ConfuserEx
+/// computes the next state in an x86 helper, which this crate has already
+/// translated to CIL by the time unflattening runs. The context is where those
+/// bodies are, and cloning is what a borrow across the fold cannot be: the
+/// bodies live behind a concurrent map that the fold cannot hold a reference
+/// into while it walks.
+struct ContextBodies<'a>(&'a CompilerContext);
+
+impl resolve::CalleeBodies for ContextBodies<'_> {
+    fn body(&self, token: Token) -> Option<SsaFunction> {
+        self.0.with_ssa(token, Clone::clone)
+    }
 }
 
 /// Unflatten a method using pre-detected dispatchers.
@@ -102,6 +121,7 @@ pub fn unflatten(ssa: &SsaFunction, config: &UnflattenConfig) -> Option<SsaFunct
 pub fn unflatten_with_dispatchers(
     ssa: &SsaFunction,
     dispatchers: Vec<Dispatcher>,
+    callees: Option<&(dyn resolve::CalleeBodies + Sync)>,
 ) -> Option<SsaFunction> {
     if dispatchers.is_empty() {
         return None;
@@ -112,7 +132,11 @@ pub fn unflatten_with_dispatchers(
     let per_dispatcher: Vec<Vec<resolve::Rewire>> = dispatchers
         .par_iter()
         .map(|d| {
-            let (rewires, stats) = resolve::resolve_dispatch_edges(ssa, d);
+            let (rewires, stats) = resolve::resolve_dispatch_edges(
+                ssa,
+                d,
+                callees.map(|c| c as &dyn resolve::CalleeBodies),
+            );
             log::debug!(
                 "CFF resolve b{}: {} edge(s) resolved, {} unresolved, {} conflicting \
                  (table {} incl. {} overflow)",
@@ -149,11 +173,12 @@ pub fn unflatten_with_dispatchers(
     // Rewiring replaces `case -> dispatcher -> next` with `case -> next`, so a
     // value that used to be merged by a phi at the dispatcher now arrives along
     // an edge no phi ever described. `rebuild_ssa` can reconstruct such a value
-    // only if it has an identity independent of control flow — a local slot.
+    // only if it has an identity independent of control flow - a local slot.
     // Promoting first is what makes the rebuild well-defined for the rewired
     // graph.
     let mut patched = ssa.clone();
-    let spilled = spill::promote_cross_block_values(&mut patched);
+    let dispatcher_blocks: BTreeSet<usize> = dispatchers.iter().map(|d| d.block).collect();
+    let spilled = spill::promote_cross_block_values(&mut patched, &dispatcher_blocks);
     if spilled > 0 {
         log::debug!("Promoted {spilled} cross-block value(s) to locals before unflattening");
     }
@@ -166,7 +191,7 @@ pub fn unflatten_with_dispatchers(
     log::debug!("CFF: rewired {applied} edge(s) past the dispatcher, {cleared} block(s) now dead");
 
     // Dispatchers whose edges did not all resolve keep their remaining
-    // predecessors and stay in the graph — partial recovery, not corruption.
+    // predecessors and stay in the graph - partial recovery, not corruption.
     // The state constants and the dispatcher itself become unreachable once
     // every edge is rewired, and the ordinary dead-code passes remove them.
     Some(patched)
@@ -343,6 +368,15 @@ impl SsaPass<CilTarget, CompilerContext> for CffReconstructionPass {
         &[PassCapability::ResolvedStaticFields]
     }
 
+    // Folding a state can read a callee's body out of the store (see
+    // `ContextBodies`). Without this the scheduler takes each method out while
+    // its pass runs, so a callee being unflattened on another thread at that
+    // moment reads as missing, and whether a dispatcher resolved depended on
+    // thread timing.
+    fn reads_peer_ssa(&self) -> bool {
+        true
+    }
+
     fn should_run(&self, method: &MethodRef, _host: &CompilerContext) -> bool {
         // Skip methods already unflattened and also skip methods that were never
         // detected as having dispatchers.
@@ -362,25 +396,38 @@ impl SsaPass<CilTarget, CompilerContext> for CffReconstructionPass {
         let ctx = host;
         let method_token = method.0;
 
-        // Use pre-detected dispatcher block indices from detect_ssa phase, but
-        // refresh variable IDs from the current SSA. Earlier passes (opaque field
-        // predicates, etc.) trigger rebuild_ssa() which reindexes variables, making
-        // the original SsaVarId values stale.
-        let dispatchers: Vec<Dispatcher> = self
-            .pre_detected
-            .get(&method_token)
+        // Detection ran in its own phase; re-read each dispatcher out of the
+        // function as it stands now. See `Dispatcher::refresh` for why nothing
+        // recorded as an index survives the passes that run in between.
+        let detected = self.pre_detected.get(&method_token);
+        let dispatchers: Vec<Dispatcher> = detected
             .map(|pre| pre.iter().filter_map(|d| d.refresh(ssa)).collect())
             .unwrap_or_default();
 
+        // A dispatcher that no longer resolves is not an error - an earlier
+        // pass may legitimately have folded the dispatch away - but it is the
+        // difference between unflattening a method and silently leaving it
+        // flattened, and nothing else reports it. The counts are what say which
+        // of the two happened.
+        let detected_count = detected.map_or(0, Vec::len);
+        if detected_count != dispatchers.len() {
+            log::debug!(
+                "CFF {:08x}: {} of {detected_count} dispatcher(s) still resolve;                  the rest were folded away before this pass ran",
+                method_token.value(),
+                dispatchers.len(),
+            );
+        }
+
         let started = std::time::Instant::now();
-        match unflatten_with_dispatchers(ssa, dispatchers) {
+        let bodies = ContextBodies(ctx);
+        match unflatten_with_dispatchers(ssa, dispatchers, Some(&bodies)) {
             Some(mut patched) => {
                 // Rewiring can leave a value defined on a path the bypass no
                 // longer takes. The guards in `resolve` exist to prevent that,
                 // and `rebuild_ssa` is what proves it: it re-derives the phi
                 // graph and rejects a definition that no longer reaches its
                 // uses. Treat a rejection as "this method cannot be unflattened
-                // safely" and leave it flattened — an unrecovered method is a
+                // safely" and leave it flattened - an unrecovered method is a
                 // gap in the analysis, whereas propagating the error abandons
                 // every remaining method in the assembly as well.
                 if let Err(error) = patched.rebuild_ssa() {
@@ -510,6 +557,7 @@ mod tests {
             num_args,
             num_locals,
             &TestTypeProvider::new(num_args, num_locals),
+            Vec::new(),
         )
     }
 

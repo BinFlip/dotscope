@@ -26,7 +26,7 @@
 use crate::{
     compiler::EventLog,
     deobfuscation::techniques::{
-        Detection, Detections, Evidence, Technique, TechniqueCategory, WorkingAssembly,
+        Detection, Evidence, Technique, TechniqueCategory, WorkingAssembly,
     },
     file::repair::RepairAction,
     CilObject, Result,
@@ -105,8 +105,7 @@ impl Technique for BitMonoPeRepair {
     fn byte_transform(
         &self,
         _assembly: &mut WorkingAssembly,
-        _detection: &Detection,
-        _detections: &Detections,
+        _detection: &mut Detection,
     ) -> Option<Result<EventLog>> {
         // PE repairs are applied during loading — no transform needed.
         Some(Ok(EventLog::new()))

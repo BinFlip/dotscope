@@ -209,8 +209,7 @@ impl Technique for JiejieNetArrays {
     fn byte_transform(
         &self,
         assembly: &mut WorkingAssembly,
-        detection: &Detection,
-        _detections: &Detections,
+        detection: &mut Detection,
     ) -> Option<Result<EventLog>> {
         let events = EventLog::new();
         let Some(findings) = detection.findings::<ArrayFindings>() else {
@@ -604,16 +603,12 @@ fn emulate_delta_chain_cctor(assembly: &CilObject, cctor_token: Token) -> HashMa
         return values;
     };
 
-    // Build IL-relative offset → index map for branch following.
-    // Instruction.offset is a raw file offset; branch targets (Operand::Target)
-    // are absolute IL offsets within the method body. Convert by subtracting
-    // the first instruction's file offset to get IL-relative offsets.
+    // Branch targets are instruction RVAs, so following one is a lookup by RVA.
     let instructions: Vec<_> = method.instructions().collect();
-    let base_offset = instructions.first().map_or(0, |i| i.offset as u32);
-    let offset_map: HashMap<u32, usize> = instructions
+    let rva_map: HashMap<u64, usize> = instructions
         .iter()
         .enumerate()
-        .map(|(i, instr)| ((instr.offset as u32).wrapping_sub(base_offset), i))
+        .map(|(i, instr)| (instr.rva, i))
         .collect();
 
     let mut stack: Vec<i64> = Vec::new();
@@ -671,47 +666,12 @@ fn emulate_delta_chain_cctor(assembly: &CilObject, cctor_token: Token) -> HashMa
                 stack.pop();
             }
             "br" | "br.s" => {
-                // Branch operands may be Target(abs_offset) or Immediate(relative_offset).
-                // Compute the absolute IL target offset and look it up.
-                let target_il = match &instr.operand {
-                    Operand::Target(abs) => Some(*abs as u32),
-                    Operand::Immediate(Immediate::Int32(rel)) => {
-                        // Relative offset from end of instruction.
-                        // IL offset of this instr = file_offset - base_offset
-                        // End of instr = IL offset + instr size
-                        let il_off = (instr.offset as u32).wrapping_sub(base_offset);
-                        let instr_size = instructions.get(pc).map_or(0, |next| {
-                            (next.offset as u32).wrapping_sub(instr.offset as u32)
-                        });
-                        // For the last case (no next), use standard br sizes
-                        let size = if instr_size > 0 {
-                            instr_size
-                        } else if instr.mnemonic == "br" {
-                            5
-                        } else {
-                            2
-                        };
-                        Some(il_off.wrapping_add(size).wrapping_add(*rel as u32))
-                    }
-                    Operand::Immediate(Immediate::Int8(rel)) => {
-                        let il_off = (instr.offset as u32).wrapping_sub(base_offset);
-                        let instr_size = instructions.get(pc).map_or(2, |next| {
-                            (next.offset as u32).wrapping_sub(instr.offset as u32)
-                        });
-                        Some(
-                            il_off
-                                .wrapping_add(instr_size)
-                                .wrapping_add(*rel as i32 as u32),
-                        )
-                    }
-                    _ => None,
-                };
-                if let Some(target) = target_il {
-                    if let Some(&target_idx) = offset_map.get(&target) {
-                        pc = target_idx;
-                    } else {
-                        break;
-                    }
+                match instr
+                    .get_branch_target()
+                    .and_then(|target| rva_map.get(&target))
+                {
+                    Some(&target_idx) => pc = target_idx,
+                    None => break,
                 }
             }
             "ret" => break,

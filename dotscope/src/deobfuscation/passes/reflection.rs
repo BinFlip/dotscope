@@ -31,9 +31,9 @@
 //!
 //! All patterns trace backward through SSA def-use chains to find
 //! constant-resolvable targets. If any step in the chain fails to resolve,
-//! the site is silently skipped — no false positives are possible.
+//! the site is silently skipped - no false positives are possible.
 //!
-//! # Example (P1 — ResolveMethod + calli)
+//! # Example (P1 - ResolveMethod + calli)
 //!
 //! ```text
 //! // Before:
@@ -51,7 +51,7 @@
 //! v7 = call 0x06000042(args...)
 //! ```
 //!
-//! # Example (P2 — ResolveMethod + Invoke)
+//! # Example (P2 - ResolveMethod + Invoke)
 //!
 //! ```text
 //! // Before:
@@ -79,6 +79,7 @@
 
 use std::collections::HashSet;
 
+use analyssa::ir::MethodDispatch;
 use dashmap::DashSet;
 
 use crate::{
@@ -436,17 +437,12 @@ impl<'a> ChainTracer<'a> {
 
     /// Traces `var` back to `Call ResolveMethod(module, token_const)`.
     ///
-    /// Returns `(module_var, token_const_var)` — the two arguments to
-    /// `Module.ResolveMethod` — or `None` if the chain doesn't match.
+    /// Returns `(module_var, token_const_var)` - the two arguments to
+    /// `Module.ResolveMethod` - or `None` if the chain doesn't match.
     fn trace_resolve_method_call(&self, var: SsaVarId) -> Option<(SsaVarId, SsaVarId)> {
-        let SsaOp::Call {
-            method,
-            args: rm_args,
-            ..
-        } = self.ssa.get_definition(var)?
-        else {
-            return None;
-        };
+        // `Module.ResolveMethod` is an instance method: compilers emit `callvirt`.
+        let call = self.ssa.get_definition(var)?.as_method_call()?;
+        let (method, rm_args) = (call.method, call.args);
         if rm_args.len() >= 2 && is_method_named(self.assembly, method.token(), "ResolveMethod") {
             Some((*rm_args.first()?, *rm_args.get(1)?))
         } else {
@@ -467,14 +463,9 @@ impl<'a> ChainTracer<'a> {
     /// `None` if the chain does not match `Call ResolveField(module, Const(token))`.
     fn trace_resolve_field(&self, field_info_var: SsaVarId) -> Option<(u32, Vec<(usize, usize)>)> {
         let mut intermediates = Vec::new();
-        let SsaOp::Call {
-            method,
-            args: rf_args,
-            ..
-        } = self.ssa.get_definition(field_info_var)?
-        else {
-            return None;
-        };
+        // `Module.ResolveField` is an instance method: compilers emit `callvirt`.
+        let call = self.ssa.get_definition(field_info_var)?.as_method_call()?;
+        let (method, rf_args) = (call.method, call.args);
         if rf_args.len() < 2 || !is_method_named(self.assembly, method.token(), "ResolveField") {
             return None;
         }
@@ -491,18 +482,15 @@ impl<'a> ChainTracer<'a> {
     /// Each intermediate instruction location is appended to `intermediates`
     /// for post-rewrite NOP cleanup.
     fn trace_module_chain(&self, module_var: SsaVarId, intermediates: &mut Vec<(usize, usize)>) {
-        let Some(SsaOp::CallVirt { args, .. }) = self.ssa.get_definition(module_var) else {
-            return;
-        };
-        let Some(&type_handle_var) = args.first() else {
+        // Each step is the call it is named for: a removed call must be one
+        // whose only effect was the value the trampoline consumed.
+        let Some(&type_handle_var) = self.named_call_argument(module_var, "get_Module") else {
             return;
         };
         intermediates.extend(self.def_site(module_var));
 
-        let Some(SsaOp::Call { args, .. }) = self.ssa.get_definition(type_handle_var) else {
-            return;
-        };
-        let Some(&loadtoken_arg) = args.first() else {
+        let Some(&loadtoken_arg) = self.named_call_argument(type_handle_var, "GetTypeFromHandle")
+        else {
             return;
         };
         intermediates.extend(self.def_site(type_handle_var));
@@ -512,6 +500,17 @@ impl<'a> ChainTracer<'a> {
             Some(SsaOp::LoadToken { .. })
         ) {
             intermediates.extend(self.def_site(loadtoken_arg));
+        }
+    }
+
+    /// Returns the first argument of the call defining `var`, when that call
+    /// names the method `name`, either dispatch.
+    fn named_call_argument(&self, var: SsaVarId, name: &str) -> Option<&SsaVarId> {
+        let call = self.ssa.get_definition(var)?.as_method_call()?;
+        if is_method_named(self.assembly, call.method.token(), name) {
+            call.args.first()
+        } else {
+            None
         }
     }
 
@@ -1104,7 +1103,7 @@ fn unpack_object_array(ssa: &SsaFunction, array_var: SsaVarId) -> Option<Vec<Ssa
         }
     }
 
-    // All slots must be filled — partial arrays cannot be safely unpacked
+    // All slots must be filled - partial arrays cannot be safely unpacked
     elements.into_iter().collect()
 }
 
@@ -1166,6 +1165,7 @@ fn rewrite_resolve_method_calli(
                 dest: *dest,
                 method: target_method,
                 args: args.clone(),
+                effects: None,
             });
             instr.set_result_type(stored_type);
         }
@@ -1222,11 +1222,15 @@ fn rewrite_resolve_method_invoke(
     if let Some(blk) = ssa.block_mut(*block) {
         if let Some(instr) = blk.instruction_mut(*idx) {
             let stored_type = instr.result_type().cloned();
-            instr.set_op(SsaOp::Call {
-                dest: *dest,
-                method: target_method,
-                args: call_args,
-            });
+            // `Invoke` on an instance dispatches on the receiver as `callvirt`
+            // does - a virtual method runs its override, any other is
+            // null-checked - so only a static target is a plain call.
+            let dispatch = if is_null_obj {
+                MethodDispatch::Static
+            } else {
+                MethodDispatch::Virtual
+            };
+            instr.set_op(dispatch.op(*dest, target_method, call_args, None));
             instr.set_result_type(stored_type);
         }
     }
@@ -1288,11 +1292,15 @@ fn rewrite_get_method_invoke(
     if let Some(blk) = ssa.block_mut(*block) {
         if let Some(instr) = blk.instruction_mut(*idx) {
             let stored_type = instr.result_type().cloned();
-            instr.set_op(SsaOp::Call {
-                dest: *dest,
-                method: target_method,
-                args: call_args,
-            });
+            // `Invoke` on an instance dispatches on the receiver as `callvirt`
+            // does - a virtual method runs its override, any other is
+            // null-checked - so only a static target is a plain call.
+            let dispatch = if is_null_obj {
+                MethodDispatch::Static
+            } else {
+                MethodDispatch::Virtual
+            };
+            instr.set_op(dispatch.op(*dest, target_method, call_args, None));
             instr.set_result_type(stored_type);
         }
     }
@@ -1419,8 +1427,17 @@ fn rewrite_field_access(
     true
 }
 
-/// NOPs all intermediate trampoline instructions and marks their call targets
-/// as neutralized so dead method elimination can remove them.
+/// NOPs the intermediate trampoline instructions nothing else reads, and marks
+/// their call targets as neutralized so dead method elimination can remove
+/// them.
+///
+/// An intermediate is removed only once no instruction still uses its result:
+/// the module, type or method object a trampoline computes may be shared with
+/// code the rewrite did not touch (a value another site reuses, or a local the
+/// program reads again), and removing its definition would leave those uses
+/// reading nothing. Removing one can free the intermediates it read, so
+/// [`SsaFunction::remove_unread_instructions`] settles the set to a fixpoint;
+/// what stays is still correct code.
 ///
 /// # Arguments
 ///
@@ -1432,19 +1449,9 @@ fn nop_intermediates(
     intermediates: &[(usize, usize)],
     ctx: &CompilerContext,
 ) {
-    for &(blk, instr_idx) in intermediates {
-        if let Some(block) = ssa.block_mut(blk) {
-            if let Some(instr) = block.instruction(instr_idx) {
-                match instr.op() {
-                    SsaOp::Call { method, .. } | SsaOp::CallVirt { method, .. } => {
-                        ctx.neutralized_tokens.insert(method.token());
-                    }
-                    _ => {}
-                }
-            }
-            if let Some(instr) = block.instruction_mut(instr_idx) {
-                instr.set_op(SsaOp::Nop);
-            }
+    for (_, _, op) in ssa.remove_unread_instructions(intermediates.iter().copied()) {
+        if let Some(call) = op.as_method_call() {
+            ctx.neutralized_tokens.insert(call.method.token());
         }
     }
 }
@@ -1460,7 +1467,7 @@ fn nop_intermediates(
 /// # Returns
 ///
 /// The first matching MethodDef token, or `None` if no method with that name
-/// exists on the type. Does not disambiguate overloads — returns the first match.
+/// exists on the type. Does not disambiguate overloads - returns the first match.
 fn resolve_method_by_name(assembly: &CilObject, type_token: Token, name: &str) -> Option<Token> {
     let ty = assembly.types().get(&type_token)?;
     let result = ty.query_methods().name(name).find_first().map(|m| m.token);
@@ -1491,10 +1498,70 @@ fn find_parameterless_ctor(assembly: &CilObject, type_token: Token) -> Option<To
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use crate::{
-        analysis::{ConstValue, SsaFunctionBuilder, SsaOp, SsaType},
-        deobfuscation::passes::reflection::{unpack_object_array, unwrap_box},
+        analysis::{CallGraph, ConstValue, MethodRef, SsaFunctionBuilder, SsaOp, SsaType},
+        compiler::CompilerContext,
+        deobfuscation::passes::reflection::{nop_intermediates, unpack_object_array, unwrap_box},
+        metadata::token::Token,
     };
+
+    /// A trampoline's `GetTypeFromHandle` and `get_Module` are removed once the
+    /// rewritten site no longer reads them - the type first in the list, so
+    /// only the module's removal frees it - and kept while another
+    /// instruction still reads the module: removing them then left that
+    /// instruction reading a value nothing defines.
+    #[test]
+    fn test_nop_intermediates_keeps_values_still_read() {
+        let removed = |shared: bool| {
+            let mut ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        let token = b.const_i32(0x0200_0001);
+                        let ty = b.call(
+                            MethodRef::from(Token::new(0x0A00_0001)),
+                            &[token],
+                            SsaType::Object,
+                        );
+                        let module = b.callvirt(
+                            MethodRef::from(Token::new(0x0A00_0002)),
+                            &[ty],
+                            SsaType::Object,
+                        );
+                        if shared {
+                            b.call_void(MethodRef::from(Token::new(0x0A00_0003)), &[module]);
+                        }
+                        b.ret();
+                    });
+                })
+                .unwrap();
+            let site = |ssa: &crate::analysis::SsaFunction, token: u32| {
+                ssa.block(0)?
+                    .instructions()
+                    .iter()
+                    .position(|instr| {
+                        instr
+                            .op()
+                            .as_method_call()
+                            .is_some_and(|call| call.method.token() == Token::new(token))
+                    })
+                    .map(|idx| (0, idx))
+            };
+            let intermediates = [
+                site(&ssa, 0x0A00_0001).unwrap(),
+                site(&ssa, 0x0A00_0002).unwrap(),
+            ];
+            let ctx = CompilerContext::new(Arc::new(CallGraph::new()));
+            nop_intermediates(&mut ssa, &intermediates, &ctx);
+            [
+                site(&ssa, 0x0A00_0001).is_none(),
+                site(&ssa, 0x0A00_0002).is_none(),
+            ]
+        };
+        assert_eq!(removed(false), [true, true], "an unread chain is removed");
+        assert_eq!(removed(true), [false, false], "a module still read is kept");
+    }
 
     #[test]
     fn test_unpack_null_array() {

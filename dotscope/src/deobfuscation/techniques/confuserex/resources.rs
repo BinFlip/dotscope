@@ -40,8 +40,8 @@ use crate::{
     cilassembly::GeneratorConfig,
     compiler::{EventKind, EventLog},
     deobfuscation::techniques::{
-        confuserex::hooks::create_lzma_hook, Detection, Detections, Evidence, Technique,
-        TechniqueCategory, WorkingAssembly,
+        confuserex::hooks::create_lzma_hook, Detection, Evidence, Technique, TechniqueCategory,
+        WorkingAssembly,
     },
     emulation::{EmulationOutcome, ProcessBuilder},
     error::Error,
@@ -166,8 +166,7 @@ impl Technique for ConfuserExResources {
     fn byte_transform(
         &self,
         assembly: &mut WorkingAssembly,
-        detection: &Detection,
-        _detections: &Detections,
+        detection: &mut Detection,
     ) -> Option<Result<EventLog>> {
         let events = EventLog::new();
 
@@ -241,8 +240,18 @@ impl Technique for ConfuserExResources {
             .iter()
             .map(|r| r.name.as_str())
             .collect();
-        let rids_to_remove = find_manifest_resources_by_name(&cil_assembly, &names_to_insert);
-        for rid in rids_to_remove {
+        let replaced = find_manifest_resources_by_name(&cil_assembly, &names_to_insert);
+        // The rows being replaced are in the application's own order, which
+        // `GetManifestResourceNames` returns; the hidden assembly's order is
+        // ConfuserEx's. A resource no row named goes after them, as found.
+        let position = |name: &str| {
+            replaced
+                .iter()
+                .position(|(_, replaced_name)| replaced_name == name)
+                .unwrap_or(usize::MAX)
+        };
+        extracted_resources.sort_by_key(|resource| position(&resource.name));
+        for (rid, _) in replaced {
             if let Err(e) = cil_assembly.table_row_remove(TableId::ManifestResource, rid) {
                 log::warn!("Failed to remove existing ManifestResource row {rid}: {e}");
             }
@@ -372,11 +381,12 @@ fn try_emulate_resource_handler(
     Ok(resources)
 }
 
-/// Finds ManifestResource row IDs matching any of the given names.
+/// Finds the ManifestResource rows named by any of the given names, as
+/// `(row id, name)` in table order.
 fn find_manifest_resources_by_name(
     cil_assembly: &crate::cilassembly::CilAssembly,
     names: &std::collections::HashSet<&str>,
-) -> Vec<u32> {
+) -> Vec<(u32, String)> {
     let view = cil_assembly.view();
     let Some(strings) = view.strings() else {
         return Vec::new();
@@ -396,7 +406,7 @@ fn find_manifest_resources_by_name(
                 .get(row.name as usize)
                 .ok()
                 .filter(|name| names.contains(*name))
-                .map(|_| row.rid)
+                .map(|name| (row.rid, name.to_string()))
         })
         .collect()
 }

@@ -35,12 +35,14 @@ pub struct RenameContext {
     pub string_literals: Vec<String>,
 
     /// Known API calls this identifier participates in, with parameter position.
+    #[cfg(any(feature = "smart-rename", test))]
     pub api_calls: Vec<ApiCallInfo>,
 
     /// The .NET type (for fields/params) or return type (for methods).
     pub dotnet_type: Option<String>,
 
     /// Parameter types and any known names (for methods).
+    #[cfg(any(feature = "smart-rename", test))]
     pub parameters: Vec<ParamInfo>,
 
     /// Field accesses (load/store) within the method body.
@@ -69,6 +71,7 @@ pub struct RenameContext {
     /// Propagated from callers via the call graph — includes nearby string
     /// literals (e.g., format strings like `"Add(10, 5) = {0}"`) and what
     /// the return value is passed to.
+    #[cfg(any(feature = "smart-rename", test))]
     pub caller_context: Vec<CallerInfo>,
 
     /// Names already used in this scope that should not be reused.
@@ -117,6 +120,7 @@ pub struct OpcodeProfile {
 }
 
 /// Parameter info for method contexts.
+#[cfg(any(feature = "smart-rename", test))]
 #[derive(Debug, Clone)]
 pub struct ParamInfo {
     /// The .NET type name (e.g., "System.String", "System.Byte[]").
@@ -127,6 +131,7 @@ pub struct ParamInfo {
 }
 
 /// Context from a known API call where this identifier is used.
+#[cfg(any(feature = "smart-rename", test))]
 #[derive(Debug, Clone)]
 pub struct ApiCallInfo {
     /// Fully qualified method: "System.IO.File::ReadAllText".
@@ -140,6 +145,7 @@ pub struct ApiCallInfo {
 ///
 /// Provides naming signals from methods that call the target, including
 /// format strings and what the return value feeds into.
+#[cfg(any(feature = "smart-rename", test))]
 #[derive(Debug, Clone)]
 pub struct CallerInfo {
     /// The caller method's name (committed rename or original if non-obfuscated).

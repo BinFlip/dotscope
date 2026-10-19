@@ -225,7 +225,7 @@ impl NativeMethodConversionPass {
     ) -> Result<()> {
         // Step 1: Get the method's RVA and verify it's a native method
         let rid = token.row();
-        // Note: closure needed here — method reference with turbofish breaks downstream type inference
+        // Note: closure needed here - method reference with turbofish breaks downstream type inference
         #[allow(clippy::redundant_closure_for_method_calls)]
         let method_row = assembly
             .view()

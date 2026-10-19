@@ -62,7 +62,7 @@ pub struct PassConfig {
     ///
     /// Every rewrite is gated on a Memory SSA alias proof, so this reaches the
     /// field and array traffic that obfuscators use to keep values out of SSA
-    /// registers — ConfuserEx state fields, array-backed string tables — which
+    /// registers - ConfuserEx state fields, array-backed string tables - which
     /// the register-level passes cannot see through.
     pub memory_optimization: bool,
     /// Enable strength reduction pass (mul->shl, div->shr, rem->and for powers of 2).
@@ -85,8 +85,10 @@ pub struct PassConfig {
     pub block_merge_max_iterations: usize,
     /// Maximum iterations for control flow simplification fixpoint (default: 20).
     pub control_flow_max_iterations: usize,
-    /// Maximum worklist iterations for value range dataflow solver (default: 10000).
+    /// Rounds the value-range fixpoint is given before it gives up.
     pub value_range_max_iterations: usize,
+    /// Rounds a recursive group of methods gets to settle its summaries.
+    pub interproc_max_iterations: usize,
 }
 
 impl Default for PassConfig {
@@ -108,7 +110,8 @@ impl Default for PassConfig {
             const_prop_max_iterations: 10,
             block_merge_max_iterations: 50,
             control_flow_max_iterations: 20,
-            value_range_max_iterations: 10_000,
+            value_range_max_iterations: analyssa::passes::ranges::DEFAULT_MAX_ITERATIONS,
+            interproc_max_iterations: 8,
         }
     }
 }
@@ -145,7 +148,7 @@ impl EmulationConfig {
     /// its own budget: [`timeout`](Self::timeout).
     ///
     /// Forking shares the emulator's configuration `Arc` by default, so without applying
-    /// these explicitly a per-method execution silently inherits the warmup budget — which is
+    /// these explicitly a per-method execution silently inherits the warmup budget - which is
     /// what left `timeout` written and never read, and let a single method run under a wall
     /// clock up to 120x larger than documented.
     ///
@@ -153,8 +156,8 @@ impl EmulationConfig {
     /// `base`, which must be the limits of the template being forked
     /// ([`EmulationProcess::limits`]). Defaulting the remainder instead would silently
     /// *raise* the call-depth ceiling and *lower* the heap ceiling relative to the template
-    /// the fork inherits its warmed heap from — 1000 and 256 MiB against the 100 and 512 MiB
-    /// the template pool builds with — so a sample whose warmup allocates past 256 MiB would
+    /// the fork inherits its warmed heap from - 1000 and 256 MiB against the 100 and 512 MiB
+    /// the template pool builds with - so a sample whose warmup allocates past 256 MiB would
     /// fail every per-method decryption on a limit it was never intended to be held to.
     ///
     /// [`EmulationProcess::limits`]: crate::emulation::EmulationProcess::limits

@@ -13,13 +13,13 @@
 
 use std::collections::{HashMap, HashSet};
 
+#[cfg(any(feature = "smart-rename", test))]
+use crate::deobfuscation::renamer::context::{ApiCallInfo, CallerInfo, ParamInfo};
 use crate::{
     analysis::{CallGraph, SsaFunction},
     deobfuscation::{
         renamer::{
-            context::{
-                ApiCallInfo, CallerInfo, IdentifierKind, ParamInfo, PhaseInfo, RenameContext,
-            },
+            context::{IdentifierKind, PhaseInfo, RenameContext},
             features, phases, prompt, validate, RenameEntry, RenameProvider, SmartRenameConfig,
         },
         utils::{is_obfuscated_name, is_special_name},
@@ -65,8 +65,10 @@ pub struct CascadeRenamer<'a> {
     /// Phase narratives keyed by method token.
     phase_narratives: HashMap<Token, Vec<PhaseInfo>>,
     /// API call anchors keyed by method token.
+    #[cfg(any(feature = "smart-rename", test))]
     anchors: HashMap<Token, Vec<ApiCallInfo>>,
     /// Caller-side context for each method, keyed by callee token.
+    #[cfg(any(feature = "smart-rename", test))]
     caller_contexts: HashMap<Token, Vec<CallerInfo>>,
     /// Names already used within each scope, for duplicate prevention.
     /// Key is a scope discriminator (e.g. declaring type token for methods/fields,
@@ -100,7 +102,9 @@ impl<'a> CascadeRenamer<'a> {
             ssa_cache: HashMap::new(),
             call_graph: None,
             phase_narratives: HashMap::new(),
+            #[cfg(any(feature = "smart-rename", test))]
             anchors: HashMap::new(),
+            #[cfg(any(feature = "smart-rename", test))]
             caller_contexts: HashMap::new(),
             used_names: HashMap::new(),
         }
@@ -127,10 +131,13 @@ impl<'a> CascadeRenamer<'a> {
         // Phase 0: Build infrastructure (SSA cache + call graph)
         self.build_infrastructure();
 
-        // Phase 1: Extract anchors from external API calls
+        // Phase 1: Extract anchors from external API calls. Anchors and caller
+        // context feed only the model's prompt.
+        #[cfg(any(feature = "smart-rename", test))]
         self.extract_anchors();
 
         // Phase 1.5: Collect caller-side context for callee methods
+        #[cfg(any(feature = "smart-rename", test))]
         self.collect_caller_contexts();
 
         // Phase 2: Decompose methods and label phases
@@ -179,6 +186,7 @@ impl<'a> CascadeRenamer<'a> {
     /// For each method with SSA, identifies calls to external APIs and maps
     /// argument positions. These anchors provide deterministic naming signals
     /// that don't require LLM inference.
+    #[cfg(any(feature = "smart-rename", test))]
     fn extract_anchors(&mut self) {
         for (token, ssa) in &self.ssa_cache {
             let anchors = features::extract_anchors(ssa, self.assembly);
@@ -200,6 +208,7 @@ impl<'a> CascadeRenamer<'a> {
     /// feeds into. This propagates naming signals from callers to callees —
     /// critical for context-starved methods (pure arithmetic, getters) that have
     /// no external calls or strings of their own.
+    #[cfg(any(feature = "smart-rename", test))]
     fn collect_caller_contexts(&mut self) {
         let Some(ref call_graph) = self.call_graph else {
             return;
@@ -625,15 +634,18 @@ impl<'a> CascadeRenamer<'a> {
             context.dotnet_type = Some(method.signature.return_type.to_string());
 
             // Parameters
-            context.parameters = method
-                .signature
-                .params
-                .iter()
-                .map(|p| ParamInfo {
-                    dotnet_type: p.to_string(),
-                    known_name: None,
-                })
-                .collect();
+            #[cfg(any(feature = "smart-rename", test))]
+            {
+                context.parameters = method
+                    .signature
+                    .params
+                    .iter()
+                    .map(|p| ParamInfo {
+                        dotnet_type: p.to_string(),
+                        known_name: None,
+                    })
+                    .collect();
+            }
 
             // Interfaces from declaring type
             if let Some(declaring_type) = method.declaring_type_rc() {
@@ -662,6 +674,7 @@ impl<'a> CascadeRenamer<'a> {
             context.call_targets = features::collect_call_targets(ssa, self.assembly);
             context.string_literals = features::collect_string_literals(ssa, self.assembly);
             context.field_accesses = features::collect_field_accesses(ssa, self.assembly);
+            #[cfg(any(feature = "smart-rename", test))]
             if let Some(method_anchors) = self.anchors.get(&method_token) {
                 context.api_calls = method_anchors.clone();
             }
@@ -678,12 +691,18 @@ impl<'a> CascadeRenamer<'a> {
         }
 
         // Caller-side context (propagated from methods that call this one)
+        #[cfg(any(feature = "smart-rename", test))]
         if let Some(caller_ctx) = self.caller_contexts.get(&method_token) {
             context.caller_context = caller_ctx.clone();
+            log::debug!(
+                "Method context 0x{:08X}: callers={}",
+                method_token.value(),
+                context.caller_context.len(),
+            );
         }
 
         log::debug!(
-            "Method context 0x{:08X}: ssa={}, calls={}, strings={}, fields={}, skeleton={}, phases={}, callers={}",
+            "Method context 0x{:08X}: ssa={}, calls={}, strings={}, fields={}, skeleton={}, phases={}",
             method_token.value(),
             has_ssa,
             context.call_targets.len(),
@@ -691,7 +710,6 @@ impl<'a> CascadeRenamer<'a> {
             context.field_accesses.len(),
             context.call_site_skeleton.is_some(),
             context.phase_narrative.len(),
-            context.caller_context.len(),
         );
 
         context
@@ -743,6 +761,7 @@ impl<'a> CascadeRenamer<'a> {
         }
 
         // Collect API call anchors: find methods that use this field
+        #[cfg(any(feature = "smart-rename", test))]
         self.collect_field_api_anchors(field_token, &mut context.api_calls);
 
         context
@@ -840,6 +859,7 @@ impl<'a> CascadeRenamer<'a> {
         }
 
         // API call anchors from the owning method
+        #[cfg(any(feature = "smart-rename", test))]
         if let Some(method_anchors) = self.anchors.get(&method_token) {
             context.api_calls = method_anchors.clone();
         }
@@ -862,6 +882,7 @@ impl<'a> CascadeRenamer<'a> {
     ///
     /// * `field_token` - The token of the field to find anchors for.
     /// * `anchors` - Output vector to append found anchors to.
+    #[cfg(any(feature = "smart-rename", test))]
     fn collect_field_api_anchors(&self, field_token: Token, anchors: &mut Vec<ApiCallInfo>) {
         // Resolve the field's qualified name once
         let field_name = self

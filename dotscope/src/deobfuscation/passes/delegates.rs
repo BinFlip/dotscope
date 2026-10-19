@@ -44,7 +44,10 @@ use crate::{
     analysis::{CilTarget, MethodRef, MethodRef as SsaMethodRef, SsaFunction, SsaOp, SsaVarId},
     assembly::{FlowType, Instruction, Operand},
     compiler::{CompilerContext, EventKind, ModificationScope, SsaPass},
-    deobfuscation::{utils::build_def_map, EmulationTemplatePool, ProcessCell},
+    deobfuscation::{
+        utils::{build_def_map, remove_unread_static_loads},
+        EmulationTemplatePool, ProcessCell,
+    },
     emulation::{tokens, DelegateEntry, EmValue, EmulationProcess, HeapObject},
     metadata::token::Token,
     CilObject, Result,
@@ -121,13 +124,13 @@ impl std::fmt::Display for NotInlinable {
 /// Only an **open, single-target** delegate qualifies, and neither restriction is incidental:
 ///
 /// - A multicast delegate invokes *every* entry. Rewriting the call site to one of them
-///   deletes the others from the output — precisely the primitive an obfuscator wants, since
+///   deletes the others from the output - precisely the primitive an obfuscator wants, since
 ///   the surviving entry can be the benign one. (The emulator's own dispatcher starts at
 ///   `first()`, so picking `last()` did not even agree with the entry that actually runs
 ///   first.)
 /// - A closed delegate carries its receiver in `entry.target`. The rewrite drops the delegate
 ///   operand and emits the remaining arguments, so inlining one yields a call with one fewer
-///   operand than the callee's signature requires — invalid IL, not merely wrong output.
+///   operand than the callee's signature requires - invalid IL, not merely wrong output.
 ///
 /// Supporting the closed case later means materialising the receiver and prepending it to the
 /// argument list, not dropping it.
@@ -214,7 +217,7 @@ impl DelegateProxyResolutionPass {
         let process = self.template_pool.fork_for_targeted_warmup(&cctors);
         if process.is_none() {
             log::warn!(
-                "DelegateProxyResolution: failed to create emulation process — pass will be a no-op"
+                "DelegateProxyResolution: failed to create emulation process - pass will be a no-op"
             );
         }
         process
@@ -244,7 +247,7 @@ impl DelegateProxyResolutionPass {
             let field_token = info.singleton_field_token;
 
             // Try direct static field lookup, then MemberRef→FieldDef fallback.
-            // Errors from get_static are lock poisoning — skip this field on failure.
+            // Errors from get_static are lock poisoning - skip this field on failure.
             let Ok(static_val_direct) = process.get_static(field_token) else {
                 continue;
             };
@@ -292,7 +295,7 @@ impl DelegateProxyResolutionPass {
                             // Follow chains (synthetic → synthetic → real) with cycle detection
                             loop {
                                 if !visited.insert(current) {
-                                    // Cycle detected — stop traversal
+                                    // Cycle detected - stop traversal
                                     break;
                                 }
                                 if let Some(body) = synthetic_methods.get(&current) {
@@ -358,7 +361,7 @@ impl DelegateProxyResolutionPass {
 /// call site.
 ///
 /// For phi nodes, all operands must resolve to `LoadStaticField` of the **same**
-/// field token — if different fields merge at a phi, the delegate target is
+/// field token - if different fields merge at a phi, the delegate target is
 /// ambiguous and resolution returns `None`.
 ///
 /// # Arguments
@@ -447,7 +450,7 @@ fn resolve_synthetic_target(instructions: &[Instruction]) -> Option<(Token, bool
         match instr.mnemonic {
             "call" | "callvirt" => {
                 if call_token.is_some() {
-                    // Multiple calls — not a simple wrapper
+                    // Multiple calls - not a simple wrapper
                     return None;
                 }
                 if let Operand::Token(token) = &instr.operand {
@@ -523,19 +526,19 @@ impl SsaPass<CilTarget, CompilerContext> for DelegateProxyResolutionPass {
         // Find delegate proxy calls and collect replacements.
         // Each replacement: (block_idx, instr_idx, new_op)
         let mut replacements: Vec<(usize, usize, SsaOp)> = Vec::new();
-        // Track LoadStaticField instructions to NOP: (block_idx, instr_idx).
-        // These loaded the delegate singleton that is no longer needed after
-        // the Call is rewritten. Without this, the dead LoadStaticField produces
-        // a dead local variable typed to the delegate class, which prevents the
+        // Delegate vars the rewritten calls no longer read. The
+        // LoadStaticField that loaded such a singleton goes once nothing else
+        // reads it. Without that, the dead LoadStaticField produces a dead
+        // local variable typed to the delegate class, which prevents the
         // cleanup pipeline from removing the now-empty delegate type.
-        let mut dead_loads: Vec<(usize, usize)> = Vec::new();
-        // Track which delegate vars we plan to remove, so we only NOP a
-        // LoadStaticField if ALL its consumers are being replaced.
         let mut removed_delegate_vars: HashSet<SsaVarId> = HashSet::new();
 
         for (block_idx, block) in ssa.blocks().iter().enumerate() {
             for (instr_idx, instr) in block.instructions().iter().enumerate() {
-                let SsaOp::Call { method, args, dest } = instr.op() else {
+                let SsaOp::Call {
+                    method, args, dest, ..
+                } = instr.op()
+                else {
                     continue;
                 };
 
@@ -583,43 +586,19 @@ impl SsaPass<CilTarget, CompilerContext> for DelegateProxyResolutionPass {
                         dest: *dest,
                         method: target_method,
                         args: new_args,
+                        effects: None,
                     }
                 } else {
                     SsaOp::Call {
                         dest: *dest,
                         method: target_method,
                         args: new_args,
+                        effects: None,
                     }
                 };
 
                 replacements.push((block_idx, instr_idx, new_op));
                 removed_delegate_vars.insert(delegate_var);
-            }
-        }
-
-        // Find LoadStaticField instructions whose dest is only used by the
-        // delegate proxy calls we're replacing. These can be safely NOP'd.
-        for (block_idx, block) in ssa.blocks().iter().enumerate() {
-            for (instr_idx, instr) in block.instructions().iter().enumerate() {
-                let SsaOp::LoadStaticField { dest, .. } = instr.op() else {
-                    continue;
-                };
-                if !removed_delegate_vars.contains(dest) {
-                    continue;
-                }
-                // Check that this variable has no other uses beyond the delegate
-                // proxy calls we're replacing. If the variable is used elsewhere,
-                // we must keep the LoadStaticField.
-                if let Some(variable) = ssa.variable(*dest) {
-                    let all_uses_removed = variable.uses().iter().all(|use_site| {
-                        replacements
-                            .iter()
-                            .any(|(b, i, _)| *b == use_site.block && *i == use_site.instruction)
-                    });
-                    if all_uses_removed {
-                        dead_loads.push((block_idx, instr_idx));
-                    }
-                }
             }
         }
 
@@ -648,14 +627,8 @@ impl SsaPass<CilTarget, CompilerContext> for DelegateProxyResolutionPass {
             }
         }
 
-        // NOP out dead LoadStaticField instructions that loaded delegate singletons
-        for (block_idx, instr_idx) in &dead_loads {
-            if let Some(block) = ssa.block_mut(*block_idx) {
-                if let Some(instr) = block.instructions_mut().get_mut(*instr_idx) {
-                    instr.set_op(SsaOp::Nop);
-                }
-            }
-        }
+        // NOP out the delegate singleton loads nothing reads any more
+        remove_unread_static_loads(ssa, &removed_delegate_vars);
 
         let changed = !replacements.is_empty();
         // Mark as processed to prevent redundant re-processing in subsequent
@@ -702,7 +675,7 @@ mod tests {
     }
 
     /// Invoking a multicast delegate invokes every entry, so rewriting the site to one of
-    /// them deletes the others from the output — an anti-analysis primitive, since the
+    /// them deletes the others from the output - an anti-analysis primitive, since the
     /// surviving entry can be the benign one.
     #[test]
     fn a_multicast_delegate_is_left_intact() {
@@ -716,7 +689,7 @@ mod tests {
 
     /// A closed delegate carries its receiver in `target`. The rewrite drops the delegate
     /// operand, so inlining one emits a call with one fewer operand than the callee's
-    /// signature requires — invalid IL.
+    /// signature requires - invalid IL.
     #[test]
     fn a_closed_delegate_is_left_intact() {
         let list = vec![closed_entry(0x0600_0001)];

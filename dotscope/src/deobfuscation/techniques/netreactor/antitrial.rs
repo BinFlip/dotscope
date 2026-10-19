@@ -93,7 +93,7 @@ impl Technique for NetReactorAntiTrial {
         );
 
         for token in &trial_check_tokens {
-            detection.cleanup_mut().add_method(*token);
+            detection.cleanup_mut().add_protection_method(*token);
         }
 
         detection

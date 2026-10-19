@@ -1,4 +1,4 @@
-//! .NET Reactor resource encryption (Stage 7) removal.
+//! .NET Reactor resource encryption removal.
 //!
 //! NR's resource-encryption stage merges every manifest resource into one
 //! AES-encrypted blob, deletes the originals, and injects a runtime resolver
@@ -19,10 +19,6 @@
 //!    output assembly, restoring the original layout.
 //! 4. Marks the resolver type, lazy-init injection sites, and the encrypted
 //!    blob for cleanup.
-//!
-//! See `docs/research/netreactor/resources.md` and
-//! `docs/research/netreactor/encrypted-resource.md` for the full structural
-//! and cryptographic analysis.
 //!
 //! # Pipeline
 //!
@@ -96,16 +92,19 @@ use crate::{
         context::AnalysisContext,
         passes::netreactor::ResourceShimRewritePass,
         techniques::{
-            netreactor::{helpers::find_resources_referenced_by_methods, hooks},
-            Detection, Detections, Evidence, Technique, TechniqueCategory, WorkingAssembly,
+            netreactor::{
+                helpers::{self, find_resources_referenced_by_methods},
+                hooks,
+            },
+            Detection, Evidence, Technique, TechniqueCategory, WorkingAssembly,
         },
     },
-    emulation::{CapturedAssembly, EmulationOutcome, ProcessBuilder},
+    emulation::{tokens, CapturedAssembly, EmValue, EmulationOutcome, ProcessBuilder},
     error::Error,
     metadata::{
         method::MethodRc,
         signatures::TypeSignature,
-        tables::{ManifestResourceBuilder, TableId, TypeRefRaw},
+        tables::ManifestResourceBuilder,
         token::Token,
         typesystem::{wellknown, CilTypeRc, CilTypeReference},
         validation::ValidationConfig,
@@ -134,7 +133,10 @@ pub struct ResourceFindings {
     /// Token of the CFF-flattened decryption engine (`OpMPoypqBX`-shape).
     pub decrypter_method_token: Token,
     /// `ManifestResource` tokens referenced by name from resolver-owned
-    /// methods. These are the encrypted blobs the runtime decrypts.
+    /// methods. These are the encrypted blobs the runtime decrypts. Empty when
+    /// the names are themselves encrypted, as .NET Reactor's string encryption
+    /// makes them; the transform then learns the blobs from what the
+    /// resolver's methods open while its decrypter runs.
     pub encrypted_resource_tokens: Vec<Token>,
     /// Methods whose first IL instruction is `call lazy_init`. Used by the
     /// IL rewrite pass to NOP the injected init call. Includes Main + any
@@ -187,24 +189,30 @@ impl Technique for NetReactorResources {
 
         let runtime_method_tokens: Vec<Token> =
             candidate.resolver_type.methods().map(|m| m.token).collect();
+        // The blob the runtime decrypts, when its name is in the clear. With
+        // string encryption on it is not, and the transform finds the blob by
+        // watching the decrypter open it instead.
         let encrypted_resource_tokens =
             find_resources_referenced_by_methods(assembly, &runtime_method_tokens);
-
-        if encrypted_resource_tokens.is_empty() {
-            return Detection::new_empty();
-        }
 
         let lazy_init_call_sites = find_lazy_init_call_sites(assembly, candidate.lazy_init_token);
         let purely_injected_cctors =
             classify_purely_injected_cctors(assembly, candidate.lazy_init_token);
-        let assembly_load_shim_tokens =
-            find_assembly_load_shim_methods(assembly, &candidate.resolver_type);
+        // Anti-tamper replaces each `ldtoken` with a raw token passed to its
+        // metadata-token resolver; the shims then name the type that way.
+        let type_handle_accessors = helpers::find_nr_token_resolver(assembly)
+            .map(|resolver| resolver.type_handle_accessors)
+            .unwrap_or_default();
+        let assembly_load_shim_tokens = find_assembly_load_shim_methods(
+            assembly,
+            &candidate.resolver_type,
+            &type_handle_accessors,
+        );
         let get_manifest_resource_names_shim_tokens =
             find_get_manifest_resource_names_shims(assembly, &candidate.resolver_type);
         let bcl_get_manifest_resource_names = find_bcl_member_ref(
             assembly,
-            "System.Reflection",
-            "Assembly",
+            "System.Reflection.Assembly",
             "GetManifestResourceNames",
         )
         .unwrap_or_else(|| Token::new(0));
@@ -314,8 +322,7 @@ impl Technique for NetReactorResources {
     fn byte_transform(
         &self,
         assembly: &mut WorkingAssembly,
-        detection: &Detection,
-        _detections: &Detections,
+        detection: &mut Detection,
     ) -> Option<Result<EventLog>> {
         let events = EventLog::new();
         let Some(findings) = detection.findings::<ResourceFindings>() else {
@@ -366,7 +373,13 @@ impl Technique for NetReactorResources {
             .with_timeout_ms(120_000)
             // Capture is opt-in on `ProcessBuilder`; enable it explicitly
             // so the shim hook's `capture_assembly` calls actually persist.
-            .capture_assemblies();
+            .capture_assemblies()
+            // With anti-tamper on, the runtime the decrypter belongs to checks
+            // the image's RSA signature first, and the image it runs in here
+            // has already been rewritten by the transforms before this one:
+            // the check fails with "<name> is tampered." and nothing is
+            // decrypted. The same bypass NecroBit's emulation uses.
+            .hook(hooks::create_antitamper_bypass_hook());
         if !shim_set.is_empty() {
             builder = builder.hook(hooks::create_resources_load_shim_hook(
                 shim_set,
@@ -395,9 +408,36 @@ impl Technique for NetReactorResources {
                 exception,
                 ..
             } => {
+                // Name the exception's type; a heap reference alone says
+                // nothing about why the decrypter stopped.
+                let thrown = match exception {
+                    EmValue::ObjectRef(href) => {
+                        let heap = process.address_space().managed_heap();
+                        let type_name = heap
+                            .get_type_token(*href)
+                            .ok()
+                            .and_then(|token| cilobject_arc.types().get(&token))
+                            .map_or_else(
+                                || format!("{exception:?}"),
+                                |ty| ty.fullname().to_string(),
+                            );
+                        let message = heap
+                            .get_field(*href, tokens::exception_fields::MESSAGE)
+                            .ok()
+                            .and_then(|value| match value {
+                                EmValue::ObjectRef(text) => heap.get_string(text).ok(),
+                                _ => None,
+                            });
+                        match message {
+                            Some(message) => format!("{type_name} (\"{message}\")"),
+                            None => type_name,
+                        }
+                    }
+                    other => format!("{other:?}"),
+                };
                 log::info!(
-                    "NR resources: decrypter raised after {instructions} instructions: \
-                     {exception:?} — extracting any captured assemblies"
+                    "NR resources: decrypter raised {thrown} after {instructions} instructions; \
+                     extracting any captured assemblies"
                 );
                 *instructions
             }
@@ -424,6 +464,24 @@ impl Technique for NetReactorResources {
         // unwrapping so we don't have to keep `process` alive past the
         // `Arc::try_unwrap`.
         let captured = process.capture().assemblies();
+        // The blobs are what the resolver's own methods opened. The decrypter
+        // runs other protections' code on the way (the string decryptor opens
+        // its own resource), and those resources are not this technique's.
+        let resolver_methods: HashSet<Token> = cilobject_arc
+            .types()
+            .get(&findings.resolver_type_token)
+            .map(|resolver| collect_type_methods(&resolver))
+            .unwrap_or_default();
+        let consumed: Vec<Token> = process
+            .capture()
+            .resource_reads()
+            .into_iter()
+            .filter(|read| {
+                read.reader
+                    .is_some_and(|reader| resolver_methods.contains(&reader))
+            })
+            .map(|read| read.resource)
+            .collect();
         drop(process);
 
         if captured.is_empty() {
@@ -521,12 +579,37 @@ impl Technique for NetReactorResources {
         };
         assembly.replace_assembly(new_assembly);
 
+        // The blobs the resolver decrypted now have their contents restored
+        // beside them; they go with the resolver. The restored resources were
+        // appended, so the blobs keep their tokens.
+        for &token in &consumed {
+            detection.cleanup_mut().add_manifest_resource(token);
+        }
+
         Some(Ok(events))
     }
 
     fn requires_regeneration(&self) -> bool {
         true
     }
+}
+
+/// Every method of `cil_type` and of the types nested in it.
+fn collect_type_methods(cil_type: &CilTypeRc) -> HashSet<Token> {
+    let mut methods = HashSet::new();
+    let mut stack = vec![cil_type.clone()];
+    let mut visited: HashSet<Token> = std::iter::once(cil_type.token).collect();
+    while let Some(ty) = stack.pop() {
+        methods.extend(ty.methods().map(|method| method.token));
+        for (_, nested_ref) in ty.nested_types.iter() {
+            if let Some(nested) = nested_ref.upgrade() {
+                if visited.insert(nested.token) {
+                    stack.push(nested);
+                }
+            }
+        }
+    }
+    methods
 }
 
 /// Pulls embedded `ManifestResource` rows out of every captured assembly
@@ -907,14 +990,19 @@ fn find_get_manifest_resource_names_shims(
             if !returns_string_array {
                 continue;
             }
-            // Single Assembly-shape arg (Class — TypeRef token resolved at parse time).
+            // Single Assembly-shape arg (Class, TypeRef token resolved at
+            // parse time), or `object` where .NET Reactor's call hiding has
+            // erased the parameter's type.
             if method.signature.params.len() != 1 {
                 continue;
             }
             let Some(first_param) = method.signature.params.first() else {
                 continue;
             };
-            if !matches!(first_param.base, TypeSignature::Class(_)) {
+            if !matches!(
+                first_param.base,
+                TypeSignature::Class(_) | TypeSignature::Object
+            ) {
                 continue;
             }
             if !method.has_body() {
@@ -953,8 +1041,8 @@ fn find_get_manifest_resource_names_shims(
     out
 }
 
-/// Scans the assembly's `MemberRef` table for a method matching
-/// `[<assembly>]<namespace>.<type>::<method>` and returns its token.
+/// Finds the `MemberRef` for method `method_name` of the core library type
+/// `type_fullname` and returns its token.
 ///
 /// Used by detection to resolve the BCL `MemberRef` for
 /// `Assembly::GetManifestResourceNames` so the SSA rewrite pass can
@@ -963,30 +1051,25 @@ fn find_get_manifest_resource_names_shims(
 /// inside the resolver type body, so the lookup succeeds in practice.
 fn find_bcl_member_ref(
     assembly: &CilObject,
-    namespace: &str,
-    type_name: &str,
+    type_fullname: &str,
     method_name: &str,
 ) -> Option<Token> {
-    for entry in assembly.refs_members().iter() {
-        let mref = entry.value();
-        if mref.name != method_name {
-            continue;
-        }
-        let parent = match &mref.declaredby {
-            CilTypeReference::TypeRef(r) | CilTypeReference::TypeDef(r) => r.upgrade()?,
-            _ => continue,
-        };
-        if parent.name == type_name && parent.namespace == namespace {
-            return Some(mref.token);
-        }
-    }
-    None
+    let parent = assembly.types().get_corelib_typeref(type_fullname)?.token;
+    assembly
+        .refs_members()
+        .iter()
+        .map(|entry| entry.value().clone())
+        .find(|mref| {
+            mref.name == method_name
+                && matches!(&mref.declaredby, CilTypeReference::TypeRef(r) if r.token() == Some(parent))
+        })
+        .map(|mref| mref.token)
 }
 
-/// Looks up the TypeRef token for `[mscorlib]System.Reflection.Assembly` in
-/// the given assembly. NR shifts the TypeRef ordering when it injects new
-/// rows, so the BCL hook's hardcoded token can collide with unrelated
-/// rows; this helper resolves the live token.
+/// Looks up the TypeRef token for the core library's
+/// `System.Reflection.Assembly` in the given assembly. NR shifts the TypeRef
+/// ordering when it injects new rows, so the BCL hook's hardcoded token can
+/// collide with unrelated rows; this helper resolves the live token.
 ///
 /// Returns `None` only when the assembly does not import
 /// `System.Reflection.Assembly` at all, which would mean the resource
@@ -994,28 +1077,10 @@ fn find_bcl_member_ref(
 /// [`hooks::create_resources_load_shim_hook`](super::hooks::create_resources_load_shim_hook)
 /// to anchor the fake Assembly object's type to the current sample.
 pub fn find_assembly_typeref(assembly: &CilObject) -> Option<Token> {
-    let tables = assembly.tables()?;
-    let table = tables.table::<TypeRefRaw>()?;
-    let strings = assembly.strings()?;
-    for row in table {
-        let row = match row {
-            Ok(row) => row,
-            Err(e) => {
-                log::warn!("skipping unreadable metadata row: {e}");
-                continue;
-            }
-        };
-        let Ok(name) = strings.get(row.type_name as usize) else {
-            continue;
-        };
-        let Ok(ns) = strings.get(row.type_namespace as usize) else {
-            continue;
-        };
-        if name == "Assembly" && ns == "System.Reflection" {
-            return Some(Token::new((TableId::TypeRef as u32) << 24 | row.rid));
-        }
-    }
-    None
+    assembly
+        .types()
+        .get_corelib_typeref("System.Reflection.Assembly")
+        .map(|ty| ty.token)
 }
 
 /// Finds methods on `cil_type` (and its nested types, recursively) whose
@@ -1029,7 +1094,11 @@ pub fn find_assembly_typeref(assembly: &CilObject) -> Option<Token> {
 /// Matched methods are hooked during emulation so the byte-array argument
 /// gets captured even though the in-emulator `Type.GetMethod` BCL stub
 /// can't currently resolve `Assembly::Load` against a real BCL Type.
-fn find_assembly_load_shim_methods(assembly: &CilObject, cil_type: &CilTypeRc) -> Vec<Token> {
+fn find_assembly_load_shim_methods(
+    assembly: &CilObject,
+    cil_type: &CilTypeRc,
+    type_handle_accessors: &[Token],
+) -> Vec<Token> {
     let mut out = Vec::new();
     let mut stack = vec![cil_type.clone()];
     let mut visited: HashSet<Token> = std::iter::once(cil_type.token).collect();
@@ -1053,17 +1122,20 @@ fn find_assembly_load_shim_methods(assembly: &CilObject, cil_type: &CilTypeRc) -
             let Some(param) = method.signature.params.first() else {
                 continue;
             };
-            let is_byte_array = match &param.base {
+            // The assembly bytes, or an `object` where .NET Reactor's call
+            // hiding has erased the parameter's type.
+            let takes_bytes = match &param.base {
                 TypeSignature::SzArray(inner) => matches!(*inner.base, TypeSignature::U1),
+                TypeSignature::Object => true,
                 _ => false,
             };
-            if !is_byte_array {
+            if !takes_bytes {
                 continue;
             }
             if !method.has_body() {
                 continue;
             }
-            if !is_assembly_load_reflection_shim(&method, assembly) {
+            if !is_assembly_load_reflection_shim(&method, assembly, type_handle_accessors) {
                 continue;
             }
             out.push(method.token);
@@ -1085,19 +1157,34 @@ fn find_assembly_load_shim_methods(assembly: &CilObject, cil_type: &CilTypeRc) -
 }
 
 /// Returns true when `method` looks like an `Assembly.Load(byte[])`
-/// reflective wrapper: the body contains an `ldtoken` AND eventually calls a
+/// reflective wrapper: the body loads a type token AND eventually calls a
 /// method named `Invoke` (resolved through the assembly's MemberRef table
 /// rather than text-matching the operand). Pairing the two signals on a
 /// method that already passed the `(uint8[]) -> object` signature gate is
-/// strong enough — no legitimate static `(byte[]) -> object` method on a
+/// strong enough: no legitimate static `(byte[]) -> object` method on a
 /// resolver-shape type does both.
-fn is_assembly_load_reflection_shim(method: &MethodRc, assembly: &CilObject) -> bool {
+///
+/// The type token is an `ldtoken`, or, where anti-tamper has rewritten every
+/// `ldtoken` into a raw token passed to its metadata-token resolver, a call to
+/// one of that resolver's `type_handle_accessors`.
+fn is_assembly_load_reflection_shim(
+    method: &MethodRc,
+    assembly: &CilObject,
+    type_handle_accessors: &[Token],
+) -> bool {
     let mut saw_assembly_token = false;
     let mut saw_invoke_call = false;
     for instr in method.instructions() {
         if instr.mnemonic == "ldtoken" {
             if let Operand::Token(_) = &instr.operand {
                 saw_assembly_token = true;
+            }
+        }
+        if instr.mnemonic == "call" {
+            if let Operand::Token(t) = &instr.operand {
+                if type_handle_accessors.contains(t) {
+                    saw_assembly_token = true;
+                }
             }
         }
         if matches!(instr.mnemonic, "callvirt" | "call") {
@@ -1116,26 +1203,9 @@ fn is_assembly_load_reflection_shim(method: &MethodRc, assembly: &CilObject) -> 
     false
 }
 
-/// Used by tests/inspection to confirm every detected resource matches an
-/// entry in the resources table. Returns the names of the encrypted
-/// resources for evidence/logging.
-#[allow(dead_code)]
-fn encrypted_resource_names(assembly: &CilObject, findings: &ResourceFindings) -> Vec<String> {
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut out = Vec::new();
-    for &token in &findings.encrypted_resource_tokens {
-        if let Some(res) = assembly.resources().iter().find(|r| r.token == token) {
-            let name = res.name.clone();
-            if seen.insert(name.clone()) {
-                out.push(name);
-            }
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
+
     use std::{
         env,
         path::{Path, PathBuf},
@@ -1217,21 +1287,16 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_negative_reactor_full_variants() {
-        // reactor_full and reactor_virtualization_full have a resource resolver
-        // type that uses a different lookup mechanism (no `ldstr <name>` match).
-        // The current detection requires the `ldstr` signal to avoid false
-        // positives — these samples are intentionally out of scope until that
-        // detection branch is extended (future work).
+    fn string_encrypted_resource_names_do_not_hide_the_resolver() {
+        // With string encryption on, no `ldstr` names the encrypted blob; the
+        // resolver is still found by its structure, and the transform learns
+        // the blob from what the decrypter opens.
         for name in &["reactor_full.exe", "reactor_virtualization_full.exe"] {
             let Some(assembly) = try_load_sample(name) else {
                 continue;
             };
             let detection = NetReactorResources.detect(&assembly);
-            assert!(
-                !detection.is_detected(),
-                "{name} uses an alternate resource lookup; detection should not fire here yet"
-            );
+            assert!(detection.is_detected(), "{name} encrypts its resources");
         }
     }
 
@@ -1354,7 +1419,7 @@ mod tests {
 
     #[test]
     fn test_detect_negative_no_resources_nr() {
-        // Samples with NR but no Stage 7 resource encryption must not fire.
+        // Samples with NR but no resource encryption must not fire.
         for name in &[
             "reactor_obfuscation.exe",
             "reactor_strings.exe",

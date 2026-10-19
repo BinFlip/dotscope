@@ -13,7 +13,9 @@ mod pipeline;
 #[cfg(test)]
 mod tests;
 
-use std::time::Instant;
+use std::{collections::HashMap, time::Instant};
+
+use analyssa::scheduling::AsSsaPass;
 
 use crate::{
     compiler::{
@@ -49,6 +51,14 @@ struct PipelineRun<'a> {
     results: TechniqueResults,
     start: Instant,
     iterations: usize,
+    /// Byte transforms that have succeeded in this run; each one changes the
+    /// assembly the next transform works on.
+    transforms_applied: usize,
+    /// For each byte transform that failed, `transforms_applied` when it did.
+    /// It is not attempted again until another transform has changed the
+    /// assembly: the same input fails the same way, and some of these failures
+    /// cost a full emulation run.
+    failed_transforms: HashMap<&'static str, usize>,
 }
 
 /// Main deobfuscation engine.
@@ -160,22 +170,28 @@ impl DeobfuscationEngine {
 
         // Simplification passes
         if self.config.passes.opaque_predicate_removal {
-            scheduler.add(Box::new(OpaquePredicatePass::new()), PassPhase::Simplify);
             scheduler.add(
-                Box::new(ValueRangePropagationPass::new(
+                Box::new(AsSsaPass(OpaquePredicatePass::new())),
+                PassPhase::Simplify,
+            );
+            scheduler.add(
+                Box::new(AsSsaPass(ValueRangePropagationPass::new(
                     self.config.passes.value_range_max_iterations,
-                )),
+                ))),
                 PassPhase::Simplify,
             );
         }
         if self.config.passes.control_flow_simplification {
             scheduler.add(
-                Box::new(ControlFlowSimplificationPass::new(
+                Box::new(AsSsaPass(ControlFlowSimplificationPass::new(
                     self.config.passes.control_flow_max_iterations,
-                )),
+                ))),
                 PassPhase::Simplify,
             );
-            scheduler.add(Box::new(JumpThreadingPass::new()), PassPhase::Simplify);
+            scheduler.add(
+                Box::new(AsSsaPass(JumpThreadingPass::new())),
+                PassPhase::Simplify,
+            );
         }
 
         // Inlining passes
@@ -195,21 +211,24 @@ impl DeobfuscationEngine {
         );
         if self.config.passes.dead_code_elimination {
             scheduler.add(
-                Box::new(DeadCodeEliminationPass::new(
+                Box::new(AsSsaPass(DeadCodeEliminationPass::new(
                     self.config.passes.dce_max_iterations,
-                )),
+                ))),
                 PassPhase::Normalize,
             );
             scheduler.add(
-                Box::new(BlockMergingPass::new(
+                Box::new(AsSsaPass(BlockMergingPass::new(
                     self.config.passes.block_merge_max_iterations,
-                )),
+                ))),
                 PassPhase::Normalize,
             );
-            scheduler.add(Box::new(LicmPass::new()), PassPhase::Normalize);
+            scheduler.add(Box::new(AsSsaPass(LicmPass::new())), PassPhase::Normalize);
         }
         if self.config.passes.constant_propagation {
-            scheduler.add(Box::new(ReassociationPass::new()), PassPhase::Normalize);
+            scheduler.add(
+                Box::new(AsSsaPass(ReassociationPass::new())),
+                PassPhase::Normalize,
+            );
             scheduler.add(
                 Box::new(ConstantPropagationPass::new(
                     self.config.passes.const_prop_max_iterations,
@@ -217,7 +236,7 @@ impl DeobfuscationEngine {
                 PassPhase::Normalize,
             );
             scheduler.add(
-                Box::new(GlobalValueNumberingPass::new()),
+                Box::new(AsSsaPass(GlobalValueNumberingPass::new())),
                 PassPhase::Normalize,
             );
         }
@@ -234,29 +253,28 @@ impl DeobfuscationEngine {
             // decodes are already canonicalised, and before strength reduction /
             // algebraic simplification so the values it forwards out of memory
             // get folded in the same fixpoint iteration.
-            scheduler.add(Box::new(MemoryOptimizationPass), PassPhase::Normalize);
+            scheduler.add(
+                Box::new(AsSsaPass(MemoryOptimizationPass)),
+                PassPhase::Normalize,
+            );
         }
         if self.config.passes.strength_reduction {
-            scheduler.add(Box::new(StrengthReductionPass::new()), PassPhase::Normalize);
             scheduler.add(
-                Box::new(AlgebraicSimplificationPass::new()),
+                // The same budget the range pass in this pipeline gets: the two
+                // read the same analysis, and a pass that asked for fewer
+                // rounds would act on a weaker answer than its neighbour.
+                Box::new(AsSsaPass(StrengthReductionPass::new(
+                    self.config.passes.value_range_max_iterations,
+                ))),
+                PassPhase::Normalize,
+            );
+            scheduler.add(
+                Box::new(AsSsaPass(AlgebraicSimplificationPass::new())),
                 PassPhase::Normalize,
             );
         }
 
         scheduler
-    }
-
-    /// Returns `true` if any detected technique has a pending byte transform.
-    ///
-    /// A technique has a pending byte transform when it has been detected,
-    /// not yet transformed, and declares `requires_regeneration()`.
-    pub(crate) fn has_pending_byte_transforms(&self, detections: &Detections) -> bool {
-        self.registry.techniques().iter().any(|tech| {
-            detections.is_detected(tech.id())
-                && !detections.is_transformed(tech.id())
-                && tech.requires_regeneration()
-        })
     }
 
     /// Creates infrastructure deobfuscation passes.

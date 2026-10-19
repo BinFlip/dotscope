@@ -7,7 +7,7 @@
 //! protections (string decryption, CFF, anti-tamper, NecroBit, resource
 //! encryption).
 //!
-//! See [`private-impl.md`] for the full structural analysis. Quick summary:
+//! What identifies the containers and makes them safe to remove:
 //!
 //! - The GUID suffix is the **structural NR signal** — no production
 //!   compiler emits a `<PrivateImplementationDetails>` with a GUID suffix.
@@ -35,7 +35,6 @@
 //! regenerator's metadata validator rejects the output — a loud failure,
 //! not silent corruption.
 //!
-//! [`private-impl.md`]: ../../../../docs/research/netreactor/private-impl.md
 //! [`expand_type_tokens`]: crate::cilassembly::expand_type_tokens
 //! [`netreactor.licensecheck`]: super::licensecheck
 

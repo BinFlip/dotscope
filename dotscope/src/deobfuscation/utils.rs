@@ -10,13 +10,13 @@
 //! - **Call-site counting**: [`build_call_site_counts()`] provides O(n) batch counting of
 //!   call/callvirt targets.
 //! - **Method name resolution**: [`is_method_named()`] checks if a token resolves to a
-//!   method whose name contains a given substring.
+//!   method of a given name.
 //! - **Blob parsing**: [`read_packed_len()`] decodes the .NET SerString packed length encoding.
 
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    analysis::{SsaFunction, SsaInstruction, SsaOp, SsaVarId},
+    analysis::{SsaFunction, SsaOp, SsaVarId},
     metadata::{
         signatures::{parse_field_signature, TypeSignature},
         streams::Strings,
@@ -104,112 +104,32 @@ pub(crate) fn build_def_map(ssa: &SsaFunction) -> HashMap<SsaVarId, &SsaOp> {
     defs
 }
 
-/// Shrinks a candidate removal set until nothing it destroys is still read.
+/// Removes the static field loads defining `values` that nothing reads any
+/// more.
 ///
-/// Neutralizing an instruction (rewriting it to `Nop`) or dropping a phi
-/// destroys the definition it produced. If any *surviving* instruction or phi
-/// operand still reads that variable, the result is IR with a read of a
-/// variable nothing defines — which the SSA verifier rejects outright, failing
-/// the whole method rather than the one rewrite. Taint analysis does not
-/// prevent this on its own: [`PhiTaintMode::NoPropagation`] deliberately makes
-/// phis taint barriers, so a phi can merge a tainted definition into code that
-/// is never itself marked tainted.
-///
-/// The resolution is to keep the definition, not to widen the removal into
-/// legitimate code: a candidate whose result still has a reader is dropped from
-/// the set. Dropping it makes it a survivor in turn, so its own operands must
-/// be kept too — hence the fixpoint. The sets only ever shrink, so this
-/// terminates in at most one round per candidate.
+/// A pass that resolves what a static field holds rewrites the instructions
+/// reading the loaded value, and the load itself is dead only once every
+/// reader is gone. Whether it is comes from the function as it stands, not from
+/// recorded use lists, which go stale as soon as an earlier pass rewrites an
+/// instruction: a load another instruction still reads is kept.
 ///
 /// # Arguments
 ///
-/// * `ssa` - The SSA function the candidates index into.
-/// * `instrs` - Candidate `(block, instr)` instruction locations. Shrunk in place.
-/// * `phis` - Candidate `(block, phi)` phi locations. Shrunk in place.
+/// * `ssa` - The SSA function to modify.
+/// * `values` - Values whose `LoadStaticField` definitions may go.
 ///
-/// [`PhiTaintMode::NoPropagation`]: crate::analysis::PhiTaintMode::NoPropagation
-pub(crate) fn retain_removable(
-    ssa: &SsaFunction,
-    instrs: &mut HashSet<(usize, usize)>,
-    phis: &mut HashSet<(usize, usize)>,
-) {
-    loop {
-        // Every variable the current candidate set would destroy, mapped back to
-        // the candidate that has to be dropped if the variable turns out live.
-        let mut destroyed: HashMap<SsaVarId, Removal> = HashMap::new();
-        for &(block_idx, instr_idx) in instrs.iter() {
-            let Some(op) = ssa
-                .block(block_idx)
-                .and_then(|b| b.instruction(instr_idx))
-                .map(SsaInstruction::op)
-            else {
-                continue;
-            };
-            for def in op.defs() {
-                destroyed.insert(def, Removal::Instruction(block_idx, instr_idx));
-            }
-        }
-        for &(block_idx, phi_idx) in phis.iter() {
-            if let Some(phi) = ssa
-                .block(block_idx)
-                .and_then(|b| b.phi_nodes().get(phi_idx))
-            {
-                destroyed.insert(phi.result(), Removal::Phi(block_idx, phi_idx));
-            }
-        }
-        if destroyed.is_empty() {
-            return;
-        }
-
-        // Anything not being removed is a survivor, and its reads keep the
-        // definitions behind them alive.
-        let mut rescued: HashSet<Removal> = HashSet::new();
-        for (block_idx, block) in ssa.blocks().iter().enumerate() {
-            for (phi_idx, phi) in block.phi_nodes().iter().enumerate() {
-                if phis.contains(&(block_idx, phi_idx)) {
-                    continue;
-                }
-                for operand in phi.operands() {
-                    if let Some(removal) = destroyed.get(&operand.value()) {
-                        rescued.insert(*removal);
-                    }
-                }
-            }
-            for (instr_idx, instr) in block.instructions().iter().enumerate() {
-                if instrs.contains(&(block_idx, instr_idx)) {
-                    continue;
-                }
-                instr.op().for_each_use(|used| {
-                    if let Some(removal) = destroyed.get(&used) {
-                        rescued.insert(*removal);
-                    }
-                });
-            }
-        }
-        if rescued.is_empty() {
-            return;
-        }
-
-        for removal in rescued {
-            match removal {
-                Removal::Instruction(block_idx, instr_idx) => {
-                    instrs.remove(&(block_idx, instr_idx));
-                }
-                Removal::Phi(block_idx, phi_idx) => {
-                    phis.remove(&(block_idx, phi_idx));
-                }
-            }
-        }
-    }
-}
-
-/// A location in the candidate removal set handled by [`retain_removable`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum Removal {
-    /// Instruction at `(block, instr)`.
-    Instruction(usize, usize),
-    /// Phi node at `(block, phi)`.
-    Phi(usize, usize),
+/// # Returns
+///
+/// The number of loads removed.
+pub fn remove_unread_static_loads(ssa: &mut SsaFunction, values: &HashSet<SsaVarId>) -> usize {
+    let loads: Vec<(usize, usize)> = ssa
+        .iter_instructions()
+        .filter(|(_, _, instr)| {
+            matches!(instr.op(), SsaOp::LoadStaticField { dest, .. } if values.contains(dest))
+        })
+        .map(|(block_idx, instr_idx, _)| (block_idx, instr_idx))
+        .collect();
+    ssa.remove_unread_instructions(loads).len()
 }
 
 /// Checks if a name contains obfuscation indicators (zero-width chars, PUA, spaces).
@@ -780,75 +700,82 @@ pub(crate) fn resolve_custom_attr_type<'a>(
     )
 }
 
-/// Checks whether a metadata token resolves to a method whose name contains `name`.
+/// Checks whether a metadata token resolves to a method named `name`.
+///
+/// The whole name: `ResolveMethod` is not `ResolveMethodHandle`, and
+/// `get_Module` is not `get_ModuleHandle`.
 ///
 /// # Arguments
 ///
 /// * `assembly` - The assembly used to resolve the token.
-/// * `token` - Metadata token to look up (MethodDef or MemberRef).
-/// * `name` - Substring to search for in the resolved method name.
+/// * `token` - Metadata token to look up (MethodDef, MemberRef or MethodSpec).
+/// * `name` - The method name.
 ///
 /// # Returns
 ///
-/// `true` if the token resolves to a method name that contains `name`,
-/// `false` if the token does not resolve or the name does not match.
+/// `true` if the token resolves to a method of that name, `false` if it does
+/// not resolve or names another method.
 pub(crate) fn is_method_named(assembly: &CilObject, token: Token, name: &str) -> bool {
     assembly
         .resolve_method_name(token)
-        .is_some_and(|n| n.contains(name))
-}
-
-/// Checks if a method token's declaring type name contains the given substring.
-///
-/// Works for both MethodDef (table 0x06) and MemberRef (table 0x0A) tokens.
-/// For MethodDef, resolves via the declaring type. For MemberRef, resolves
-/// via the `declaredby` parent reference.
-///
-/// # Returns
-///
-/// `true` if the declaring type name contains `type_name`,
-/// `false` if the token cannot be resolved or the name does not match.
-pub(crate) fn is_method_on_type(assembly: &CilObject, token: Token, type_name: &str) -> bool {
-    match token.table() {
-        0x06 => assembly
-            .method(&token)
-            .ok()
-            .and_then(|m| m.declaring_type_rc())
-            .is_some_and(|ty| ty.name.contains(type_name)),
-        0x0A => assembly
-            .refs_members()
-            .get(&token)
-            .and_then(|entry| entry.value().declaredby.fullname())
-            .is_some_and(|name| name.contains(type_name)),
-        _ => false,
-    }
-}
-
-/// Checks if a token resolves to a method with the given name on the given declaring type.
-///
-/// Combines [`is_method_on_type`] and [`is_method_named`] in a single lookup.
-pub(crate) fn is_typed_method_named(
-    assembly: &CilObject,
-    token: Token,
-    type_name: &str,
-    method_name: &str,
-) -> bool {
-    is_method_on_type(assembly, token, type_name) && is_method_named(assembly, token, method_name)
+        .is_some_and(|n| n == name)
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
+        analysis::{FieldRef, MethodRef, SsaFunctionBuilder, SsaOp, SsaType},
         deobfuscation::utils::{
             build_call_site_counts, is_method_named, is_obfuscated_name, is_special_name,
-            resolve_constructor_type,
+            remove_unread_static_loads, resolve_constructor_type,
         },
         metadata::{
             tables::{MemberRefRaw, MethodDefRaw, TableId, TypeDefRaw, TypeRefRaw},
             token::Token,
         },
-        test::helpers::load_sample,
+        test::helpers::{load_sample, method_token, mono_mscorlib},
     };
+
+    /// A static load goes once nothing reads it, and stays while an
+    /// instruction the resolving pass did not rewrite still reads it.
+    #[test]
+    fn test_remove_unread_static_loads_keeps_loads_still_read() {
+        let removed = |still_read: bool| {
+            let field = FieldRef::new(Token::new(0x0400_0001));
+            let mut loaded = None;
+            let mut ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    let object = f.var();
+                    loaded = Some(object);
+                    f.block(0, |b| {
+                        b.op(SsaOp::LoadStaticField {
+                            dest: object,
+                            field,
+                        });
+                        // The field load the pass resolved, already a constant.
+                        let _ = b.const_i32(1);
+                        if still_read {
+                            let _ = b.call(
+                                MethodRef::new(Token::new(0x0A00_0001)),
+                                &[object],
+                                SsaType::I32,
+                            );
+                        }
+                        b.ret();
+                    });
+                })
+                .unwrap();
+            let values = [loaded.unwrap()].into_iter().collect();
+            let count = remove_unread_static_loads(&mut ssa, &values);
+            let kept = matches!(
+                ssa.block(0).unwrap().instructions()[0].op(),
+                SsaOp::LoadStaticField { .. }
+            );
+            (count, kept)
+        };
+        assert_eq!(removed(false), (1, false), "an unread load is removed");
+        assert_eq!(removed(true), (0, true), "a load still read is kept");
+    }
 
     #[test]
     fn test_is_obfuscated_name_normal_names() {
@@ -1012,5 +939,14 @@ mod tests {
 
         // Token for a nonexistent method should return false
         assert!(!is_method_named(&asm, Token::new(0x06FFFFFF), "Main"));
+    }
+
+    /// A method is named by its whole name, not by a prefix of it.
+    #[test]
+    fn a_method_is_named_by_its_whole_name() {
+        let mscorlib = mono_mscorlib();
+        let resolve = method_token(&mscorlib, "System.ModuleHandle", "ResolveMethodHandle", 1);
+        assert!(is_method_named(&mscorlib, resolve, "ResolveMethodHandle"));
+        assert!(!is_method_named(&mscorlib, resolve, "ResolveMethod"));
     }
 }

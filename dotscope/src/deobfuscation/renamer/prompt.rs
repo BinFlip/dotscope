@@ -7,8 +7,10 @@
 //! Each [`IdentifierKind`] has a distinct template optimized for the
 //! information most useful for that kind of rename.
 
+use crate::deobfuscation::renamer::context::PhaseInfo;
+#[cfg(any(feature = "smart-rename", test))]
 use crate::{
-    deobfuscation::renamer::context::{IdentifierKind, ParamInfo, PhaseInfo, RenameContext},
+    deobfuscation::renamer::context::{IdentifierKind, ParamInfo, RenameContext},
     utils::truncate_chars,
 };
 
@@ -25,6 +27,7 @@ use crate::{
 /// # Returns
 ///
 /// `(prefix_string, suffix_string)` for FIM inference.
+#[cfg(any(feature = "smart-rename", test))]
 pub fn build_fim_prompt(context: &RenameContext, max_phases: usize) -> (String, String) {
     let kind = context.kind.unwrap_or(IdentifierKind::Method);
 
@@ -101,6 +104,7 @@ pub fn build_phase_label_prompt(phase: &PhaseInfo) -> (String, String) {
 /// # Returns
 ///
 /// `(prefix, suffix)` tuple for FIM inference.
+#[cfg(any(feature = "smart-rename", test))]
 fn build_method_prompt(context: &RenameContext, max_phases: usize) -> (String, String) {
     let mut prefix = String::new();
     prefix.push_str("<|fim_prefix|>");
@@ -164,6 +168,7 @@ fn build_method_prompt(context: &RenameContext, max_phases: usize) -> (String, S
 /// Renders shared context lines (call targets, strings, fields, siblings)
 /// into the prefix. These lines appear before the signature in all method
 /// prompt variants.
+#[cfg(any(feature = "smart-rename", test))]
 fn render_shared_context(prefix: &mut String, context: &RenameContext) {
     if !context.interfaces.is_empty() {
         let interfaces = format_interfaces(&context.interfaces);
@@ -210,6 +215,7 @@ fn render_shared_context(prefix: &mut String, context: &RenameContext) {
 ///
 /// When retrying after a duplicate, this tells the LLM which names
 /// are already taken so it can suggest something different.
+#[cfg(any(feature = "smart-rename", test))]
 fn render_rejected_names(prefix: &mut String, context: &RenameContext) {
     if !context.rejected_names.is_empty() {
         let rejected = context.rejected_names.join(", ");
@@ -224,6 +230,7 @@ fn render_rejected_names(prefix: &mut String, context: &RenameContext) {
 /// Shows which methods call this one, what nearby strings they have,
 /// and what the return value feeds into — critical for context-starved
 /// methods that have no external calls or strings of their own.
+#[cfg(any(feature = "smart-rename", test))]
 fn render_caller_context(prefix: &mut String, context: &RenameContext) {
     if context.caller_context.is_empty() {
         return;
@@ -272,6 +279,7 @@ fn render_caller_context(prefix: &mut String, context: &RenameContext) {
 /// # Returns
 ///
 /// `(prefix, suffix)` tuple for FIM inference.
+#[cfg(any(feature = "smart-rename", test))]
 fn build_field_prompt(context: &RenameContext) -> (String, String) {
     let mut prefix = String::from("<|fim_prefix|>");
 
@@ -316,6 +324,7 @@ fn build_field_prompt(context: &RenameContext) -> (String, String) {
 /// # Returns
 ///
 /// `(prefix, suffix)` tuple for FIM inference.
+#[cfg(any(feature = "smart-rename", test))]
 fn build_type_prompt(context: &RenameContext) -> (String, String) {
     let mut prefix = String::from("<|fim_prefix|>");
 
@@ -368,6 +377,7 @@ fn build_type_prompt(context: &RenameContext) -> (String, String) {
 /// # Returns
 ///
 /// `(prefix, suffix)` tuple for FIM inference.
+#[cfg(any(feature = "smart-rename", test))]
 fn build_parameter_prompt(context: &RenameContext) -> (String, String) {
     let mut prefix = String::from("<|fim_prefix|>");
 
@@ -419,6 +429,7 @@ fn build_parameter_prompt(context: &RenameContext) -> (String, String) {
 /// # Returns
 ///
 /// A comma-separated parameter string (e.g., `"string path, int param_1"`).
+#[cfg(any(feature = "smart-rename", test))]
 fn format_params(params: &[ParamInfo]) -> String {
     if params.is_empty() {
         return String::new();
@@ -445,6 +456,7 @@ fn format_params(params: &[ParamInfo]) -> String {
 /// # Returns
 ///
 /// A comma-separated string (e.g., `"IDisposable, IEnumerable"`).
+#[cfg(any(feature = "smart-rename", test))]
 fn format_interfaces(interfaces: &[String]) -> String {
     interfaces.join(", ")
 }
@@ -462,6 +474,7 @@ fn format_interfaces(interfaces: &[String]) -> String {
 /// # Returns
 ///
 /// A vector of references to the retained phases.
+#[cfg(any(feature = "smart-rename", test))]
 fn truncate_phases(phases: &[PhaseInfo], max_phases: usize) -> Vec<&PhaseInfo> {
     if phases.len() <= max_phases {
         return phases.iter().collect();

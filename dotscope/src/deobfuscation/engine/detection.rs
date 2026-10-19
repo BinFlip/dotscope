@@ -120,7 +120,7 @@ impl DeobfuscationEngine {
     /// Returns `true` if any technique has registered emulation requirements.
     ///
     /// Checks for decryptors, warmup methods, emulation hooks, or state machine
-    /// providers — any of which indicate that passes will need emulation.
+    /// providers - any of which indicate that passes will need emulation.
     ///
     /// # Arguments
     ///

@@ -21,7 +21,7 @@ use std::any::Any;
 use crate::{
     compiler::{EventKind, EventLog},
     deobfuscation::techniques::{
-        Detection, Detections, Evidence, Technique, TechniqueCategory, WorkingAssembly,
+        Detection, Evidence, Technique, TechniqueCategory, WorkingAssembly,
     },
     metadata::tables::{AssemblyRaw, DeclSecurityRaw, ModuleRaw, TableId, TypeRefRaw},
     CilObject, Result,
@@ -220,8 +220,7 @@ impl Technique for GenericMetadata {
     fn byte_transform(
         &self,
         assembly: &mut WorkingAssembly,
-        detection: &Detection,
-        _detections: &Detections,
+        detection: &mut Detection,
     ) -> Option<Result<EventLog>> {
         let events = EventLog::new();
 

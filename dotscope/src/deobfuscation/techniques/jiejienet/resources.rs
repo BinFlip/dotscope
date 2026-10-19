@@ -54,9 +54,7 @@ use crate::{
     deobfuscation::{
         context::AnalysisContext,
         passes::jiejienet::{ResourceRestorationPass, ResourceTarget},
-        techniques::{
-            Detection, Detections, Evidence, Technique, TechniqueCategory, WorkingAssembly,
-        },
+        techniques::{Detection, Evidence, Technique, TechniqueCategory, WorkingAssembly},
         utils::get_field_data_size,
     },
     error::Error,
@@ -204,8 +202,7 @@ impl Technique for JiejieNetResources {
     fn byte_transform(
         &self,
         assembly: &mut WorkingAssembly,
-        detection: &Detection,
-        _detections: &Detections,
+        detection: &mut Detection,
     ) -> Option<Result<EventLog>> {
         let events = EventLog::new();
 

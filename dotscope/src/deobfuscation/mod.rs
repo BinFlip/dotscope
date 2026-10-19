@@ -73,15 +73,15 @@
 //!
 //! Each protection technique is a self-contained module implementing:
 //!
-//! - [`Technique`](crate::deobfuscation::Technique) — unified trait: `detect()`, `byte_transform()`, `ssa_phase()`, `detect_ssa()`, etc.
+//! - [`Technique`](crate::deobfuscation::Technique) - unified trait: `detect()`, `byte_transform()`, `ssa_phase()`, `detect_ssa()`, etc.
 //!
 //! ## Pass System
 //!
 //! SSA-based transformation passes ([`crate::compiler::SsaPass`]):
 //!
-//! - [`crate::compiler::PassScheduler`] — Manages pass execution order and fixpoint iteration
-//! - [`crate::compiler::EventLog`] — Tracks changes made by passes
-//! - [`AnalysisContext`](crate::deobfuscation::AnalysisContext) — Shared interprocedural analysis data
+//! - [`crate::compiler::PassScheduler`] - Manages pass execution order and fixpoint iteration
+//! - [`crate::compiler::EventLog`] - Tracks changes made by passes
+//! - [`AnalysisContext`](crate::deobfuscation::AnalysisContext) - Shared interprocedural analysis data
 //!
 //! # Usage
 //!
@@ -110,7 +110,7 @@ mod template;
 pub(crate) mod utils;
 mod workqueue;
 
-// Public API — used by CLI, tests, examples, and external consumers
+// Public API - used by CLI, tests, examples, and external consumers
 pub use config::{
     CleanupConfig, DecryptorHeuristics, DetectionWeights, EmulationConfig, EngineConfig,
     IterationConfig, PassConfig, UnflatteningThresholds,
@@ -119,7 +119,8 @@ pub use context::{AnalysisContext, HookFactory};
 pub use decryptors::{CacheKey, DecryptedCall, DecryptorContext, FailedCall, FailureReason};
 pub use engine::DeobfuscationEngine;
 pub use passes::{
-    CffReconstructionPass, DecryptionPass, DelegateProxyResolutionPass, DelegateTypeInfo,
+    unflatten, CffDetector, CffPattern, CffReconstructionPass, DecryptionPass,
+    DelegateProxyResolutionPass, DelegateTypeInfo, Dispatcher, EntryCondition, EntryPoint,
     NativeMethodConversionPass, NeutralizationPass, OpaqueFieldPredicatePass, UnflattenConfig,
 };
 // Crate-internal re-exports (only items that are actually imported via this path)
