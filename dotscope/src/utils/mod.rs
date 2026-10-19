@@ -42,9 +42,11 @@
 //! ```
 
 mod alignment;
+#[cfg(feature = "emulation")]
 mod base64;
 mod compression;
 mod crypto;
+#[cfg(feature = "emulation")]
 mod decompress;
 mod dot;
 mod enums;
@@ -52,8 +54,10 @@ mod hash;
 mod heap_calc;
 mod io;
 mod lazylist;
+#[cfg(feature = "emulation")]
 mod lebytes;
 mod math;
+mod rowlist;
 mod synchronization;
 mod text;
 mod visitedmap;
@@ -68,34 +72,41 @@ pub(crate) use crypto::derive_key_iv;
 pub(crate) use crypto::derive_pbkdf1_key;
 #[cfg(feature = "deobfuscation")]
 pub(crate) use crypto::CryptoParameters;
+#[cfg(feature = "deobfuscation")]
+pub(crate) use crypto::MAX_PBKDF2_ITERATIONS;
 #[cfg(feature = "emulation")]
 pub(crate) use crypto::{
     apply_crypto_transform, derive_pbkdf2_key, verify_rsa_pkcs1v15, MAX_DERIVED_KEY_LEN,
-    MAX_PBKDF2_ITERATIONS,
 };
 #[cfg(feature = "emulation")]
 pub(crate) use crypto::{compute_hmac_sha256, compute_hmac_sha512};
 #[cfg(feature = "legacy-crypto")]
 pub(crate) use crypto::{compute_md5, compute_sha1};
 pub(crate) use crypto::{compute_sha256, compute_sha384, compute_sha512};
+#[cfg(feature = "deobfuscation")]
 #[allow(unused_imports)]
 pub(crate) use decompress::{
-    decompress_confuserex_lzma, decompress_confuserex_lzma_limited, decompress_deflate,
-    decompress_deflate_limited, decompress_gzip, decompress_gzip_limited, is_confuserex_lzma,
+    decompress_confuserex_lzma, decompress_confuserex_lzma_limited, is_confuserex_lzma,
+};
+#[cfg(feature = "emulation")]
+#[allow(unused_imports)]
+pub(crate) use decompress::{
+    decompress_deflate, decompress_deflate_limited, decompress_gzip, decompress_gzip_limited,
     MAX_DECOMPRESSED_BYTES,
 };
 pub use dot::escape_dot;
 pub use enums::EnumUtils;
 pub use hash::{hash_blob, hash_guid, hash_string};
 pub use heap_calc::calculate_table_row_size;
+#[cfg(feature = "deobfuscation")]
+pub use io::{decode_utf16le, read_packed_len};
 #[allow(unused_imports)]
 pub use io::{
-    decode_utf16le, read_be, read_be_at, read_be_at_dyn, read_compressed_int,
-    read_compressed_int_at, read_compressed_uint, read_compressed_uint_at, read_le, read_le_at,
-    read_le_at_dyn, read_packed_len, write_7bit_encoded_int, write_be, write_be_at,
-    write_be_at_dyn, write_compressed_int, write_compressed_uint, write_le, write_le_at,
-    write_le_at_dyn, write_prefixed_string_utf16, write_prefixed_string_utf8, write_string_at,
-    write_string_utf8, CilIO,
+    read_be, read_be_at, read_be_at_dyn, read_compressed_int, read_compressed_int_at,
+    read_compressed_uint, read_compressed_uint_at, read_le, read_le_at, read_le_at_dyn,
+    write_7bit_encoded_int, write_be, write_be_at, write_be_at_dyn, write_compressed_int,
+    write_compressed_uint, write_le, write_le_at, write_le_at_dyn, write_prefixed_string_utf16,
+    write_prefixed_string_utf8, write_string_at, write_string_utf8, CilIO,
 };
 pub use lazylist::LazyList;
 #[allow(unused_imports)]
@@ -105,6 +116,9 @@ pub use lebytes::LeBytes;
 #[cfg(feature = "emulation")]
 pub use math::to_i32_saturating;
 pub use math::to_u32;
+pub use rowlist::RowList;
+#[allow(unused_imports)]
+pub use rowlist::RowListIter;
 pub use synchronization::FailFastBarrier;
 pub(crate) use text::truncate_chars;
 pub use visitedmap::VisitedMap;

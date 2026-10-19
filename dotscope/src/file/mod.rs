@@ -389,7 +389,7 @@ impl File {
 
         // Always attempt PE repair proactively. Some obfuscators (e.g., BitMono's
         // BitDecompiler) corrupt CLR headers that goblin's PE::parse() does not
-        // validate, so we must repair before parsing — not just on failure.
+        // validate, so we must repair before parsing - not just on failure.
         let repair_result = repair_pe_cow(&cowfile);
         if !repair_result.repairs.is_empty() {
             cowfile.commit()?;
@@ -400,7 +400,7 @@ impl File {
         // directories, and a .NET assembly's own resources live in the managed
         // metadata (`ManifestResource` / the `.resources` streams), not in the
         // PE resource directory. What the directory does hold for an assembly is
-        // `VS_VERSIONINFO`, dialogs and string tables — and goblin walks that
+        // `VS_VERSIONINFO`, dialogs and string tables - and goblin walks that
         // tree in `ParseMode::Strict` by default, so one malformed
         // `ResourceString` in any of it aborts the whole parse and takes every
         // bit of CIL metadata with it. The relocation-side directory walk this
@@ -461,7 +461,7 @@ impl File {
     /// Creates an independent fork of the underlying CowFile.
     ///
     /// For file-backed assemblies, this re-opens the original file via a new
-    /// `MAP_PRIVATE` mmap — zero-copy, OS shares physical read pages.
+    /// `MAP_PRIVATE` mmap - zero-copy, OS shares physical read pages.
     /// For memory-backed assemblies, this clones the data.
     ///
     /// Pending writes (PE repairs) are **not** carried over.

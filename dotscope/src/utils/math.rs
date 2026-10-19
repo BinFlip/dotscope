@@ -24,6 +24,7 @@ pub fn to_u32(value: usize) -> Result<u32> {
 /// Useful for returning array lengths and similar values to .NET code,
 /// where `int` is the expected return type.
 #[must_use]
+#[cfg(feature = "emulation")]
 pub fn to_i32_saturating(value: usize) -> i32 {
     i32::try_from(value).unwrap_or(i32::MAX)
 }
@@ -94,6 +95,7 @@ mod tests {
         assert!(to_u32(usize::MAX).is_err());
     }
 
+    #[cfg(feature = "emulation")]
     #[test]
     fn test_to_i32_saturating_in_range() {
         assert_eq!(to_i32_saturating(0), 0);
@@ -101,6 +103,7 @@ mod tests {
         assert_eq!(to_i32_saturating(i32::MAX as usize), i32::MAX);
     }
 
+    #[cfg(feature = "emulation")]
     #[cfg(target_pointer_width = "64")]
     #[test]
     fn test_to_i32_saturating_overflow() {

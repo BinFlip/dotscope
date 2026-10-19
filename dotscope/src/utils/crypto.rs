@@ -25,7 +25,9 @@
 #[cfg(feature = "emulation")]
 use std::iter::repeat_n;
 
+#[cfg(feature = "emulation")]
 use aes::Aes128;
+#[cfg(feature = "emulation")]
 use cbc::{
     cipher::{
         block_padding::{NoPadding, Pkcs7},
@@ -33,55 +35,71 @@ use cbc::{
     },
     Decryptor, Encryptor,
 };
-#[cfg(feature = "legacy-crypto")]
+#[cfg(all(feature = "legacy-crypto", feature = "emulation"))]
 use des::{Des, TdesEde3};
+#[cfg(feature = "emulation")]
 use ecb::{Decryptor as EcbDecryptor, Encryptor as EcbEncryptor};
+#[cfg(feature = "emulation")]
 use hmac::{Hmac, KeyInit as HmacKeyInit, Mac};
 #[cfg(feature = "legacy-crypto")]
 use md5::{Digest as Md5Digest, Md5};
 #[cfg(feature = "emulation")]
 use num_bigint::BigUint;
+#[cfg(feature = "emulation")]
 use pbkdf2::pbkdf2_hmac;
 #[cfg(feature = "legacy-crypto")]
 use sha1::{Digest as Sha1Digest, Sha1};
 use sha2::{Digest as Sha2Digest, Sha256, Sha384, Sha512};
 
+#[cfg(feature = "emulation")]
 use crate::{Error::TypeError, Result};
 
 // Type aliases for AES CBC modes
+#[cfg(feature = "emulation")]
 type Aes128CbcEnc = Encryptor<Aes128>;
+#[cfg(feature = "emulation")]
 type Aes128CbcDec = Decryptor<Aes128>;
+#[cfg(feature = "emulation")]
 type Aes192CbcEnc = Encryptor<aes::Aes192>;
+#[cfg(feature = "emulation")]
 type Aes192CbcDec = Decryptor<aes::Aes192>;
+#[cfg(feature = "emulation")]
 type Aes256CbcEnc = Encryptor<aes::Aes256>;
+#[cfg(feature = "emulation")]
 type Aes256CbcDec = Decryptor<aes::Aes256>;
 
 // Type aliases for AES ECB modes
+#[cfg(feature = "emulation")]
 type Aes128EcbEnc = EcbEncryptor<Aes128>;
+#[cfg(feature = "emulation")]
 type Aes128EcbDec = EcbDecryptor<Aes128>;
+#[cfg(feature = "emulation")]
 type Aes192EcbEnc = EcbEncryptor<aes::Aes192>;
+#[cfg(feature = "emulation")]
 type Aes192EcbDec = EcbDecryptor<aes::Aes192>;
+#[cfg(feature = "emulation")]
 type Aes256EcbEnc = EcbEncryptor<aes::Aes256>;
+#[cfg(feature = "emulation")]
 type Aes256EcbDec = EcbDecryptor<aes::Aes256>;
 
 // Type aliases for DES CBC modes (legacy-crypto feature)
-#[cfg(feature = "legacy-crypto")]
+#[cfg(all(feature = "legacy-crypto", feature = "emulation"))]
 type DesCbcEnc = Encryptor<Des>;
-#[cfg(feature = "legacy-crypto")]
+#[cfg(all(feature = "legacy-crypto", feature = "emulation"))]
 type DesCbcDec = Decryptor<Des>;
-#[cfg(feature = "legacy-crypto")]
+#[cfg(all(feature = "legacy-crypto", feature = "emulation"))]
 type TdesCbcEnc = Encryptor<TdesEde3>;
-#[cfg(feature = "legacy-crypto")]
+#[cfg(all(feature = "legacy-crypto", feature = "emulation"))]
 type TdesCbcDec = Decryptor<TdesEde3>;
 
 // Type aliases for DES ECB modes (legacy-crypto feature)
-#[cfg(feature = "legacy-crypto")]
+#[cfg(all(feature = "legacy-crypto", feature = "emulation"))]
 type DesEcbEnc = EcbEncryptor<Des>;
-#[cfg(feature = "legacy-crypto")]
+#[cfg(all(feature = "legacy-crypto", feature = "emulation"))]
 type DesEcbDec = EcbDecryptor<Des>;
-#[cfg(feature = "legacy-crypto")]
+#[cfg(all(feature = "legacy-crypto", feature = "emulation"))]
 type TdesEcbEnc = EcbEncryptor<TdesEde3>;
-#[cfg(feature = "legacy-crypto")]
+#[cfg(all(feature = "legacy-crypto", feature = "emulation"))]
 type TdesEcbDec = EcbDecryptor<TdesEde3>;
 
 /// Computes the MD5 hash of input bytes.
@@ -192,6 +210,7 @@ pub fn compute_sha512(data: &[u8]) -> Vec<u8> {
 /// # Returns
 ///
 /// A 32-byte vector containing the HMAC-SHA256 result.
+#[cfg(feature = "emulation")]
 #[must_use]
 pub fn compute_hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
     type HmacSha256 = Hmac<Sha256>;
@@ -214,6 +233,7 @@ pub fn compute_hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
 /// # Returns
 ///
 /// A 64-byte vector containing the HMAC-SHA512 result.
+#[cfg(feature = "emulation")]
 #[must_use]
 pub fn compute_hmac_sha512(key: &[u8], data: &[u8]) -> Vec<u8> {
     type HmacSha512 = Hmac<Sha512>;
@@ -235,6 +255,7 @@ pub fn compute_hmac_sha512(key: &[u8], data: &[u8]) -> Vec<u8> {
 ///
 /// Real-world obfuscators use 100–100 000. Ten million leaves three orders of magnitude of
 /// headroom over observed usage while keeping the worst case to seconds rather than days.
+#[cfg(feature = "emulation")]
 pub(crate) const MAX_PBKDF2_ITERATIONS: u32 = 10_000_000;
 
 /// Upper bound on the derived key length accepted by [`derive_pbkdf2_key`], in bytes.
@@ -242,6 +263,7 @@ pub(crate) const MAX_PBKDF2_ITERATIONS: u32 = 10_000_000;
 /// Symmetric keys and IVs in the formats this crate handles are at most 32 and 16 bytes.
 /// 1 KiB accommodates any plausible combined key+IV request and rejects the ~2 GB one that an
 /// unvalidated `int32` allows.
+#[cfg(feature = "emulation")]
 pub(crate) const MAX_DERIVED_KEY_LEN: usize = 1024;
 
 /// Derives a key using PBKDF2 (RFC 2898 Section 5.2).
@@ -282,6 +304,7 @@ pub(crate) const MAX_DERIVED_KEY_LEN: usize = 1024;
 /// let key = derive_pbkdf2_key(password, salt, 1000, 32, "SHA256")?;
 /// assert_eq!(key.len(), 32);
 /// ```
+#[cfg(feature = "emulation")]
 pub fn derive_pbkdf2_key(
     password: &[u8],
     salt: &[u8],
@@ -380,7 +403,7 @@ pub fn derive_pbkdf2_key(
 ///
 /// This function requires the `legacy-crypto` feature because PBKDF1 is
 /// inherently SHA1-based per RFC 2898.
-#[cfg(feature = "legacy-crypto")]
+#[cfg(all(feature = "legacy-crypto", feature = "emulation"))]
 pub fn derive_pbkdf1_key(password: &[u8], salt: &[u8], iterations: u32, key_len: usize) -> Vec<u8> {
     // Step 1: T_1 = SHA1(Password || Salt)
     let mut hasher = sha1::Sha1::new();
@@ -448,6 +471,7 @@ pub fn derive_pbkdf1_key(password: &[u8], salt: &[u8], iterations: u32, key_len:
 /// | AES/Rijndael | 16, 24, 32 bytes | 16 bytes |
 /// | DES | 8 bytes | 8 bytes |
 /// | TripleDES/3DES | 24 bytes | 8 bytes |
+#[cfg(feature = "emulation")]
 pub fn apply_crypto_transform(
     algorithm: &str,
     key: &[u8],
@@ -510,6 +534,7 @@ pub fn apply_crypto_transform(
 }
 
 /// AES CBC mode transform with configurable padding.
+#[cfg(feature = "emulation")]
 fn aes_cbc_transform(
     key: &[u8],
     iv: &[u8],
@@ -526,6 +551,7 @@ fn aes_cbc_transform(
 }
 
 /// AES ECB mode transform with configurable padding.
+#[cfg(feature = "emulation")]
 fn aes_ecb_transform(key: &[u8], is_encryptor: bool, data: &[u8], padding: u8) -> Option<Vec<u8>> {
     match key.len() {
         16 => ecb_transform::<Aes128EcbEnc, Aes128EcbDec>(key, 16, is_encryptor, data, padding),
@@ -536,6 +562,7 @@ fn aes_ecb_transform(key: &[u8], is_encryptor: bool, data: &[u8], padding: u8) -
 }
 
 /// Generic CBC mode transform with configurable padding.
+#[cfg(feature = "emulation")]
 fn cbc_transform<E, D>(
     key: &[u8],
     iv: &[u8],
@@ -594,6 +621,7 @@ where
 }
 
 /// Generic ECB mode transform with configurable padding.
+#[cfg(feature = "emulation")]
 fn ecb_transform<E, D>(
     key: &[u8],
     block_size: usize,
@@ -645,7 +673,7 @@ where
 }
 
 /// DES CBC mode transform (legacy-crypto feature).
-#[cfg(feature = "legacy-crypto")]
+#[cfg(all(feature = "legacy-crypto", feature = "emulation"))]
 fn des_cbc_transform(
     key: &[u8],
     iv: &[u8],
@@ -657,13 +685,13 @@ fn des_cbc_transform(
 }
 
 /// DES ECB mode transform (legacy-crypto feature).
-#[cfg(feature = "legacy-crypto")]
+#[cfg(all(feature = "legacy-crypto", feature = "emulation"))]
 fn des_ecb_transform(key: &[u8], is_encryptor: bool, data: &[u8], padding: u8) -> Option<Vec<u8>> {
     ecb_transform::<DesEcbEnc, DesEcbDec>(key, 8, is_encryptor, data, padding)
 }
 
 /// TripleDES CBC mode transform (legacy-crypto feature).
-#[cfg(feature = "legacy-crypto")]
+#[cfg(all(feature = "legacy-crypto", feature = "emulation"))]
 fn tdes_cbc_transform(
     key: &[u8],
     iv: &[u8],
@@ -675,7 +703,7 @@ fn tdes_cbc_transform(
 }
 
 /// TripleDES ECB mode transform (legacy-crypto feature).
-#[cfg(feature = "legacy-crypto")]
+#[cfg(all(feature = "legacy-crypto", feature = "emulation"))]
 fn tdes_ecb_transform(key: &[u8], is_encryptor: bool, data: &[u8], padding: u8) -> Option<Vec<u8>> {
     ecb_transform::<TdesEcbEnc, TdesEcbDec>(key, 8, is_encryptor, data, padding)
 }
@@ -799,6 +827,7 @@ pub fn verify_rsa_pkcs1v15(
 /// When extraction fails for a specific parameter, the [`Default`] implementation
 /// provides values matching .NET's `Rfc2898DeriveBytes` defaults (SHA1, 1000
 /// iterations) and AES-256-CBC (32-byte key, 16-byte IV).
+#[cfg(feature = "deobfuscation")]
 #[derive(Debug, Clone)]
 pub struct CryptoParameters {
     /// PBKDF2 iteration count.
@@ -811,6 +840,7 @@ pub struct CryptoParameters {
     pub hash_algorithm: &'static str,
 }
 
+#[cfg(feature = "deobfuscation")]
 impl Default for CryptoParameters {
     /// Returns defaults matching .NET's `Rfc2898DeriveBytes` default constructor
     /// (SHA1, 1000 iterations) and AES-256-CBC (32-byte key, 16-byte IV).
@@ -844,6 +874,7 @@ impl Default for CryptoParameters {
 /// Propagates any error from [`derive_pbkdf2_key`] — an iteration count or output length past
 /// its ceiling, or an unsupported hash algorithm. Both are reachable from a crafted assembly,
 /// since `params` is extracted from an attacker-supplied decryptor body.
+#[cfg(all(feature = "deobfuscation", feature = "legacy-crypto"))]
 pub fn derive_key_iv(
     password: &[u8],
     salt: &[u8],
@@ -868,7 +899,7 @@ pub fn derive_key_iv(
     Ok((key, iv))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "emulation"))]
 mod tests {
     use super::*;
 
@@ -1177,6 +1208,7 @@ mod legacy_tests {
 
     use super::*;
 
+    #[cfg(feature = "emulation")]
     #[test]
     fn test_pbkdf2_sha1_basic() {
         let password = b"password";
@@ -1191,6 +1223,7 @@ mod legacy_tests {
         assert_eq!(key, key2);
     }
 
+    #[cfg(feature = "emulation")]
     #[test]
     fn test_pbkdf2_sha256_vs_sha1() {
         let password = b"password";
@@ -1206,6 +1239,7 @@ mod legacy_tests {
     ///
     /// A fallback to SHA-1 would return bytes of the correct length and the wrong value, which
     /// an analyst then consumes as ground truth with no signal that the crypto was substituted.
+    #[cfg(feature = "emulation")]
     #[test]
     fn test_pbkdf2_unknown_algorithm_is_rejected() {
         let password = b"test";
@@ -1339,6 +1373,7 @@ mod legacy_tests {
         }
     }
 
+    #[cfg(feature = "emulation")]
     #[test]
     fn test_pbkdf1_different_from_pbkdf2() {
         let password = b"password";
@@ -1353,6 +1388,7 @@ mod legacy_tests {
 
     // DES encryption tests
 
+    #[cfg(feature = "emulation")]
     #[test]
     fn test_des_encrypt_decrypt() {
         let key = [0u8; 8]; // 56-bit key (8 bytes with parity)
@@ -1364,6 +1400,7 @@ mod legacy_tests {
         assert_eq!(decrypted, plaintext);
     }
 
+    #[cfg(feature = "emulation")]
     #[test]
     fn test_tripledes_encrypt_decrypt() {
         let key = [0u8; 24]; // 168-bit key (24 bytes)

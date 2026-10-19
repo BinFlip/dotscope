@@ -1,8 +1,9 @@
 //! ECMA-335 compressed integer encoding and decoding utilities.
 //!
-//! This module provides utilities for working with ECMA-335 compressed unsigned integers,
-//! which are used throughout .NET metadata to efficiently encode frequently-small values
-//! while supporting the full u32 range when needed.
+//! The size of an ECMA-335 compressed unsigned integer, which .NET metadata uses
+//! to encode frequently-small values while supporting the full u32 range. The
+//! encoder and decoder are [`crate::io::write_compressed_uint`] and
+//! [`crate::io::read_compressed_uint`].
 //!
 //! # ECMA-335 Compressed Integer Format
 //!
@@ -17,7 +18,7 @@
 //! # Examples
 //!
 //! ```rust,ignore
-//! use dotscope::utils::compression::{write_compressed_uint, compressed_uint_size};
+//! use dotscope::io::{compressed_uint_size, write_compressed_uint};
 //!
 //! let mut buffer = Vec::new();
 //!
@@ -46,58 +47,6 @@
 const SINGLE_BYTE_MAX: u32 = 0x7F;
 /// Maximum value encodable in two bytes (10xxxxxx pattern)
 const TWO_BYTE_MAX: u32 = 0x3FFF;
-/// High bit marker for two-byte encoding
-const TWO_BYTE_MARKER: u8 = 0x80;
-/// High bit marker for four-byte encoding
-const FOUR_BYTE_MARKER: u8 = 0xC0;
-
-/// Encodes an unsigned integer using ECMA-335 compressed integer format.
-///
-/// This function implements the compressed unsigned integer encoding specified in
-/// ECMA-335 Partition II, Section 23.2. The encoding uses variable-length representation
-/// to minimize space usage for commonly small integer values.
-///
-/// # Arguments
-///
-/// * `value` - The unsigned 32-bit integer to encode
-/// * `buffer` - Mutable vector to append the encoded bytes to
-///
-/// # Encoding Format
-///
-/// - **Small values** (0x00-0x7F): Single byte with high bit clear
-/// - **Medium values** (0x80-0x3FFF): Two bytes with "10" bit pattern prefix
-/// - **Large values** (0x4000+): Four bytes with "110" bit pattern prefix
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// use dotscope::utils::compression::write_compressed_uint;
-///
-/// let mut buffer = Vec::new();
-/// write_compressed_uint(42, &mut buffer);
-/// assert_eq!(buffer, vec![0x2A]);
-///
-/// buffer.clear();
-/// write_compressed_uint(300, &mut buffer);
-/// assert_eq!(buffer, vec![0x81, 0x2C]);
-/// ```
-#[allow(clippy::cast_possible_truncation)]
-pub fn write_compressed_uint(value: u32, buffer: &mut Vec<u8>) {
-    if value <= SINGLE_BYTE_MAX {
-        // Single byte: 0xxxxxxx
-        buffer.push(value as u8);
-    } else if value <= TWO_BYTE_MAX {
-        // Two bytes: 10xxxxxx xxxxxxxx
-        buffer.push(TWO_BYTE_MARKER | ((value >> 8) as u8));
-        buffer.push(value as u8);
-    } else {
-        // Four bytes: 110xxxxx xxxxxxxx xxxxxxxx xxxxxxxx
-        buffer.push(FOUR_BYTE_MARKER | ((value >> 24) as u8));
-        buffer.push((value >> 16) as u8);
-        buffer.push((value >> 8) as u8);
-        buffer.push(value as u8);
-    }
-}
 
 /// Calculates the encoded size of a compressed unsigned integer without encoding it.
 ///
@@ -138,6 +87,7 @@ pub fn compressed_uint_size(value: usize) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::write_compressed_uint;
 
     #[test]
     fn test_compressed_uint_single_byte() {

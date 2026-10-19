@@ -35,7 +35,7 @@
 // The crate's trusted computing base is exactly one `unsafe` block, and it carries a targeted
 // `#[allow(unsafe_code)]` with its own SAFETY note:
 //
-// - `cilassembly/writer/output.rs` — `Mmap::map_mut` over the output file.
+// - `cilassembly/writer/output.rs` - `Mmap::map_mut` over the output file.
 //
 // The deny lint does not reach through dependencies, so note the other mapping here: `cowfile`'s
 // `map_copy`, which the primary load path routes its mmap through.
@@ -307,6 +307,10 @@ pub(crate) mod test;
 /// ```
 pub mod formatting;
 
+/// Readers and writers for the binary encodings .NET metadata uses:
+/// endian integers, ECMA-335 compressed integers and blob strings.
+pub mod io;
+
 /// Convenient re-exports of the most commonly used types and traits.
 ///
 /// This module provides a curated selection of the most frequently used types
@@ -466,7 +470,7 @@ pub mod assembly;
 /// let cfg = ControlFlowGraph::from_basic_blocks(blocks)?;
 ///
 /// // Convert to SSA form
-/// let ssa = SsaConverter::build(&cfg, num_args, num_locals, resolver)?;
+/// let ssa = SsaConverter::build(&cfg, num_args, num_locals, resolver, Vec::new())?;
 ///
 /// // Analyze loops
 /// for loop_info in cfg.loops() {
@@ -939,8 +943,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub use cilassembly::{
-    ChangeRefKind, ChangeRefRc, CilAssembly, CleanupRequest, LastWriteWinsResolver,
-    MethodBodyBuilder, MethodBuilder,
+    ChangeRefKind, ChangeRefRc, CilAssembly, CleanupRequest, Conflict, ConflictResolver,
+    LastWriteWinsResolver, MethodBodyBuilder, MethodBuilder, OperationResolution, Resolution,
 };
 /// `dotscope` Error type.
 ///
@@ -1031,6 +1035,7 @@ pub use file::{
         Export as PeExport, Import as PeImport, Machine, OptionalHeader, Pe, PeCharacteristics,
         SectionTable, StandardFields, Subsystem, WindowsFields,
     },
+    repair::{repair_pe, RepairAction, RepairResult},
     File,
 };
 /// Main entry point for working with .NET assemblies.

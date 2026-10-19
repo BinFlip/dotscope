@@ -388,6 +388,22 @@ pub enum Error {
     #[error("Codegen error: {0}")]
     CodegenFailed(String),
 
+    /// An exception region the generated layout does not keep in one piece.
+    ///
+    /// A clause names one contiguous span of bytes for each of its regions, so
+    /// a layout that places code outside a region between the region's blocks
+    /// cannot be described. Code generation refuses the method rather than
+    /// dropping the clause, which would leave the code it guards unprotected.
+    #[error("Codegen error: exception region of blocks {start}..{end} is not contiguous in the layout: {intruder} falls inside it")]
+    EhRegionNotContiguous {
+        /// The region's first block.
+        start: usize,
+        /// The block after its last.
+        end: usize,
+        /// The layout entry that falls inside the region.
+        intruder: String,
+    },
+
     /// Cannot modify replaced table.
     ///
     /// This error occurs when attempting to apply sparse modifications
