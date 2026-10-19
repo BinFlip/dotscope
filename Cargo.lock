@@ -99,16 +99,16 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "analyssa"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f9547a6316defcd8b3e6fcb49caaa7c93b27305a6c25824ae475e1461ea3660"
+version = "0.7.0"
 dependencies = [
  "boxcar",
  "dashmap",
  "log",
  "num_enum",
  "rayon",
- "thiserror 2.0.20",
+ "rustc-hash 2.1.3",
+ "smallvec 1.16.3",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -296,7 +296,7 @@ dependencies = [
  "num-traits",
  "pastey 0.1.1",
  "rayon",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "v_frame",
  "y4m",
 ]
@@ -565,7 +565,7 @@ dependencies = [
  "cached_proc_macro_types",
  "hashbrown 0.15.5",
  "once_cell",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "web-time",
 ]
 
@@ -609,7 +609,7 @@ dependencies = [
  "rand_distr 0.5.1",
  "rayon",
  "safetensors 0.7.0",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokenizers 0.22.2",
  "yoke 0.8.3",
  "zip",
@@ -626,7 +626,7 @@ dependencies = [
  "objc2-foundation",
  "objc2-metal",
  "once_cell",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -645,7 +645,7 @@ dependencies = [
  "rayon",
  "safetensors 0.7.0",
  "serde",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -961,7 +961,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62c10f4a5e79d5e0a109ffeadb808578e24f82123292efd4c2412a21e9f9b4ff"
 dependencies = [
  "memmap2",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1156,7 +1156,7 @@ dependencies = [
  "dtoa-short",
  "itoa",
  "phf",
- "smallvec 1.16.0",
+ "smallvec 1.16.3",
 ]
 
 [[package]]
@@ -1377,7 +1377,7 @@ version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "10d60334b3b2e7c9d91ef8150abfb6fa4c1c39ebbcf4a81c2e346aad939fee3e"
 dependencies = [
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1598,10 +1598,10 @@ dependencies = [
  "rustc-hash 2.1.3",
  "sha1 0.11.0",
  "sha2 0.11.0",
- "smallvec 1.16.0",
+ "smallvec 1.16.3",
  "strum 0.28.0",
  "tempfile",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "uguid",
  "widestring",
@@ -1811,7 +1811,7 @@ dependencies = [
  "num-complex",
  "pulp 0.22.3",
  "rayon-core",
- "smallvec 1.16.0",
+ "smallvec 1.16.3",
  "zune-inflate",
 ]
 
@@ -2506,7 +2506,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "ureq",
  "windows-sys 0.60.2",
@@ -2535,7 +2535,7 @@ checksum = "12d23156ea4dbe6b37ad48fab2da56ff27b0f6192fb5db210c44eb07bfe6e787"
 dependencies = [
  "html5ever 0.38.0",
  "tendril 0.5.1",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "unicode-width",
 ]
 
@@ -2623,7 +2623,7 @@ dependencies = [
  "httparse",
  "itoa",
  "pin-project-lite",
- "smallvec 1.16.0",
+ "smallvec 1.16.3",
  "tokio",
  "want",
 ]
@@ -2739,7 +2739,7 @@ dependencies = [
  "icu_normalizer_data",
  "icu_properties",
  "icu_provider",
- "smallvec 1.16.0",
+ "smallvec 1.16.3",
  "zerovec",
 ]
 
@@ -2798,7 +2798,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b0875f23caa03898994f6ddc501886a45c7d3d62d04d2d90788d47be1b1e4de"
 dependencies = [
  "idna_adapter",
- "smallvec 1.16.0",
+ "smallvec 1.16.3",
  "utf8_iter",
 ]
 
@@ -3062,7 +3062,7 @@ dependencies = [
  "jni-sys",
  "log",
  "simd_cesu8",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "walkdir",
  "windows-link 0.2.1",
 ]
@@ -3495,7 +3495,7 @@ dependencies = [
  "schemars 1.2.2",
  "serde",
  "serde_json",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -3595,7 +3595,7 @@ dependencies = [
  "strum 0.27.2",
  "symphonia",
  "sysinfo",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokenizers 0.21.4",
  "tokio",
  "tokio-rayon",
@@ -3659,7 +3659,7 @@ dependencies = [
  "half",
  "objc2-foundation",
  "objc2-metal",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3686,7 +3686,7 @@ dependencies = [
  "safetensors 0.7.0",
  "serde",
  "serde_json",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
  "yoke 0.8.3",
@@ -3764,7 +3764,7 @@ version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77a5d83df9f36fe23f0c3648c6bbb8b0298bb5f1939c8f2704431371f4b84d43"
 dependencies = [
- "smallvec 1.16.0",
+ "smallvec 1.16.3",
 ]
 
 [[package]]
@@ -4109,7 +4109,7 @@ dependencies = [
  "serde_with",
  "sha1 0.10.7",
  "sha2 0.10.9",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -4195,7 +4195,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "redox_syscall",
- "smallvec 1.16.0",
+ "smallvec 1.16.3",
  "windows-link 0.2.1",
 ]
 
@@ -4530,7 +4530,7 @@ dependencies = [
  "rustc-hash 2.1.3",
  "rustls",
  "socket2",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
  "web-time",
@@ -4553,7 +4553,7 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "slab",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tinyvec",
  "tracing",
  "web-time",
@@ -4757,7 +4757,7 @@ dependencies = [
  "rand 0.9.5",
  "rand_chacha 0.9.0",
  "simd_helpers",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "v_frame",
  "wasm-bindgen",
 ]
@@ -4861,7 +4861,7 @@ checksum = "a4e608c6638b9c18977b00b475ac1f28d14e84b27d8d42f70e0bf1e3dec127ac"
 dependencies = [
  "getrandom 0.2.17",
  "libredox",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -5239,7 +5239,7 @@ checksum = "5e1aee7486406df3541b5a657204a11be97175a467d77bc98e6d94a66289fb80"
 dependencies = [
  "arraydeque",
  "smallvec 2.0.0-alpha.13",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -5368,7 +5368,7 @@ dependencies = [
  "precomputed-hash",
  "rustc-hash 2.1.3",
  "servo_arc",
- "smallvec 1.16.0",
+ "smallvec 1.16.3",
 ]
 
 [[package]]
@@ -5687,9 +5687,9 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "smallvec"
-version = "1.16.0"
+version = "1.16.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9be42f50aa861c555654aa3a37f52f4b1074bacf4e48fe0ef7fa584e80f1f0f"
+checksum = "5b3dc8af474f516a851ff4bd12db780f948b9250ad37211e4eec0bccea54e01b"
 
 [[package]]
 name = "smallvec"
@@ -6155,11 +6155,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.20"
+version = "2.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec86235f5fcc2a73650310756d2ac5b138a5780bbbdfae3eeccec992c435ba4f"
+checksum = "09e52cb86a36cede5cb101bf8908837b3e4c6e5e59fe7fd85c23fb56200d189e"
 dependencies = [
- "thiserror-impl 2.0.20",
+ "thiserror-impl 2.0.21",
 ]
 
 [[package]]
@@ -6175,9 +6175,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.20"
+version = "2.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc04cd3e1236dd4a98afca4569f2deb3f120e5422a4023be2cb683f8486292af"
+checksum = "fe5197923287db20a58125f0bc85c062f7f2c892de97b18c356f9efb14b28524"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6299,7 +6299,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spm_precompiled",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "unicode-normalization-alignments",
  "unicode-segmentation",
  "unicode_categories",
@@ -6332,7 +6332,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spm_precompiled",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "unicode-normalization-alignments",
  "unicode-segmentation",
  "unicode_categories",
@@ -6609,7 +6609,7 @@ dependencies = [
  "once_cell",
  "regex-automata",
  "sharded-slab",
- "smallvec 1.16.0",
+ "smallvec 1.16.3",
  "thread_local",
  "tracing",
  "tracing-core",
@@ -6645,7 +6645,7 @@ dependencies = [
  "log",
  "rand 0.9.5",
  "sha1 0.10.7",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "utf-8",
 ]
 
@@ -6726,7 +6726,7 @@ version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "43f613e4fa046e69818dd287fdc4bc78175ff20331479dab6e1b0f98d57062de"
 dependencies = [
- "smallvec 1.16.0",
+ "smallvec 1.16.3",
 ]
 
 [[package]]
@@ -7753,3 +7753,67 @@ checksum = "27bc9d5b815bc103f142aa054f561d9187d191692ec7c2d1e2b4737f8dbd7296"
 dependencies = [
  "zune-core",
 ]
+
+[[patch.unused]]
+name = "analysir"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "autoit-rs"
+version = "0.1.2"
+
+[[patch.unused]]
+name = "darwinscope"
+version = "0.1.4"
+
+[[patch.unused]]
+name = "gobin"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "innospect"
+version = "0.2.0"
+
+[[patch.unused]]
+name = "mallabel"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "msft-typelib"
+version = "0.2.0"
+
+[[patch.unused]]
+name = "nimrod"
+version = "0.3.1"
+
+[[patch.unused]]
+name = "nsis"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "pascalscript"
+version = "0.2.1"
+
+[[patch.unused]]
+name = "securs-abi"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "securs-fleet"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "securs-spec"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "securs-wg"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "undelphi"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "visualbasic"
+version = "0.6.0"

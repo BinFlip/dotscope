@@ -47,13 +47,15 @@ build-release:
 
 # Run tests
 #
-# Release profile is mandatory, not a speed preference: the sample-driven integration tests
-# run the full detection -> SSA -> pass-pipeline -> codegen path over real packed binaries,
-# which takes hours unoptimised and tens of seconds optimised.
+# An optimised profile is mandatory, not a speed preference: the sample-driven integration
+# tests run the full detection -> SSA -> pass-pipeline -> codegen path over real packed
+# binaries, which takes hours unoptimised and tens of seconds optimised. `ci-test` is
+# release with debug assertions and overflow checks on (see the workspace Cargo.toml), so
+# the invariants release compiles out are checked here.
 # `--lib --bins --tests` excludes doc tests, which have their own target below because they
 # need a concurrency cap this run does not.
 test:
-	RUST_TEST_THREADS=$(TEST_THREADS) cargo test --workspace --release --all-features --lib --bins --tests --verbose
+	RUST_TEST_THREADS=$(TEST_THREADS) cargo test --workspace --profile ci-test --all-features --lib --bins --tests --verbose
 
 # Run doc tests
 #
