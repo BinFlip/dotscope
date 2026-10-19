@@ -131,7 +131,7 @@ mod memory;
 mod process;
 mod runtime;
 mod thread;
-pub(crate) mod tokens;
+pub mod tokens;
 mod tracer;
 mod value;
 
@@ -140,7 +140,7 @@ mod value;
 pub use capture::{
     AssemblyLoadMethod, BufferSource, CaptureContext, CaptureSource, CapturedAssembly,
     CapturedBuffer, CapturedMethodReturn, CapturedString, FileOpKind, FileOperation,
-    MemorySnapshot, NetworkOpKind, NetworkOperation,
+    MemorySnapshot, NetworkOpKind, NetworkOperation, ResourceRead,
 };
 // Re-export primary types from engine module
 pub use engine::{

@@ -302,9 +302,7 @@ impl Interpreter {
         instruction: &Instruction,
     ) -> Result<StepResult> {
         match instruction.opcode {
-            // ================================================================
             // Stack Operations (0x00 - 0x01, 0x25, 0x26)
-            // ================================================================
             0x00 => Ok(StepResult::Continue),   // nop
             0x01 => Ok(StepResult::Breakpoint), // break
 
@@ -319,9 +317,7 @@ impl Interpreter {
                 Ok(StepResult::Continue)
             }
 
-            // ================================================================
             // Load Argument (0x02 - 0x05, 0x0E, 0x0F)
-            // ================================================================
             0x02 => Self::load_argument(thread, 0), // ldarg.0
             0x03 => Self::load_argument(thread, 1), // ldarg.1
             0x04 => Self::load_argument(thread, 2), // ldarg.2
@@ -341,9 +337,7 @@ impl Interpreter {
                 Self::load_argument_address(thread, u16::from(index))
             }
 
-            // ================================================================
             // Store Argument (0x10)
-            // ================================================================
             0x10 => {
                 // starg.s
                 let index = instruction
@@ -352,9 +346,7 @@ impl Interpreter {
                 Self::store_argument(thread, u16::from(index))
             }
 
-            // ================================================================
             // Load Local (0x06 - 0x0D, 0x11, 0x12)
-            // ================================================================
             0x06 => Self::load_local(thread, 0), // ldloc.0
             0x07 => Self::load_local(thread, 1), // ldloc.1
             0x08 => Self::load_local(thread, 2), // ldloc.2
@@ -374,9 +366,7 @@ impl Interpreter {
                 Self::load_local_address(thread, u16::from(index))
             }
 
-            // ================================================================
             // Store Local (0x0A - 0x0D, 0x13)
-            // ================================================================
             0x0A => Self::store_local(thread, 0), // stloc.0
             0x0B => Self::store_local(thread, 1), // stloc.1
             0x0C => Self::store_local(thread, 2), // stloc.2
@@ -389,18 +379,14 @@ impl Interpreter {
                 Self::store_local(thread, u16::from(index))
             }
 
-            // ================================================================
             // Load Null (0x14)
-            // ================================================================
             0x14 => {
                 // ldnull
                 thread.push(EmValue::Null)?;
                 Ok(StepResult::Continue)
             }
 
-            // ================================================================
             // Load Constants (0x15 - 0x23)
-            // ================================================================
             0x15 => {
                 // ldc.i4.m1
                 thread.push(EmValue::I32(-1))?;
@@ -492,9 +478,7 @@ impl Interpreter {
                 Ok(StepResult::Continue)
             }
 
-            // ================================================================
             // Branching (0x2B - 0x44)
-            // ================================================================
             0x2B => {
                 // br.s
                 let target = instruction
@@ -678,18 +662,14 @@ impl Interpreter {
                 Self::branch_compare_unsigned(thread, target, CompareOp::LtUn)
             }
 
-            // ================================================================
             // Switch (0x45)
-            // ================================================================
             0x45 => {
                 // switch
                 Self::execute_switch(thread, instruction)
             }
 
-            // ================================================================
             // Indirect Load (0x46 - 0x50)
             // All small integer loads (i1, u1, i2, u2, i4, u4) widen to I32 per CIL spec
-            // ================================================================
             0x46 => Self::load_indirect_sized(thread, &self.address_space, &CilFlavor::I4, 1, true), // ldind.i1
             0x47 => {
                 Self::load_indirect_sized(thread, &self.address_space, &CilFlavor::I4, 1, false)
@@ -724,10 +704,8 @@ impl Interpreter {
                 false,
             ), // ldind.ref
 
-            // ================================================================
             // Indirect Store (0x51 - 0x57)
             // All small integer stores (i1, i2, i4) take I32 per CIL spec
-            // ================================================================
             0x51 => Self::store_indirect_sized(
                 thread,
                 &self.address_space,
@@ -741,9 +719,7 @@ impl Interpreter {
             0x56 => Self::store_indirect_sized(thread, &self.address_space, &CilFlavor::R4, 4), // stind.r4
             0x57 => Self::store_indirect_sized(thread, &self.address_space, &CilFlavor::R8, 8), // stind.r8
 
-            // ================================================================
             // Arithmetic (0x58 - 0x66)
-            // ================================================================
             0x58 => Self::binary_op(thread, BinaryOp::Add, self.pointer_size), // add
             0x59 => Self::binary_op(thread, BinaryOp::Sub, self.pointer_size), // sub
             0x5A => Self::binary_op(thread, BinaryOp::Mul, self.pointer_size), // mul
@@ -760,9 +736,7 @@ impl Interpreter {
             0x65 => Self::unary_op(thread, UnaryOp::Neg, self.pointer_size),   // neg
             0x66 => Self::unary_op(thread, UnaryOp::Not, self.pointer_size),   // not
 
-            // ================================================================
             // Conversions (0x67 - 0x76, 0xD1 - 0xD3)
-            // ================================================================
             0x67 => Self::convert(thread, ConversionType::I1, self.pointer_size), // conv.i1
             0x68 => Self::convert(thread, ConversionType::I2, self.pointer_size), // conv.i2
             0x69 => Self::convert(thread, ConversionType::I4, self.pointer_size), // conv.i4
@@ -778,17 +752,13 @@ impl Interpreter {
             0xD3 => Self::convert(thread, ConversionType::I, self.pointer_size),  // conv.i
             0xE0 => Self::convert(thread, ConversionType::U, self.pointer_size),  // conv.u
 
-            // ================================================================
             // Load String (0x72)
-            // ================================================================
             0x72 => {
                 // ldstr
                 Self::load_string(instruction)
             }
 
-            // ================================================================
             // Return (0x2A)
-            // ================================================================
             0x2A => {
                 // ret
                 // The return value (if any) should be on the stack
@@ -796,9 +766,7 @@ impl Interpreter {
                 Ok(StepResult::Return { value: None })
             }
 
-            // ================================================================
             // Call Instructions (0x27, 0x28, 0x29, 0x6F)
-            // ================================================================
             0x27 => {
                 // jmp - unconditional jump to method, transferring current args
                 let token = instruction
@@ -863,9 +831,7 @@ impl Interpreter {
                 }
             }
 
-            // ================================================================
             // Value Type Operations (0x70, 0x71)
-            // ================================================================
             0x70 => {
                 // cpobj - copy value type
                 let type_token = instruction
@@ -881,9 +847,7 @@ impl Interpreter {
                 Self::load_object(thread, type_token)
             }
 
-            // ================================================================
             // Object Creation (0x73)
-            // ================================================================
             0x73 => {
                 // newobj
                 let ctor_token = instruction
@@ -895,9 +859,7 @@ impl Interpreter {
                 })
             }
 
-            // ================================================================
             // Type Operations (0x74, 0x75)
-            // ================================================================
             0x74 => {
                 // castclass
                 let type_token = instruction
@@ -913,14 +875,10 @@ impl Interpreter {
                 Ok(StepResult::IsInst { type_token })
             }
 
-            // ================================================================
             // Comparison (0xFE 0x01-0x06, but some single-byte exist)
-            // ================================================================
             // Note: ceq, cgt, clt are 0xFE prefixed, handled in execute_fe_prefixed
 
-            // ================================================================
             // Unbox (0x79)
-            // ================================================================
             0x79 => {
                 // unbox - extract value type address from boxed object
                 let type_token = instruction
@@ -929,9 +887,7 @@ impl Interpreter {
                 Ok(StepResult::Unbox { type_token })
             }
 
-            // ================================================================
             // Exception Handling
-            // ================================================================
             0x7A => {
                 // throw
                 let exception = thread.pop()?;
@@ -962,9 +918,7 @@ impl Interpreter {
                 self.pointer_size.bytes(),
             ), // stind.i
 
-            // ================================================================
             // Typed Reference Operations (0xC2, 0xC6)
-            // ================================================================
             0xC2 => {
                 // refanyval - extract address from typed reference
                 let type_token = instruction
@@ -980,17 +934,13 @@ impl Interpreter {
                 Ok(StepResult::MkRefAny { type_token })
             }
 
-            // ================================================================
             // Floating Point Check (0xC3)
-            // ================================================================
             0xC3 => {
                 // ckfinite - throw if value is not finite
                 Self::check_finite(thread)
             }
 
-            // ================================================================
             // Load Token (0xD0)
-            // ================================================================
             0xD0 => {
                 // ldtoken - load metadata token as runtime handle
                 let token = instruction
@@ -999,15 +949,11 @@ impl Interpreter {
                 Ok(StepResult::LoadToken { token })
             }
 
-            // ================================================================
             // Overflow-checked conversions (0xD4, 0xD5)
-            // ================================================================
             0xD4 => Self::convert(thread, ConversionType::IOvf, self.pointer_size), // conv.ovf.i
             0xD5 => Self::convert(thread, ConversionType::UOvf, self.pointer_size), // conv.ovf.u
 
-            // ================================================================
             // Overflow-checked arithmetic (0xD6 - 0xDB)
-            // ================================================================
             0xD6 => Self::binary_op(thread, BinaryOp::AddOvf, self.pointer_size), // add.ovf
             0xD7 => Self::binary_op(thread, BinaryOp::AddOvfUn, self.pointer_size), // add.ovf.un
             0xD8 => Self::binary_op(thread, BinaryOp::MulOvf, self.pointer_size), // mul.ovf
@@ -1015,9 +961,7 @@ impl Interpreter {
             0xDA => Self::binary_op(thread, BinaryOp::SubOvf, self.pointer_size), // sub.ovf
             0xDB => Self::binary_op(thread, BinaryOp::SubOvfUn, self.pointer_size), // sub.ovf.un
 
-            // ================================================================
             // Boxing (0x8C)
-            // ================================================================
             0x8C => {
                 // box - box a value type
                 let type_token = instruction
@@ -1026,9 +970,7 @@ impl Interpreter {
                 Ok(StepResult::Box { type_token })
             }
 
-            // ================================================================
             // Array Operations (0x8D, 0x8E, 0x8F-0x9A, 0xA2-0xA5)
-            // ================================================================
             0x8D => {
                 // newarr
                 Self::new_array(thread, instruction)
@@ -1073,9 +1015,7 @@ impl Interpreter {
                 Ok(StepResult::UnboxAny { type_token })
             }
 
-            // ================================================================
             // Field Operations (0x7B, 0x7C, 0x7D, 0x7E, 0x7F, 0x80)
-            // ================================================================
             0x7B => {
                 // ldfld
                 Self::load_field(thread, instruction)
@@ -1101,9 +1041,7 @@ impl Interpreter {
                 Self::store_static_field(thread, instruction)
             }
 
-            // ================================================================
             // Value Type Store (0x81)
-            // ================================================================
             0x81 => {
                 // stobj - store value type to address
                 let type_token = instruction
@@ -1112,9 +1050,7 @@ impl Interpreter {
                 Self::store_object(thread, type_token)
             }
 
-            // ================================================================
             // Unimplemented - return error
-            // ================================================================
             _ => Err(EmulationError::UnsupportedOpcode {
                 opcode: instruction.opcode,
                 prefix: None,
@@ -1131,27 +1067,21 @@ impl Interpreter {
         instruction: &Instruction,
     ) -> Result<StepResult> {
         match instruction.opcode {
-            // ================================================================
             // Arglist (0xFE 0x00)
-            // ================================================================
             0x00 => {
                 // arglist - gets a handle to the argument list
                 // This is used in varargs methods - return as a special result
                 Ok(StepResult::ArgList)
             }
 
-            // ================================================================
             // Comparison (0xFE 0x01 - 0x06)
-            // ================================================================
             0x01 => Self::compare(thread, CompareOp::Eq), // ceq
             0x02 => Self::compare(thread, CompareOp::Gt), // cgt
             0x03 => Self::compare(thread, CompareOp::GtUn), // cgt.un
             0x04 => Self::compare(thread, CompareOp::Lt), // clt
             0x05 => Self::compare(thread, CompareOp::LtUn), // clt.un
 
-            // ================================================================
             // Function Pointers (0xFE 0x06 - 0x07)
-            // ================================================================
             0x06 => {
                 // ldftn - load function pointer
                 let method = instruction
@@ -1169,9 +1099,7 @@ impl Interpreter {
                 Ok(StepResult::LoadVirtualFunctionPointer { method })
             }
 
-            // ================================================================
             // Extended Load/Store
-            // ================================================================
             0x09 => {
                 // ldarg
                 let index = instruction
@@ -1215,27 +1143,21 @@ impl Interpreter {
                 Self::store_local(thread, index)
             }
 
-            // ================================================================
             // Stack Allocation (0xFE 0x0F)
-            // ================================================================
             0x0F => {
                 // localloc - allocate space on the local stack
                 let size = thread.pop()?;
                 Ok(StepResult::LocalAlloc { size })
             }
 
-            // ================================================================
             // Exception Filter (0xFE 0x11)
-            // ================================================================
             0x11 => {
                 // endfilter - end exception filter
                 let value = thread.pop()?;
                 Ok(StepResult::EndFilter { value })
             }
 
-            // ================================================================
             // Object Initialization (0xFE 0x15)
-            // ================================================================
             0x15 => {
                 // initobj - initialize value type at address
                 let type_token = instruction
@@ -1244,9 +1166,7 @@ impl Interpreter {
                 Ok(StepResult::InitObj { type_token })
             }
 
-            // ================================================================
             // Memory Operations (0xFE 0x17 - 0x18)
-            // ================================================================
             0x17 => {
                 // cpblk - copy memory block
                 let size = thread.pop()?;
@@ -1262,14 +1182,10 @@ impl Interpreter {
                 Ok(StepResult::InitBlock { addr, value, size })
             }
 
-            // ================================================================
             // Rethrow (0xFE 0x1A)
-            // ================================================================
             0x1A => Ok(StepResult::Rethrow),
 
-            // ================================================================
             // Type Size (0xFE 0x1C)
-            // ================================================================
             0x1C => {
                 // sizeof - get size of type
                 let type_token = instruction
@@ -1278,17 +1194,13 @@ impl Interpreter {
                 Ok(StepResult::SizeOf { type_token })
             }
 
-            // ================================================================
             // Typed Reference Type (0xFE 0x1D)
-            // ================================================================
             0x1D => {
                 // refanytype - get type from typed reference
                 Ok(StepResult::RefAnyType)
             }
 
-            // ================================================================
             // Overflow-checked conversions (0xFE 0x82 - 0x8A)
-            // ================================================================
             0x82 => Self::convert(thread, ConversionType::I1Ovf, self.pointer_size), // conv.ovf.i1
             0x83 => Self::convert(thread, ConversionType::U1Ovf, self.pointer_size), // conv.ovf.u1
             0x84 => Self::convert(thread, ConversionType::I2Ovf, self.pointer_size), // conv.ovf.i2
@@ -1312,9 +1224,7 @@ impl Interpreter {
             0xBB => Self::convert(thread, ConversionType::IOvfUn, self.pointer_size), // conv.ovf.i.un
             0xBC => Self::convert(thread, ConversionType::UOvfUn, self.pointer_size), // conv.ovf.u.un
 
-            // ================================================================
             // Prefix opcodes (modify the next instruction)
-            // ================================================================
             0x12 => {
                 // unaligned.
                 let alignment = instruction.get_u8_operand().unwrap_or(1);
@@ -1341,9 +1251,7 @@ impl Interpreter {
                 Ok(StepResult::Continue)
             }
 
-            // ================================================================
             // Unimplemented
-            // ================================================================
             _ => Err(EmulationError::UnsupportedOpcode {
                 opcode: instruction.opcode,
                 prefix: Some(0xFE),

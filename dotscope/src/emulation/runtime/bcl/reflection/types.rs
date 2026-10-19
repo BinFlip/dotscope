@@ -960,10 +960,8 @@ fn type_get_generic_arguments_pre(
                     }
 
                     // Source 3: Open generic type definitions
-                    for i in 0..cil_type.generic_params.count() {
-                        if let Some(gp) = cil_type.generic_params.get(i) {
-                            arg_tokens.push(gp.token);
-                        }
+                    for (_, gp) in cil_type.generic_params.iter() {
+                        arg_tokens.push(gp.token);
                     }
                     if !arg_tokens.is_empty() {
                         return alloc_type_array_from_tokens(thread, &arg_tokens);

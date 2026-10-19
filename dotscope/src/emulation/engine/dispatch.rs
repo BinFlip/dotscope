@@ -51,7 +51,6 @@ use crate::{
     emulation::engine::context::EmulationContext,
     metadata::{
         method::Method,
-        signatures::SignatureMethod,
         token::Token,
         typesystem::{CilType, CilTypeReference},
     },
@@ -248,7 +247,7 @@ impl DispatchResolver {
             };
             if method.name != *method_name
                 || method.is_static()
-                || !signatures_match(&method.signature, &base_method.signature)
+                || !method.signature.has_same_parameters(&base_method.signature)
             {
                 continue;
             }
@@ -318,7 +317,7 @@ impl DispatchResolver {
             };
             if method.is_virtual()
                 && method.name == method_name
-                && signatures_match(&method.signature, &base_method.signature)
+                && method.signature.has_same_parameters(&base_method.signature)
             {
                 return Some(method.token);
             }
@@ -451,30 +450,6 @@ impl Default for DispatchResolver {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Checks if two method signatures are compatible for virtual override purposes.
-///
-/// Two signatures are compatible when they have the same parameter count,
-/// the same generic parameter count, and each positional parameter has
-/// the same base type (`CilFlavor`). Return type is intentionally ignored
-/// per ECMA-335 §II.10.3.2 (covariant returns are not considered here).
-fn signatures_match(candidate: &SignatureMethod, base: &SignatureMethod) -> bool {
-    if candidate.param_count != base.param_count {
-        return false;
-    }
-    if candidate.param_count_generic != base.param_count_generic {
-        return false;
-    }
-    if candidate.params.len() != base.params.len() {
-        return false;
-    }
-    for (cp, bp) in candidate.params.iter().zip(base.params.iter()) {
-        if cp.base != bp.base {
-            return false;
-        }
-    }
-    true
 }
 
 #[cfg(test)]
