@@ -355,8 +355,9 @@ fn collect_type_tokens_from_local_sig(blob_data: &[u8], referenced: &mut HashSet
 /// table can be `TypeDef` (0x02), `TypeRef` (0x01), **or** `TypeSpec`
 /// (0x1B). All three must flow into the live-set so that the cascade
 /// cleanup doesn't drop a TypeSpec that's referenced only via a local
-/// variable signature (no IL operand picks it up).
-fn collect_all_type_tokens(sig: &TypeSignature, out: &mut HashSet<Token>) {
+/// variable signature (no IL operand picks it up). Function pointer
+/// signatures and custom modifiers name types too, and are followed.
+pub(crate) fn collect_all_type_tokens(sig: &TypeSignature, out: &mut HashSet<Token>) {
     match sig {
         TypeSignature::Class(token) | TypeSignature::ValueType(token) => {
             let table = token.table();
@@ -375,6 +376,22 @@ fn collect_all_type_tokens(sig: &TypeSignature, out: &mut HashSet<Token>) {
         TypeSignature::Ptr(ptr) => collect_all_type_tokens(&ptr.base, out),
         TypeSignature::ByRef(inner) | TypeSignature::Pinned(inner) => {
             collect_all_type_tokens(inner, out);
+        }
+        TypeSignature::FnPtr(method) => {
+            for param in std::iter::once(&method.return_type)
+                .chain(&method.params)
+                .chain(&method.varargs)
+            {
+                collect_all_type_tokens(&param.base, out);
+            }
+        }
+        TypeSignature::ModifiedRequired(modifiers) | TypeSignature::ModifiedOptional(modifiers) => {
+            for modifier in modifiers {
+                let table = modifier.modifier_type.table();
+                if table == 0x01 || table == 0x02 || table == 0x1B {
+                    out.insert(modifier.modifier_type);
+                }
+            }
         }
         _ => {}
     }
@@ -414,6 +431,59 @@ pub(super) fn collect_typedefs_from_field_signatures(assembly: &CilAssembly) -> 
         }
         if let Ok(blob_data) = blob_heap.get(field.signature as usize) {
             if let Ok(sig) = parse_field_signature(blob_data) {
+                collect_all_type_tokens(&sig.base, &mut referenced);
+            }
+        }
+    }
+
+    referenced
+}
+
+/// Collects TypeDef tokens referenced by surviving TypeSpec signatures.
+///
+/// A TypeSpec's signature names the types it is built from: the generic type
+/// and its arguments for an instantiation, the element type for an array or
+/// pointer, and so on. Those names can be TypeDefs of this assembly, and a
+/// TypeSpec row is the only place they appear - no IL operand and no field
+/// signature picks them up.
+///
+/// Without this, a TypeDef reachable only as, say, the argument of a
+/// `List<T>` instantiation looks unused and is removed as an empty type,
+/// leaving the surviving TypeSpec pointing at a row that is no longer there.
+/// Loading the result then fails outright on the dangling spec.
+///
+/// This is the same protection [`collect_typedefs_from_field_signatures`]
+/// gives to types named only by a field signature.
+pub(super) fn collect_typedefs_from_typespec_signatures(assembly: &CilAssembly) -> HashSet<Token> {
+    let mut referenced = HashSet::new();
+
+    let view = assembly.view();
+    let Some(tables) = view.tables() else {
+        return referenced;
+    };
+    let Some(typespec_table) = tables.table::<TypeSpecRaw>() else {
+        return referenced;
+    };
+    let Some(blob_heap) = view.blobs() else {
+        return referenced;
+    };
+
+    for typespec in typespec_table.iter() {
+        let typespec = match typespec {
+            Ok(row) => row,
+            Err(e) => {
+                log::warn!("skipping unreadable metadata row: {e}");
+                continue;
+            }
+        };
+        if assembly
+            .changes()
+            .is_row_deleted(TableId::TypeSpec, typespec.rid)
+        {
+            continue;
+        }
+        if let Ok(blob_data) = blob_heap.get(typespec.signature as usize) {
+            if let Ok(sig) = parse_type_spec_signature(blob_data) {
                 collect_all_type_tokens(&sig.base, &mut referenced);
             }
         }

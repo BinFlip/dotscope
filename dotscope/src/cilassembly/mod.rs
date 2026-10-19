@@ -145,6 +145,7 @@ use crate::{
         },
         tables::{
             skip_unreadable, AssemblyRefRaw, CodedIndex, CodedIndexType, TableDataOwned, TableId,
+            TypeRefRaw,
         },
         token::Token,
     },
@@ -168,11 +169,13 @@ pub use cleanup::CleanupRequest;
 #[cfg(feature = "deobfuscation")]
 pub(crate) use cleanup::{
     compute_entry_points, expand_type_tokens, extract_local_var_sig_rid, find_unreferenced_types,
-    with_method_body,
+    with_method_body, TypeNames,
 };
 pub use modifications::TableModifications;
 pub use operation::{Operation, TableOperation};
-pub use resolver::LastWriteWinsResolver;
+pub use resolver::{
+    Conflict, ConflictResolver, LastWriteWinsResolver, OperationResolution, Resolution,
+};
 pub use writer::GeneratorConfig;
 use writer::PeGenerator;
 pub(crate) use writer::ResolvePlaceholders;
@@ -1718,19 +1721,92 @@ impl CilAssembly {
 
     /// Finds the AssemblyRef for the core library.
     ///
-    /// This method searches the AssemblyRef table to find the core library
-    /// reference, which can be any of:
-    /// - "mscorlib" (classic .NET Framework)
-    /// - "System.Runtime" (.NET Core/.NET 5+)
-    /// - "System.Private.CoreLib" (some .NET implementations)
+    /// The core library is the assembly defining `System.Object`, so the scope
+    /// of the module's own `System.Object` reference names it (its
+    /// `System.ValueType` reference in a module declaring only value types),
+    /// whatever the library is called on the runtime the module targets. Among
+    /// several such references the lowest row decides, as the compiler emits
+    /// its rows before anything appended to the image later.
     ///
     /// # Returns
     ///
-    /// A [`CodedIndex`] pointing to the core library AssemblyRef, or None if not found.
+    /// A [`CodedIndex`] pointing to the core library AssemblyRef, or None when
+    /// the module imports neither type from another assembly (the core library
+    /// itself, for instance).
     pub fn find_core_library_ref(&self) -> Option<CodedIndex> {
-        self.find_assembly_ref_by_name("mscorlib")
-            .or_else(|| self.find_assembly_ref_by_name("System.Runtime"))
-            .or_else(|| self.find_assembly_ref_by_name("System.Private.CoreLib"))
+        let scope = self.core_library_scope()?;
+        (scope.tag == TableId::AssemblyRef).then(|| {
+            CodedIndex::new(
+                TableId::AssemblyRef,
+                scope.row,
+                CodedIndexType::Implementation,
+            )
+        })
+    }
+
+    /// Finds the TypeRef through which the module imports `namespace.name` from
+    /// its core library (see [`CilAssembly::find_core_library_ref`]).
+    ///
+    /// A module can import one type from several scopes - an obfuscator built
+    /// against another runtime adds references to that runtime's core library -
+    /// and only the reference into the module's core library resolves wherever
+    /// the module runs. Falls back to the lowest TypeRef of that name when the
+    /// core library does not provide the type.
+    ///
+    /// # Returns
+    ///
+    /// A `TypeDefOrRef` [`CodedIndex`] for the TypeRef, or None when the module
+    /// does not import the type.
+    pub fn find_corelib_typeref(&self, namespace: &str, name: &str) -> Option<CodedIndex> {
+        let corelib = self.core_library_scope();
+        let mut rows = self.typeref_rows_named(namespace, name);
+        let first = rows.next()?;
+        let row = match corelib {
+            Some(scope) if scope != first.resolution_scope => rows
+                .find(|row| row.resolution_scope == scope)
+                .unwrap_or(first),
+            _ => first,
+        };
+        Some(CodedIndex::new(
+            TableId::TypeRef,
+            row.rid,
+            CodedIndexType::TypeDefOrRef,
+        ))
+    }
+
+    /// Returns the resolution scope of the module's core library imports.
+    ///
+    /// That is the scope of its `System.Object` reference, or of its
+    /// `System.ValueType` reference in a module declaring only value types;
+    /// the core library defines both.
+    fn core_library_scope(&self) -> Option<CodedIndex> {
+        self.typeref_rows_named("System", "Object")
+            .next()
+            .or_else(|| self.typeref_rows_named("System", "ValueType").next())
+            .map(|root| root.resolution_scope)
+    }
+
+    /// Returns the original TypeRef rows naming `namespace.name`, lowest row first.
+    fn typeref_rows_named<'a>(
+        &'a self,
+        namespace: &'a str,
+        name: &'a str,
+    ) -> impl Iterator<Item = TypeRefRaw> + 'a {
+        let strings = self.view.strings();
+        let is_named = move |row: &TypeRefRaw| {
+            strings.is_some_and(|strings| {
+                strings.get(row.type_name as usize).is_ok_and(|n| n == name)
+                    && strings
+                        .get(row.type_namespace as usize)
+                        .is_ok_and(|ns| ns == namespace)
+            })
+        };
+        self.view
+            .tables()
+            .and_then(|tables| tables.table::<TypeRefRaw>())
+            .into_iter()
+            .flat_map(|table| table.iter().filter_map(skip_unreadable))
+            .filter(is_named)
     }
 
     /// Adds a method signature to the blob heap and returns its index.
@@ -2759,5 +2835,28 @@ mod tests {
 
             Ok(())
         }
+    }
+
+    #[test]
+    fn a_type_imported_from_two_core_libraries_resolves_to_the_modules_own() {
+        // BitMono, running on .NET 10, imports `RuntimeTypeHandle` from that
+        // runtime's System.Private.CoreLib (TypeRef 0x0D) beside the protected
+        // program's mscorlib import (TypeRef 0x17).
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/samples/packers/bitmono/0.39.0/bitmono_calltocalli.exe");
+        let assembly = CilAssembly::from_path(&path).unwrap();
+
+        let corelib = assembly.find_core_library_ref().unwrap();
+        assert_eq!(
+            Some(corelib.row),
+            assembly
+                .find_assembly_ref_by_name("mscorlib")
+                .map(|mscorlib| mscorlib.row)
+        );
+        let handle = assembly
+            .find_corelib_typeref("System", "RuntimeTypeHandle")
+            .unwrap();
+        assert_eq!((handle.tag, handle.row), (TableId::TypeRef, 0x17));
+        assert!(assembly.find_corelib_typeref("No.Such", "Type").is_none());
     }
 }

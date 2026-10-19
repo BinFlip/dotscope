@@ -131,6 +131,16 @@ pub struct CleanupRequest {
     /// removed as orphans because they were created after the cleanup request
     /// was built.
     protected_tokens: HashSet<Token>,
+
+    /// Methods removed together with every call to them.
+    ///
+    /// A protection check - a trial expiry, an anti-debug probe - is called
+    /// from the program's own methods only because the protector put the call
+    /// there. Removing the method is half of removing the protection; the
+    /// calls go too, which neutralization does. Every other removal is of code
+    /// nothing should still call, and one that surviving code does call is
+    /// withdrawn instead.
+    call_sites_stripped: BTreeSet<Token>,
 }
 
 impl Default for CleanupRequest {
@@ -149,6 +159,7 @@ impl Default for CleanupRequest {
             remove_orphans: true,
             remove_empty_types: true,
             protected_tokens: HashSet::new(),
+            call_sites_stripped: BTreeSet::new(),
         }
     }
 }
@@ -212,6 +223,27 @@ impl CleanupRequest {
     pub fn add_methods(&mut self, tokens: impl IntoIterator<Item = Token>) -> &mut Self {
         self.methods.extend(tokens);
         self
+    }
+
+    /// Adds a protection method (MethodDef) to be removed together with every
+    /// call to it.
+    ///
+    /// For a method the program calls only because a protector inserted the
+    /// call - a trial check, an anti-debug probe. Its call sites in converted
+    /// methods are stripped by neutralization rather than keeping the method
+    /// alive, which is what a call from surviving code does to any other
+    /// removal.
+    pub fn add_protection_method(&mut self, token: Token) -> &mut Self {
+        self.methods.insert(token);
+        self.call_sites_stripped.insert(token);
+        self
+    }
+
+    /// Whether the calls to `token` are removed with it (see
+    /// [`Self::add_protection_method`]).
+    #[must_use]
+    pub fn strips_call_sites(&self, token: Token) -> bool {
+        self.call_sites_stripped.contains(&token)
     }
 
     /// Returns an iterator over methods to remove in descending RID order.
@@ -294,6 +326,35 @@ impl CleanupRequest {
     #[must_use]
     pub fn fields_len(&self) -> usize {
         self.fields.len()
+    }
+
+    /// Takes back a scheduled removal, whatever kind of token it is.
+    ///
+    /// A request is assembled by several independent producers, each deciding
+    /// from the snapshot of deletions that existed when it ran. Soundness is a
+    /// property of the finished request rather than of any one of them - no
+    /// surviving code may name a token the request removes - so the builder
+    /// needs to be able to retract a decision once the whole is visible.
+    ///
+    /// Withdrawing a type resurrects its members with it, since membership is
+    /// what put them in the removal set.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The token to stop removing.
+    ///
+    /// # Returns
+    ///
+    /// `true` when the token was scheduled for removal and no longer is.
+    pub fn withdraw(&mut self, token: Token) -> bool {
+        self.types.remove(&token)
+            | self.methods.remove(&token)
+            | self.methodspecs.remove(&token)
+            | self.fields.remove(&token)
+            | self.attributes.remove(&token)
+            | self.assemblyrefs.remove(&token)
+            | self.modulerefs.remove(&token)
+            | self.manifest_resources.remove(&token)
     }
 
     /// Adds a custom attribute to be removed.
@@ -589,6 +650,8 @@ impl CleanupRequest {
             .extend(other.excluded_sections.iter().cloned());
         self.protected_tokens
             .extend(other.protected_tokens.iter().copied());
+        self.call_sites_stripped
+            .extend(other.call_sites_stripped.iter().copied());
         self
     }
 

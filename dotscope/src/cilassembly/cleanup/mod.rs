@@ -96,6 +96,7 @@
 //! - ManifestResource entries referencing the deleted scope
 //! - File entries no longer referenced by surviving ExportedType/ManifestResource
 
+#[cfg(feature = "deobfuscation")]
 mod analysis;
 mod compaction;
 mod executor;
@@ -106,7 +107,7 @@ mod stats;
 mod utils;
 
 #[cfg(feature = "deobfuscation")]
-pub use analysis::{compute_entry_points, expand_type_tokens, find_unreferenced_types};
+pub use analysis::{compute_entry_points, expand_type_tokens, find_unreferenced_types, TypeNames};
 pub(crate) use compaction::mark_unreferenced_heap_entries;
 pub use executor::execute_cleanup;
 pub use request::CleanupRequest;

@@ -336,6 +336,71 @@ impl TableModifications {
         }
     }
 
+    /// How far the table's sparse changes reach: the number of operations
+    /// recorded and the next row an insert takes, or `None` for a replaced
+    /// table.
+    #[cfg(feature = "compiler")]
+    pub(crate) fn extent(&self) -> Option<(usize, u32)> {
+        match self {
+            Self::Sparse {
+                operations,
+                next_rid,
+                ..
+            } => Some((operations.len(), *next_rid)),
+            Self::Replaced(_) => None,
+        }
+    }
+
+    /// The number of rows inserted at `rid` or after, as recorded operations.
+    #[cfg(feature = "compiler")]
+    pub(crate) fn inserted_since(&self, rid: u32) -> usize {
+        match self {
+            Self::Sparse { operations, .. } => operations
+                .iter()
+                .filter(
+                    |op| matches!(op.operation, Operation::Insert(inserted, _) if inserted >= rid),
+                )
+                .count(),
+            Self::Replaced(_) => 0,
+        }
+    }
+
+    /// Undoes every insert made since [`Self::extent`] read `extent`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error, changing nothing, when the table changed in any other
+    /// way since: it was replaced, or a row was updated or deleted, which only
+    /// the operation's own inverse could undo.
+    #[cfg(feature = "compiler")]
+    pub(crate) fn rollback_inserts(&mut self, extent: (usize, u32)) -> Result<()> {
+        let (operations_before, rid_before) = extent;
+        let undone = self.inserted_since(rid_before);
+        let Self::Sparse {
+            operations,
+            inserted_rows,
+            change_refs,
+            next_rid,
+            ..
+        } = self
+        else {
+            return Err(Error::ModificationInvalid(
+                "a replaced table cannot be rolled back to its sparse extent".to_string(),
+            ));
+        };
+        if operations.len().saturating_sub(undone) != operations_before {
+            return Err(Error::ModificationInvalid(format!(
+                "table changed by more than inserts since its extent ({operations_before} operations, next row {rid_before})"
+            )));
+        }
+        operations
+            .retain(|op| !matches!(op.operation, Operation::Insert(rid, _) if rid >= rid_before));
+        inserted_rows.retain(|rid| *rid < rid_before);
+        change_refs.retain(|rid, _| *rid < rid_before);
+        *next_rid = rid_before;
+        Ok(())
+    }
+
     /// Consolidate operations to remove superseded operations and optimize memory.
     ///
     /// This method removes operations that have been superseded by later operations
@@ -656,6 +721,46 @@ mod tests {
         assert!(mods.has_modifications());
         assert_eq!(mods.operation_count(), 1);
         assert!(mods.has_row(1));
+    }
+
+    /// Rows inserted after an extent was read are undone, and the table's
+    /// next row is the one it was then.
+    #[cfg(feature = "compiler")]
+    #[test]
+    fn rollback_undoes_the_inserts_since_the_extent() {
+        let mut mods = TableModifications::new_sparse(3);
+        mods.apply_operation(TableOperation::new(Operation::Insert(3, make_test_row(1))))
+            .unwrap();
+        let extent = mods.extent().unwrap();
+        for rid in 4..6 {
+            mods.apply_operation(TableOperation::new(Operation::Insert(
+                rid,
+                make_test_row(rid),
+            )))
+            .unwrap();
+        }
+        assert_eq!(mods.inserted_since(extent.1), 2);
+        mods.rollback_inserts(extent).unwrap();
+        assert_eq!(mods.extent(), Some(extent));
+        assert!(mods.has_row(3));
+        assert!(!mods.has_row(4));
+        assert_eq!(mods.next_rid().unwrap(), 4);
+    }
+
+    /// A table updated since its extent is refused, unchanged: an update is
+    /// not an insert, and dropping it would lose a change made on purpose.
+    #[cfg(feature = "compiler")]
+    #[test]
+    fn rollback_refuses_a_table_changed_by_more_than_inserts() {
+        let mut mods = TableModifications::new_sparse(3);
+        let extent = mods.extent().unwrap();
+        mods.apply_operation(TableOperation::new(Operation::Insert(3, make_test_row(1))))
+            .unwrap();
+        mods.apply_operation(TableOperation::new(Operation::Update(1, make_test_row(2))))
+            .unwrap();
+        assert!(mods.rollback_inserts(extent).is_err());
+        assert_eq!(mods.operation_count(), 2);
+        assert!(mods.has_row(3));
     }
 
     #[test]

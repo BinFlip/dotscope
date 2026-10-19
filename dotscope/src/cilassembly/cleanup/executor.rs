@@ -19,7 +19,7 @@ use crate::{
             orphans::{self, DeletionContext},
             references::{
                 collect_pre_deletion_references, collect_typedefs_from_field_signatures,
-                scan_method_body_tokens,
+                collect_typedefs_from_typespec_signatures, scan_method_body_tokens,
             },
             utils::{is_cctor_method, list_range, try_remove},
             CleanupRequest, CleanupStats,
@@ -584,6 +584,18 @@ fn remove_empty_types(
     let field_sig_refs = collect_typedefs_from_field_signatures(assembly);
     referenced_typedefs.extend(
         field_sig_refs
+            .iter()
+            .filter(|t| t.is_table(TableId::TypeDef))
+            .map(|t| t.row()),
+    );
+
+    // And TypeDef RIDs named by surviving TypeSpec signatures. A type used
+    // only as part of a constructed type - a generic argument, an array
+    // element - is named nowhere else, and removing it leaves the spec
+    // pointing at a row that no longer exists.
+    let typespec_sig_refs = collect_typedefs_from_typespec_signatures(assembly);
+    referenced_typedefs.extend(
+        typespec_sig_refs
             .iter()
             .filter(|t| t.is_table(TableId::TypeDef))
             .map(|t| t.row()),

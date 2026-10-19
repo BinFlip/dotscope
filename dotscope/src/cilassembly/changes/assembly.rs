@@ -45,6 +45,8 @@ use crate::{
     cilassembly::{operation::Operation, ChangeRef, HeapChanges, TableModifications},
     metadata::{exports::UnifiedExportContainer, imports::UnifiedImportContainer, tables::TableId},
 };
+#[cfg(feature = "compiler")]
+use crate::{Error, Result};
 
 /// Internal structure for tracking all modifications to an assembly.
 ///
@@ -163,6 +165,26 @@ pub struct AssemblyChanges {
     /// will be resolved to real RVAs during PE writing based on actual section layout.
     /// Uses a different range than method bodies to avoid conflicts.
     pub next_field_placeholder: u32,
+}
+
+/// How far every change set reached at one moment, which
+/// [`AssemblyChanges::rollback_to`] returns to.
+///
+/// Additions only: the rollback undoes inserted rows, appended heap entries
+/// and stored data, and refuses a table changed in any other way.
+#[cfg(feature = "compiler")]
+#[derive(Debug, Clone)]
+pub(crate) struct Savepoint {
+    /// Each changed table's extent; `None` for a replaced table.
+    tables: HashMap<TableId, Option<(usize, u32)>>,
+    /// Items appended to the #Strings, #Blob, #GUID and #US heaps.
+    heaps: [usize; 4],
+    /// The next method body placeholder.
+    next_method_placeholder: u32,
+    /// The next field data placeholder.
+    next_field_placeholder: u32,
+    /// Bytes of managed resource data.
+    resource_data: usize,
 }
 
 impl AssemblyChanges {
@@ -441,6 +463,81 @@ impl AssemblyChanges {
         None
     }
 
+    /// Where every change set stands now; see [`Savepoint`].
+    #[cfg(feature = "compiler")]
+    pub(crate) fn savepoint(&self) -> Savepoint {
+        Savepoint {
+            tables: self
+                .table_changes
+                .iter()
+                .map(|(table, changes)| (*table, changes.extent()))
+                .collect(),
+            heaps: [
+                self.string_heap_changes.additions_count(),
+                self.blob_heap_changes.additions_count(),
+                self.guid_heap_changes.additions_count(),
+                self.userstring_heap_changes.additions_count(),
+            ],
+            next_method_placeholder: self.next_method_placeholder,
+            next_field_placeholder: self.next_field_placeholder,
+            resource_data: self.resource_data.len(),
+        }
+    }
+
+    /// Undoes every addition made since `savepoint` was taken.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a table changed since in a way other than
+    /// inserted rows, which a rollback cannot undo. Nothing is rolled back
+    /// then.
+    #[cfg(feature = "compiler")]
+    pub(crate) fn rollback_to(&mut self, savepoint: &Savepoint) -> Result<()> {
+        // Checked before anything changes, so a refusal leaves every set as
+        // it was.
+        for (table, changes) in &self.table_changes {
+            let unchanged = match savepoint.tables.get(table) {
+                Some(Some(extent)) => changes.extent().is_some_and(|(operations, _)| {
+                    let inserted = changes.inserted_since(extent.1);
+                    operations.saturating_sub(inserted) == extent.0
+                }),
+                Some(None) => changes.extent().is_none(),
+                None => changes
+                    .extent()
+                    .is_some_and(|(operations, _)| changes.inserted_since(0) == operations),
+            };
+            if !unchanged {
+                return Err(Error::ModificationInvalid(format!(
+                    "table {table:?} changed by more than inserted rows since the savepoint"
+                )));
+            }
+        }
+        let mut emptied = Vec::new();
+        for (table, changes) in &mut self.table_changes {
+            match savepoint.tables.get(table) {
+                Some(Some(extent)) => changes.rollback_inserts(*extent)?,
+                Some(None) => {}
+                None => emptied.push(*table),
+            }
+        }
+        for table in emptied {
+            self.table_changes.remove(&table);
+        }
+        let [strings, blobs, guids, userstrings] = savepoint.heaps;
+        self.string_heap_changes.truncate_appended(strings);
+        self.blob_heap_changes.truncate_appended(blobs);
+        self.guid_heap_changes.truncate_appended(guids);
+        self.userstring_heap_changes.truncate_appended(userstrings);
+        self.method_bodies
+            .retain(|placeholder, _| *placeholder < savepoint.next_method_placeholder);
+        self.next_method_placeholder = savepoint.next_method_placeholder;
+        self.field_data
+            .retain(|placeholder, _| *placeholder < savepoint.next_field_placeholder);
+        self.next_field_placeholder = savepoint.next_field_placeholder;
+        self.resource_data.truncate(savepoint.resource_data);
+        Ok(())
+    }
+
     /// Stores a method body and allocates a placeholder RVA for it.
     ///
     /// This method stores the method body with a sequential placeholder RVA that will
@@ -706,7 +803,92 @@ impl Default for AssemblyChanges {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cilassembly::HeapChanges;
+    #[cfg(feature = "compiler")]
+    use crate::{
+        cilassembly::{HeapChanges, TableOperation},
+        metadata::{
+            tables::{TableDataOwned, TypeSpecRaw},
+            token::Token,
+        },
+    };
+
+    /// A rollback takes back every addition since the savepoint - rows, heap
+    /// entries, stored data - and removes a table first changed since.
+    #[cfg(feature = "compiler")]
+    #[test]
+    fn rollback_returns_every_change_set_to_the_savepoint() {
+        let mut changes = AssemblyChanges::empty();
+        changes.string_heap_changes.append("kept".to_string());
+        let savepoint = changes.savepoint();
+
+        changes.string_heap_changes.append("dropped".to_string());
+        changes.blob_heap_changes.append(vec![1, 2, 3]);
+        changes
+            .userstring_heap_changes
+            .append("dropped".to_string());
+        let field = changes.store_field_data(vec![0; 4]);
+        let body = changes.store_method_body(vec![0x2A]);
+        let mut table = TableModifications::new_sparse(1);
+        table
+            .apply_operation(TableOperation::new(Operation::Insert(
+                1,
+                TableDataOwned::TypeSpec(TypeSpecRaw {
+                    rid: 0,
+                    token: Token::new(0),
+                    offset: 0,
+                    signature: 0,
+                }),
+            )))
+            .unwrap();
+        changes.table_changes.insert(TableId::TypeSpec, table);
+
+        changes.rollback_to(&savepoint).unwrap();
+        assert_eq!(changes.string_heap_changes.additions_count(), 1);
+        assert_eq!(changes.blob_heap_changes.additions_count(), 0);
+        assert_eq!(changes.userstring_heap_changes.additions_count(), 0);
+        assert!(!changes.field_data.contains_key(&field));
+        assert!(!changes.method_bodies.contains_key(&body));
+        assert_eq!(changes.store_field_data(vec![1]), field);
+        assert!(changes.table_changes.is_empty());
+    }
+
+    /// A table updated since the savepoint is refused before anything is
+    /// rolled back.
+    #[cfg(feature = "compiler")]
+    #[test]
+    fn rollback_refuses_without_changing_anything() {
+        let mut changes = AssemblyChanges::empty();
+        let mut table = TableModifications::new_sparse(3);
+        let savepoint_table = table.clone();
+        changes
+            .table_changes
+            .insert(TableId::TypeSpec, savepoint_table);
+        let savepoint = changes.savepoint();
+
+        changes.blob_heap_changes.append(vec![1]);
+        table
+            .apply_operation(TableOperation::new(Operation::Update(
+                1,
+                TableDataOwned::TypeSpec(TypeSpecRaw {
+                    rid: 1,
+                    token: Token::new(0x1B00_0001),
+                    offset: 0,
+                    signature: 0,
+                }),
+            )))
+            .unwrap();
+        changes.table_changes.insert(TableId::TypeSpec, table);
+
+        assert!(changes.rollback_to(&savepoint).is_err());
+        assert_eq!(changes.blob_heap_changes.additions_count(), 1);
+        assert_eq!(
+            changes
+                .table_changes
+                .get(&TableId::TypeSpec)
+                .map(TableModifications::operation_count),
+            Some(1)
+        );
+    }
 
     #[test]
     fn test_assembly_changes_empty() {

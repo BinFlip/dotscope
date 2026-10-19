@@ -112,6 +112,13 @@ impl<T> HeapChanges<T> {
         self.heap_kind
     }
 
+    /// Drops the items appended after the first `len`, which the writer then
+    /// never sees.
+    #[cfg(feature = "compiler")]
+    pub(crate) fn truncate_appended(&mut self, len: usize) {
+        self.appended.truncate(len);
+    }
+
     /// Returns the number of items that have been added to this heap.
     pub fn additions_count(&self) -> usize {
         self.appended.len()

@@ -109,6 +109,12 @@ pub struct RidRemapper {
     /// Used to filter out deleted RIDs when remapping type tokens in signatures,
     /// since deleted types shouldn't be remapped to other types.
     deleted_rids: HashMap<TableId, HashSet<u32>>,
+
+    /// For each table the writer reorders into the sort order the format
+    /// requires: the RID a row would be written at once deletions are
+    /// accounted for → the RID it is written at. Only tables whose order
+    /// actually changes appear. Applied after the deletion shift.
+    sort_orders: HashMap<TableId, HashMap<u32, u32>>,
 }
 
 impl RidRemapper {
@@ -120,10 +126,11 @@ impl RidRemapper {
         Self::default()
     }
 
-    /// Returns `true` if there are no deletions requiring remapping.
+    /// Returns `true` if no row changes position: nothing was deleted and no
+    /// table was reordered.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.tables_with_deletions.is_empty()
+        self.tables_with_deletions.is_empty() && self.sort_orders.is_empty()
     }
 
     /// Returns `true` if the specified table has any deletions.
@@ -176,7 +183,57 @@ impl RidRemapper {
             remaps,
             tables_with_deletions,
             deleted_rids,
+            sort_orders: HashMap::new(),
         }
+    }
+
+    /// Records the order a sorted table is written in.
+    ///
+    /// `rows` holds each row the table writes, in the order it would write
+    /// them otherwise: the RID the row is known by (its original RID, or the
+    /// RID it was inserted at) and its [sort key](crate::metadata::tables::RowWritable::sort_key).
+    /// The rows are stably sorted by key, so rows sharing a key keep their
+    /// order, and every reference to a row is then remapped to where it lands.
+    ///
+    /// Returns the indices into `rows` in the order they are to be written.
+    pub fn set_sort_order(&mut self, table_id: TableId, rows: &[(u32, (u32, u32))]) -> Vec<usize> {
+        let mut order: Vec<usize> = (0..rows.len()).collect();
+        order.sort_by_key(|&index| rows.get(index).map(|(_, key)| *key));
+
+        let mut moved = HashMap::new();
+        for (position, &index) in order.iter().enumerate() {
+            let Some(&(rid, _)) = rows.get(index) else {
+                continue;
+            };
+            let Ok(position) = u32::try_from(position) else {
+                continue;
+            };
+            let written_at = position.saturating_add(1);
+            let otherwise_at = self.shift(table_id, rid);
+            if written_at != otherwise_at {
+                moved.insert(otherwise_at, written_at);
+            }
+        }
+        if !moved.is_empty() {
+            self.sort_orders.insert(table_id, moved);
+        }
+        order
+    }
+
+    /// Whether the writer reorders `table_id` to sort it.
+    #[must_use]
+    pub fn is_reordered(&self, table_id: TableId) -> bool {
+        self.sort_orders.contains_key(&table_id)
+    }
+
+    /// The RID a row of `table_id` known as `old_rid` has once deletions are
+    /// accounted for, before any reordering.
+    fn shift(&self, table_id: TableId, old_rid: u32) -> u32 {
+        self.remaps
+            .get(&table_id)
+            .and_then(|map| map.get(&old_rid))
+            .copied()
+            .unwrap_or(old_rid)
     }
 
     /// Calculates the RID remapping for a single table.
@@ -275,11 +332,12 @@ impl RidRemapper {
             return 0;
         }
 
-        self.remaps
+        let shifted = self.shift(target_table, old_rid);
+        self.sort_orders
             .get(&target_table)
-            .and_then(|map| map.get(&old_rid))
+            .and_then(|map| map.get(&shifted))
             .copied()
-            .unwrap_or(old_rid)
+            .unwrap_or(shifted)
     }
 
     /// Returns the TypeDef RID remapping for signature blob processing.
@@ -415,12 +473,11 @@ impl RidRemapper {
         }
 
         let table_id = coded_index.tag;
-        if let Some(table_remap) = self.remaps.get(&table_id) {
-            if let Some(&new_rid) = table_remap.get(&coded_index.row) {
-                coded_index.row = new_rid;
-                // Update the token to reflect the new row
-                coded_index.token = Token::from_parts(table_id, new_rid);
-            }
+        let new_rid = self.remap_rid(table_id, coded_index.row);
+        if new_rid != coded_index.row {
+            coded_index.row = new_rid;
+            // Update the token to reflect the new row
+            coded_index.token = Token::from_parts(table_id, new_rid);
         }
     }
 
@@ -888,7 +945,10 @@ impl RidRemapper {
             return false;
         }
 
-        table_id.references().iter().any(|t| self.has_deletions(*t))
+        table_id
+            .references()
+            .iter()
+            .any(|t| self.has_deletions(*t) || self.is_reordered(*t))
     }
 }
 
@@ -1010,6 +1070,7 @@ mod tests {
             remaps,
             tables_with_deletions: [TableId::MethodDef].into_iter().collect(),
             deleted_rids,
+            sort_orders: HashMap::new(),
         };
 
         // RID 0 never remapped (null reference)
@@ -1045,6 +1106,7 @@ mod tests {
             remaps,
             tables_with_deletions: [TableId::MethodDef].into_iter().collect(),
             deleted_rids,
+            sort_orders: HashMap::new(),
         };
 
         // Coded index pointing to MethodDef row 5 (should become 4)
@@ -1087,6 +1149,7 @@ mod tests {
             remaps,
             tables_with_deletions: [TableId::MethodDef].into_iter().collect(),
             deleted_rids,
+            sort_orders: HashMap::new(),
         };
 
         let mut typedef = TypeDefRaw {
@@ -1127,6 +1190,7 @@ mod tests {
             remaps,
             tables_with_deletions: [TableId::TypeDef].into_iter().collect(),
             deleted_rids,
+            sort_orders: HashMap::new(),
         };
 
         // Get the signature-safe typedef remap
@@ -1163,6 +1227,7 @@ mod tests {
             remaps,
             tables_with_deletions: [TableId::MethodDef].into_iter().collect(),
             deleted_rids,
+            sort_orders: HashMap::new(),
         };
 
         // Should return None since there are no TypeDef deletions

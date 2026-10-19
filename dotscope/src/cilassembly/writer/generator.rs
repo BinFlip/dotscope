@@ -87,6 +87,7 @@ use crate::{
 /// The scan window is otherwise "this PE section", which for a small file can still be the
 /// bulk of it. A native stub in a mixed-mode assembly is kilobytes of code; anything past this
 /// is not a stub whose extent we failed to find, it is a region we should refuse to guess at.
+#[cfg(feature = "x86")]
 const MAX_NATIVE_BODY_SCAN_BYTES: usize = 64 * 1024;
 
 /// IAT (Import Address Table) size for .NET executables (8 bytes).
@@ -177,6 +178,107 @@ impl GeneratorConfig {
     pub fn with_skip_original_method_bodies(mut self, enabled: bool) -> Self {
         self.skip_original_method_bodies = enabled;
         self
+    }
+}
+
+/// The tables ECMA-335 §II.22 and the Portable PDB format require sorted, in
+/// the order the writer settles them.
+///
+/// A table comes after every sorted table its key refers to: a
+/// GenericParamConstraint is keyed by its GenericParam, and a CustomAttribute
+/// or CustomDebugInformation by a parent that can be a row of most of the
+/// others. Its key is then computed with those references already remapped to
+/// where their rows land.
+const SORTED_TABLES: &[TableId] = &[
+    TableId::GenericParam,
+    TableId::GenericParamConstraint,
+    TableId::InterfaceImpl,
+    TableId::DeclSecurity,
+    TableId::MethodImpl,
+    TableId::MethodSemantics,
+    TableId::NestedClass,
+    TableId::ClassLayout,
+    TableId::FieldLayout,
+    TableId::FieldRVA,
+    TableId::FieldMarshal,
+    TableId::Constant,
+    TableId::ImplMap,
+    TableId::LocalScope,
+    TableId::StateMachineMethod,
+    TableId::CustomAttribute,
+    TableId::CustomDebugInformation,
+];
+
+/// A row of any table, as the writer serializes it.
+///
+/// [`RowWritable`] is implemented per row type and is not object safe; this
+/// lets one routine produce the rows of every table.
+trait RowSource {
+    /// The row's [sort key](RowWritable::sort_key).
+    fn key(&self, sizes: &TableInfoRef) -> Result<Option<(u32, u32)>>;
+
+    /// Serializes the row, as [`RowWritable::row_write`].
+    fn write(
+        &self,
+        data: &mut [u8],
+        offset: &mut usize,
+        rid: u32,
+        sizes: &TableInfoRef,
+    ) -> Result<()>;
+}
+
+impl<R: RowWritable> RowSource for R {
+    fn key(&self, sizes: &TableInfoRef) -> Result<Option<(u32, u32)>> {
+        self.sort_key(sizes)
+    }
+
+    fn write(
+        &self,
+        data: &mut [u8],
+        offset: &mut usize,
+        rid: u32,
+        sizes: &TableInfoRef,
+    ) -> Result<()> {
+        self.row_write(data, offset, rid, sizes)
+    }
+}
+
+/// Receives each row written: its RID, its sort key when its table is sorted,
+/// and its bytes.
+type RowSink<'a> = dyn FnMut(u32, Option<(u32, u32)>, &[u8]) -> Result<()> + 'a;
+
+/// What rows need from the write context once the method bodies, field data
+/// and resources are laid out: where RVAs and offsets moved, and which
+/// duplicate signatures are dropped.
+struct RowFixups {
+    method_body_rva_map: HashMap<u32, u32>,
+    field_data_rva_map: HashMap<u32, u32>,
+    resource_offset_remap: HashMap<u32, u32>,
+    original_rva_delta: i32,
+    standalonesig_skip: HashSet<u32>,
+}
+
+impl RowFixups {
+    fn from_context(ctx: &WriteContext) -> Self {
+        Self {
+            method_body_rva_map: ctx.method_body_rva_map.clone(),
+            field_data_rva_map: ctx.field_data_rva_map.clone(),
+            resource_offset_remap: ctx.resource_offset_remap.clone(),
+            original_rva_delta: ctx.original_method_rva_delta,
+            standalonesig_skip: ctx.standalonesig_skip.clone(),
+        }
+    }
+
+    /// Applies the RVA and offset fixups to a serialized row of `table_id`.
+    fn apply(&self, buffer: &mut [u8], table_id: TableId) {
+        PeGenerator::apply_rva_fixups(
+            buffer,
+            table_id,
+            &self.method_body_rva_map,
+            &self.field_data_rva_map,
+            &self.resource_offset_remap,
+            self.original_rva_delta,
+        );
     }
 }
 
@@ -1963,7 +2065,7 @@ impl<'a> PeGenerator<'a> {
         }
 
         // Build RID remapper for handling row deletions
-        let remapper = RidRemapper::from_changes(changes, &original_counts);
+        let mut remapper = RidRemapper::from_changes(changes, &original_counts);
 
         // Calculate new row counts for all tables and build valid bitvector
         let mut valid = tables.valid;
@@ -2016,6 +2118,35 @@ impl<'a> PeGenerator<'a> {
             })
         };
 
+        // Settle the order of every table the format requires sorted before
+        // anything is written: tables written earlier hold references into
+        // them (an attribute on a generic parameter, a constraint on it), so
+        // where each of their rows lands has to be known first. `SORTED_TABLES`
+        // lists a table after the sorted tables its key refers to, so each key
+        // is computed with those references already in their final form.
+        let fixups = RowFixups::from_context(ctx);
+        for &table_id in SORTED_TABLES {
+            if valid & (1u64 << (table_id as u64)) == 0 {
+                continue;
+            }
+            let mut rows = Vec::new();
+            self.emit_table_rows(
+                &fixups,
+                table_id,
+                &output_table_info,
+                changes,
+                &remapper,
+                &mut |rid, key, _| {
+                    rows.push((rid, key.unwrap_or_default()));
+                    Ok(())
+                },
+            )?;
+            remapper.set_sort_order(table_id, &rows);
+        }
+        let sorted = SORTED_TABLES.iter().fold(tables.sorted, |bits, &table_id| {
+            bits | (1u64 << (table_id as u64))
+        });
+
         // Write tables stream header using OUTPUT table info
         let mut header_buffer = Vec::new();
 
@@ -2031,8 +2162,8 @@ impl<'a> PeGenerator<'a> {
         header_buffer.write_all(&[0x01])?;
         // Valid bitvector
         header_buffer.write_all(&valid.to_le_bytes())?;
-        // Sorted bitvector
-        header_buffer.write_all(&tables.sorted.to_le_bytes())?;
+        // Sorted bitvector: every table the format requires sorted now is
+        header_buffer.write_all(&sorted.to_le_bytes())?;
 
         // Row counts for each present table
         for table_id in TableId::iter() {
@@ -2050,7 +2181,14 @@ impl<'a> PeGenerator<'a> {
                 continue;
             }
 
-            self.write_table_data(ctx, table_id, &output_table_info, changes, &remapper)?;
+            self.write_table_data(
+                ctx,
+                &fixups,
+                table_id,
+                &output_table_info,
+                changes,
+                &remapper,
+            )?;
         }
 
         ctx.tables_stream_size = ctx
@@ -2126,27 +2264,13 @@ impl<'a> PeGenerator<'a> {
         }
     }
 
-    /// Writes table data with unified handling for all cases.
+    /// Writes one table's rows.
     ///
-    /// This function handles:
-    /// - Tables with no modifications (simple iteration)
-    /// - Tables with Replaced modifications (full replacement)
-    /// - Tables with Sparse modifications (updates, deletes, inserts)
-    ///
-    /// All rows are read from parsed table data and written with the output format.
-    /// RID remapping is applied to all cross-table references.
-    ///
-    /// # Arguments
-    ///
-    /// * `ctx` - The write context
-    /// * `table_id` - The table being written
-    /// * `output_table_info` - Table size information for output assembly
-    /// * `changes` - Assembly changes for modifications and placeholder resolution
-    /// * `remapper` - RID remapper for handling row deletions
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(())` on success.
+    /// Rows come from [`emit_table_rows`](Self::emit_table_rows). A table the
+    /// format requires sorted is written in its sort order, the order the
+    /// remapper was told about in [`write_tables_stream`](Self::write_tables_stream),
+    /// so the references other tables hold to its rows already point where
+    /// they land; every other table is written as it comes.
     ///
     /// # Errors
     ///
@@ -2154,27 +2278,92 @@ impl<'a> PeGenerator<'a> {
     fn write_table_data(
         &self,
         ctx: &mut WriteContext,
+        fixups: &RowFixups,
         table_id: TableId,
         output_table_info: &TableInfoRef,
         changes: &AssemblyChanges,
         remapper: &RidRemapper,
     ) -> Result<()> {
-        // Compute row size from table info
-        let output_row_size = calculate_table_row_size(table_id, output_table_info) as usize;
+        if !SORTED_TABLES.contains(&table_id) {
+            return self.emit_table_rows(
+                fixups,
+                table_id,
+                output_table_info,
+                changes,
+                remapper,
+                &mut |_, _, row| ctx.write(row),
+            );
+        }
 
-        // Clone to avoid borrow issues with ctx
-        let method_body_rva_map = ctx.method_body_rva_map.clone();
-        let field_data_rva_map = ctx.field_data_rva_map.clone();
-        let resource_offset_remap = ctx.resource_offset_remap.clone();
-        let original_rva_delta = ctx.original_method_rva_delta;
+        let row_size = calculate_table_row_size(table_id, output_table_info) as usize;
+        let mut keys = Vec::new();
+        let mut bytes = Vec::new();
+        self.emit_table_rows(
+            fixups,
+            table_id,
+            output_table_info,
+            changes,
+            remapper,
+            &mut |_, key, row| {
+                keys.push(key.unwrap_or_default());
+                bytes.extend_from_slice(row);
+                Ok(())
+            },
+        )?;
+
+        // The same stable sort `set_sort_order` recorded, over the same keys.
+        let mut order: Vec<usize> = (0..keys.len()).collect();
+        order.sort_by_key(|&index| keys.get(index).copied());
+        for index in order {
+            let start = index
+                .checked_mul(row_size)
+                .ok_or_else(|| Error::LayoutFailed("Row offset overflow".to_string()))?;
+            let row = bytes
+                .get(start..start.saturating_add(row_size))
+                .ok_or_else(|| Error::LayoutFailed("Row out of range".to_string()))?;
+            ctx.write(row)?;
+        }
+        Ok(())
+    }
+
+    /// Produces a table's rows as they are written, in table order.
+    ///
+    /// Handles tables with no modifications, fully replaced tables, and sparse
+    /// modifications (updates, deletes, inserts). Every row has its references
+    /// remapped and its RVAs fixed up, and is handed to `sink` with the RID it
+    /// is known by (its original RID, or the RID it was inserted at) and its
+    /// [sort key](RowWritable::sort_key).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if row serialization fails or `sink` does.
+    fn emit_table_rows(
+        &self,
+        fixups: &RowFixups,
+        table_id: TableId,
+        output_table_info: &TableInfoRef,
+        changes: &AssemblyChanges,
+        remapper: &RidRemapper,
+        sink: &mut RowSink<'_>,
+    ) -> Result<()> {
+        let output_row_size = calculate_table_row_size(table_id, output_table_info) as usize;
         let needs_remapping = remapper.needs_remapping(table_id);
+        let mut buffer = vec![0u8; output_row_size];
+
+        // Serializes one row, fixes up its RVAs, and hands it on.
+        let mut emit = |rid: u32, row: &dyn RowSource, buffer: &mut Vec<u8>| -> Result<()> {
+            let key = row.key(output_table_info)?;
+            let mut buf_offset = 0;
+            row.write(buffer, &mut buf_offset, rid, output_table_info)?;
+            fixups.apply(buffer, table_id);
+            sink(rid, key, buffer)
+        };
 
         // Get table modification info (if any)
         let table_mod = changes.get_table_modifications(table_id);
 
         // Handle fully replaced tables
         if let Some(TableModifications::Replaced(rows)) = table_mod {
-            let mut buffer = vec![0u8; output_row_size];
             for (idx, row) in rows.iter().enumerate() {
                 let rid_idx = idx
                     .checked_add(1)
@@ -2188,18 +2377,7 @@ impl<'a> PeGenerator<'a> {
                 if needs_remapping {
                     resolved_row.remap_references(remapper);
                 }
-
-                let mut buf_offset = 0;
-                resolved_row.row_write(&mut buffer, &mut buf_offset, rid, output_table_info)?;
-                Self::apply_rva_fixups(
-                    &mut buffer,
-                    table_id,
-                    &method_body_rva_map,
-                    &field_data_rva_map,
-                    &resource_offset_remap,
-                    original_rva_delta,
-                );
-                ctx.write(&buffer)?;
+                emit(rid, &resolved_row, &mut buffer)?;
             }
             return Ok(());
         }
@@ -2253,8 +2431,7 @@ impl<'a> PeGenerator<'a> {
             .ok_or_else(|| Error::LayoutFailed("No tables stream".to_string()))?;
         let original_row_count = tables.table_row_count(table_id);
 
-        // Write original rows (using parsed table data)
-        let mut buffer = vec![0u8; output_row_size];
+        // Original rows (using parsed table data)
         dispatch_table_type!(table_id, |RawType| {
             if let Some(table) = tables.table::<RawType>() {
                 for rid in 1..=original_row_count {
@@ -2264,7 +2441,9 @@ impl<'a> PeGenerator<'a> {
                     }
 
                     // Skip StandAloneSig duplicates (deduplication)
-                    if table_id == TableId::StandAloneSig && ctx.standalonesig_skip.contains(&rid) {
+                    if table_id == TableId::StandAloneSig
+                        && fixups.standalonesig_skip.contains(&rid)
+                    {
                         continue;
                     }
 
@@ -2275,38 +2454,19 @@ impl<'a> PeGenerator<'a> {
                         if needs_remapping {
                             resolved_row.remap_references(remapper);
                         }
-                        let mut buf_offset = 0;
-                        resolved_row.row_write(
-                            &mut buffer,
-                            &mut buf_offset,
-                            rid,
-                            output_table_info,
-                        )?;
+                        emit(rid, &resolved_row, &mut buffer)?;
                     } else if let Some(mut row) = table.get(rid)? {
                         // Use parsed original row
                         if needs_remapping {
                             row.remap_references(remapper);
                         }
-                        let mut buf_offset = 0;
-                        row.row_write(&mut buffer, &mut buf_offset, rid, output_table_info)?;
-                    } else {
-                        continue; // Row not found (shouldn't happen)
+                        emit(rid, &row, &mut buffer)?;
                     }
-
-                    Self::apply_rva_fixups(
-                        &mut buffer,
-                        table_id,
-                        &method_body_rva_map,
-                        &field_data_rva_map,
-                        &resource_offset_remap,
-                        original_rva_delta,
-                    );
-                    ctx.write(&buffer)?;
                 }
             }
         });
 
-        // Append inserted rows
+        // Inserted rows
         for (rid, insert_data) in &inserts {
             // Check if insert was subsequently updated
             let final_data = updates.get(rid).unwrap_or(insert_data);
@@ -2316,18 +2476,7 @@ impl<'a> PeGenerator<'a> {
             if needs_remapping {
                 resolved_row.remap_references(remapper);
             }
-
-            let mut buf_offset = 0;
-            resolved_row.row_write(&mut buffer, &mut buf_offset, *rid, output_table_info)?;
-            Self::apply_rva_fixups(
-                &mut buffer,
-                table_id,
-                &method_body_rva_map,
-                &field_data_rva_map,
-                &resource_offset_remap,
-                original_rva_delta,
-            );
-            ctx.write(&buffer)?;
+            emit(*rid, &resolved_row, &mut buffer)?;
         }
 
         Ok(())
@@ -3146,13 +3295,169 @@ impl<'a> PeGenerator<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use tempfile::NamedTempFile;
 
     use crate::{
         cilassembly::{writer::generator::PeGenerator, CilAssembly},
-        metadata::{signatures::TypeSignature, tables::TableId},
-        CilAssemblyView, MethodBuilder,
+        metadata::{
+            signatures::TypeSignature,
+            tables::{
+                CodedIndex, CodedIndexType, CustomAttributeBuilder, CustomAttributeRaw,
+                GenericParamBuilder, GenericParamConstraintRaw, GenericParamRaw, TableId,
+            },
+            token::Token,
+        },
+        CilAssemblyView, CilObject, MethodBuilder,
     };
+
+    const SAMPLE: &str = "tests/samples/crafted_2.exe";
+
+    /// An attribute added to a method goes where the CustomAttribute table's
+    /// sort order puts it, not at the end, and the method finds it. Appended
+    /// under a header that still called the table sorted, the runtime's binary
+    /// search would miss it.
+    #[test]
+    fn an_added_attribute_is_written_where_its_table_sorts_it() {
+        let target = Token::new(0x0600_0001);
+        let before = CilObject::from_path(Path::new(SAMPLE))
+            .and_then(|object| object.method(&target))
+            .expect("the method loads")
+            .custom_attributes
+            .count();
+
+        let view = CilAssemblyView::from_path(Path::new(SAMPLE)).expect("the sample loads");
+        // Copy an existing attribute's constructor and blob, so the added one
+        // decodes like any other.
+        let (constructor, value) = {
+            let row = view
+                .tables()
+                .and_then(|tables| tables.table::<CustomAttributeRaw>())
+                .and_then(|table| table.get(1).ok().flatten())
+                .expect("the sample has attributes");
+            let value = view
+                .blobs()
+                .and_then(|blobs| blobs.get(row.value as usize).ok())
+                .expect("the attribute's blob")
+                .to_vec();
+            (row.constructor, value)
+        };
+        let mut assembly = CilAssembly::new(view);
+        CustomAttributeBuilder::new()
+            .parent(CodedIndex::new(
+                TableId::MethodDef,
+                target.row(),
+                CodedIndexType::HasCustomAttribute,
+            ))
+            .constructor(constructor)
+            .value(&value)
+            .build(&mut assembly)
+            .expect("the attribute is added");
+
+        let written = assembly
+            .into_cilobject()
+            .expect("the output loads, sort order included");
+        let method = written.method(&target).expect("the method survives");
+        assert_eq!(method.custom_attributes.count(), before + 1);
+
+        let parents: Vec<Token> = written
+            .tables()
+            .and_then(|tables| tables.table::<CustomAttributeRaw>())
+            .expect("the attribute table")
+            .iter()
+            .flatten()
+            .map(|row| row.parent.token)
+            .collect();
+        let at = parents.iter().position(|parent| *parent == target);
+        assert!(
+            at.is_some_and(|at| at + 1 < parents.len()),
+            "the attribute sorts ahead of the rest, not after them: {at:?} of {}",
+            parents.len()
+        );
+    }
+
+    /// Each generic parameter constraint as the owner of its parameter, the
+    /// parameter's name, and the constraint.
+    fn constraints_of(object: &CilObject) -> Vec<(Token, String, Token)> {
+        let tables = object.tables().expect("tables");
+        let strings = object.strings().expect("strings");
+        let params = tables
+            .table::<GenericParamRaw>()
+            .expect("generic parameters");
+        let mut described: Vec<(Token, String, Token)> = tables
+            .table::<GenericParamConstraintRaw>()
+            .expect("constraints")
+            .iter()
+            .flatten()
+            .map(|constraint| {
+                let param = params
+                    .get(constraint.owner)
+                    .ok()
+                    .flatten()
+                    .expect("the constraint's parameter");
+                let name = strings
+                    .get(param.name as usize)
+                    .expect("the name")
+                    .to_string();
+                (param.owner.token, name, constraint.constraint.token)
+            })
+            .collect();
+        described.sort();
+        described
+    }
+
+    /// Adding a generic parameter whose owner sorts ahead of every other
+    /// moves each existing parameter down a row, and every constraint follows
+    /// its own parameter there.
+    #[test]
+    fn constraints_follow_their_parameters_when_the_parameters_are_sorted() {
+        let original = CilObject::from_path(Path::new(SAMPLE)).expect("the sample loads");
+        let expected = constraints_of(&original);
+        assert!(
+            !expected.is_empty(),
+            "the sample constrains generic parameters"
+        );
+
+        // The first type that has no parameters of its own: its owner key is
+        // below every existing parameter's.
+        let owners: Vec<Token> = original
+            .tables()
+            .and_then(|tables| tables.table::<GenericParamRaw>())
+            .expect("generic parameters")
+            .iter()
+            .flatten()
+            .map(|param| param.owner.token)
+            .collect();
+        let owner = (2..)
+            .map(|rid| Token::from_parts(TableId::TypeDef, rid))
+            .find(|token| !owners.contains(token))
+            .expect("a type without parameters");
+        assert!(
+            owners
+                .iter()
+                .any(|existing| existing.value() > owner.value()),
+            "the new parameter sorts ahead of an existing one"
+        );
+
+        let view = CilAssemblyView::from_path(Path::new(SAMPLE)).expect("the sample loads");
+        let mut assembly = CilAssembly::new(view);
+        GenericParamBuilder::new()
+            .name("TAdded")
+            .number(0)
+            .owner(CodedIndex::new(
+                TableId::TypeDef,
+                owner.row(),
+                CodedIndexType::TypeOrMethodDef,
+            ))
+            .build(&mut assembly)
+            .expect("the parameter is added");
+
+        let written = assembly
+            .into_cilobject()
+            .expect("the output loads, sort order included");
+        assert_eq!(constraints_of(&written), expected);
+    }
 
     #[test]
     fn test_pe_generator_basic() {
