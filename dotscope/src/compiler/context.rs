@@ -9,13 +9,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crossbeam_skiplist::SkipSet;
 use dashmap::{DashMap, DashSet};
 use rayon::prelude::*;
 
 use crate::{
-    analysis::{
-        CallGraph, ConstValue, SsaFunction, SsaFunctionCilExt, SsaOp, SsaVarId, ValueRange,
-    },
+    analysis::{CallGraph, ConstValue, SsaFunction, SsaFunctionCilExt, SsaOp, SsaVarId},
     compiler::{
         summary::{CallSiteInfo, MethodSummary},
         EventLog, ProcessingState,
@@ -53,7 +52,12 @@ pub struct CompilerContext {
     pub dead_methods: DashSet<Token>,
 
     /// Methods that have been fully processed by the pass pipeline.
-    pub processed_methods: DashSet<Token>,
+    ///
+    /// Ordered, because code generation walks it: the order methods are
+    /// emitted in decides where each body lands and the order new user
+    /// strings and signatures enter their heaps and tables, so an unordered
+    /// set wrote the same program out differently on every run.
+    pub processed_methods: SkipSet<Token>,
 
     /// Entry point methods (Main, event handlers, etc.).
     pub entry_points: DashSet<Token>,
@@ -78,15 +82,6 @@ pub struct CompilerContext {
     /// NOP'd or replaced). Used by cleanup to cascade-remove orphaned MemberRef,
     /// TypeRef, and AssemblyRef entries that are no longer referenced.
     pub neutralized_tokens: DashSet<Token>,
-
-    /// Known constant values for SSA variables, per method.
-    known_values: DashMap<Token, DashMap<SsaVarId, ConstValue>>,
-
-    /// Known value ranges for SSA variables, per method.
-    known_ranges: DashMap<Token, DashMap<SsaVarId, ValueRange>>,
-
-    /// Local variable remappings after optimization, per method.
-    local_remappings: DashMap<Token, Vec<Option<u16>>>,
 
     /// Assembly under analysis. Set by the pipeline before running passes
     /// via [`set_assembly`](Self::set_assembly). Test contexts may leave
@@ -117,15 +112,12 @@ impl CompilerContext {
             call_sites: DashMap::new(),
             events: EventLog::new(),
             dead_methods: DashSet::new(),
-            processed_methods: DashSet::new(),
+            processed_methods: SkipSet::new(),
             entry_points: DashSet::new(),
             no_inline: DashSet::new(),
             inlined_methods: DashSet::new(),
             devirtualized_methods: DashSet::new(),
             neutralized_tokens: DashSet::new(),
-            known_values: DashMap::new(),
-            known_ranges: DashMap::new(),
-            local_remappings: DashMap::new(),
             assembly_slot: RwLock::new(None),
             processing_state: ProcessingState::new(),
             start_time: Instant::now(),
@@ -366,21 +358,25 @@ impl CompilerContext {
     }
 
     /// Executes a closure with a reference to a known constant value.
+    ///
+    /// The value's own record answers this. Nothing is kept beside the
+    /// function: see [`CilVariableFacts`](crate::analysis::CilVariableFacts)
+    /// for why a table keyed by [`SsaVarId`] cannot.
     pub fn with_known_value<R, F>(&self, method: Token, var: SsaVarId, f: F) -> Option<R>
     where
         F: FnOnce(&ConstValue) -> R,
     {
-        self.known_values
-            .get(&method)
-            .and_then(|method_values| method_values.get(&var).map(|r| f(&r)))
+        self.with_ssa(method, |ssa| {
+            ssa.variable(var)
+                .and_then(|variable| variable.facts().known_value().map(f))
+        })
+        .flatten()
     }
 
     /// Checks if a known value exists for an SSA variable.
     #[must_use]
     pub fn has_known_value(&self, method: Token, var: SsaVarId) -> bool {
-        self.known_values
-            .get(&method)
-            .is_some_and(|m| m.contains_key(&var))
+        self.with_known_value(method, var, |_| ()).is_some()
     }
 
     /// Checks if a known value satisfies a predicate.
@@ -389,9 +385,7 @@ impl CompilerContext {
     where
         F: FnOnce(&ConstValue) -> bool,
     {
-        self.known_values
-            .get(&method)
-            .and_then(|m| m.get(&var).map(|r| predicate(&r)))
+        self.with_known_value(method, var, predicate)
             .unwrap_or(false)
     }
 
@@ -400,75 +394,55 @@ impl CompilerContext {
     where
         F: FnMut(SsaVarId, &ConstValue),
     {
-        if let Some(inner) = self.known_values.get(&method) {
-            for entry in inner.iter() {
-                f(*entry.key(), entry.value());
+        self.with_ssa(method, |ssa| {
+            for variable in ssa.variables().iter() {
+                if let Some(value) = variable.facts().known_value() {
+                    f(variable.id(), value);
+                }
             }
-        }
+        });
     }
 
     /// Records a known constant value for an SSA variable.
+    ///
+    /// Stored on the variable, so it travels with the value through every
+    /// renumbering and is restored with the function when a pass group rolls
+    /// back. A method with no SSA loaded records nothing: there is no value to
+    /// record it against.
     pub fn add_known_value(&self, method: Token, var: SsaVarId, value: ConstValue) {
-        self.known_values
-            .entry(method)
-            .or_default()
-            .insert(var, value);
+        self.with_ssa_mut(method, |ssa| {
+            if let Some(variable) = ssa.variable_mut(var) {
+                variable.facts_mut().set_known_value(value);
+            }
+        });
     }
 
     /// Clears known values for a method when its SSA is modified.
     pub fn clear_known_values(&self, method: Token) {
-        self.known_values.remove(&method);
+        self.with_ssa_mut(method, |ssa| {
+            let ids: Vec<SsaVarId> = ssa
+                .variables()
+                .iter()
+                .map(|variable| variable.id())
+                .collect();
+            for var in ids {
+                if let Some(variable) = ssa.variable_mut(var) {
+                    variable.facts_mut().clear_known_value();
+                }
+            }
+        });
     }
 
     /// Returns the number of known values for a method.
     #[must_use]
     pub fn known_value_count(&self, method: Token) -> usize {
-        self.known_values
-            .get(&method)
-            .map_or(0, |inner| inner.len())
-    }
-
-    /// Records a known value range for an SSA variable.
-    pub fn add_known_range(&self, method: Token, var: SsaVarId, range: ValueRange) {
-        self.known_ranges
-            .entry(method)
-            .or_default()
-            .insert(var, range);
-    }
-
-    /// Executes a closure with a reference to a known value range.
-    pub fn with_known_range<R, F>(&self, method: Token, var: SsaVarId, f: F) -> Option<R>
-    where
-        F: FnOnce(&ValueRange) -> R,
-    {
-        self.known_ranges
-            .get(&method)
-            .and_then(|method_ranges| method_ranges.get(&var).map(|r| f(&r)))
-    }
-
-    /// Checks if a known range exists for an SSA variable.
-    #[must_use]
-    pub fn has_known_range(&self, method: Token, var: SsaVarId) -> bool {
-        self.known_ranges
-            .get(&method)
-            .is_some_and(|m| m.contains_key(&var))
-    }
-
-    /// Iterates over all known ranges for a method.
-    pub fn for_each_known_range<F>(&self, method: Token, mut f: F)
-    where
-        F: FnMut(SsaVarId, &ValueRange),
-    {
-        if let Some(inner) = self.known_ranges.get(&method) {
-            for entry in inner.iter() {
-                f(*entry.key(), entry.value());
-            }
-        }
-    }
-
-    /// Clears known ranges for a method when its SSA is modified.
-    pub fn clear_known_ranges(&self, method: Token) {
-        self.known_ranges.remove(&method);
+        self.with_ssa(method, |ssa| {
+            ssa.variables()
+                .iter()
+                .filter(|variable| variable.facts().known_value().is_some())
+                .count()
+        })
+        .unwrap_or(0)
     }
 
     /// Canonicalizes all SSA functions in preparation for code generation.
@@ -481,25 +455,15 @@ impl CompilerContext {
             };
 
             ssa.canonicalize();
-            let remapping = ssa.optimize_locals();
+            // The remapping says where each original local moved. Nothing reads
+            // it: code generation reads the optimized function, and a consumer
+            // that wants to relate a value back to its original slot reads the
+            // variable's own origin. Keeping it meant a per-method table that
+            // no edit ever updated.
+            let _ = ssa.optimize_locals();
 
             self.ssa_functions.insert(token, ssa);
-            self.local_remappings.insert(token, remapping);
         });
-    }
-
-    /// Executes a closure with a reference to the local variable remapping.
-    pub fn with_local_remapping<R, F>(&self, token: Token, f: F) -> Option<R>
-    where
-        F: FnOnce(&[Option<u16>]) -> R,
-    {
-        self.local_remappings.get(&token).map(|r| f(&r))
-    }
-
-    /// Checks if a local variable remapping exists for a method.
-    #[must_use]
-    pub fn has_local_remapping(&self, token: Token) -> bool {
-        self.local_remappings.contains_key(&token)
     }
 
     /// Builds a live call graph from actual SSA instructions.

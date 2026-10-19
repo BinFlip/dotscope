@@ -1,16 +1,33 @@
+use std::{collections::BTreeSet, path::PathBuf};
+
+use analyssa::{
+    events::NullListener,
+    ir::{value::DecryptedArrayData, FlagCondition},
+    passes::algebraic,
+};
+
 use crate::{
     analysis::{
-        BreakpointOp, ConstValue, DefSite, FieldRef, MethodRef, PhiNode, PhiOperand, SsaBlock,
-        SsaFunction, SsaFunctionBuilder, SsaInstruction, SsaOp, SsaType, SsaVarId, TypeRef,
-        VariableOrigin,
+        BlockRange, BreakpointOp, ConstValue, ControlFlowGraph, DefSite, FieldRef, MethodRef,
+        PhiNode, PhiOperand, SsaBlock, SsaConverter, SsaExceptionHandler, SsaFunction,
+        SsaFunctionBuilder, SsaInstruction, SsaOp, SsaType, SsaVarId, TypeRef, VariableOrigin,
     },
-    assembly::decode_stream,
-    compiler::codegen::{SsaCodeGenerator, VarStorage},
+    assembly::{
+        decode_blocks_with_handlers, decode_stream, Immediate, Instruction, InstructionAssembler,
+        Operand,
+    },
+    cilassembly::{CilAssembly, Operation, TableModifications},
+    compiler::codegen::{LayoutEntry, SsaCodeGenerator},
     deobfuscation::{DeobfuscationEngine, EngineConfig, PassConfig},
     metadata::{
-        method::MethodBody, tables::MethodDefRaw, token::Token, validation::ValidationConfig,
+        method::{ExceptionHandler, ExceptionHandlerFlags, Method, MethodBody},
+        tables::{MemberRefRaw, MethodDefRaw, TableDataOwned, TableId},
+        token::Token,
+        typesystem::PointerSize,
+        validation::ValidationConfig,
     },
-    CilObject, Parser,
+    test::{factories::table::assemblyref::get_test_assembly, TestTypeProvider},
+    CilAssemblyView, CilObject, Error, Parser,
 };
 
 /// Generates bytecode from an SSA function and returns the decoded mnemonics.
@@ -31,6 +48,14 @@ fn assert_generates(ssa: &SsaFunction, expected: &[&str]) {
     );
 }
 
+/// Registers values `v0..count` in `ssa`, for functions built by naming
+/// variable ids directly.
+fn register_variables(ssa: &mut SsaFunction, count: usize) {
+    while ssa.var_id_capacity() < count {
+        let _ = ssa.create_variable(VariableOrigin::Phi, 0, DefSite::entry(), SsaType::I32);
+    }
+}
+
 /// Asserts that code generation succeeds and returns non-empty bytecode.
 fn assert_generates_ok(ssa: &SsaFunction) {
     let mut gen = SsaCodeGenerator::new();
@@ -43,29 +68,14 @@ fn assert_generates_ok(ssa: &SsaFunction) {
 #[test]
 fn test_codegen_creation() {
     let gen = SsaCodeGenerator::new();
-    assert!(gen.var_storage.is_empty());
-    assert_eq!(gen.next_local, 0);
+    assert!(gen.method.storage.is_none());
+    assert!(gen.method.slot_types.is_empty());
 }
 
 #[test]
 fn test_codegen_default() {
     let gen = SsaCodeGenerator::default();
-    assert!(gen.var_storage.is_empty());
-}
-
-#[test]
-fn test_var_storage_equality() {
-    assert_eq!(VarStorage::Arg(0), VarStorage::Arg(0));
-    assert_eq!(VarStorage::Local(5), VarStorage::Local(5));
-    assert_eq!(VarStorage::Stack, VarStorage::Stack);
-    assert_ne!(VarStorage::Arg(0), VarStorage::Local(0));
-}
-
-#[test]
-fn test_var_storage_debug() {
-    let storage = VarStorage::Arg(1);
-    let debug = format!("{:?}", storage);
-    assert!(debug.contains("Arg"));
+    assert!(gen.method.storage.is_none());
 }
 
 #[test]
@@ -996,6 +1006,7 @@ fn test_ldsfld() {
     let v0 = SsaVarId::from_index(0);
 
     let mut ssa = SsaFunction::new(0, 0);
+    register_variables(&mut ssa, 1);
     let mut block = SsaBlock::new(0);
     block.add_instruction(
         SsaInstruction::synthetic(SsaOp::LoadStaticField {
@@ -1057,6 +1068,7 @@ fn test_ldsflda() {
     let v0 = SsaVarId::from_index(0);
 
     let mut ssa = SsaFunction::new(0, 0);
+    register_variables(&mut ssa, 1);
     let mut block = SsaBlock::new(0);
     block.add_instruction(
         SsaInstruction::synthetic(SsaOp::LoadStaticFieldAddr {
@@ -1124,12 +1136,14 @@ fn test_call() {
     let v0 = SsaVarId::from_index(0);
 
     let mut ssa = SsaFunction::new(0, 0);
+    register_variables(&mut ssa, 1);
     let mut block = SsaBlock::new(0);
     block.add_instruction(
         SsaInstruction::synthetic(SsaOp::Call {
             dest: Some(v0),
             method: MethodRef::new(method_token),
             args: vec![],
+            effects: None,
         })
         .with_result_type(SsaType::I32),
     );
@@ -1149,6 +1163,7 @@ fn test_call_void() {
         dest: None,
         method: MethodRef::new(method_token),
         args: vec![],
+        effects: None,
     }));
     block.add_instruction(SsaInstruction::synthetic(SsaOp::Return { value: None }));
     ssa.add_block(block);
@@ -1169,6 +1184,7 @@ fn test_call_with_args() {
                         dest: Some(dest),
                         method: MethodRef::new(method_token),
                         args: vec![arg0, arg1],
+                        effects: None,
                     },
                     SsaType::I32,
                 );
@@ -1192,6 +1208,7 @@ fn test_callvirt() {
                         dest: Some(dest),
                         method: MethodRef::new(method_token),
                         args: vec![object],
+                        effects: None,
                     },
                     SsaType::I32,
                 );
@@ -1208,6 +1225,7 @@ fn test_newobj() {
     let v0 = SsaVarId::from_index(0);
 
     let mut ssa = SsaFunction::new(0, 0);
+    register_variables(&mut ssa, 1);
     let mut block = SsaBlock::new(0);
     block.add_instruction(SsaInstruction::synthetic(SsaOp::NewObj {
         dest: v0,
@@ -1424,6 +1442,7 @@ fn test_sizeof() {
     let v0 = SsaVarId::from_index(0);
 
     let mut ssa = SsaFunction::new(0, 0);
+    register_variables(&mut ssa, 1);
     let mut block = SsaBlock::new(0);
     block.add_instruction(SsaInstruction::synthetic(SsaOp::SizeOf {
         dest: v0,
@@ -1498,6 +1517,7 @@ fn test_ldtoken() {
     let v0 = SsaVarId::from_index(0);
 
     let mut ssa = SsaFunction::new(0, 0);
+    register_variables(&mut ssa, 1);
     let mut block = SsaBlock::new(0);
     block.add_instruction(SsaInstruction::synthetic(SsaOp::LoadToken {
         dest: v0,
@@ -1509,12 +1529,74 @@ fn test_ldtoken() {
     assert_generates(&ssa, &["ldtoken", "ret"]);
 }
 
+/// `refanytype(mkrefany(arg0))`: each typed-reference operation is emitted as
+/// its own instruction, after the value it takes.
+#[test]
+fn test_typed_references() {
+    let type_token = Token::new(0x02000001);
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let address = f.arg(0, SsaType::I32);
+            let (typed_ref, handle) = (f.var(), f.var());
+            f.block(0, |b| {
+                b.op_typed(
+                    SsaOp::MakeTypedRef {
+                        dest: typed_ref,
+                        address,
+                        value_type: TypeRef(type_token),
+                    },
+                    SsaType::TypedReference,
+                );
+                b.op_typed(
+                    SsaOp::TypedRefType {
+                        dest: handle,
+                        typed_ref,
+                    },
+                    SsaType::ValueType(TypeRef(Token::new(0x01000002))),
+                );
+                b.ret_val(handle);
+            });
+        })
+        .unwrap();
+    assert_generates(&ssa, &["ldarg.0", "mkrefany", "refanytype", "ret"]);
+}
+
+/// The address a typed reference designates, and the vararg handle.
+#[test]
+fn test_refanyval_and_arglist() {
+    let type_token = Token::new(0x02000001);
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let typed_ref = f.arg(0, SsaType::I32);
+            let (address, handle) = (f.var(), f.var());
+            f.block(0, |b| {
+                b.op_typed(
+                    SsaOp::TypedRefValue {
+                        dest: address,
+                        typed_ref,
+                        value_type: TypeRef(type_token),
+                    },
+                    SsaType::ByRef(Box::new(SsaType::I32)),
+                );
+                b.op(SsaOp::Pop { value: address });
+                b.op_typed(
+                    SsaOp::ArgList { dest: handle },
+                    SsaType::ValueType(TypeRef(Token::new(0x01000003))),
+                );
+                b.ret_val(handle);
+            });
+        })
+        .unwrap();
+    assert_generates(&ssa, &["ldarg.0", "refanyval", "pop", "arglist", "ret"]);
+}
+
 #[test]
 fn test_ldftn() {
     let method_token = Token::new(0x06000001);
     let v0 = SsaVarId::from_index(0);
 
     let mut ssa = SsaFunction::new(0, 0);
+    register_variables(&mut ssa, 1);
     let mut block = SsaBlock::new(0);
     block.add_instruction(SsaInstruction::synthetic(SsaOp::LoadFunctionPtr {
         dest: v0,
@@ -1574,79 +1656,6 @@ fn test_ckfinite() {
         })
         .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ckfinite", "ret"]);
-}
-
-#[test]
-fn test_is_immediately_consumed_return() {
-    let gen = SsaCodeGenerator::new();
-    let var = SsaVarId::from_index(0);
-    let next = SsaOp::Return { value: Some(var) };
-    assert!(gen.is_immediately_consumed(var, Some(&next)));
-}
-
-#[test]
-fn test_is_immediately_consumed_branch() {
-    let gen = SsaCodeGenerator::new();
-    let var = SsaVarId::from_index(0);
-    let next = SsaOp::Branch {
-        condition: var,
-        true_target: 1,
-        false_target: 2,
-    };
-    assert!(gen.is_immediately_consumed(var, Some(&next)));
-}
-
-#[test]
-fn test_is_immediately_consumed_add_left() {
-    let gen = SsaCodeGenerator::new();
-    let var = SsaVarId::from_index(0);
-    let v1 = SsaVarId::from_index(1);
-    let v2 = SsaVarId::from_index(2);
-    let next = SsaOp::Add {
-        dest: v2,
-        left: var,
-        right: v1,
-        flags: None,
-    };
-    assert!(gen.is_immediately_consumed(var, Some(&next)));
-}
-
-#[test]
-fn test_is_immediately_consumed_right_operand_simple_left() {
-    let mut gen = SsaCodeGenerator::new();
-    let var = SsaVarId::from_index(0);
-    let other_var = SsaVarId::from_index(1);
-    let v2 = SsaVarId::from_index(2);
-
-    // Allocate storage for other_var so it's a "simple load"
-    gen.var_storage.insert(other_var, VarStorage::Arg(0));
-
-    let next = SsaOp::Add {
-        dest: v2,
-        left: other_var,
-        right: var,
-        flags: None,
-    };
-    // Should be consumed because left is a simple load
-    assert!(gen.is_immediately_consumed(var, Some(&next)));
-}
-
-#[test]
-fn test_is_immediately_consumed_right_operand_complex_left() {
-    let gen = SsaCodeGenerator::new();
-    let var = SsaVarId::from_index(0);
-    let other_var = SsaVarId::from_index(1);
-    let v2 = SsaVarId::from_index(2);
-
-    // Don't allocate storage for other_var, so it's not a "simple load"
-    let next = SsaOp::Add {
-        dest: v2,
-        left: other_var,
-        right: var,
-        flags: None,
-    };
-    // Should NOT be consumed because left is not a simple load
-    assert!(!gen.is_immediately_consumed(var, Some(&next)));
 }
 
 #[test]
@@ -2116,7 +2125,7 @@ fn test_fibonacci_style_loop() {
 /// This is a regression test for the copy propagation bug that incorrectly merged loop variables.
 #[test]
 fn test_fibonacci_deobfuscation_preserves_semantics() {
-    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/samples/packers/source/TestApp/TestApp.exe");
     let assembly = match CilObject::from_path_with_validation(&path, ValidationConfig::analysis()) {
         Ok(asm) => asm,
@@ -2203,7 +2212,7 @@ fn test_fibonacci_deobfuscation_preserves_semantics() {
 /// This catches regressions where specific pass orderings break loop semantics.
 #[test]
 fn test_fibonacci_pass_combinations() {
-    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/samples/packers/source/TestApp/TestApp.exe");
 
     // Test key pass combinations
@@ -2306,11 +2315,12 @@ fn test_factorial_style_loop() {
     let mut ssa = SsaFunction::new(1, 2); // 1 arg (n), 2 locals (result, i)
 
     // Variables
+    // An argument has its signature's type, as a lift gives it.
     let n_id = ssa.create_variable(
         VariableOrigin::Argument(0),
         0,
         DefSite::phi(0),
-        SsaType::Unknown,
+        SsaType::I32,
     );
     let result_init_id = ssa.create_variable(
         VariableOrigin::Local(2),
@@ -2441,10 +2451,12 @@ fn test_factorial_style_loop() {
         "Should load result before ret"
     );
 
-    assert!(
-        num_locals >= 2,
-        "Should have at least 2 locals, got {}",
-        num_locals
+    // `i` may live in the argument it starts as, so one local suffices.
+    assert!(num_locals >= 1, "Should have a local for result");
+    assert_eq!(
+        run_integer_cil(&bytecode, &[StackValue::I4(5)]),
+        StackValue::I4(120),
+        "5! is 120"
     );
 }
 
@@ -2558,10 +2570,16 @@ fn test_nested_loop_pattern() {
     );
 
     // Inner loop exit -> outer loop continue
+    let outer_one_id = ssa.create_variable(
+        VariableOrigin::Local(12),
+        0,
+        DefSite::instruction(5, 0),
+        SsaType::Unknown,
+    );
     let i_next_id = ssa.create_variable(
         VariableOrigin::Local(11),
         0,
-        DefSite::instruction(5, 0),
+        DefSite::instruction(5, 1),
         SsaType::Unknown,
     );
 
@@ -2661,13 +2679,13 @@ fn test_nested_loop_pattern() {
     // Block 5: inner exit -> increment i
     let mut block5 = SsaBlock::new(5);
     block5.add_instruction(SsaInstruction::synthetic(SsaOp::Const {
-        dest: one_id,
+        dest: outer_one_id,
         value: ConstValue::I32(1),
     }));
     block5.add_instruction(SsaInstruction::synthetic(SsaOp::Add {
         dest: i_next_id,
         left: i_phi_id,
-        right: one_id,
+        right: outer_one_id,
         flags: None,
     }));
     block5.add_instruction(SsaInstruction::synthetic(SsaOp::Jump { target: 1 }));
@@ -2894,4 +2912,2244 @@ fn test_accumulator_with_early_exit() {
         branch_count >= 2,
         "Should have multiple branches for loop and break"
     );
+}
+
+/// A value on the CIL evaluation stack, as far as the integer tests need one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StackValue {
+    I4(i32),
+    I8(i64),
+}
+
+/// The index a short-form or indexed load or store names.
+fn indexed_operand(instr: &Instruction) -> usize {
+    if let Some(digit) = instr
+        .mnemonic
+        .rsplit('.')
+        .next()
+        .and_then(|s| s.parse().ok())
+    {
+        return digit;
+    }
+    match &instr.operand {
+        Operand::Local(index) | Operand::Argument(index) => usize::from(*index),
+        Operand::Immediate(Immediate::UInt8(index)) => usize::from(*index),
+        Operand::Immediate(Immediate::UInt16(index)) => usize::from(*index),
+        other => panic!("{} has no index operand: {other:?}", instr.mnemonic),
+    }
+}
+
+/// Runs straight-line integer CIL - the code a lowering emits - and returns
+/// what it leaves for `ret`.
+///
+/// Knows only the instructions integer lowerings produce, and panics on
+/// anything else, so a test never passes by skipping an instruction.
+fn run_integer_cil(bytecode: &[u8], args: &[StackValue]) -> StackValue {
+    run_integer_cil_with_handlers(bytecode, &[], args)
+}
+
+/// [`run_integer_cil`] over a body with exception clauses: a `leave` out of a
+/// protected region runs the region's `finally` first, and `endfinally`
+/// resumes at the leave's target. Nothing throws, so no other clause runs.
+fn run_integer_cil_with_handlers(
+    bytecode: &[u8],
+    handlers: &[ExceptionHandler],
+    args: &[StackValue],
+) -> StackValue {
+    let instructions = decode_stream(&mut Parser::new(bytecode), 0).expect("decode failed");
+    let mut resume_at: Vec<u64> = Vec::new();
+    let index_of = |offset: u64| {
+        instructions
+            .iter()
+            .position(|i| i.offset == offset)
+            .unwrap_or_else(|| panic!("branch into the middle of an instruction at {offset}"))
+    };
+    let mut stack: Vec<StackValue> = Vec::new();
+    let mut locals: Vec<Option<StackValue>> = vec![None; 256];
+    let mut args: Vec<StackValue> = args.to_vec();
+    let pop = |stack: &mut Vec<StackValue>| stack.pop().expect("stack underflow");
+    let mut pc = 0usize;
+    let mut steps = 0usize;
+    while let Some(instr) = instructions.get(pc) {
+        steps += 1;
+        assert!(steps < 100_000, "run_integer_cil did not terminate");
+        pc += 1;
+        let m = instr.mnemonic;
+        let target = || match instr.branch_targets.first() {
+            Some(&target) => index_of(target),
+            None => panic!("{m} has no target"),
+        };
+        match m {
+            "br" | "br.s" => pc = target(),
+            "leave" | "leave.s" => {
+                stack.clear();
+                let destination = *instr.branch_targets.first().expect("leave has a target");
+                let finally = handlers.iter().find(|clause| {
+                    let start = u64::from(clause.try_offset);
+                    let end = start + u64::from(clause.try_length);
+                    clause.flags.contains(ExceptionHandlerFlags::FINALLY)
+                        && (start..end).contains(&instr.offset)
+                        && !(start..end).contains(&destination)
+                });
+                match finally {
+                    Some(clause) => {
+                        resume_at.push(destination);
+                        pc = index_of(u64::from(clause.handler_offset));
+                    }
+                    None => pc = index_of(destination),
+                }
+            }
+            "endfinally" => {
+                pc = index_of(resume_at.pop().expect("endfinally outside a leave"));
+            }
+            "brtrue" | "brtrue.s" | "brfalse" | "brfalse.s" => {
+                let truthy = match pop(&mut stack) {
+                    StackValue::I4(v) => v != 0,
+                    StackValue::I8(v) => v != 0,
+                };
+                if truthy == m.starts_with("brtrue") {
+                    pc = target();
+                }
+            }
+            "ceq" | "cgt" | "clt" | "beq" | "beq.s" | "bgt" | "bgt.s" | "blt" | "blt.s" | "bge"
+            | "bge.s" | "ble" | "ble.s" | "bne.un" | "bne.un.s" => {
+                let (b, a) = (pop(&mut stack), pop(&mut stack));
+                let (a, b) = match (a, b) {
+                    (StackValue::I4(a), StackValue::I4(b)) => (i64::from(a), i64::from(b)),
+                    (StackValue::I8(a), StackValue::I8(b)) => (a, b),
+                    _ => panic!("{m} over mixed widths"),
+                };
+                let holds = match m.trim_end_matches(".s") {
+                    "ceq" | "beq" => a == b,
+                    "cgt" | "bgt" => a > b,
+                    "clt" | "blt" => a < b,
+                    "bge" => a >= b,
+                    "ble" => a <= b,
+                    _ => a != b,
+                };
+                if m.starts_with('c') {
+                    stack.push(StackValue::I4(i32::from(holds)));
+                } else if holds {
+                    pc = target();
+                }
+            }
+            _ if m.starts_with("ldarg") => stack.push(args[indexed_operand(instr)]),
+            _ if m.starts_with("starg") => {
+                let value = pop(&mut stack);
+                args[indexed_operand(instr)] = value;
+            }
+            _ if m.starts_with("ldloc") => {
+                stack.push(locals[indexed_operand(instr)].expect("local read before written"));
+            }
+            _ if m.starts_with("stloc") => {
+                let value = pop(&mut stack);
+                locals[indexed_operand(instr)] = Some(value);
+            }
+            "ldc.i4.m1" => stack.push(StackValue::I4(-1)),
+            _ if m.starts_with("ldc.i4.") && m.len() == 8 && m != "ldc.i4.s" => {
+                let digit = m.strip_prefix("ldc.i4.").expect("ldc.i4.N");
+                stack.push(StackValue::I4(digit.parse().expect("ldc.i4.N")));
+            }
+            "ldc.i4.s" | "ldc.i4" | "ldc.i8" => {
+                let value = match &instr.operand {
+                    Operand::Immediate(Immediate::Int8(v)) => StackValue::I4(i32::from(*v)),
+                    Operand::Immediate(Immediate::Int32(v)) => StackValue::I4(*v),
+                    Operand::Immediate(Immediate::Int64(v)) => StackValue::I8(*v),
+                    other => panic!("{m} operand {other:?}"),
+                };
+                stack.push(value);
+            }
+            "dup" => {
+                let top = *stack.last().expect("dup on empty stack");
+                stack.push(top);
+            }
+            "pop" => {
+                pop(&mut stack);
+            }
+            "and" | "or" | "xor" | "add" | "sub" | "mul" => {
+                let (b, a) = (pop(&mut stack), pop(&mut stack));
+                let result = match (a, b) {
+                    (StackValue::I4(a), StackValue::I4(b)) => StackValue::I4(match m {
+                        "and" => a & b,
+                        "or" => a | b,
+                        "xor" => a ^ b,
+                        "add" => a.wrapping_add(b),
+                        "sub" => a.wrapping_sub(b),
+                        _ => a.wrapping_mul(b),
+                    }),
+                    (StackValue::I8(a), StackValue::I8(b)) => StackValue::I8(match m {
+                        "and" => a & b,
+                        "or" => a | b,
+                        "xor" => a ^ b,
+                        "add" => a.wrapping_add(b),
+                        "sub" => a.wrapping_sub(b),
+                        _ => a.wrapping_mul(b),
+                    }),
+                    _ => panic!("{m} over mixed widths {a:?}, {b:?}"),
+                };
+                stack.push(result);
+            }
+            "shl" | "shr" | "shr.un" => {
+                let StackValue::I4(amount) = pop(&mut stack) else {
+                    panic!("{m} amount is not int32");
+                };
+                let amount = u32::try_from(amount).expect("negative shift count");
+                let result = match pop(&mut stack) {
+                    StackValue::I4(v) => {
+                        assert!(amount < 32, "{m} by {amount} is unspecified in CIL");
+                        StackValue::I4(match m {
+                            "shl" => v << amount,
+                            "shr" => v >> amount,
+                            _ => ((v as u32) >> amount) as i32,
+                        })
+                    }
+                    StackValue::I8(v) => {
+                        assert!(amount < 64, "{m} by {amount} is unspecified in CIL");
+                        StackValue::I8(match m {
+                            "shl" => v << amount,
+                            "shr" => v >> amount,
+                            _ => ((v as u64) >> amount) as i64,
+                        })
+                    }
+                };
+                stack.push(result);
+            }
+            "neg" => {
+                let result = match pop(&mut stack) {
+                    StackValue::I4(v) => StackValue::I4(v.wrapping_neg()),
+                    StackValue::I8(v) => StackValue::I8(v.wrapping_neg()),
+                };
+                stack.push(result);
+            }
+            _ if m.starts_with("conv.") => {
+                let bits = match pop(&mut stack) {
+                    StackValue::I4(v) => i64::from(v),
+                    StackValue::I8(v) => v,
+                };
+                let result = match m {
+                    "conv.i1" => StackValue::I4(i32::from(bits as i8)),
+                    "conv.u1" => StackValue::I4(i32::from(bits as u8)),
+                    "conv.i2" => StackValue::I4(i32::from(bits as i16)),
+                    "conv.u2" => StackValue::I4(i32::from(bits as u16)),
+                    "conv.i4" | "conv.u4" => StackValue::I4(bits as i32),
+                    "conv.i8" => StackValue::I8(bits),
+                    other => panic!("unsupported {other}"),
+                };
+                stack.push(result);
+            }
+            "ret" => return pop(&mut stack),
+            "nop" => {}
+            other => panic!("run_integer_cil does not model {other}"),
+        }
+    }
+    panic!("no ret");
+}
+
+/// A one-block function returning `op` applied to typed arguments, with the
+/// result typed `result_type`.
+fn single_op_function(
+    arg_types: &[SsaType],
+    result_type: SsaType,
+    make_op: impl FnOnce(SsaVarId, &[SsaVarId]) -> SsaOp,
+) -> SsaFunction {
+    let mut result = None;
+    let mut ssa = SsaFunctionBuilder::new(arg_types.len(), 0)
+        .build_with(|f| {
+            let args: Vec<SsaVarId> = arg_types
+                .iter()
+                .enumerate()
+                .map(|(index, ty)| f.arg(index, ty.clone()))
+                .collect();
+            let dest = f.var();
+            result = Some(dest);
+            f.block(0, |b| {
+                b.op(make_op(dest, &args));
+                b.ret_val(dest);
+            });
+        })
+        .unwrap();
+    let dest = result.unwrap();
+    ssa.variable_mut(dest).unwrap().set_type(result_type);
+    ssa
+}
+
+#[test]
+fn a_decrypted_string_is_interned_once_for_every_method_using_it() {
+    // One generator compiles an assembly's methods; a string two of them
+    // decrypted to is one #US entry, not one per method.
+    let returning_hello = || {
+        single_op_function(&[], SsaType::String, |dest, _| SsaOp::Const {
+            dest,
+            value: ConstValue::DecryptedString("hello".into()),
+        })
+    };
+    let ldstr_token = |bytecode: &[u8]| {
+        decode_stream(&mut Parser::new(bytecode), 0)
+            .unwrap()
+            .into_iter()
+            .find(|instr| instr.mnemonic == "ldstr")
+            .and_then(|instr| match instr.operand {
+                Operand::Token(token) => Some(token),
+                _ => None,
+            })
+            .unwrap()
+    };
+
+    let mut assembly = get_test_assembly().unwrap();
+    let mut gen = SsaCodeGenerator::new();
+    let first = gen.compile(&returning_hello(), &mut assembly).unwrap();
+    let second = gen.compile(&returning_hello(), &mut assembly).unwrap();
+    assert_eq!(ldstr_token(&first.bytecode), ldstr_token(&second.bytecode));
+}
+
+/// A method that fails after interning leaves nothing behind: the assembly's
+/// change sets and the session's interning are as they were, so the next
+/// method interns the same string afresh.
+///
+/// `B0` decrypts a string and enters the try `B1`, whose handler `B2` is an
+/// empty block: it emits nothing, so the clause cannot be stated and the
+/// method is refused after the string was added to #US.
+#[test]
+fn a_method_that_fails_after_interning_leaves_the_assembly_unchanged() {
+    let mut ssa = SsaFunction::new(0, 0);
+    let text = ssa.create_variable(
+        VariableOrigin::Phi,
+        0,
+        DefSite::instruction(0, 0),
+        SsaType::String,
+    );
+    let mut b0 = SsaBlock::new(0);
+    b0.add_instruction(SsaInstruction::synthetic(SsaOp::Const {
+        dest: text,
+        value: ConstValue::DecryptedString("discarded".into()),
+    }));
+    b0.add_instruction(SsaInstruction::synthetic(SsaOp::Jump { target: 1 }));
+    ssa.add_block(b0);
+    let mut b1 = SsaBlock::new(1);
+    b1.add_instruction(SsaInstruction::synthetic(SsaOp::Leave { target: 3 }));
+    ssa.add_block(b1);
+    ssa.add_block(SsaBlock::new(2));
+    let mut b3 = SsaBlock::new(3);
+    b3.add_instruction(SsaInstruction::synthetic(SsaOp::Return { value: None }));
+    ssa.add_block(b3);
+    ssa.set_exception_handlers(vec![SsaExceptionHandler {
+        flags: ExceptionHandlerFlags::FINALLY,
+        try_offset: 0,
+        try_length: 0,
+        handler_offset: 0,
+        handler_length: 0,
+        class_token_or_filter: 0,
+        protected_range: BlockRange::new(1, 2),
+        handler_range: BlockRange::new(2, 3),
+        filter_range: None,
+    }]);
+    ssa.recompute_uses();
+
+    let mut assembly = get_test_assembly().unwrap();
+    let userstrings =
+        |assembly: &CilAssembly| assembly.changes().userstring_heap_changes.additions_count();
+    let before = userstrings(&assembly);
+    let tables_before = assembly.changes().table_changes.len();
+    let mut gen = SsaCodeGenerator::new();
+    let Err(refused) = gen.compile(&ssa, &mut assembly) else {
+        panic!("a clause with an empty handler is refused");
+    };
+    assert!(
+        matches!(&refused, Error::CodegenFailed(message) if message.contains("exception clause")),
+        "{refused:?}"
+    );
+    assert_eq!(userstrings(&assembly), before);
+    assert_eq!(assembly.changes().table_changes.len(), tables_before);
+    assert!(gen.interned_strings.is_empty());
+    assert!(gen.interned_this_method.is_empty());
+
+    let returning = single_op_function(&[], SsaType::String, |dest, _| SsaOp::Const {
+        dest,
+        value: ConstValue::DecryptedString("discarded".into()),
+    });
+    gen.compile(&returning, &mut assembly).unwrap();
+    assert_eq!(userstrings(&assembly), before + 1);
+}
+
+/// A method returning a twelve-byte decrypted array of three `int32`s.
+fn returning_decrypted_array() -> SsaFunction {
+    single_op_function(&[], SsaType::Object, |dest, _| SsaOp::Const {
+        dest,
+        value: ConstValue::DecryptedArray(Box::new(DecryptedArrayData {
+            data: (1u8..=12).collect(),
+            element_type_ref: TypeRef::new(Token::new(0x0100_0001)),
+            element_size: 4,
+        })),
+    })
+}
+
+/// A decrypted array is filled from its data by `InitializeArray`, which
+/// the generator names when the module has no reference to it, and the type
+/// the data is declared with is a value type.
+///
+/// With no reference to `InitializeArray` the array used to be emitted
+/// without its data: `newarr` alone, an array of zeros.
+#[test]
+fn a_decrypted_array_is_initialised_from_its_data() {
+    let mut assembly = get_test_assembly().unwrap();
+    let mut gen = SsaCodeGenerator::new();
+    let compiled = gen
+        .compile(&returning_decrypted_array(), &mut assembly)
+        .unwrap();
+    let instructions = decode_stream(&mut Parser::new(&compiled.bytecode), 0).unwrap();
+    let mnemonics: Vec<&str> = instructions.iter().map(|i| i.mnemonic).collect();
+    let call = mnemonics
+        .windows(4)
+        .position(|run| run == ["newarr", "dup", "ldtoken", "call"])
+        .map(|at| at + 3)
+        .expect("the array is initialised from its data");
+    let initialize_array = gen.initialize_array.expect("InitializeArray is named");
+    assert!(matches!(
+        instructions.get(call).map(|i| &i.operand),
+        Some(Operand::Token(token)) if *token == initialize_array
+    ));
+    assert_eq!(initialize_array.table(), 0x0A, "a MemberRef");
+    let member_refs = |assembly: &CilAssembly| {
+        assembly
+            .view()
+            .tables()
+            .and_then(|tables| tables.table::<MemberRefRaw>())
+            .map_or(0, |table| table.row_count)
+    };
+    assert!(
+        initialize_array.row() <= member_refs(&assembly),
+        "WindowsBase's own reference is found by its signature, not added again"
+    );
+
+    gen.finalize_array_types(&mut assembly).unwrap();
+    let added_types: Vec<_> = match assembly.changes().table_changes.get(&TableId::TypeDef) {
+        Some(TableModifications::Sparse { operations, .. }) => operations
+            .iter()
+            .filter_map(|op| match &op.operation {
+                Operation::Insert(_, TableDataOwned::TypeDef(row)) => Some(row.extends.clone()),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    assert_eq!(added_types.len(), 2, "the size type and its parent");
+    assert!(
+        added_types.iter().all(|extends| extends.row != 0),
+        "every added type has a base: {added_types:?}"
+    );
+}
+
+/// A module with no reference to `InitializeArray` gets one, made once for
+/// the session along with the type references its signature names.
+#[test]
+fn initialize_array_is_referenced_when_the_module_has_no_reference() {
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/mono_4.0/Mono.Options.dll");
+    let mut assembly = CilAssembly::new(CilAssemblyView::from_path(&path).unwrap());
+    let original = assembly
+        .view()
+        .tables()
+        .and_then(|tables| tables.table::<MemberRefRaw>())
+        .map_or(0, |table| table.row_count);
+    let mut gen = SsaCodeGenerator::new();
+    gen.compile(&returning_decrypted_array(), &mut assembly)
+        .unwrap();
+    let added = gen.initialize_array.expect("InitializeArray is named");
+    assert!(
+        added.row() > original,
+        "{added:?} is added, past {original} rows"
+    );
+    let member_refs_added =
+        |assembly: &CilAssembly| match assembly.changes().table_changes.get(&TableId::MemberRef) {
+            Some(TableModifications::Sparse { operations, .. }) => operations.len(),
+            _ => 0,
+        };
+    assert_eq!(member_refs_added(&assembly), 1);
+    gen.compile(&returning_decrypted_array(), &mut assembly)
+        .unwrap();
+    assert_eq!(gen.initialize_array, Some(added));
+    assert_eq!(
+        member_refs_added(&assembly),
+        1,
+        "one reference for the session"
+    );
+}
+
+/// Without an assembly to intern into, a decrypted array is refused rather
+/// than emitted without its data.
+#[test]
+fn a_decrypted_array_that_cannot_be_interned_is_refused() {
+    let mut gen = SsaCodeGenerator::new();
+    assert!(gen.generate(&returning_decrypted_array()).is_err());
+}
+
+fn generate_bytecode(ssa: &SsaFunction) -> Vec<u8> {
+    let mut gen = SsaCodeGenerator::new();
+    match gen.generate(ssa) {
+        Ok((bytecode, _, _)) => bytecode,
+        Err(err) => panic!("codegen failed: {err}\n{ssa}"),
+    }
+}
+
+/// Rotates `bits` of a `width`-bit value the way an ISA does: the count is
+/// reduced modulo the width.
+fn reference_rotate(value: u64, count: u32, width: u32, left: bool) -> u64 {
+    let mask = if width == 64 {
+        u64::MAX
+    } else {
+        (1u64 << width) - 1
+    };
+    let value = value & mask;
+    let count = count % width;
+    if count == 0 {
+        return value;
+    }
+    let rotated = if left {
+        (value << count) | (value >> (width - count))
+    } else {
+        (value >> count) | (value << (width - count))
+    };
+    rotated & mask
+}
+
+/// The stack form of a `width`-bit value: sign- or zero-extended per `signed`.
+fn stack_form(bits: u64, width: u32, signed: bool) -> StackValue {
+    let extended = if width == 64 {
+        bits as i64
+    } else if signed {
+        let shift = 64 - width;
+        ((bits << shift) as i64) >> shift
+    } else {
+        (bits & ((1u64 << width) - 1)) as i64
+    };
+    if width == 64 {
+        StackValue::I8(extended)
+    } else {
+        StackValue::I4(extended as i32)
+    }
+}
+
+#[test]
+fn a_rotate_is_lowered_to_shifts_that_compute_it() {
+    let samples: [u64; 5] = [0, 1, 0x8000_0000_0000_0001, 0x0123_4567_89ab_cdef, u64::MAX];
+    let cases = [
+        (SsaType::U8, 8, false),
+        (SsaType::I8, 8, true),
+        (SsaType::U16, 16, false),
+        (SsaType::I16, 16, true),
+        (SsaType::U32, 32, false),
+        (SsaType::I32, 32, true),
+        (SsaType::U64, 64, false),
+        (SsaType::I64, 64, true),
+    ];
+    for (ty, width, signed) in cases {
+        for left in [true, false] {
+            let ssa = single_op_function(&[ty.clone(), SsaType::I32], ty.clone(), |dest, args| {
+                if left {
+                    SsaOp::Rol {
+                        dest,
+                        value: args[0],
+                        amount: args[1],
+                    }
+                } else {
+                    SsaOp::Ror {
+                        dest,
+                        value: args[0],
+                        amount: args[1],
+                    }
+                }
+            });
+            let bytecode = generate_bytecode(&ssa);
+            for &sample in &samples {
+                for count in 0..(width + 8) {
+                    let expected =
+                        stack_form(reference_rotate(sample, count, width, left), width, signed);
+                    let got = run_integer_cil(
+                        &bytecode,
+                        &[
+                            stack_form(sample, width, signed),
+                            StackValue::I4(count as i32),
+                        ],
+                    );
+                    assert_eq!(
+                        got,
+                        expected,
+                        "{} {ty:?} {sample:#x} by {count}",
+                        if left { "rol" } else { "ror" }
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_byte_swap_is_lowered_to_shifts_that_compute_it() {
+    let samples: [u64; 4] = [0, 0x0123_4567_89ab_cdef, 0x8000_0000_0000_00ff, u64::MAX];
+    let cases = [
+        (SsaType::U16, 16, false),
+        (SsaType::I16, 16, true),
+        (SsaType::U32, 32, false),
+        (SsaType::I32, 32, true),
+        (SsaType::U64, 64, false),
+        (SsaType::I64, 64, true),
+    ];
+    for (ty, width, signed) in cases {
+        let ssa = single_op_function(std::slice::from_ref(&ty), ty.clone(), |dest, args| {
+            SsaOp::BSwap { dest, src: args[0] }
+        });
+        let bytecode = generate_bytecode(&ssa);
+        for &sample in &samples {
+            let mask = if width == 64 {
+                u64::MAX
+            } else {
+                (1u64 << width) - 1
+            };
+            let swapped = (sample & mask).swap_bytes() >> (64 - width);
+            let expected = stack_form(swapped, width, signed);
+            let got = run_integer_cil(&bytecode, &[stack_form(sample, width, signed)]);
+            assert_eq!(got, expected, "bswap {ty:?} {sample:#x}");
+        }
+    }
+}
+
+#[test]
+fn an_op_with_no_cil_spelling_fails_codegen_instead_of_vanishing() {
+    let ssa = single_op_function(&[SsaType::U32], SsaType::U32, |dest, args| {
+        SsaOp::Popcount { dest, src: args[0] }
+    });
+    let mut gen = SsaCodeGenerator::new();
+    let err = gen
+        .generate(&ssa)
+        .expect_err("a popcount has no CIL spelling and must not compile to nothing");
+    assert!(format!("{err}").contains("Popcount"), "{err}");
+}
+
+#[test]
+fn a_rotate_idiom_folded_by_the_algebraic_pass_still_computes_the_rotate() {
+    // `(x << 13) | (x >> 19)` over a uint: the C# spelling of a rotate, which
+    // the algebraic pass folds to a single `Rol`.
+    let mut vars = Vec::new();
+    let mut ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let x = f.arg(0, SsaType::U32);
+            f.block(0, |b| {
+                let thirteen = b.const_i32(13);
+                let nineteen = b.const_i32(19);
+                let high = b.shl(x, thirteen);
+                let low = b.shr_un(x, nineteen);
+                let rotated = b.or(high, low);
+                vars.extend([high, low, rotated]);
+                b.ret_val(rotated);
+            });
+        })
+        .unwrap();
+    for &var in &vars {
+        ssa.variable_mut(var).unwrap().set_type(SsaType::U32);
+    }
+
+    let changed = algebraic::run(
+        &mut ssa,
+        &MethodRef::new(Token::new(0x0600_0001)),
+        &NullListener,
+        PointerSize::Bit64,
+    );
+    assert!(changed, "the idiom should fold");
+    assert!(
+        ssa.blocks()
+            .iter()
+            .flat_map(|b| b.instructions())
+            .any(|i| matches!(i.op(), SsaOp::Rol { .. })),
+        "the fold should produce a rotate"
+    );
+
+    let bytecode = generate_bytecode(&ssa);
+    for sample in [0u32, 1, 0x8000_0001, 0xdead_beef, u32::MAX] {
+        let got = run_integer_cil(&bytecode, &[StackValue::I4(sample as i32)]);
+        assert_eq!(
+            got,
+            StackValue::I4(sample.rotate_left(13) as i32),
+            "rol13 {sample:#x}"
+        );
+    }
+}
+
+#[test]
+fn a_flags_branch_fails_codegen_instead_of_panicking() {
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let flags = f.arg(0, SsaType::I32);
+            f.block(0, |b| {
+                b.op(SsaOp::BranchFlags {
+                    flags,
+                    condition: FlagCondition::Zero,
+                    true_target: 1,
+                    false_target: 2,
+                });
+            });
+            f.block(1, |b| b.ret());
+            f.block(2, |b| b.ret());
+        })
+        .unwrap();
+    let mut gen = SsaCodeGenerator::new();
+    let err = gen
+        .generate(&ssa)
+        .expect_err("a flags branch has no CIL spelling");
+    assert!(format!("{err}").contains("BranchFlags"), "{err}");
+}
+
+#[test]
+fn two_versions_of_one_local_live_at_once_do_not_share_its_slot() {
+    // a = x + 1 and b = a + 1 are both versions of local 0 - the shape copy
+    // propagation leaves behind `old = i; i = i + 1; ... old ...` - and `a` is
+    // still read after `b` is written. One slot cannot hold both.
+    let mut ssa = SsaFunction::new(1, 1);
+    let x = ssa.create_variable(
+        VariableOrigin::Argument(0),
+        0,
+        DefSite::entry(),
+        SsaType::I32,
+    );
+    let one = ssa.create_variable(
+        VariableOrigin::Phi,
+        0,
+        DefSite::instruction(0, 0),
+        SsaType::I32,
+    );
+    let hundred = ssa.create_variable(
+        VariableOrigin::Phi,
+        0,
+        DefSite::instruction(0, 1),
+        SsaType::I32,
+    );
+    let a = ssa.create_variable(
+        VariableOrigin::Local(0),
+        1,
+        DefSite::instruction(0, 2),
+        SsaType::I32,
+    );
+    let b = ssa.create_variable(
+        VariableOrigin::Local(0),
+        2,
+        DefSite::instruction(0, 3),
+        SsaType::I32,
+    );
+    let q = ssa.create_variable(
+        VariableOrigin::Phi,
+        0,
+        DefSite::instruction(0, 4),
+        SsaType::I32,
+    );
+    let p = ssa.create_variable(
+        VariableOrigin::Phi,
+        0,
+        DefSite::instruction(0, 5),
+        SsaType::I32,
+    );
+    let r = ssa.create_variable(
+        VariableOrigin::Phi,
+        0,
+        DefSite::instruction(0, 6),
+        SsaType::I32,
+    );
+
+    let mut block = SsaBlock::new(0);
+    for op in [
+        SsaOp::Const {
+            dest: one,
+            value: ConstValue::I32(1),
+        },
+        SsaOp::Const {
+            dest: hundred,
+            value: ConstValue::I32(100),
+        },
+        SsaOp::Add {
+            dest: a,
+            left: x,
+            right: one,
+            flags: None,
+        },
+        SsaOp::Add {
+            dest: b,
+            left: a,
+            right: one,
+            flags: None,
+        },
+        SsaOp::Mul {
+            dest: q,
+            left: b,
+            right: b,
+            flags: None,
+        },
+        SsaOp::Mul {
+            dest: p,
+            left: a,
+            right: hundred,
+            flags: None,
+        },
+        SsaOp::Add {
+            dest: r,
+            left: q,
+            right: p,
+            flags: None,
+        },
+        SsaOp::Return { value: Some(r) },
+    ] {
+        block.add_instruction(SsaInstruction::synthetic(op));
+    }
+    ssa.add_block(block);
+    ssa.recompute_uses();
+
+    let bytecode = generate_bytecode(&ssa);
+    // x = 5: a = 6, b = 7, q = 49, p = 600.
+    assert_eq!(
+        run_integer_cil(&bytecode, &[StackValue::I4(5)]),
+        StackValue::I4(649)
+    );
+}
+
+#[test]
+fn an_argument_a_handler_reads_stays_in_its_argument_slot() {
+    // void M(int x) {
+    //     try { _ = 100 / x; x = 7; _ = 100 / x; }
+    //     catch { _ = x; }
+    //     return x;
+    // }
+    //
+    // A throw reaches the handler holding either the `x` the method was called
+    // with or the 7 the try wrote, so the handler's phi, the entry value and the
+    // 7 must be one slot. The entry value is only ever in the argument slot, so
+    // that is the slot: moved to a fresh local instead, the first division
+    // reads a local nothing has written.
+    let mut asm = InstructionAssembler::new();
+    asm.try_start("t")
+        .unwrap()
+        .ldc_i4(100)
+        .unwrap()
+        .ldarg_0()
+        .unwrap()
+        .div()
+        .unwrap()
+        .pop()
+        .unwrap()
+        .ldc_i4(7)
+        .unwrap()
+        .starg_s(0)
+        .unwrap()
+        .ldc_i4(100)
+        .unwrap()
+        .ldarg_0()
+        .unwrap()
+        .div()
+        .unwrap()
+        .pop()
+        .unwrap()
+        .leave_s("end")
+        .unwrap()
+        .try_end("t")
+        .unwrap()
+        .catch_start("t", Token::new(0x0100_0001))
+        .unwrap()
+        .pop()
+        .unwrap()
+        .ldarg_0()
+        .unwrap()
+        .pop()
+        .unwrap()
+        .leave_s("end")
+        .unwrap()
+        .catch_end("t")
+        .unwrap()
+        .label("end")
+        .unwrap()
+        .ldarg_0()
+        .unwrap()
+        .ret()
+        .unwrap();
+
+    let (bytecode, _max_stack, handlers) = asm.finish().unwrap();
+    let blocks =
+        decode_blocks_with_handlers(&bytecode, 0, 0x1000, Some(bytecode.len()), &handlers).unwrap();
+    assert_eq!(blocks.len(), 3, "try, catch and the join after them");
+    let ssa_handlers = Method::ssa_handlers_for_clauses(&handlers, &blocks).unwrap();
+    let cfg = ControlFlowGraph::from_basic_blocks(blocks).unwrap();
+    let ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0), ssa_handlers).unwrap();
+    assert!(
+        !ssa.exceptional_webs().is_empty(),
+        "the handler must merge the argument over the throw points:\n{ssa}"
+    );
+
+    let generated = generate_bytecode(&ssa);
+    let instructions = decode_stream(&mut Parser::new(&generated), 0).unwrap();
+    let mut written: Vec<usize> = Vec::new();
+    for instr in &instructions {
+        if instr.mnemonic.starts_with("stloc") {
+            written.push(indexed_operand(instr));
+        } else if instr.mnemonic.starts_with("ldloc") {
+            let local = indexed_operand(instr);
+            assert!(
+                written.contains(&local),
+                "local {local} is read before anything writes it: {:?}\n{ssa}",
+                instructions.iter().map(|i| i.mnemonic).collect::<Vec<_>>()
+            );
+        }
+    }
+}
+
+#[test]
+fn a_handler_that_discards_its_exception_pops_it_where_it_arrives() {
+    // int M(int x) { try { _ = 100 / x; } catch { } return x; }
+    //
+    // The handler pops the exception object the runtime pushed. Kept on the
+    // stack until that pop, it needs no local: the handler is `pop; leave`.
+    let mut asm = InstructionAssembler::new();
+    asm.try_start("t")
+        .unwrap()
+        .ldc_i4(100)
+        .unwrap()
+        .ldarg_0()
+        .unwrap()
+        .div()
+        .unwrap()
+        .pop()
+        .unwrap()
+        .leave_s("end")
+        .unwrap()
+        .try_end("t")
+        .unwrap()
+        .catch_start("t", Token::new(0x0100_0001))
+        .unwrap()
+        .pop()
+        .unwrap()
+        .leave_s("end")
+        .unwrap()
+        .catch_end("t")
+        .unwrap()
+        .label("end")
+        .unwrap()
+        .ldarg_0()
+        .unwrap()
+        .ret()
+        .unwrap();
+    let ssa = lift_il(asm, 1, 0);
+
+    let mnemonics = generate_mnemonics(&ssa);
+    assert!(
+        !mnemonics
+            .iter()
+            .any(|m| m.starts_with("stloc") || m.starts_with("ldloc")),
+        "the exception object went through a local: {mnemonics:?}\n{ssa}"
+    );
+}
+
+#[test]
+fn a_loop_whose_back_edge_leaves_a_try_runs_its_finally_every_iteration() {
+    // int M(int n) {
+    //     int count = 0, i = 0;
+    //     while (true) {
+    //         try { if (i >= n) break; i++; } finally { count++; }
+    //     }
+    //     return count;
+    // }
+    //
+    // The loop head is outside the try and lifts to a block that only jumps
+    // into it. Emitted as nothing, it would start where the try does, and the
+    // back edge's `leave` to it would land inside the try: the finally would
+    // run once instead of once per iteration.
+    let mut asm = InstructionAssembler::new();
+    asm.ldc_i4_0()
+        .unwrap()
+        .stloc_0()
+        .unwrap()
+        .ldc_i4_0()
+        .unwrap()
+        .stloc_1()
+        .unwrap()
+        .label("head")
+        .unwrap()
+        .br_s("body")
+        .unwrap()
+        .try_start("t")
+        .unwrap()
+        .label("body")
+        .unwrap()
+        .ldloc_1()
+        .unwrap()
+        .ldarg_0()
+        .unwrap()
+        .bge_s("exit")
+        .unwrap()
+        .ldloc_1()
+        .unwrap()
+        .ldc_i4_1()
+        .unwrap()
+        .add()
+        .unwrap()
+        .stloc_1()
+        .unwrap()
+        .leave_s("head")
+        .unwrap()
+        .label("exit")
+        .unwrap()
+        .leave_s("end")
+        .unwrap()
+        .try_end("t")
+        .unwrap()
+        .finally_start("t")
+        .unwrap()
+        .ldloc_0()
+        .unwrap()
+        .ldc_i4_1()
+        .unwrap()
+        .add()
+        .unwrap()
+        .stloc_0()
+        .unwrap()
+        .endfinally()
+        .unwrap()
+        .finally_end("t")
+        .unwrap()
+        .label("end")
+        .unwrap()
+        .ldloc_0()
+        .unwrap()
+        .ret()
+        .unwrap();
+    let ssa = lift_il(asm, 1, 2);
+
+    let mut gen = SsaCodeGenerator::new();
+    let (bytecode, _, _) = gen.generate(&ssa).expect("codegen failed");
+    let handlers = gen
+        .remap_exception_handlers(&ssa, u32::try_from(bytecode.len()).unwrap())
+        .unwrap();
+    // Three iterations and the exit each run the finally.
+    assert_eq!(
+        run_integer_cil_with_handlers(&bytecode, &handlers, &[StackValue::I4(3)]),
+        StackValue::I4(4),
+        "{ssa}"
+    );
+}
+
+#[test]
+fn phi_copies_that_swap_two_values_swap_them() {
+    // a, b = x, y; while (n > 0) { a, b = b, a; n -= 1; } return a
+    //
+    // The back edge's copies are `a <- b` and `b <- a`, which take effect
+    // together: written one after the other, both end up holding one value.
+    let mut ssa = SsaFunction::new(3, 0);
+    let var =
+        |ssa: &mut SsaFunction, origin, site| ssa.create_variable(origin, 0, site, SsaType::I32);
+    let x = var(&mut ssa, VariableOrigin::Argument(0), DefSite::entry());
+    let y = var(&mut ssa, VariableOrigin::Argument(1), DefSite::entry());
+    let n0 = var(&mut ssa, VariableOrigin::Argument(2), DefSite::entry());
+    let a = var(&mut ssa, VariableOrigin::Phi, DefSite::phi(1));
+    let b = var(&mut ssa, VariableOrigin::Phi, DefSite::phi(1));
+    let n = var(&mut ssa, VariableOrigin::Phi, DefSite::phi(1));
+    let zero = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(1, 0));
+    let more = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(1, 1));
+    let one = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(2, 0));
+    let n1 = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(2, 1));
+
+    let mut entry = SsaBlock::new(0);
+    entry.add_instruction(SsaInstruction::synthetic(SsaOp::Jump { target: 1 }));
+    ssa.add_block(entry);
+
+    let mut header = SsaBlock::new(1);
+    for (result, initial, looped) in [(a, x, b), (b, y, a), (n, n0, n1)] {
+        let mut phi = PhiNode::new(result, VariableOrigin::Phi);
+        phi.add_operand(PhiOperand::new(initial, 0));
+        phi.add_operand(PhiOperand::new(looped, 2));
+        header.add_phi(phi);
+    }
+    for op in [
+        SsaOp::Const {
+            dest: zero,
+            value: ConstValue::I32(0),
+        },
+        SsaOp::Cgt {
+            dest: more,
+            left: n,
+            right: zero,
+            unsigned: false,
+        },
+        SsaOp::Branch {
+            condition: more,
+            true_target: 2,
+            false_target: 3,
+        },
+    ] {
+        header.add_instruction(SsaInstruction::synthetic(op));
+    }
+    ssa.add_block(header);
+
+    let mut body = SsaBlock::new(2);
+    for op in [
+        SsaOp::Const {
+            dest: one,
+            value: ConstValue::I32(1),
+        },
+        SsaOp::Sub {
+            dest: n1,
+            left: n,
+            right: one,
+            flags: None,
+        },
+        SsaOp::Jump { target: 1 },
+    ] {
+        body.add_instruction(SsaInstruction::synthetic(op));
+    }
+    ssa.add_block(body);
+
+    let mut exit = SsaBlock::new(3);
+    exit.add_instruction(SsaInstruction::synthetic(SsaOp::Return { value: Some(a) }));
+    ssa.add_block(exit);
+    ssa.recompute_uses();
+
+    let bytecode = generate_bytecode(&ssa);
+    for (swaps, expected) in [(0, 10), (1, 20), (2, 10), (5, 20)] {
+        assert_eq!(
+            run_integer_cil(
+                &bytecode,
+                &[
+                    StackValue::I4(10),
+                    StackValue::I4(20),
+                    StackValue::I4(swaps)
+                ]
+            ),
+            StackValue::I4(expected),
+            "{swaps} swaps"
+        );
+    }
+}
+
+#[test]
+fn a_copy_read_in_a_later_block_is_stored_even_when_its_first_use_reads_the_source() {
+    // B0: c = x; d = c + 1; jump B1
+    // B1: return c * d
+    //
+    // The use of `c` in B0 may read `x` in its place, but B1 reads `c` from
+    // its slot, so the copy must still write that slot.
+    let mut ssa = SsaFunction::new(1, 0);
+    let var =
+        |ssa: &mut SsaFunction, origin, site| ssa.create_variable(origin, 0, site, SsaType::I32);
+    let x = var(&mut ssa, VariableOrigin::Argument(0), DefSite::entry());
+    let c = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(0, 0));
+    let one = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(0, 1));
+    let d = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(0, 2));
+    let product = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(1, 0));
+
+    let mut b0 = SsaBlock::new(0);
+    for op in [
+        SsaOp::Copy { dest: c, src: x },
+        SsaOp::Const {
+            dest: one,
+            value: ConstValue::I32(1),
+        },
+        SsaOp::Add {
+            dest: d,
+            left: c,
+            right: one,
+            flags: None,
+        },
+        SsaOp::Jump { target: 1 },
+    ] {
+        b0.add_instruction(SsaInstruction::synthetic(op));
+    }
+    ssa.add_block(b0);
+    let mut b1 = SsaBlock::new(1);
+    for op in [
+        SsaOp::Mul {
+            dest: product,
+            left: c,
+            right: d,
+            flags: None,
+        },
+        SsaOp::Return {
+            value: Some(product),
+        },
+    ] {
+        b1.add_instruction(SsaInstruction::synthetic(op));
+    }
+    ssa.add_block(b1);
+    ssa.recompute_uses();
+
+    let bytecode = generate_bytecode(&ssa);
+    assert_eq!(
+        run_integer_cil(&bytecode, &[StackValue::I4(6)]),
+        StackValue::I4(42)
+    );
+}
+
+#[test]
+fn a_copy_feeding_a_copy_root_is_stored_when_read_in_a_later_block() {
+    // B0: c = x; f = c + 1; g = f; jump B1
+    // B1: return c * g
+    //
+    // `g = f` is a copy root, so `f` and the copy `c = x` below it are
+    // generated as its dependencies. `c` is read again in B1, so `c = x` has to
+    // write `c`'s slot rather than be read through.
+    let mut ssa = SsaFunction::new(1, 0);
+    let var =
+        |ssa: &mut SsaFunction, origin, site| ssa.create_variable(origin, 0, site, SsaType::I32);
+    let x = var(&mut ssa, VariableOrigin::Argument(0), DefSite::entry());
+    let c = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(0, 0));
+    let one = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(0, 1));
+    let f = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(0, 2));
+    let g = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(0, 3));
+    let product = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(1, 0));
+
+    let mut b0 = SsaBlock::new(0);
+    for op in [
+        SsaOp::Copy { dest: c, src: x },
+        SsaOp::Const {
+            dest: one,
+            value: ConstValue::I32(1),
+        },
+        SsaOp::Add {
+            dest: f,
+            left: c,
+            right: one,
+            flags: None,
+        },
+        SsaOp::Copy { dest: g, src: f },
+        SsaOp::Jump { target: 1 },
+    ] {
+        b0.add_instruction(SsaInstruction::synthetic(op));
+    }
+    ssa.add_block(b0);
+    let mut b1 = SsaBlock::new(1);
+    for op in [
+        SsaOp::Mul {
+            dest: product,
+            left: c,
+            right: g,
+            flags: None,
+        },
+        SsaOp::Return {
+            value: Some(product),
+        },
+    ] {
+        b1.add_instruction(SsaInstruction::synthetic(op));
+    }
+    ssa.add_block(b1);
+    ssa.recompute_uses();
+
+    let bytecode = generate_bytecode(&ssa);
+    assert_eq!(
+        run_integer_cil(&bytecode, &[StackValue::I4(6)]),
+        StackValue::I4(42)
+    );
+}
+
+#[test]
+fn a_copy_within_one_slot_still_orders_its_readers_after_the_source() {
+    // B0: a = x + 1; l1 = a; l2 = l1; s = l2 - 10; l3 = s; jump B1
+    // B1: return l3
+    //
+    // l1, l2 and l3 are versions of one local whose lifetimes follow each
+    // other, so they share its slot and `l2 = l1` copies the slot onto itself.
+    // It still orders `s` after `l1 = a` has filled that slot: without it,
+    // `l1 = a` reads as a root taking effect together with `l3 = s`, and `s`
+    // reads the slot before anything was stored there.
+    let mut ssa = SsaFunction::new(1, 1);
+    let var = |ssa: &mut SsaFunction, origin, version, site| {
+        ssa.create_variable(origin, version, site, SsaType::I32)
+    };
+    let x = var(&mut ssa, VariableOrigin::Argument(0), 0, DefSite::entry());
+    let one = var(&mut ssa, VariableOrigin::Phi, 0, DefSite::instruction(0, 0));
+    let a = var(&mut ssa, VariableOrigin::Phi, 0, DefSite::instruction(0, 1));
+    let l1 = var(
+        &mut ssa,
+        VariableOrigin::Local(0),
+        1,
+        DefSite::instruction(0, 2),
+    );
+    let l2 = var(
+        &mut ssa,
+        VariableOrigin::Local(0),
+        2,
+        DefSite::instruction(0, 3),
+    );
+    let ten = var(&mut ssa, VariableOrigin::Phi, 0, DefSite::instruction(0, 4));
+    let s = var(&mut ssa, VariableOrigin::Phi, 0, DefSite::instruction(0, 5));
+    let l3 = var(
+        &mut ssa,
+        VariableOrigin::Local(0),
+        3,
+        DefSite::instruction(0, 6),
+    );
+
+    let mut b0 = SsaBlock::new(0);
+    for op in [
+        SsaOp::Const {
+            dest: one,
+            value: ConstValue::I32(1),
+        },
+        SsaOp::Add {
+            dest: a,
+            left: x,
+            right: one,
+            flags: None,
+        },
+        SsaOp::Copy { dest: l1, src: a },
+        SsaOp::Copy { dest: l2, src: l1 },
+        SsaOp::Const {
+            dest: ten,
+            value: ConstValue::I32(10),
+        },
+        SsaOp::Sub {
+            dest: s,
+            left: l2,
+            right: ten,
+            flags: None,
+        },
+        SsaOp::Copy { dest: l3, src: s },
+        SsaOp::Jump { target: 1 },
+    ] {
+        b0.add_instruction(SsaInstruction::synthetic(op));
+    }
+    ssa.add_block(b0);
+    let mut b1 = SsaBlock::new(1);
+    b1.add_instruction(SsaInstruction::synthetic(SsaOp::Return { value: Some(l3) }));
+    ssa.add_block(b1);
+    ssa.recompute_uses();
+
+    let bytecode = generate_bytecode(&ssa);
+    // x = 5: a = 6, s = -4.
+    assert_eq!(
+        run_integer_cil(&bytecode, &[StackValue::I4(5)]),
+        StackValue::I4(-4)
+    );
+}
+
+#[test]
+fn a_branch_after_a_copy_root_computes_what_it_branches_on() {
+    // B0: a = x + 1; c = x; b = a * 2; branch b, B1, B2
+    // B1: return c
+    // B2: return 0
+    //
+    // `c = x` is a copy root, which defers the branch until the copies are
+    // stored. The branch still reads `b`, and nothing else computes it: the
+    // deferred branch has to generate `a` and `b` rather than load a slot no
+    // one wrote.
+    let mut ssa = SsaFunction::new(1, 0);
+    let var =
+        |ssa: &mut SsaFunction, origin, site| ssa.create_variable(origin, 0, site, SsaType::I32);
+    let x = var(&mut ssa, VariableOrigin::Argument(0), DefSite::entry());
+    let one = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(0, 0));
+    let a = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(0, 1));
+    let c = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(0, 2));
+    let two = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(0, 3));
+    let b = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(0, 4));
+    let zero = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(2, 0));
+
+    let mut b0 = SsaBlock::new(0);
+    for op in [
+        SsaOp::Const {
+            dest: one,
+            value: ConstValue::I32(1),
+        },
+        SsaOp::Add {
+            dest: a,
+            left: x,
+            right: one,
+            flags: None,
+        },
+        SsaOp::Copy { dest: c, src: x },
+        SsaOp::Const {
+            dest: two,
+            value: ConstValue::I32(2),
+        },
+        SsaOp::Mul {
+            dest: b,
+            left: a,
+            right: two,
+            flags: None,
+        },
+        SsaOp::Branch {
+            condition: b,
+            true_target: 1,
+            false_target: 2,
+        },
+    ] {
+        b0.add_instruction(SsaInstruction::synthetic(op));
+    }
+    ssa.add_block(b0);
+    let mut b1 = SsaBlock::new(1);
+    b1.add_instruction(SsaInstruction::synthetic(SsaOp::Return { value: Some(c) }));
+    ssa.add_block(b1);
+    let mut b2 = SsaBlock::new(2);
+    for op in [
+        SsaOp::Const {
+            dest: zero,
+            value: ConstValue::I32(0),
+        },
+        SsaOp::Return { value: Some(zero) },
+    ] {
+        b2.add_instruction(SsaInstruction::synthetic(op));
+    }
+    ssa.add_block(b2);
+    ssa.recompute_uses();
+
+    let bytecode = generate_bytecode(&ssa);
+    // x = 5: b = 12, so B1 returns c = 5; x = -1: b = 0, so B2 returns 0.
+    assert_eq!(
+        run_integer_cil(&bytecode, &[StackValue::I4(5)]),
+        StackValue::I4(5)
+    );
+    assert_eq!(
+        run_integer_cil(&bytecode, &[StackValue::I4(-1)]),
+        StackValue::I4(0)
+    );
+}
+
+#[test]
+fn a_copy_root_reading_a_copy_left_for_its_reader_reads_what_that_copies() {
+    // B0: a = x + 1; c1 = a; c2 = c1; jump B1
+    // B1: return c2
+    //
+    // `c1 = a` is read only by `c2 = c1` in its own block, so it is left for
+    // that reader and writes no slot. `c2 = c1` is a copy root - `c2` is read
+    // in B1 - and has to copy `a`, not `c1`'s slot.
+    //
+    // Both copies are versions of locals, so each has its local's slot.
+    let mut ssa = SsaFunction::new(1, 2);
+    let var =
+        |ssa: &mut SsaFunction, origin, site| ssa.create_variable(origin, 1, site, SsaType::I32);
+    // The argument's entry value is its version 0.
+    let x = ssa.create_variable(
+        VariableOrigin::Argument(0),
+        0,
+        DefSite::entry(),
+        SsaType::I32,
+    );
+    let one = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(0, 0));
+    let a = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(0, 1));
+    let c1 = var(
+        &mut ssa,
+        VariableOrigin::Local(0),
+        DefSite::instruction(0, 2),
+    );
+    let c2 = var(
+        &mut ssa,
+        VariableOrigin::Local(1),
+        DefSite::instruction(0, 3),
+    );
+
+    let mut b0 = SsaBlock::new(0);
+    for op in [
+        SsaOp::Const {
+            dest: one,
+            value: ConstValue::I32(1),
+        },
+        SsaOp::Add {
+            dest: a,
+            left: x,
+            right: one,
+            flags: None,
+        },
+        SsaOp::Copy { dest: c1, src: a },
+        SsaOp::Copy { dest: c2, src: c1 },
+        SsaOp::Jump { target: 1 },
+    ] {
+        b0.add_instruction(SsaInstruction::synthetic(op));
+    }
+    ssa.add_block(b0);
+    let mut b1 = SsaBlock::new(1);
+    b1.add_instruction(SsaInstruction::synthetic(SsaOp::Return { value: Some(c2) }));
+    ssa.add_block(b1);
+    ssa.recompute_uses();
+
+    let bytecode = generate_bytecode(&ssa);
+    assert_eq!(
+        run_integer_cil(&bytecode, &[StackValue::I4(5)]),
+        StackValue::I4(6)
+    );
+}
+
+#[test]
+fn a_value_computed_in_a_try_reaches_the_code_after_its_finally() {
+    // B0: z = arg + 1; branch arg, B1, B3
+    // B1 (try):     x = arg * 2; leave B3
+    // B2 (finally): p = phi(z thrown in B1, x from B1); endfinally
+    // B3:           r = phi(z from B0, p from B2); ret r
+    //
+    // The leave runs the finally, and `endfinally` resumes at B3: the phi there
+    // takes its operand from B2. `z` is live across the try - a throw would
+    // hand it to the finally - so `x` cannot share its slot, and on one of the
+    // two edges into B3 a copy is needed. The leave names no operand of B3's
+    // phi, so for the finally's edge the copy has to be made before the
+    // `endfinally`, or B3 reads a slot the try never wrote.
+    let mut ssa = SsaFunction::new(1, 0);
+    let var =
+        |ssa: &mut SsaFunction, origin, site| ssa.create_variable(origin, 0, site, SsaType::I32);
+    let arg = var(&mut ssa, VariableOrigin::Argument(0), DefSite::entry());
+    let one = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(0, 0));
+    let z = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(0, 1));
+    let two = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(1, 0));
+    let x = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(1, 1));
+    let p = var(&mut ssa, VariableOrigin::Phi, DefSite::phi(2));
+    let r = var(&mut ssa, VariableOrigin::Phi, DefSite::phi(3));
+
+    let mut b0 = SsaBlock::new(0);
+    for op in [
+        SsaOp::Const {
+            dest: one,
+            value: ConstValue::I32(1),
+        },
+        SsaOp::Add {
+            dest: z,
+            left: arg,
+            right: one,
+            flags: None,
+        },
+        SsaOp::Branch {
+            condition: arg,
+            true_target: 1,
+            false_target: 3,
+        },
+    ] {
+        b0.add_instruction(SsaInstruction::synthetic(op));
+    }
+    ssa.add_block(b0);
+    let mut b1 = SsaBlock::new(1);
+    for op in [
+        SsaOp::Const {
+            dest: two,
+            value: ConstValue::I32(2),
+        },
+        SsaOp::Mul {
+            dest: x,
+            left: arg,
+            right: two,
+            flags: None,
+        },
+        SsaOp::Leave { target: 3 },
+    ] {
+        b1.add_instruction(SsaInstruction::synthetic(op));
+    }
+    ssa.add_block(b1);
+    let mut b2 = SsaBlock::new(2);
+    let mut merged = PhiNode::new(p, VariableOrigin::Phi);
+    merged.add_operand(PhiOperand::exceptional(z, 1));
+    merged.add_operand(PhiOperand::new(x, 1));
+    b2.add_phi(merged);
+    b2.add_instruction(SsaInstruction::synthetic(SsaOp::EndFinally));
+    ssa.add_block(b2);
+    let mut b3 = SsaBlock::new(3);
+    let mut resumed = PhiNode::new(r, VariableOrigin::Phi);
+    resumed.add_operand(PhiOperand::new(z, 0));
+    resumed.add_operand(PhiOperand::new(p, 2));
+    b3.add_phi(resumed);
+    b3.add_instruction(SsaInstruction::synthetic(SsaOp::Return { value: Some(r) }));
+    ssa.add_block(b3);
+    ssa.set_exception_handlers(vec![SsaExceptionHandler {
+        flags: ExceptionHandlerFlags::FINALLY,
+        try_offset: 0,
+        try_length: 0,
+        handler_offset: 0,
+        handler_length: 0,
+        class_token_or_filter: 0,
+        protected_range: BlockRange::new(1, 2),
+        handler_range: BlockRange::new(2, 3),
+        filter_range: None,
+    }]);
+    ssa.recompute_uses();
+
+    let mut gen = SsaCodeGenerator::new();
+    let (bytecode, _, _) = gen.generate(&ssa).expect("codegen failed");
+    let handlers = gen
+        .remap_exception_handlers(&ssa, u32::try_from(bytecode.len()).unwrap())
+        .unwrap();
+    // arg = 5 takes the try: 10. arg = 0 goes straight to B3: z = 1.
+    assert_eq!(
+        run_integer_cil_with_handlers(&bytecode, &handlers, &[StackValue::I4(5)]),
+        StackValue::I4(10)
+    );
+    assert_eq!(
+        run_integer_cil_with_handlers(&bytecode, &handlers, &[StackValue::I4(0)]),
+        StackValue::I4(1)
+    );
+}
+
+/// A value a throw hands a `finally` and that is also read after the
+/// variable's next version is written keeps its value.
+///
+/// `B0: z = 1. B1 (try): x = arg * 2; leave B3. B2 (finally): p = phi(z thrown
+/// before the multiply, x thrown after it); endfinally. B3: return z + x.`
+/// The finally's phi puts `z` and `x` in one place, as no copy runs on an
+/// exceptional edge, but `z` is read after `x` is written there: before the
+/// operand was given a copy of its own, the place held `x` when `B3` read `z`,
+/// and the body was refused.
+#[test]
+fn a_value_handed_to_a_finally_and_read_after_it_keeps_its_value() {
+    let mut ssa = SsaFunction::new(1, 0);
+    let var =
+        |ssa: &mut SsaFunction, origin, site| ssa.create_variable(origin, 0, site, SsaType::I32);
+    let arg = var(&mut ssa, VariableOrigin::Argument(0), DefSite::entry());
+    let z = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(0, 0));
+    let two = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(1, 0));
+    let x = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(1, 1));
+    let p = var(&mut ssa, VariableOrigin::Phi, DefSite::phi(2));
+    let r = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(3, 0));
+
+    let mut b0 = SsaBlock::new(0);
+    b0.add_instruction(SsaInstruction::synthetic(SsaOp::Const {
+        dest: z,
+        value: ConstValue::I32(1),
+    }));
+    b0.add_instruction(SsaInstruction::synthetic(SsaOp::Jump { target: 1 }));
+    ssa.add_block(b0);
+    let mut b1 = SsaBlock::new(1);
+    for op in [
+        SsaOp::Const {
+            dest: two,
+            value: ConstValue::I32(2),
+        },
+        SsaOp::Mul {
+            dest: x,
+            left: arg,
+            right: two,
+            flags: None,
+        },
+        SsaOp::Leave { target: 3 },
+    ] {
+        b1.add_instruction(SsaInstruction::synthetic(op));
+    }
+    ssa.add_block(b1);
+    let mut b2 = SsaBlock::new(2);
+    let mut handed = PhiNode::new(p, VariableOrigin::Phi);
+    handed.add_operand(PhiOperand::exceptional(z, 1));
+    handed.add_operand(PhiOperand::exceptional(x, 1));
+    b2.add_phi(handed);
+    b2.add_instruction(SsaInstruction::synthetic(SsaOp::EndFinally));
+    ssa.add_block(b2);
+    let mut b3 = SsaBlock::new(3);
+    b3.add_instruction(SsaInstruction::synthetic(SsaOp::Add {
+        dest: r,
+        left: z,
+        right: x,
+        flags: None,
+    }));
+    b3.add_instruction(SsaInstruction::synthetic(SsaOp::Return { value: Some(r) }));
+    ssa.add_block(b3);
+    ssa.set_exception_handlers(vec![SsaExceptionHandler {
+        flags: ExceptionHandlerFlags::FINALLY,
+        try_offset: 0,
+        try_length: 0,
+        handler_offset: 0,
+        handler_length: 0,
+        class_token_or_filter: 0,
+        protected_range: BlockRange::new(1, 2),
+        handler_range: BlockRange::new(2, 3),
+        filter_range: None,
+    }]);
+    ssa.recompute_uses();
+
+    let mut gen = SsaCodeGenerator::new();
+    let (bytecode, _, _) = gen.generate(&ssa).expect("codegen failed");
+    let handlers = gen
+        .remap_exception_handlers(&ssa, u32::try_from(bytecode.len()).unwrap())
+        .unwrap();
+    // 1 + 5 * 2.
+    assert_eq!(
+        run_integer_cil_with_handlers(&bytecode, &handlers, &[StackValue::I4(5)]),
+        StackValue::I4(11)
+    );
+}
+
+/// A local a loop's `try` writes on one path and leaves at its value from
+/// before the loop on the other keeps that value on the second path in every
+/// iteration, not the one the first path wrote in an earlier iteration.
+///
+/// The original resets the local each iteration; in SSA the reset is the value
+/// from before the loop, so the finally's phi takes `a` from one path and `l`
+/// from the other. Kept in the one place a finally phi's values share, `a`
+/// was overwritten by `l` in the first iteration and never restored, and the
+/// second iteration read `l`: `200` for `100 + 7`.
+///
+/// `B1` loops `i` over `0..n`; the try `B2..B5` takes `B3` (`l = i + 100`) or
+/// `B4`; the finally `B5` merges `l` and `a`, and `B6` adds the merge to `acc`.
+#[test]
+fn a_local_reset_each_iteration_keeps_its_value_through_a_finally() {
+    let mut ssa = SsaFunction::new(1, 0);
+    let var =
+        |ssa: &mut SsaFunction, origin, site| ssa.create_variable(origin, 0, site, SsaType::I32);
+    let n = var(&mut ssa, VariableOrigin::Argument(0), DefSite::entry());
+    let a = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(0, 0));
+    let zero = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(0, 1));
+    let one = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(0, 2));
+    let hundred = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(0, 3));
+    let i = var(&mut ssa, VariableOrigin::Phi, DefSite::phi(1));
+    let acc = var(&mut ssa, VariableOrigin::Phi, DefSite::phi(1));
+    let more = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(1, 0));
+    let bit = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(2, 0));
+    let l = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(3, 0));
+    let merged = var(&mut ssa, VariableOrigin::Phi, DefSite::phi(5));
+    let acc2 = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(6, 0));
+    let i2 = var(&mut ssa, VariableOrigin::Phi, DefSite::instruction(6, 1));
+
+    let block = |index: usize, ops: Vec<SsaOp>| {
+        let mut block = SsaBlock::new(index);
+        for op in ops {
+            block.add_instruction(SsaInstruction::synthetic(op));
+        }
+        block
+    };
+    let constant = |dest, value| SsaOp::Const {
+        dest,
+        value: ConstValue::I32(value),
+    };
+    ssa.add_block(block(
+        0,
+        vec![
+            constant(a, 7),
+            constant(zero, 0),
+            constant(one, 1),
+            constant(hundred, 100),
+            SsaOp::Jump { target: 1 },
+        ],
+    ));
+    let mut header = block(
+        1,
+        vec![
+            SsaOp::Clt {
+                dest: more,
+                left: i,
+                right: n,
+                unsigned: false,
+            },
+            SsaOp::Branch {
+                condition: more,
+                true_target: 2,
+                false_target: 7,
+            },
+        ],
+    );
+    for (result, initial, carried) in [(i, zero, i2), (acc, zero, acc2)] {
+        let mut phi = PhiNode::new(result, VariableOrigin::Phi);
+        phi.add_operand(PhiOperand::new(initial, 0));
+        phi.add_operand(PhiOperand::new(carried, 6));
+        header.add_phi(phi);
+    }
+    ssa.add_block(header);
+    ssa.add_block(block(
+        2,
+        vec![
+            SsaOp::And {
+                dest: bit,
+                left: i,
+                right: one,
+                flags: None,
+            },
+            SsaOp::Branch {
+                condition: bit,
+                true_target: 4,
+                false_target: 3,
+            },
+        ],
+    ));
+    ssa.add_block(block(
+        3,
+        vec![
+            SsaOp::Add {
+                dest: l,
+                left: i,
+                right: hundred,
+                flags: None,
+            },
+            SsaOp::Leave { target: 6 },
+        ],
+    ));
+    ssa.add_block(block(4, vec![SsaOp::Leave { target: 6 }]));
+    let mut finally = block(5, vec![SsaOp::EndFinally]);
+    let mut phi = PhiNode::new(merged, VariableOrigin::Phi);
+    phi.add_operand(PhiOperand::new(l, 3));
+    phi.add_operand(PhiOperand::new(a, 4));
+    phi.add_operand(PhiOperand::exceptional(a, 2));
+    phi.add_operand(PhiOperand::exceptional(a, 3));
+    phi.add_operand(PhiOperand::exceptional(l, 3));
+    phi.add_operand(PhiOperand::exceptional(a, 4));
+    finally.add_phi(phi);
+    ssa.add_block(finally);
+    ssa.add_block(block(
+        6,
+        vec![
+            SsaOp::Add {
+                dest: acc2,
+                left: acc,
+                right: merged,
+                flags: None,
+            },
+            SsaOp::Add {
+                dest: i2,
+                left: i,
+                right: one,
+                flags: None,
+            },
+            SsaOp::Jump { target: 1 },
+        ],
+    ));
+    ssa.add_block(block(7, vec![SsaOp::Return { value: Some(acc) }]));
+    ssa.set_exception_handlers(vec![SsaExceptionHandler {
+        flags: ExceptionHandlerFlags::FINALLY,
+        try_offset: 0,
+        try_length: 0,
+        handler_offset: 0,
+        handler_length: 0,
+        class_token_or_filter: 0,
+        protected_range: BlockRange::new(2, 5),
+        handler_range: BlockRange::new(5, 6),
+        filter_range: None,
+    }]);
+    ssa.recompute_uses();
+
+    let mut gen = SsaCodeGenerator::new();
+    let (bytecode, _, _) = gen.generate(&ssa).expect("codegen failed");
+    let handlers = gen
+        .remap_exception_handlers(&ssa, u32::try_from(bytecode.len()).unwrap())
+        .unwrap();
+    assert_eq!(
+        run_integer_cil_with_handlers(&bytecode, &handlers, &[StackValue::I4(2)]),
+        StackValue::I4(107)
+    );
+}
+
+/// A clause as `(protected, handler)` block ranges, each `(start, end)`.
+type ClauseBlocks = ((usize, usize), (usize, usize));
+
+/// A function of blocks that only branch, with `clauses` as its exception
+/// table.
+fn region_layout_function(terminators: Vec<SsaOp>, clauses: &[ClauseBlocks]) -> SsaFunction {
+    let mut ssa = SsaFunction::new(0, 0);
+    for (index, terminator) in terminators.into_iter().enumerate() {
+        let mut block = SsaBlock::new(index);
+        block.add_instruction(SsaInstruction::synthetic(terminator));
+        ssa.add_block(block);
+    }
+    ssa.set_exception_handlers(
+        clauses
+            .iter()
+            .map(
+                |&((try_start, try_end), (handler_start, handler_end))| SsaExceptionHandler {
+                    flags: ExceptionHandlerFlags::EXCEPTION,
+                    try_offset: 0,
+                    try_length: 0,
+                    handler_offset: 0,
+                    handler_length: 0,
+                    class_token_or_filter: 0,
+                    protected_range: BlockRange::new(try_start, try_end),
+                    handler_range: BlockRange::new(handler_start, handler_end),
+                    filter_range: None,
+                },
+            )
+            .collect(),
+    );
+    ssa
+}
+
+/// Asserts every region of `ssa` occupies one run of `layout`, entered at its
+/// first block, with each protected region ahead of its handler.
+fn assert_regions_laid_out_whole(ssa: &SsaFunction, layout: &[usize]) {
+    let position = |block: usize| layout.iter().position(|&b| b == block);
+    let span = |start: usize, end: usize| -> (usize, usize) {
+        let positions: Vec<usize> = (start..end).filter_map(position).collect();
+        let first = *positions.iter().min().expect("the region is laid out");
+        let last = *positions.iter().max().expect("the region is laid out");
+        assert_eq!(
+            last - first + 1,
+            positions.len(),
+            "region {start}..{end} is not contiguous in {layout:?}"
+        );
+        assert_eq!(
+            position(start),
+            Some(first),
+            "region {start}..{end} is not entered at its first block in {layout:?}"
+        );
+        (first, last)
+    };
+    for eh in ssa.exception_handlers() {
+        let protected = eh.protected_range.expect("protected range");
+        let handler = eh.handler_range.expect("handler range");
+        let (_, try_last) = span(protected.start(), protected.end());
+        let (handler_first, _) = span(handler.start(), handler.end());
+        assert!(
+            try_last < handler_first,
+            "the handler precedes its protected region in {layout:?}"
+        );
+    }
+}
+
+/// A fall-through chain that reaches a protected region past its entry
+/// still lays the region out whole, from its entry.
+///
+/// `B0 -> B5 -> B2`, with `B2` the second block of the try `B1..B3`. Following
+/// the chain block by block put `B2` ahead of `B1`, so the region was neither
+/// contiguous nor entered at its start, and the method kept its original IL.
+#[test]
+fn a_chain_into_the_middle_of_a_try_lays_the_try_out_whole() {
+    let ssa = region_layout_function(
+        vec![
+            SsaOp::Jump { target: 5 },
+            SsaOp::Jump { target: 2 },
+            SsaOp::Leave { target: 4 },
+            SsaOp::Leave { target: 4 },
+            SsaOp::Return { value: None },
+            SsaOp::Jump { target: 2 },
+        ],
+        &[((1, 3), (3, 4))],
+    );
+    let included: BTreeSet<usize> = (0..6).collect();
+    let layout = SsaCodeGenerator::compute_block_layout(&ssa, &included);
+    assert_eq!(layout.len(), 6, "{layout:?}");
+    assert_regions_laid_out_whole(&ssa, &layout);
+}
+
+/// Nested regions: an inner try and its handler inside an outer try, whose
+/// own handler follows. Each level is laid out whole within its parent.
+#[test]
+fn nested_regions_are_each_laid_out_whole() {
+    let ssa = region_layout_function(
+        vec![
+            SsaOp::Jump { target: 6 },
+            SsaOp::Jump { target: 2 },
+            SsaOp::Leave { target: 4 },
+            SsaOp::Leave { target: 4 },
+            SsaOp::Leave { target: 7 },
+            SsaOp::Leave { target: 7 },
+            SsaOp::Jump { target: 3 },
+            SsaOp::Return { value: None },
+        ],
+        &[((2, 3), (3, 4)), ((1, 5), (5, 6))],
+    );
+    let included: BTreeSet<usize> = (0..8).collect();
+    let layout = SsaCodeGenerator::compute_block_layout(&ssa, &included);
+    assert_eq!(layout.len(), 8, "{layout:?}");
+    assert_regions_laid_out_whole(&ssa, &layout);
+}
+
+/// A try nothing reaches takes its handler with it: neither is emitted, and
+/// the clause is dropped.
+///
+/// `B0` returns; the try `B1` and its catch `B2` are reached by nothing. Every
+/// non-empty block used to be emitted, so a handler whose protected code was
+/// dead was laid out with a clause guarding code no path runs.
+#[test]
+fn a_handler_whose_try_nothing_reaches_is_not_emitted() {
+    let ssa = region_layout_function(
+        vec![
+            SsaOp::Return { value: None },
+            SsaOp::Leave { target: 3 },
+            SsaOp::Leave { target: 3 },
+            SsaOp::Return { value: None },
+        ],
+        &[((1, 2), (2, 3))],
+    );
+    let mut gen = SsaCodeGenerator::new();
+    let (bytecode, _, _) = gen.generate(&ssa).expect("codegen failed");
+    let mnemonics: Vec<&str> = decode_stream(&mut Parser::new(&bytecode), 0)
+        .unwrap()
+        .iter()
+        .map(|instruction| instruction.mnemonic)
+        .collect();
+    assert_eq!(mnemonics, ["ret"]);
+    let handlers = gen
+        .remap_exception_handlers(&ssa, u32::try_from(bytecode.len()).unwrap())
+        .unwrap();
+    assert!(handlers.is_empty(), "{handlers:?}");
+}
+
+/// A handler no terminator names is emitted once its try is reached, and
+/// its clause with it.
+#[test]
+fn a_reached_try_keeps_its_handler_and_clause() {
+    let ssa = region_layout_function(
+        vec![
+            SsaOp::Jump { target: 1 },
+            SsaOp::Leave { target: 3 },
+            SsaOp::Leave { target: 3 },
+            SsaOp::Return { value: None },
+        ],
+        &[((1, 2), (2, 3))],
+    );
+    let mut gen = SsaCodeGenerator::new();
+    let (bytecode, _, _) = gen.generate(&ssa).expect("codegen failed");
+    let handlers = gen
+        .remap_exception_handlers(&ssa, u32::try_from(bytecode.len()).unwrap())
+        .unwrap();
+    assert_eq!(handlers.len(), 1, "{handlers:?}");
+    let handler = handlers.first().unwrap();
+    assert!(handler.try_length > 0 && handler.handler_length > 0);
+    assert!(handler.try_offset + handler.try_length <= handler.handler_offset);
+}
+
+/// A layout that places code outside a region between its blocks is refused
+/// with the region named, not described by a clause that swallows it.
+#[test]
+fn a_region_interleaved_with_other_code_is_refused() {
+    let ssa = region_layout_function(
+        vec![
+            SsaOp::Jump { target: 1 },
+            SsaOp::Jump { target: 2 },
+            SsaOp::Leave { target: 4 },
+            SsaOp::Leave { target: 4 },
+            SsaOp::Return { value: None },
+        ],
+        &[((1, 3), (3, 4))],
+    );
+    let mut gen = SsaCodeGenerator::new();
+    gen.method.layout_offsets = vec![
+        (LayoutEntry::Block(0), 0),
+        (LayoutEntry::Block(1), 2),
+        (LayoutEntry::Block(4), 4),
+        (LayoutEntry::Block(2), 5),
+        (LayoutEntry::Block(3), 7),
+    ];
+    let refused = gen.remap_exception_handlers(&ssa, 9).unwrap_err();
+    assert!(
+        matches!(
+            refused,
+            Error::EhRegionNotContiguous {
+                start: 1,
+                end: 3,
+                ..
+            }
+        ),
+        "{refused:?}"
+    );
+}
+
+/// A clause whose protected code is emitted without its handler is refused:
+/// dropping it would leave the code unguarded.
+#[test]
+fn a_clause_emitted_without_its_handler_is_refused() {
+    let ssa = region_layout_function(
+        vec![
+            SsaOp::Jump { target: 1 },
+            SsaOp::Leave { target: 3 },
+            SsaOp::Leave { target: 3 },
+            SsaOp::Return { value: None },
+        ],
+        &[((1, 2), (2, 3))],
+    );
+    let mut gen = SsaCodeGenerator::new();
+    gen.method.layout_offsets = vec![
+        (LayoutEntry::Block(0), 0),
+        (LayoutEntry::Block(1), 2),
+        (LayoutEntry::Block(3), 4),
+    ];
+    let refused = gen.remap_exception_handlers(&ssa, 5).unwrap_err();
+    assert!(
+        matches!(&refused, Error::CodegenFailed(message) if message.contains("partly emitted")),
+        "{refused:?}"
+    );
+}
+
+/// Lifts straight IL with no exception clauses.
+fn lift_il(asm: InstructionAssembler, args: usize, locals: usize) -> SsaFunction {
+    let (bytecode, _max_stack, handlers) = asm.finish().unwrap();
+    let blocks =
+        decode_blocks_with_handlers(&bytecode, 0, 0x1000, Some(bytecode.len()), &handlers).unwrap();
+    let ssa_handlers = Method::ssa_handlers_for_clauses(&handlers, &blocks).unwrap();
+    let cfg = ControlFlowGraph::from_basic_blocks(blocks).unwrap();
+    SsaConverter::build(
+        &cfg,
+        args,
+        locals,
+        &TestTypeProvider::new(args, locals),
+        ssa_handlers,
+    )
+    .unwrap()
+}
+
+/// The method tokens the generated body calls, in order.
+fn called_tokens(ssa: &SsaFunction) -> Vec<Token> {
+    let bytecode = generate_bytecode(ssa);
+    decode_stream(&mut Parser::new(&bytecode), 0)
+        .unwrap()
+        .iter()
+        .filter(|instr| instr.mnemonic == "call")
+        .filter_map(|instr| match instr.operand {
+            Operand::Token(token) => Some(token),
+            _ => None,
+        })
+        .collect()
+}
+
+/// `a = a++ * 3 + a++ * 5 + a++ * 7; return a - that`, consumed last-first.
+///
+/// The index chain overwrites `a` three times while the three products, each
+/// reading an older `a`, wait for the final `sub`; the `sub` reads the newest
+/// `a` first. A generator that emits each value when its consumer pulls it
+/// computes the products after the chain and reads the overwritten slots: the
+/// decryptor in issue #288 lost its byte reads this way.
+#[test]
+fn a_value_read_after_its_slot_is_overwritten_keeps_its_value() {
+    let mut asm = InstructionAssembler::new();
+    for k in [3, 5, 7] {
+        asm.ldarg_0()
+            .unwrap()
+            .dup()
+            .unwrap()
+            .ldc_i4(1)
+            .unwrap()
+            .add()
+            .unwrap();
+        asm.starg_s(0).unwrap().ldc_i4(k).unwrap().mul().unwrap();
+        if k != 3 {
+            asm.add().unwrap();
+        }
+    }
+    asm.stloc_0().unwrap();
+    asm.ldarg_0()
+        .unwrap()
+        .ldloc_0()
+        .unwrap()
+        .sub()
+        .unwrap()
+        .ret()
+        .unwrap();
+    let ssa = lift_il(asm, 1, 1);
+    let bytecode = generate_bytecode(&ssa);
+    // a = 1: 1*3 + 2*5 + 3*7 = 34, and a ends at 4.
+    assert_eq!(
+        run_integer_cil(&bytecode, &[StackValue::I4(1)]),
+        StackValue::I4(-30)
+    );
+}
+
+/// The same chain consumed in the order it was computed.
+#[test]
+fn a_chain_consumed_in_order_keeps_its_values() {
+    let mut asm = InstructionAssembler::new();
+    for k in [3, 5, 7] {
+        asm.ldarg_0()
+            .unwrap()
+            .dup()
+            .unwrap()
+            .ldc_i4(1)
+            .unwrap()
+            .add()
+            .unwrap();
+        asm.starg_s(0).unwrap().ldc_i4(k).unwrap().mul().unwrap();
+        if k != 3 {
+            asm.add().unwrap();
+        }
+    }
+    asm.ldarg_0().unwrap().sub().unwrap().ret().unwrap();
+    let ssa = lift_il(asm, 1, 0);
+    let bytecode = generate_bytecode(&ssa);
+    assert_eq!(
+        run_integer_cil(&bytecode, &[StackValue::I4(1)]),
+        StackValue::I4(30)
+    );
+}
+
+/// `v = A(); B(); C(v)` calls A before B.
+#[test]
+fn calls_run_in_program_order() {
+    let (a, b, c) = (
+        Token::new(0x0600_000A),
+        Token::new(0x0600_000B),
+        Token::new(0x0600_000C),
+    );
+    let ssa = SsaFunctionBuilder::new(0, 0)
+        .build_with(|f| {
+            f.block(0, |blk| {
+                let v = blk.call(MethodRef::new(a), &[], SsaType::I32);
+                blk.call_void(MethodRef::new(b), &[]);
+                blk.call_void(MethodRef::new(c), &[v]);
+                blk.ret();
+            });
+        })
+        .unwrap();
+    assert_eq!(called_tokens(&ssa), vec![a, b, c]);
+}
+
+/// `v = A(); F = x; return v` calls A before the store.
+#[test]
+fn a_call_is_not_moved_past_a_store() {
+    let field = Token::new(0x0400_0001);
+    let a = Token::new(0x0600_000A);
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let x = f.arg(0, SsaType::I32);
+            f.block(0, |blk| {
+                let v = blk.call(MethodRef::new(a), &[], SsaType::I32);
+                blk.op(SsaOp::StoreStaticField {
+                    field: FieldRef::new(field),
+                    value: x,
+                });
+                blk.ret_val(v);
+            });
+        })
+        .unwrap();
+    let mnemonics = generate_mnemonics(&ssa);
+    let call = mnemonics.iter().position(|m| *m == "call");
+    let store = mnemonics.iter().position(|m| *m == "stsfld");
+    assert!(call < store, "{mnemonics:?}");
+}
+
+/// `v = arr[i]; arr[i] = x; return v` returns the element before the store.
+#[test]
+fn a_load_is_not_moved_past_a_store_to_the_same_element() {
+    let ssa = SsaFunctionBuilder::new(3, 0)
+        .build_with(|f| {
+            let (arr, idx, val) = (
+                f.arg(0, SsaType::I32),
+                f.arg(1, SsaType::I32),
+                f.arg(2, SsaType::I32),
+            );
+            let dest = f.var();
+            f.block(0, |blk| {
+                blk.op(SsaOp::LoadElement {
+                    dest,
+                    array: arr,
+                    index: idx,
+                    elem_type: SsaType::I32,
+                });
+                blk.op(SsaOp::StoreElement {
+                    array: arr,
+                    index: idx,
+                    value: val,
+                    elem_type: SsaType::I32,
+                });
+                blk.ret_val(dest);
+            });
+        })
+        .unwrap();
+    let mnemonics = generate_mnemonics(&ssa);
+    let load = mnemonics.iter().position(|m| *m == "ldelem.i4");
+    let store = mnemonics.iter().position(|m| *m == "stelem.i4");
+    assert!(load < store, "{mnemonics:?}");
+}
+
+/// `v = F; F = x; return v` returns the field before the store.
+#[test]
+fn a_load_is_not_moved_past_a_store_to_the_same_field() {
+    let field = Token::new(0x0400_0001);
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let x = f.arg(0, SsaType::I32);
+            let dest = f.var();
+            f.block(0, |blk| {
+                blk.op_typed(
+                    SsaOp::LoadStaticField {
+                        dest,
+                        field: FieldRef::new(field),
+                    },
+                    SsaType::I32,
+                );
+                blk.op(SsaOp::StoreStaticField {
+                    field: FieldRef::new(field),
+                    value: x,
+                });
+                blk.ret_val(dest);
+            });
+        })
+        .unwrap();
+    let mnemonics = generate_mnemonics(&ssa);
+    let load = mnemonics.iter().position(|m| *m == "ldsfld");
+    let store = mnemonics.iter().position(|m| *m == "stsfld");
+    assert!(load < store, "{mnemonics:?}");
 }

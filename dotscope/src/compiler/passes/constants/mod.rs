@@ -33,14 +33,19 @@
 //! v5 = 0           // absorbing element
 //! ```
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use analyssa::BitSet;
+use analyssa::{
+    analysis::consts::{destination_width, evaluate_const_op},
+    ir::MethodDispatch,
+    passes::utils::resolve_chains,
+    BitSet,
+};
 
 use crate::{
     analysis::{
-        conv_op_for_target, simplify_op, CilTarget, CmpKind, ConstValue, ConstValueCilExt,
-        ConstantPropagation, EhCfg, MethodRef, SccpResult, SimplifyResult, SsaEvaluator,
+        simplify_op, CallResolver, CilTarget, ConstValue, ConstValueCilExt, ConstantPropagation,
+        LoopAnalyzer, MethodPurity, MethodRef, SccpResult, SimplifyResult, SsaCfg, SsaEvaluator,
         SsaFunction, SsaOp, SsaType, SsaVarId,
     },
     compiler::{
@@ -50,107 +55,6 @@ use crate::{
     metadata::{tables::TableId, token::Token, typesystem::PointerSize},
     CilObject,
 };
-
-/// Checks whether `token` resolves to a method whose declaring type name contains `type_name`.
-///
-/// Handles both `MethodDef` (table 0x06) and `MemberRef` (table 0x0A) tokens. A duplicate of
-/// `deobfuscation::utils::is_method_on_type` exists here so that the `compiler` feature does
-/// not depend on the `deobfuscation` feature being enabled.
-fn is_method_on_type(assembly: &CilObject, token: Token, type_name: &str) -> bool {
-    match token.table() {
-        0x06 => assembly
-            .method(&token)
-            .ok()
-            .and_then(|m| m.declaring_type_rc())
-            .is_some_and(|ty| ty.name.contains(type_name)),
-        0x0A => assembly
-            .refs_members()
-            .get(&token)
-            .and_then(|entry| entry.value().declaredby.fullname())
-            .is_some_and(|name| name.contains(type_name)),
-        _ => false,
-    }
-}
-
-/// An integer constant reduced to its CIL stack width and raw bit pattern.
-///
-/// Folding an operation whose meaning depends on operand width and signedness — `rem`/`rem.un`
-/// and `div`/`div.un` — cannot go through a single `as_i64` accessor. `as_i64` sign-extends,
-/// so reinterpreting its result as unsigned turns `rem.un` of `I32(-1)` into
-/// `0xFFFF_FFFF_FFFF_FFFF % r` rather than the `0xFFFF_FFFF % r` CIL specifies. `as_u64` is
-/// no better here: it refuses negative values outright, so it cannot express the
-/// reinterpretation at all.
-///
-/// Per ECMA-335 III.1.1 the stack holds `int32` and `int64`; anything narrower is widened to
-/// `int32` when loaded. This mirrors that: sub-word constants become 32-bit, and the bit
-/// pattern is kept unsigned so each operation can choose how to read it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum IntOperand {
-    /// A 32-bit stack value, as raw bits.
-    W32(u32),
-    /// A 64-bit stack value, as raw bits.
-    W64(u64),
-}
-
-impl IntOperand {
-    /// Classifies an integer constant, or `None` for non-integer constants.
-    ///
-    /// `NativeInt`/`NativeUInt` are deliberately excluded rather than assumed 64-bit: their
-    /// width is the target's pointer size, so folding them here would bake a host assumption
-    /// into the output.
-    fn from_const(value: &ConstValue) -> Option<Self> {
-        #[allow(clippy::cast_sign_loss)]
-        Some(match value {
-            ConstValue::I8(v) => Self::W32(i32::from(*v) as u32),
-            ConstValue::I16(v) => Self::W32(i32::from(*v) as u32),
-            ConstValue::I32(v) => Self::W32(*v as u32),
-            ConstValue::U8(v) => Self::W32(u32::from(*v)),
-            ConstValue::U16(v) => Self::W32(u32::from(*v)),
-            ConstValue::U32(v) => Self::W32(*v),
-            ConstValue::I64(v) => Self::W64(*v as u64),
-            ConstValue::U64(v) => Self::W64(*v),
-            ConstValue::True => Self::W32(1),
-            ConstValue::False => Self::W32(0),
-            _ => return None,
-        })
-    }
-}
-
-/// Folds `rem`/`rem.un` over two constant operands, or `None` when it must not be folded.
-///
-/// Returns `None` — leaving the instruction in place — when:
-///
-/// - the divisor is zero, since the operation raises `DivideByZeroException` at runtime;
-/// - the division overflows (`i32::MIN % -1`), which raises `OverflowException`;
-/// - the operands have different widths, which is unverifiable IL. Inventing a promotion
-///   would mean choosing sign- or zero-extension on the crate's behalf and folding an input
-///   the runtime would reject.
-///
-/// The result keeps the operand width, so a 64-bit remainder stays [`ConstValue::I64`].
-/// Narrowing it to `I32` — as a single `ConstValue::I32(result as i32)` does — is worse than a
-/// wrong number: codegen then emits `ldc.i4` where the stack type requires `ldc.i8`, which is
-/// a verification failure rather than a miscomputation.
-fn fold_rem(left: IntOperand, right: IntOperand, unsigned: bool) -> Option<ConstValue> {
-    #[allow(clippy::cast_possible_wrap)]
-    match (left, right) {
-        (IntOperand::W32(l), IntOperand::W32(r)) => {
-            if unsigned {
-                Some(ConstValue::I32(l.checked_rem(r)? as i32))
-            } else {
-                Some(ConstValue::I32((l as i32).checked_rem(r as i32)?))
-            }
-        }
-        (IntOperand::W64(l), IntOperand::W64(r)) => {
-            if unsigned {
-                Some(ConstValue::I64(l.checked_rem(r)? as i64))
-            } else {
-                Some(ConstValue::I64((l as i64).checked_rem(r as i64)?))
-            }
-        }
-        // Mixed widths: see above.
-        _ => None,
-    }
-}
 
 /// Result of checking an algebraic identity.
 ///
@@ -270,6 +174,7 @@ impl ConstantPropagationPass {
         ptr_size: PointerSize,
         max_iterations: usize,
         assembly: &CilObject,
+        resolver: &CallResolver,
     ) -> BTreeMap<SsaVarId, ConstValue> {
         let block_count = ssa.block_count();
         if block_count == 0 {
@@ -287,7 +192,7 @@ impl ConstantPropagationPass {
         // exception-aware view: over terminator edges alone a handler block is
         // unreachable, and every value defined in one would be left Top and
         // folded as if it were a constant nobody wrote.
-        let cfg = EhCfg::from_ssa(ssa);
+        let cfg = SsaCfg::from_ssa(ssa);
         let mut sccp = ConstantPropagation::new(ptr_size);
         let mut sccp_result = sccp.analyze(ssa, &cfg);
 
@@ -309,11 +214,12 @@ impl ConstantPropagationPass {
             method_token,
             changes,
             assembly,
+            resolver,
             ptr_size,
         );
         if constants.len() > pre_fold_count {
             ssa.recompute_uses();
-            let cfg = EhCfg::from_ssa(ssa);
+            let cfg = SsaCfg::from_ssa(ssa);
             let mut sccp2 = ConstantPropagation::new(ptr_size);
             let sccp_result2 = sccp2.analyze(ssa, &cfg);
             for (var, c) in sccp_result2.constants() {
@@ -699,10 +605,11 @@ impl ConstantPropagationPass {
                         if let Some(instr) = block.instructions_mut().get_mut(instr_idx) {
                             let old_op_str = format!("{}", instr.op());
 
-                            instr.set_op(conv_op_for_target(
+                            instr.set_op(SsaOp::conversion_between(
                                 dest,
                                 new_operand,
                                 target.clone(),
+                                None,
                                 unsigned,
                                 false,
                             ));
@@ -965,20 +872,27 @@ impl ConstantPropagationPass {
         method_token: Token,
         changes: &mut EventLog,
         assembly: &CilObject,
+        resolver: &CallResolver,
         ptr_size: PointerSize,
     ) {
         let mut replacements: Vec<(usize, usize, SsaVarId, ConstValue)> = Vec::new();
 
         for (block_idx, block) in ssa.iter_blocks() {
             for (instr_idx, instr) in block.instructions().iter().enumerate() {
-                let (dest, callee_token, args) = match instr.op() {
-                    SsaOp::Call {
-                        dest: Some(dest),
-                        method,
-                        args,
-                    } => (*dest, method.token(), args),
-                    _ => continue,
+                let Some(call) = instr.op().as_method_call() else {
+                    continue;
                 };
+                let Some(dest) = call.dest else {
+                    continue;
+                };
+                let (callee_token, args) = (call.method.token(), call.args);
+                // A `callvirt` runs the body it names only where nothing in the
+                // assembly overrides that method - C# emits one for every
+                // instance call, virtual or not.
+                let is_virtual = call.dispatch == MethodDispatch::Virtual;
+                if is_virtual && resolver.is_polymorphic(callee_token) {
+                    continue;
+                }
 
                 // Only handle MethodDef tokens (same-assembly methods)
                 if !callee_token.is_table(TableId::MethodDef) {
@@ -1002,6 +916,10 @@ impl ConstantPropagationPass {
                 let Some(concrete_args) = concrete_args else {
                     continue;
                 };
+                // ...and on a receiver that is not null, where it throws instead.
+                if is_virtual && matches!(concrete_args.first(), Some(ConstValue::Null)) {
+                    continue;
+                }
 
                 // Try to evaluate the callee
                 let Some(result) =
@@ -1035,53 +953,45 @@ impl ConstantPropagationPass {
         // because SCCP doesn't visit exception handler blocks, so constants from
         // folded x86 calls wouldn't otherwise reach the switch variable.
         if !constants.is_empty() {
-            Self::propagate_folded_arithmetic(ssa, constants, method_token, changes);
+            Self::propagate_folded_arithmetic(ssa, constants, method_token, changes, ptr_size);
         }
     }
 
-    /// Propagates known constants through arithmetic operations.
+    /// Propagates known constants through remainders.
     ///
-    /// After folding pure calls, some operations (like `rem.un`) may have both
-    /// operands as constants but haven't been folded yet (SCCP ran before the calls
-    /// were folded). This pass finds and folds such operations.
+    /// After folding pure calls, a `rem` (the `rem.un` of a flattened switch
+    /// dispatch) may have both operands constant and not yet be folded. Each
+    /// is folded as SCCP folds it ([`evaluate_const_op`]), so the remainder
+    /// keeps its operands' width and signedness, and a divisor of zero or
+    /// `MIN % -1` stays in place for the runtime to raise.
     fn propagate_folded_arithmetic(
         ssa: &mut SsaFunction,
         constants: &mut BTreeMap<SsaVarId, ConstValue>,
         method_token: Token,
         changes: &mut EventLog,
+        ptr_size: PointerSize,
     ) {
         let mut new_constants: Vec<(usize, usize, SsaVarId, ConstValue)> = Vec::new();
 
         for (block_idx, block) in ssa.iter_blocks() {
             for (instr_idx, instr) in block.instructions().iter().enumerate() {
-                if let SsaOp::Rem {
-                    dest,
-                    left,
-                    right,
-                    unsigned,
-                    ..
-                } = instr.op()
+                let op = instr.op();
+                let SsaOp::Rem { dest, .. } = op else {
+                    continue;
+                };
+                let known = |var: SsaVarId| {
+                    constants
+                        .get(&var)
+                        .or_else(|| match ssa.get_definition(var) {
+                            Some(SsaOp::Const { value, .. }) => Some(value),
+                            _ => None,
+                        })
+                        .cloned()
+                };
+                if let Some(value) =
+                    evaluate_const_op(op, destination_width(ssa, op), known, ptr_size)
                 {
-                    let lval = constants
-                        .get(left)
-                        .or_else(|| match ssa.get_definition(*left) {
-                            Some(SsaOp::Const { value, .. }) => Some(value),
-                            _ => None,
-                        })
-                        .and_then(IntOperand::from_const);
-                    let rval = constants
-                        .get(right)
-                        .or_else(|| match ssa.get_definition(*right) {
-                            Some(SsaOp::Const { value, .. }) => Some(value),
-                            _ => None,
-                        })
-                        .and_then(IntOperand::from_const);
-
-                    if let (Some(l), Some(r)) = (lval, rval) {
-                        if let Some(value) = fold_rem(l, r, *unsigned) {
-                            new_constants.push((block_idx, instr_idx, *dest, value));
-                        }
-                    }
+                    new_constants.push((block_idx, instr_idx, *dest, value));
                 }
             }
         }
@@ -1115,8 +1025,44 @@ impl ConstantPropagationPass {
     ) -> Option<ConstValue> {
         let method = assembly.method(&callee_token).ok()?;
         let callee_ssa = method.ssa(assembly).ok()?;
+        Self::evaluate_pure_function(&callee_ssa, args, ptr_size)
+    }
 
-        let mut eval = SsaEvaluator::new(&callee_ssa, ptr_size);
+    /// Evaluates `callee` over concrete arguments, when replacing a call to it
+    /// with the result loses nothing.
+    ///
+    /// A call is its result only when computing the result is all it does. The
+    /// evaluator steps over a store to a field or a static - it computes values,
+    /// it does not model memory - so a callee that writes one and returns a
+    /// function of its arguments evaluates cleanly, and folding the call would
+    /// delete the write. Only a callee whose purity is proven is evaluated: one
+    /// that writes nothing, calls nothing and throws nothing, and at most reads.
+    ///
+    /// # Arguments
+    ///
+    /// * `callee` - The called method's SSA.
+    /// * `args` - The call's arguments, all known.
+    /// * `ptr_size` - The target pointer width.
+    ///
+    /// # Returns
+    ///
+    /// The value the call returns, or `None` when the callee is not proven pure
+    /// or its evaluation does not complete to a return.
+    fn evaluate_pure_function(
+        callee_ssa: &SsaFunction,
+        args: &[ConstValue],
+        ptr_size: PointerSize,
+    ) -> Option<ConstValue> {
+        // A callee that may raise is evaluated too: a run that raises does not
+        // complete to a return, and is not folded.
+        if !matches!(
+            callee_ssa.purity(),
+            MethodPurity::Pure | MethodPurity::ReadOnly | MethodPurity::MayThrow
+        ) {
+            return None;
+        }
+
+        let mut eval = SsaEvaluator::new(callee_ssa, ptr_size);
         for (var, value) in callee_ssa.argument_variables().zip(args) {
             eval.set_concrete(var.id(), value.clone());
         }
@@ -1171,11 +1117,13 @@ impl ConstantPropagationPass {
                         dest: Some(dest),
                         method,
                         args,
+                        ..
                     }
                     | SsaOp::CallVirt {
                         dest: Some(dest),
                         method,
                         args,
+                        ..
                     } => Self::try_fold_string_call(*dest, method, args, constants, assembly),
                     _ => None,
                 };
@@ -1227,7 +1175,10 @@ impl ConstantPropagationPass {
         assembly: &CilObject,
     ) -> Option<StringFoldOp> {
         let token = method.token();
-        if !is_method_on_type(assembly, token, "String") {
+        // Exactly `System.String`: a substring match would fold a user's
+        // `StringHelper.Concat` as if it concatenated.
+        let declaring = assembly.resolve_method_declaring_type(token);
+        if declaring.as_deref() != Some("System.String") {
             return None;
         }
         let name = assembly.resolve_method_name(token)?;
@@ -1548,13 +1499,27 @@ impl ConstantPropagationPass {
             });
         }
 
-        // Step 4: Apply transforms
-        for t in transforms {
+        // Step 4: Apply transforms.
+        //
+        // The even chains are substitutions, and one chain's innermost operand
+        // can be another's outermost result: `a = neg(neg x)` feeding
+        // `b = not(not a)` gives `(a -> x)` and `(b -> a)`. Applied one at a
+        // time the second writes `a` back into use after its definition is
+        // gone, so they are resolved together, and an odd chain's surviving
+        // operation reads the resolved operand too.
+        let substitutions: Vec<(SsaVarId, SsaVarId)> = transforms
+            .iter()
+            .filter(|t| t.chain_length % 2 == 0)
+            .map(|t| (t.outermost_dest, t.innermost_operand))
+            .collect();
+        let resolved = resolve_chains(&substitutions);
+        let resolve = |var: SsaVarId| resolved.get(&var).copied().unwrap_or(var);
+
+        for t in &transforms {
             let op_name = if t.is_neg { "neg" } else { "not" };
 
             if t.chain_length % 2 == 0 {
                 // Even chain: all cancel out, result = innermost_operand
-                ssa.replace_uses_including_phis(t.outermost_dest, t.innermost_operand);
                 for &(b, i) in &t.instructions_to_nop {
                     ssa.replace_instruction_op(b, i, SsaOp::Nop);
                 }
@@ -1563,23 +1528,26 @@ impl ConstantPropagationPass {
                     .at(method_token, t.outermost_location.1)
                     .message(format!(
                         "{} → {} ({op_name}^{}(x))",
-                        t.outermost_dest, t.innermost_operand, t.chain_length
+                        t.outermost_dest,
+                        resolve(t.outermost_dest),
+                        t.chain_length
                     ));
             } else {
                 // Odd chain: one operation remains, rewrite outermost to use innermost_operand
+                let operand = resolve(t.innermost_operand);
                 let (b, i) = t.outermost_location;
                 if let Some(block) = ssa.block_mut(b) {
                     if let Some(instr) = block.instructions_mut().get_mut(i) {
                         if t.is_neg {
                             instr.set_op(SsaOp::Neg {
                                 dest: t.outermost_dest,
-                                operand: t.innermost_operand,
+                                operand,
                                 flags: None,
                             });
                         } else {
                             instr.set_op(SsaOp::Not {
                                 dest: t.outermost_dest,
-                                operand: t.innermost_operand,
+                                operand,
                                 flags: None,
                             });
                         }
@@ -1595,68 +1563,44 @@ impl ConstantPropagationPass {
                     .record(EventKind::ConstantFolded)
                     .at(method_token, t.outermost_location.1)
                     .message(format!(
-                        "{} = {op_name}({}) ({op_name}^{}(x))",
-                        t.outermost_dest, t.innermost_operand, t.chain_length
+                        "{} = {op_name}({operand}) ({op_name}^{}(x))",
+                        t.outermost_dest, t.chain_length
                     ));
             }
         }
+        ssa.replace_uses_resolved(&substitutions);
     }
 
-    /// Checks if a block is a loop header by detecting back-edges.
+    /// The header block of every natural loop in `ssa`.
     ///
-    /// A block is a loop header if any block with a higher index targets it,
-    /// indicating a back-edge in the CFG. Switch folding must be skipped for
-    /// loop headers because the switch value (which appears constant on the
-    /// initial iteration) may take different values on subsequent iterations
-    /// via the PHI at the loop header.
-    fn is_loop_header(ssa: &SsaFunction, block_idx: usize) -> bool {
-        // Check the block itself for self-targeting terminators (self-loops).
-        // After jump threading, a switch case that originally targeted a
-        // trampoline may be threaded to the switch block itself. These
-        // self-loops won't be caught by the higher-index scan below.
-        if let Some(block) = ssa.block(block_idx) {
-            if let Some(op) = block.control_terminator() {
-                let self_targets = match op {
-                    SsaOp::Switch {
-                        targets, default, ..
-                    } => targets.contains(&block_idx) || *default == block_idx,
-                    _ => false,
-                };
-                if self_targets {
-                    return true;
-                }
-            }
-        }
-
-        // Check for back-edges from blocks with higher indices.
-        for bi in block_idx.saturating_add(1)..ssa.block_count() {
-            if let Some(block) = ssa.block(bi) {
-                if let Some(op) = block.control_terminator() {
-                    let targets_block = match op {
-                        SsaOp::Jump { target } => *target == block_idx,
-                        SsaOp::Leave { target } => *target == block_idx,
-                        SsaOp::Branch {
-                            true_target,
-                            false_target,
-                            ..
-                        } => *true_target == block_idx || *false_target == block_idx,
-                        SsaOp::BranchCmp {
-                            true_target,
-                            false_target,
-                            ..
-                        } => *true_target == block_idx || *false_target == block_idx,
-                        SsaOp::Switch {
-                            targets, default, ..
-                        } => targets.contains(&block_idx) || *default == block_idx,
-                        _ => false,
-                    };
-                    if targets_block {
-                        return true;
-                    }
-                }
-            }
-        }
-        false
+    /// Switch folding has to be skipped at a loop header: the switch value can
+    /// be constant on the entry edge and something else on the back edge, and
+    /// folding it to the entry value makes every other case unreachable. That is
+    /// what a control-flow-flattening dispatcher is, so getting this wrong
+    /// deletes the body of the loop rather than one arm of a branch.
+    ///
+    /// Which blocks are headers is asked of the dominator tree, through
+    /// [`LoopAnalyzer`], because a back edge is a dominance relation and nothing
+    /// else. This used to test whether any *higher-indexed* block branched to
+    /// the block, taking block order as a proxy for the edge direction. It reads
+    /// a back edge only when the latch happens to be numbered after the header,
+    /// which is a property of how the blocks were laid out rather than of the
+    /// loop. A JIEJIE.NET dispatcher reached through a one-instruction
+    /// trampoline - `b21 -> b1 -> b2`, where the trampoline `b1` is numbered
+    /// before the dispatcher `b2` it jumps to - has a loop the test cannot see,
+    /// and `DemoEmbeddedResources` lost its whole trailing `foreach` to a switch
+    /// folded on the entry state.
+    ///
+    /// # Arguments
+    ///
+    /// * `ssa` - The function whose loops to find.
+    fn loop_headers(ssa: &SsaFunction) -> BTreeSet<usize> {
+        LoopAnalyzer::new(ssa)
+            .analyze()
+            .loops()
+            .iter()
+            .map(|loop_info| loop_info.header.index())
+            .collect()
     }
 
     /// Simplifies control flow based on constant conditions.
@@ -1677,6 +1621,11 @@ impl ConstantPropagationPass {
         method_token: Token,
         changes: &mut EventLog,
     ) {
+        // One dominator-tree walk answers for every block, and the answer has
+        // to be taken before the first rewrite: folding a terminator changes
+        // the edges the next block's answer would be computed from.
+        let loop_headers = Self::loop_headers(ssa);
+
         for block_idx in 0..ssa.block_count() {
             if !sccp_result.is_block_executable(block_idx) {
                 continue;
@@ -1711,7 +1660,7 @@ impl ConstantPropagationPass {
                             // These control input-dependent control flow that must be preserved
                             if ssa.is_preserved_dispatch_var(*value) {
                                 None
-                            } else if Self::is_loop_header(ssa, block_idx) {
+                            } else if loop_headers.contains(&block_idx) {
                                 // Don't fold switches at loop headers. A switch whose
                                 // value is constant on the initial iteration may take
                                 // different values on subsequent iterations (via the
@@ -1746,12 +1695,9 @@ impl ConstantPropagationPass {
                             if let (Some(left_val), Some(right_val)) =
                                 (constants.get(left), constants.get(right))
                             {
-                                let result = if *unsigned {
-                                    Self::eval_cmp_unsigned(*cmp, left_val, right_val)
-                                } else {
-                                    Self::eval_cmp_signed(*cmp, left_val, right_val)
-                                };
-                                if let Some(is_true) = result {
+                                if let Some(is_true) = SsaEvaluator::evaluate_comparison(
+                                    left_val, right_val, *cmp, *unsigned,
+                                ) {
                                     let target = if is_true { *true_target } else { *false_target };
                                     Some((SsaOp::Jump { target }, target))
                                 } else {
@@ -1783,36 +1729,6 @@ impl ConstantPropagationPass {
                 }
             }
         }
-    }
-
-    /// Evaluate a signed comparison between two constant values.
-    fn eval_cmp_signed(cmp: CmpKind, left: &ConstValue, right: &ConstValue) -> Option<bool> {
-        // Get both values as i64 for signed comparison
-        let l = left.as_i64()?;
-        let r = right.as_i64()?;
-        Some(match cmp {
-            CmpKind::Eq => l == r,
-            CmpKind::Ne => l != r,
-            CmpKind::Lt => l < r,
-            CmpKind::Le => l <= r,
-            CmpKind::Gt => l > r,
-            CmpKind::Ge => l >= r,
-        })
-    }
-
-    /// Evaluate an unsigned comparison between two constant values.
-    fn eval_cmp_unsigned(cmp: CmpKind, left: &ConstValue, right: &ConstValue) -> Option<bool> {
-        // Get both values as u64 for unsigned comparison
-        let l = left.as_u64()?;
-        let r = right.as_u64()?;
-        Some(match cmp {
-            CmpKind::Eq => l == r,
-            CmpKind::Ne => l != r,
-            CmpKind::Lt => l < r,
-            CmpKind::Le => l <= r,
-            CmpKind::Gt => l > r,
-            CmpKind::Ge => l >= r,
-        })
     }
 }
 
@@ -1850,11 +1766,21 @@ impl SsaPass<CilTarget, CompilerContext> for ConstantPropagationPass {
             ptr_size,
             self.max_iterations,
             &assembly,
+            host.call_graph.resolver(),
         );
 
-        // Cache the constants we found for other passes
+        // Record what was proved, on the values it was proved about.
+        //
+        // Written into the function this pass is holding, not through the host:
+        // the host would look up *its* copy of the method, and a pass is handed
+        // the function precisely because that copy is not the one being
+        // transformed. Recording here also means the facts are rolled back with
+        // the function if this pass group is, rather than outliving the IR they
+        // describe.
         for (var, value) in &constants {
-            host.add_known_value(method_token, *var, value.clone());
+            if let Some(variable) = ssa.variable_mut(*var) {
+                variable.facts_mut().set_known_value(value.clone());
+            }
         }
 
         let changed = !changes.is_empty();

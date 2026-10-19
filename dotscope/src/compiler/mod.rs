@@ -58,7 +58,7 @@ mod state;
 mod summary;
 
 pub use analyssa::events::{DerivedStats, EventKind, EventListener, NullListener};
-pub use codegen::{CompilationResult, SsaCodeGenerator};
+pub use codegen::{validate_lift, CompilationResult, SsaCodeGenerator};
 pub use context::CompilerContext;
 
 use crate::analysis::CilTarget;

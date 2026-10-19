@@ -48,7 +48,11 @@ use crate::{
         SsaInstruction, SsaOp, SsaVarId, VariableOrigin,
     },
     compiler::{CompilerContext, EventKind, EventLog, ModificationScope, PassCapability, SsaPass},
-    metadata::{tables::MemberRefSignature, token::Token, typesystem::CilTypeReference},
+    metadata::{
+        resolver::select_method_overload,
+        tables::{MemberRefSignature, TableId},
+        token::Token,
+    },
     CilObject,
 };
 
@@ -170,11 +174,15 @@ impl ProxyDevirtualizationPass {
 
         for instr in instructions {
             match instr.op() {
-                SsaOp::Call { method, args, dest } => {
+                SsaOp::Call {
+                    method, args, dest, ..
+                } => {
                     call_count = call_count.saturating_add(1);
                     call_info = Some((method, args, *dest, ForwardKind::Call));
                 }
-                SsaOp::CallVirt { method, args, dest } => {
+                SsaOp::CallVirt {
+                    method, args, dest, ..
+                } => {
                     call_count = call_count.saturating_add(1);
                     call_info = Some((method, args, *dest, ForwardKind::CallVirt));
                 }
@@ -318,58 +326,43 @@ impl ProxyDevirtualizationPass {
     /// SSA forms are stored under MethodDef tokens, but call instructions may
     /// use MemberRef tokens for internal methods. This resolves
     /// MemberRef -> MethodDef so we can look up the callee's SSA.
+    ///
+    /// The declaring type is tried first. ConfuserEx's proxy protection points
+    /// internal MemberRefs at fake assembly references whose TypeRef resolves
+    /// to nothing, so the fallback is the module's own type of that full name -
+    /// by the same overload selection, so a name shared by several methods
+    /// resolves to none of them rather than to whichever comes first. A name
+    /// alone is no identity: `[mscorlib]System.IO.Stream::Read` is not an
+    /// internal stream's `Read` override, and binding it there lets that
+    /// method's body stand in for the runtime's.
     fn resolve_to_method_def(token: Token, assembly: &CilObject) -> Token {
-        let table_id = token.table();
-
-        // Already a MethodDef - return as-is
-        if table_id == 0x06 {
+        if !token.is_table(TableId::MemberRef) {
             return token;
         }
-
-        // MemberRef - try to resolve to MethodDef
-        if table_id == 0x0A {
-            let refs = assembly.refs_members();
-            if let Some(member_ref_entry) = refs.get(&token) {
-                let member_ref = member_ref_entry.value();
-
-                // Only handle method signatures, not fields
-                let MemberRefSignature::Method(ref _method_sig) = member_ref.signature else {
-                    return token;
-                };
-
-                // Check if declared by an internal type. Try TypeDef first,
-                // then TypeRef (ConfuserEx creates fake assembly references so
-                // internal MemberRefs appear external — the TypeRef may still
-                // resolve to an internal TypeDef via the weak reference).
-                let resolved_type = match &member_ref.declaredby {
-                    CilTypeReference::TypeDef(r) | CilTypeReference::TypeRef(r) => r.upgrade(),
-                    _ => None,
-                };
-                if let Some(type_info) = resolved_type {
-                    if let Some(method) = type_info
-                        .query_methods()
-                        .name(&member_ref.name)
-                        .find_first()
-                    {
-                        return method.token;
-                    }
-                }
-
-                // Fallback: scan all methods by name. Handles cases where the
-                // MemberRef's TypeRef points to a fake assembly that can't be
-                // resolved to a TypeDef (e.g., ConfuserEx proxy protection).
-                for entry in assembly.methods().iter() {
-                    let method_token = *entry.key();
-                    if let Some(name) = assembly.resolve_method_name(method_token) {
-                        if name == member_ref.name {
-                            return method_token;
-                        }
-                    }
-                }
-            }
+        if let Some(method_def) = assembly.resolver().resolve_memberref_method(token) {
+            return method_def;
         }
-
-        token
+        let Some(member_ref) = assembly.member_ref(&token) else {
+            return token;
+        };
+        let MemberRefSignature::Method(signature) = &member_ref.signature else {
+            return token;
+        };
+        let Some(declaring_type) = member_ref.declaredby.fullname() else {
+            return token;
+        };
+        select_method_overload(
+            assembly
+                .methods()
+                .iter()
+                .map(|entry| entry.value().clone())
+                .filter(|method| {
+                    method.declaring_type_fullname().as_deref() == Some(declaring_type.as_str())
+                }),
+            &member_ref.name,
+            signature,
+        )
+        .unwrap_or(token)
     }
 
     /// Checks if a method should be devirtualized as a proxy.
@@ -454,21 +447,24 @@ impl ProxyDevirtualizationPass {
         let mut candidates = Vec::new();
 
         for (block_idx, instr_idx, instr) in ssa.iter_instructions() {
-            let raw_callee_token = match instr.op() {
-                SsaOp::Call { method, .. } => method.token(),
-                SsaOp::CallVirt { method, .. } => {
-                    let token = method.token();
-                    // Check if this is actually polymorphic
-                    if ctx.call_graph.resolver().is_polymorphic(token) {
-                        continue;
-                    }
-                    token
-                }
+            let (raw_callee_token, is_virtual) = match instr.op() {
+                SsaOp::Call { method, .. } => (method.token(), false),
+                SsaOp::CallVirt { method, .. } => (method.token(), true),
                 _ => continue,
             };
 
             // Resolve MemberRef tokens to MethodDef tokens for SSA lookup
             let callee_token = Self::resolve_to_method_def(raw_callee_token, assembly);
+
+            // A virtual call dispatches by the method it resolves to: overrides
+            // are indexed under the MethodDef, not the MemberRef naming it.
+            let resolver = ctx.call_graph.resolver();
+            if is_virtual
+                && (resolver.is_polymorphic(raw_callee_token)
+                    || resolver.is_polymorphic(callee_token))
+            {
+                continue;
+            }
 
             // Try no-op elimination first (cheaper check)
             if let Some(noop_result) = Self::detect_noop_method(callee_token, method_token, ctx) {
@@ -634,11 +630,13 @@ impl ProxyDevirtualizationPass {
                 dest,
                 method: target_method,
                 args: remapped_args,
+                effects: None,
             },
             ForwardKind::Call => SsaOp::Call {
                 dest,
                 method: target_method,
                 args: remapped_args,
+                effects: None,
             },
         };
 
@@ -690,7 +688,13 @@ impl ProxyDevirtualizationPass {
         caller_token: Token,
         changes: &mut EventLog,
     ) -> bool {
-        if !matches!(call_op, SsaOp::Call { .. } | SsaOp::CallVirt { .. }) {
+        // A void callee defines nothing, so a call whose result is read has
+        // not bound the method it names; dropping it would leave that read
+        // without a definition.
+        if !matches!(
+            call_op,
+            SsaOp::Call { dest: None, .. } | SsaOp::CallVirt { dest: None, .. }
+        ) {
             return false;
         }
 
@@ -826,8 +830,9 @@ mod tests {
             passes::proxy::{ForwardKind, ProxyArgSource, ProxyDevirtualizationPass},
             CompilerContext, SsaPass,
         },
-        metadata::token::Token,
+        metadata::{tables::TableId, token::Token},
         test::helpers::test_assembly_arc,
+        CilObject,
     };
 
     fn test_context() -> CompilerContext {
@@ -1046,6 +1051,86 @@ mod tests {
             matches!(first_instr.op(), SsaOp::Nop),
             "Expected Nop, got {:?}",
             first_instr.op()
+        );
+    }
+
+    /// A void callee defines nothing, so a call naming it whose result is read
+    /// has bound the wrong method. Dropping the call would leave the read with
+    /// no definition, so it stays.
+    #[test]
+    fn a_call_whose_result_is_read_is_not_a_void_noop() {
+        let noop_token = Token::new(0x06000002);
+        let noop_ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| b.ret());
+            })
+            .unwrap();
+
+        let caller_token = Token::new(0x06000001);
+        let mut caller_ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let read = b.call(MethodRef::new(noop_token), &[], SsaType::I32);
+                    b.ret_val(read);
+                });
+            })
+            .unwrap();
+
+        let ctx = test_context();
+        ctx.set_ssa(noop_token, noop_ssa);
+
+        ProxyDevirtualizationPass::new()
+            .run_on_method(&mut caller_ssa, &MethodRef::from(caller_token), &ctx)
+            .unwrap();
+
+        let call = &caller_ssa.block(0).unwrap().instructions()[0];
+        assert!(
+            matches!(call.op(), SsaOp::Call { dest: Some(_), .. }),
+            "the call defining a read result must stay, got {:?}",
+            call.op()
+        );
+    }
+
+    /// JIEJIE.NET's resource helper derives a stream, so its `Read`,
+    /// `set_Position` and `get_Length` share names and signatures with the
+    /// runtime's. A reference to `[mscorlib]System.IO.Stream::Read` must not
+    /// resolve to that override: the helper is deleted and its body gutted, and
+    /// the user's own `Stream.Read` call was dropped as a no-op in its name.
+    #[test]
+    fn a_runtime_method_is_not_bound_to_a_namesake_in_the_module() {
+        let assembly =
+            CilObject::from_path("tests/samples/packers/jiejie/source/jiejie_resources_only.exe")
+                .unwrap();
+        for entry in assembly.refs_members().iter() {
+            let member_ref = entry.value();
+            let resolved =
+                ProxyDevirtualizationPass::resolve_to_method_def(member_ref.token, &assembly);
+            if !resolved.is_table(TableId::MethodDef) {
+                continue;
+            }
+            let method = assembly.method(&resolved).unwrap();
+            assert_eq!(
+                method.declaring_type_fullname(),
+                member_ref.declaredby.fullname(),
+                "{} {}::{} bound to {}",
+                member_ref.token,
+                member_ref.declaredby.fullname().unwrap_or_default(),
+                member_ref.name,
+                resolved
+            );
+        }
+        let read = assembly
+            .refs_members()
+            .iter()
+            .map(|entry| entry.value().clone())
+            .find(|member_ref| {
+                member_ref.name == "Read"
+                    && member_ref.declaredby.fullname().as_deref() == Some("System.IO.Stream")
+            })
+            .expect("the sample reads a runtime stream");
+        assert_eq!(
+            ProxyDevirtualizationPass::resolve_to_method_def(read.token, &assembly),
+            read.token
         );
     }
 

@@ -15,7 +15,7 @@
 
 use std::sync::Arc;
 
-use analyssa::scheduling::{PassScheduler as AnalyssaPassScheduler, PipelineConfig};
+use analyssa::scheduling::{FailurePolicy, PassScheduler as AnalyssaPassScheduler, PipelineConfig};
 
 use crate::{
     analysis::CilTarget,
@@ -71,14 +71,19 @@ impl PassScheduler {
     ) -> Self {
         // dotscope populates the scheduler with its own CIL passes (gated by
         // engine config), so start from an empty analyssa scheduler rather
-        // than the default built-in pipeline. Only the iteration limits and
-        // `verify_hard` flag are consumed by `empty`; the remaining
-        // `PipelineConfig` fields tune analyssa's built-in passes, which we
-        // do not register here.
+        // than the default built-in pipeline. Only the iteration limits, the
+        // `verify_hard` flag and the failure policy are consumed by `empty`;
+        // the remaining `PipelineConfig` fields tune analyssa's built-in
+        // passes, which we do not register here.
+        //
+        // A pass that fails on one method is rolled back for that method and
+        // recorded as an event: one method no pass can handle used to fail
+        // the whole assembly.
         let config = PipelineConfig {
             max_iterations,
             stable_iterations,
             max_phase_iterations,
+            on_method_failure: FailurePolicy::RollbackAndContinue,
             ..PipelineConfig::default()
         };
         Self {

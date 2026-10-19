@@ -28,7 +28,8 @@
 use crate::{
     analysis::SsaType,
     assembly::{Immediate, InstructionEncoder, Operand},
-    Result,
+    metadata::token::Token,
+    Error, Result,
 };
 
 /// Emits an optimized ldc.i4 instruction for a 32-bit integer value.
@@ -246,159 +247,202 @@ pub fn emit_ldloca(encoder: &mut InstructionEncoder, index: u16) -> Result<()> {
 /// * `overflow_check` - Whether to check for overflow
 /// * `unsigned` - Whether the source value is unsigned
 ///
-/// # Instruction Selection
+/// An unsigned integer converted to a float goes through `conv.r.un`, which
+/// reads it as unsigned, and then to the target width: `conv.r4` or `conv.r8`
+/// alone read it as signed, and `uint` 3000000000 came out negative. A target
+/// with no conversion CIL can spell is an error, not a conversion left out.
 ///
-/// The function selects from various conv.* instructions:
-/// - conv.i1, conv.i2, conv.i4, conv.i8 - signed conversions
-/// - conv.u1, conv.u2, conv.u4, conv.u8 - unsigned conversions
-/// - conv.r4, conv.r8 - floating point conversions
-/// - conv.ovf.* - with overflow checking
-/// - conv.ovf.*.un - unsigned source with overflow
+/// # Errors
+///
+/// Returns [`Error::CodegenFailed`] for a target no `conv` produces.
 pub fn emit_conv(
     encoder: &mut InstructionEncoder,
     target: &SsaType,
     overflow_check: bool,
     unsigned: bool,
 ) -> Result<()> {
-    let instr = match (target, overflow_check, unsigned) {
-        (SsaType::I8, false, _) => "conv.i1",
-        (SsaType::I16, false, _) => "conv.i2",
-        (SsaType::I32, false, _) => "conv.i4",
-        (SsaType::I64, false, _) => "conv.i8",
-        (SsaType::U8, false, _) => "conv.u1",
-        (SsaType::U16, false, _) => "conv.u2",
-        (SsaType::U32, false, _) => "conv.u4",
-        (SsaType::U64, false, _) => "conv.u8",
-        (SsaType::F32, false, _) => "conv.r4",
-        (SsaType::F64, false, _) => "conv.r8",
-        (SsaType::NativeInt, false, _) => "conv.i",
-        (SsaType::NativeUInt, false, _) => "conv.u",
-        // With overflow check
-        (SsaType::I8, true, false) => "conv.ovf.i1",
-        (SsaType::I16, true, false) => "conv.ovf.i2",
-        (SsaType::I32, true, false) => "conv.ovf.i4",
-        (SsaType::I64, true, false) => "conv.ovf.i8",
-        (SsaType::U8, true, false) => "conv.ovf.u1",
-        (SsaType::U16, true, false) => "conv.ovf.u2",
-        (SsaType::U32, true, false) => "conv.ovf.u4",
-        (SsaType::U64, true, false) => "conv.ovf.u8",
-        (SsaType::NativeInt, true, false) => "conv.ovf.i",
-        (SsaType::NativeUInt, true, false) => "conv.ovf.u",
-        // Unsigned with overflow
-        (SsaType::I8, true, true) => "conv.ovf.i1.un",
-        (SsaType::I16, true, true) => "conv.ovf.i2.un",
-        (SsaType::I32, true, true) => "conv.ovf.i4.un",
-        (SsaType::I64, true, true) => "conv.ovf.i8.un",
-        (SsaType::U8, true, true) => "conv.ovf.u1.un",
-        (SsaType::U16, true, true) => "conv.ovf.u2.un",
-        (SsaType::U32, true, true) => "conv.ovf.u4.un",
-        (SsaType::U64, true, true) => "conv.ovf.u8.un",
-        (SsaType::NativeInt, true, true) => "conv.ovf.i.un",
-        (SsaType::NativeUInt, true, true) => "conv.ovf.u.un",
-        // R.un conversions
-        (SsaType::F32 | SsaType::F64, _, true) => "conv.r.un",
-        // Other types - no conversion needed or not applicable
-        _ => return Ok(()),
+    if matches!(target, SsaType::F32 | SsaType::F64) {
+        if unsigned {
+            encoder.emit_instruction("conv.r.un", None)?;
+        }
+        let width = if matches!(target, SsaType::F32) {
+            "conv.r4"
+        } else {
+            "conv.r8"
+        };
+        encoder.emit_instruction(width, None)?;
+        return Ok(());
+    }
+    let base = match target {
+        SsaType::I8 => "i1",
+        SsaType::I16 => "i2",
+        SsaType::I32 => "i4",
+        SsaType::I64 => "i8",
+        SsaType::U8 => "u1",
+        SsaType::U16 | SsaType::Char => "u2",
+        SsaType::U32 => "u4",
+        SsaType::U64 => "u8",
+        SsaType::NativeInt => "i",
+        SsaType::NativeUInt => "u",
+        other => {
+            return Err(Error::CodegenFailed(format!(
+                "no CIL conversion produces {other:?}"
+            )))
+        }
     };
-    encoder.emit_instruction(instr, None)?;
+    let mnemonic = match (overflow_check, unsigned) {
+        (false, _) => format!("conv.{base}"),
+        (true, false) => format!("conv.ovf.{base}"),
+        (true, true) => format!("conv.ovf.{base}.un"),
+    };
+    encoder.emit_instruction(&mnemonic, None)?;
     Ok(())
+}
+
+/// How a typed load or store through an array element or a pointer is
+/// spelled: a fixed-width opcode suffix, or the token form for a value type.
+enum Access {
+    /// `ldelem.{suffix}` and its relatives.
+    Suffix(&'static str),
+    /// `ldelem <token>`, `ldobj <token>` and their stores.
+    Token(Token),
+}
+
+/// Whether a load or store of `ty` names it by a TypeSpec token: a type with
+/// no fixed-width opcode whose type carries no token of its own.
+#[must_use]
+pub fn needs_type_spec(ty: &SsaType) -> bool {
+    match ty {
+        SsaType::GenericParam(_) | SsaType::MethodGenericParam(_) | SsaType::TypedReference => true,
+        SsaType::GenericInst(base, _) => !base.is_reference(),
+        _ => false,
+    }
+}
+
+/// The access a load of `ty` uses. Loads distinguish signedness.
+///
+/// `spec` is the TypeSpec token naming `ty`, for a type [`needs_type_spec`].
+fn load_access(ty: &SsaType, spec: Option<Token>) -> Result<Access> {
+    Ok(match ty {
+        SsaType::I8 => Access::Suffix("i1"),
+        SsaType::U8 | SsaType::Bool => Access::Suffix("u1"),
+        SsaType::I16 => Access::Suffix("i2"),
+        SsaType::U16 | SsaType::Char => Access::Suffix("u2"),
+        SsaType::I32 => Access::Suffix("i4"),
+        SsaType::U32 => Access::Suffix("u4"),
+        SsaType::I64 | SsaType::U64 => Access::Suffix("i8"),
+        SsaType::F32 => Access::Suffix("r4"),
+        SsaType::F64 => Access::Suffix("r8"),
+        _ => store_access(ty, spec)?,
+    })
+}
+
+/// The access a store of `ty` uses. Stores name only the width.
+///
+/// `spec` is as for [`load_access`].
+fn store_access(ty: &SsaType, spec: Option<Token>) -> Result<Access> {
+    Ok(match ty {
+        SsaType::I8 | SsaType::U8 | SsaType::Bool => Access::Suffix("i1"),
+        SsaType::I16 | SsaType::U16 | SsaType::Char => Access::Suffix("i2"),
+        SsaType::I32 | SsaType::U32 => Access::Suffix("i4"),
+        SsaType::I64 | SsaType::U64 => Access::Suffix("i8"),
+        SsaType::F32 => Access::Suffix("r4"),
+        SsaType::F64 => Access::Suffix("r8"),
+        SsaType::NativeInt | SsaType::NativeUInt | SsaType::Pointer(_) | SsaType::FnPtr(_) => {
+            Access::Suffix("i")
+        }
+        SsaType::Object
+        | SsaType::String
+        | SsaType::Class(_)
+        | SsaType::Array(_, _)
+        | SsaType::Null => Access::Suffix("ref"),
+        SsaType::GenericInst(base, _) if base.is_reference() => Access::Suffix("ref"),
+        SsaType::ValueType(type_ref) => Access::Token(type_ref.token()),
+        other if needs_type_spec(other) => match spec {
+            Some(token) => Access::Token(token),
+            None => {
+                return Err(Error::CodegenFailed(format!(
+                    "a load or store of {other:?} needs a TypeSpec token, and none was interned"
+                )))
+            }
+        },
+        other => {
+            return Err(Error::CodegenFailed(format!(
+                "no load or store opcode for an element or pointee of type {other:?}"
+            )))
+        }
+    })
 }
 
 /// Emits a ldelem instruction based on element type.
 ///
-/// Selects the appropriate ldelem variant:
-/// - ldelem.i1, ldelem.i2, ldelem.i4, ldelem.i8 for signed integers
-/// - ldelem.u1, ldelem.u2, ldelem.u4 for unsigned integers
-/// - ldelem.r4, ldelem.r8 for floats
-/// - ldelem.ref for reference types
-pub fn emit_ldelem(encoder: &mut InstructionEncoder, elem_type: &SsaType) -> Result<()> {
-    let instr = match elem_type {
-        SsaType::I8 => "ldelem.i1",
-        SsaType::I16 => "ldelem.i2",
-        SsaType::I32 => "ldelem.i4",
-        SsaType::I64 | SsaType::U64 => "ldelem.i8",
-        SsaType::U8 => "ldelem.u1",
-        SsaType::U16 => "ldelem.u2",
-        SsaType::U32 => "ldelem.u4",
-        SsaType::F32 => "ldelem.r4",
-        SsaType::F64 => "ldelem.r8",
-        SsaType::NativeInt | SsaType::NativeUInt => "ldelem.i",
-        _ => "ldelem.ref", // Object, Class, String, and other reference types
-    };
-    encoder.emit_instruction(instr, None)?;
-    Ok(())
+/// # Errors
+///
+/// Returns [`Error::CodegenFailed`] for an element type with no opcode, or one
+/// that [`needs_type_spec`] when `spec` is `None`.
+pub fn emit_ldelem(
+    encoder: &mut InstructionEncoder,
+    elem_type: &SsaType,
+    spec: Option<Token>,
+) -> Result<()> {
+    match load_access(elem_type, spec)? {
+        Access::Suffix(suffix) => encoder.emit_instruction(&format!("ldelem.{suffix}"), None),
+        Access::Token(token) => encoder.emit_instruction("ldelem", Some(Operand::Token(token))),
+    }
 }
 
 /// Emits a stelem instruction based on element type.
 ///
-/// Selects the appropriate stelem variant:
-/// - stelem.i1, stelem.i2, stelem.i4, stelem.i8 for integers
-/// - stelem.r4, stelem.r8 for floats
-/// - stelem.ref for reference types
-pub fn emit_stelem(encoder: &mut InstructionEncoder, elem_type: &SsaType) -> Result<()> {
-    let instr = match elem_type {
-        SsaType::I8 | SsaType::U8 => "stelem.i1",
-        SsaType::I16 | SsaType::U16 => "stelem.i2",
-        SsaType::I32 | SsaType::U32 => "stelem.i4",
-        SsaType::I64 | SsaType::U64 => "stelem.i8",
-        SsaType::F32 => "stelem.r4",
-        SsaType::F64 => "stelem.r8",
-        SsaType::NativeInt | SsaType::NativeUInt => "stelem.i",
-        _ => "stelem.ref", // Object, Class, String, and other reference types
-    };
-    encoder.emit_instruction(instr, None)?;
-    Ok(())
+/// # Errors
+///
+/// As for [`emit_ldelem`].
+pub fn emit_stelem(
+    encoder: &mut InstructionEncoder,
+    elem_type: &SsaType,
+    spec: Option<Token>,
+) -> Result<()> {
+    match store_access(elem_type, spec)? {
+        Access::Suffix(suffix) => encoder.emit_instruction(&format!("stelem.{suffix}"), None),
+        Access::Token(token) => encoder.emit_instruction("stelem", Some(Operand::Token(token))),
+    }
 }
 
-/// Emits a ldind instruction based on value type.
+/// Emits a ldind instruction based on value type, or `ldobj` for a value type.
 ///
-/// Selects the appropriate ldind variant for indirect loading:
-/// - ldind.i1, ldind.i2, ldind.i4, ldind.i8 for signed integers
-/// - ldind.u1, ldind.u2, ldind.u4 for unsigned integers
-/// - ldind.r4, ldind.r8 for floats
-/// - ldind.ref for reference types
-pub fn emit_ldind(encoder: &mut InstructionEncoder, value_type: &SsaType) -> Result<()> {
-    let instr = match value_type {
-        SsaType::I8 => "ldind.i1",
-        SsaType::I16 => "ldind.i2",
-        SsaType::I32 => "ldind.i4",
-        SsaType::I64 | SsaType::U64 => "ldind.i8",
-        SsaType::U8 => "ldind.u1",
-        SsaType::U16 => "ldind.u2",
-        SsaType::U32 => "ldind.u4",
-        SsaType::F32 => "ldind.r4",
-        SsaType::F64 => "ldind.r8",
-        SsaType::NativeInt | SsaType::NativeUInt => "ldind.i",
-        _ => "ldind.ref", // Object, Class, String, and other reference types
-    };
-    encoder.emit_instruction(instr, None)?;
-    Ok(())
+/// # Errors
+///
+/// As for [`emit_ldelem`].
+pub fn emit_ldind(
+    encoder: &mut InstructionEncoder,
+    value_type: &SsaType,
+    spec: Option<Token>,
+) -> Result<()> {
+    match load_access(value_type, spec)? {
+        Access::Suffix(suffix) => encoder.emit_instruction(&format!("ldind.{suffix}"), None),
+        Access::Token(token) => encoder.emit_instruction("ldobj", Some(Operand::Token(token))),
+    }
 }
 
-/// Emits a stind instruction based on value type.
+/// Emits a stind instruction based on value type, or `stobj` for a value type.
 ///
-/// Selects the appropriate stind variant for indirect storing:
-/// - stind.i1, stind.i2, stind.i4, stind.i8 for integers
-/// - stind.r4, stind.r8 for floats
-/// - stind.ref for reference types
-pub fn emit_stind(encoder: &mut InstructionEncoder, value_type: &SsaType) -> Result<()> {
-    let instr = match value_type {
-        SsaType::I8 | SsaType::U8 => "stind.i1",
-        SsaType::I16 | SsaType::U16 => "stind.i2",
-        SsaType::I32 | SsaType::U32 => "stind.i4",
-        SsaType::I64 | SsaType::U64 => "stind.i8",
-        SsaType::F32 => "stind.r4",
-        SsaType::F64 => "stind.r8",
-        SsaType::NativeInt | SsaType::NativeUInt => "stind.i",
-        _ => "stind.ref", // Object, Class, String, and other reference types
-    };
-    encoder.emit_instruction(instr, None)?;
-    Ok(())
+/// # Errors
+///
+/// As for [`emit_ldelem`].
+pub fn emit_stind(
+    encoder: &mut InstructionEncoder,
+    value_type: &SsaType,
+    spec: Option<Token>,
+) -> Result<()> {
+    match store_access(value_type, spec)? {
+        Access::Suffix(suffix) => encoder.emit_instruction(&format!("stind.{suffix}"), None),
+        Access::Token(token) => encoder.emit_instruction("stobj", Some(Operand::Token(token))),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::TypeRef;
 
     #[test]
     fn test_emit_ldc_i4_special_values() {
@@ -476,118 +520,168 @@ mod tests {
         assert!(!bytecode.is_empty());
     }
 
-    #[test]
-    fn test_emit_conv_variants() {
+    /// The mnemonics `emit` produces, decoded from the bytes.
+    fn mnemonics(
+        emit: impl FnOnce(&mut InstructionEncoder) -> Result<()>,
+    ) -> Result<Vec<&'static str>> {
         let mut encoder = InstructionEncoder::new();
-
-        // Basic conversions
-        emit_conv(&mut encoder, &SsaType::I32, false, false).unwrap();
-        emit_conv(&mut encoder, &SsaType::I64, false, false).unwrap();
-        emit_conv(&mut encoder, &SsaType::F64, false, false).unwrap();
-
-        // With overflow
-        emit_conv(&mut encoder, &SsaType::I32, true, false).unwrap();
-
-        // Unsigned with overflow
-        emit_conv(&mut encoder, &SsaType::U32, true, true).unwrap();
-
-        let (bytecode, _, _) = encoder.finalize().unwrap();
-        assert!(!bytecode.is_empty());
+        // Operands the instruction consumes, as far as the depth check cares.
+        encoder.set_stack_depth(8);
+        emit(&mut encoder)?;
+        encoder.emit_instruction("ret", None)?;
+        let (bytecode, _, _) = encoder.finalize()?;
+        let mut names: Vec<&'static str> =
+            crate::assembly::decode_stream(&mut crate::Parser::new(&bytecode), 0)?
+                .iter()
+                .map(|instr| instr.mnemonic)
+                .collect();
+        names.pop();
+        Ok(names)
     }
 
     #[test]
-    fn test_emit_ldelem_types() {
-        let mut encoder = InstructionEncoder::new();
-
-        // ldelem pops 2 (array ref + index), pushes 1
-        // Push dummy values (array ref and index) before each ldelem
-        emit_ldc_i4(&mut encoder, 0).unwrap(); // dummy array ref
-        emit_ldc_i4(&mut encoder, 0).unwrap(); // index
-        emit_ldelem(&mut encoder, &SsaType::I8).unwrap();
-        encoder.emit_instruction("pop", None).unwrap(); // consume the result
-
-        emit_ldc_i4(&mut encoder, 0).unwrap();
-        emit_ldc_i4(&mut encoder, 0).unwrap();
-        emit_ldelem(&mut encoder, &SsaType::I32).unwrap();
-        encoder.emit_instruction("pop", None).unwrap();
-
-        emit_ldc_i4(&mut encoder, 0).unwrap();
-        emit_ldc_i4(&mut encoder, 0).unwrap();
-        emit_ldelem(&mut encoder, &SsaType::F64).unwrap();
-        encoder.emit_instruction("pop", None).unwrap();
-
-        emit_ldc_i4(&mut encoder, 0).unwrap();
-        emit_ldc_i4(&mut encoder, 0).unwrap();
-        emit_ldelem(&mut encoder, &SsaType::Object).unwrap();
-        encoder.emit_instruction("pop", None).unwrap();
-
-        let (bytecode, _, _) = encoder.finalize().unwrap();
-        assert!(!bytecode.is_empty());
+    fn conversions_are_selected_exactly() {
+        let cases: &[(SsaType, bool, bool, &[&str])] = &[
+            (SsaType::I8, false, false, &["conv.i1"]),
+            (SsaType::U16, false, false, &["conv.u2"]),
+            (SsaType::Char, false, false, &["conv.u2"]),
+            (SsaType::I64, true, false, &["conv.ovf.i8"]),
+            (SsaType::U32, true, true, &["conv.ovf.u4.un"]),
+            (SsaType::NativeUInt, true, true, &["conv.ovf.u.un"]),
+            (SsaType::F64, false, false, &["conv.r8"]),
+            (SsaType::F32, false, true, &["conv.r.un", "conv.r4"]),
+            (SsaType::F64, false, true, &["conv.r.un", "conv.r8"]),
+        ];
+        for (target, overflow, unsigned, expected) in cases {
+            let got = mnemonics(|e| emit_conv(e, target, *overflow, *unsigned)).unwrap();
+            assert_eq!(
+                &got, expected,
+                "{target:?} overflow={overflow} unsigned={unsigned}"
+            );
+        }
+        assert!(mnemonics(|e| emit_conv(e, &SsaType::Bool, false, false)).is_err());
+        assert!(mnemonics(|e| emit_conv(e, &SsaType::Object, false, false)).is_err());
     }
 
     #[test]
-    fn test_emit_stelem_types() {
-        let mut encoder = InstructionEncoder::new();
-
-        // stelem pops 3 (array ref + index + value), pushes 0
-        emit_ldc_i4(&mut encoder, 0).unwrap(); // array ref
-        emit_ldc_i4(&mut encoder, 0).unwrap(); // index
-        emit_ldc_i4(&mut encoder, 0).unwrap(); // value
-        emit_stelem(&mut encoder, &SsaType::I8).unwrap();
-
-        emit_ldc_i4(&mut encoder, 0).unwrap();
-        emit_ldc_i4(&mut encoder, 0).unwrap();
-        emit_ldc_i4(&mut encoder, 0).unwrap();
-        emit_stelem(&mut encoder, &SsaType::I32).unwrap();
-
-        emit_ldc_i4(&mut encoder, 0).unwrap();
-        emit_ldc_i4(&mut encoder, 0).unwrap();
-        emit_ldc_i4(&mut encoder, 0).unwrap();
-        emit_stelem(&mut encoder, &SsaType::Object).unwrap();
-
-        let (bytecode, _, _) = encoder.finalize().unwrap();
-        assert!(!bytecode.is_empty());
-    }
-
-    #[test]
-    fn test_emit_ldind_types() {
-        let mut encoder = InstructionEncoder::new();
-
-        // ldind pops 1 (address), pushes 1
-        emit_ldc_i4(&mut encoder, 0).unwrap(); // dummy address
-        emit_ldind(&mut encoder, &SsaType::I8).unwrap();
-        encoder.emit_instruction("pop", None).unwrap();
-
-        emit_ldc_i4(&mut encoder, 0).unwrap();
-        emit_ldind(&mut encoder, &SsaType::I32).unwrap();
-        encoder.emit_instruction("pop", None).unwrap();
-
-        emit_ldc_i4(&mut encoder, 0).unwrap();
-        emit_ldind(&mut encoder, &SsaType::Object).unwrap();
-        encoder.emit_instruction("pop", None).unwrap();
-
-        let (bytecode, _, _) = encoder.finalize().unwrap();
-        assert!(!bytecode.is_empty());
-    }
-
-    #[test]
-    fn test_emit_stind_types() {
-        let mut encoder = InstructionEncoder::new();
-
-        // stind pops 2 (address + value), pushes 0
-        emit_ldc_i4(&mut encoder, 0).unwrap(); // address
-        emit_ldc_i4(&mut encoder, 0).unwrap(); // value
-        emit_stind(&mut encoder, &SsaType::I8).unwrap();
-
-        emit_ldc_i4(&mut encoder, 0).unwrap();
-        emit_ldc_i4(&mut encoder, 0).unwrap();
-        emit_stind(&mut encoder, &SsaType::I32).unwrap();
-
-        emit_ldc_i4(&mut encoder, 0).unwrap();
-        emit_ldc_i4(&mut encoder, 0).unwrap();
-        emit_stind(&mut encoder, &SsaType::Object).unwrap();
-
-        let (bytecode, _, _) = encoder.finalize().unwrap();
-        assert!(!bytecode.is_empty());
+    fn element_and_indirect_access_is_selected_exactly() {
+        let value_type = SsaType::ValueType(TypeRef::new(Token::new(0x0200_0005)));
+        let cases: &[(SsaType, &str, &str, &str, &str)] = &[
+            (
+                SsaType::I8,
+                "ldelem.i1",
+                "stelem.i1",
+                "ldind.i1",
+                "stind.i1",
+            ),
+            (
+                SsaType::Bool,
+                "ldelem.u1",
+                "stelem.i1",
+                "ldind.u1",
+                "stind.i1",
+            ),
+            (
+                SsaType::Char,
+                "ldelem.u2",
+                "stelem.i2",
+                "ldind.u2",
+                "stind.i2",
+            ),
+            (
+                SsaType::U32,
+                "ldelem.u4",
+                "stelem.i4",
+                "ldind.u4",
+                "stind.i4",
+            ),
+            (
+                SsaType::U64,
+                "ldelem.i8",
+                "stelem.i8",
+                "ldind.i8",
+                "stind.i8",
+            ),
+            (
+                SsaType::F32,
+                "ldelem.r4",
+                "stelem.r4",
+                "ldind.r4",
+                "stind.r4",
+            ),
+            (
+                SsaType::NativeUInt,
+                "ldelem.i",
+                "stelem.i",
+                "ldind.i",
+                "stind.i",
+            ),
+            (
+                SsaType::String,
+                "ldelem.ref",
+                "stelem.ref",
+                "ldind.ref",
+                "stind.ref",
+            ),
+            (value_type, "ldelem", "stelem", "ldobj", "stobj"),
+        ];
+        for (ty, ldelem, stelem, ldind, stind) in cases {
+            assert_eq!(
+                mnemonics(|e| emit_ldelem(e, ty, None)).unwrap(),
+                [*ldelem],
+                "{ty:?}"
+            );
+            assert_eq!(
+                mnemonics(|e| emit_stelem(e, ty, None)).unwrap(),
+                [*stelem],
+                "{ty:?}"
+            );
+            assert_eq!(
+                mnemonics(|e| emit_ldind(e, ty, None)).unwrap(),
+                [*ldind],
+                "{ty:?}"
+            );
+            assert_eq!(
+                mnemonics(|e| emit_stind(e, ty, None)).unwrap(),
+                [*stind],
+                "{ty:?}"
+            );
+        }
+        // A type named by a TypeSpec uses the token form with the token it
+        // is given, and fails without one; a type with no form fails anyway.
+        let spec = Token::new(0x1B00_0001);
+        for named in [
+            SsaType::GenericParam(0),
+            SsaType::MethodGenericParam(1),
+            SsaType::TypedReference,
+            SsaType::GenericInst(
+                Box::new(SsaType::ValueType(TypeRef::new(Token::new(0x0100_0002)))),
+                vec![SsaType::I32],
+            ),
+        ] {
+            assert_eq!(
+                mnemonics(|e| emit_ldelem(e, &named, Some(spec))).unwrap(),
+                ["ldelem"],
+                "{named:?}"
+            );
+            assert_eq!(
+                mnemonics(|e| emit_stind(e, &named, Some(spec))).unwrap(),
+                ["stobj"],
+                "{named:?}"
+            );
+            assert!(
+                mnemonics(|e| emit_ldelem(e, &named, None)).is_err(),
+                "{named:?}"
+            );
+        }
+        let reference_inst = SsaType::GenericInst(
+            Box::new(SsaType::Class(TypeRef::new(Token::new(0x0100_0003)))),
+            vec![SsaType::I32],
+        );
+        assert_eq!(
+            mnemonics(|e| emit_ldelem(e, &reference_inst, None)).unwrap(),
+            ["ldelem.ref"]
+        );
+        assert!(mnemonics(|e| emit_stind(e, &SsaType::Unknown, Some(spec))).is_err());
     }
 }

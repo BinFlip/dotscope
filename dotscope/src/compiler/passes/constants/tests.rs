@@ -2,15 +2,15 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use crate::{
     analysis::{
-        CallGraph, ConstValue, ConstValueCilExt, MethodRef, SsaFunctionBuilder, SsaOp, SsaType,
-        SsaVarId,
+        CallGraph, CmpKind, ConstValue, ConstValueCilExt, FieldRef, MethodRef, SsaFunctionBuilder,
+        SsaOp, SsaType, SsaVarId,
     },
     compiler::{
-        passes::constants::{fold_rem, AlgebraicResult, ConstantPropagationPass, IntOperand},
+        passes::constants::{AlgebraicResult, ConstantPropagationPass, StringFoldOp},
         CompilerContext, EventLog, SsaPass,
     },
     metadata::{token::Token, typesystem::PointerSize},
-    test::helpers::test_assembly_arc,
+    test::helpers::{method_token, mono_mscorlib, test_assembly_arc},
 };
 
 /// Creates a test compiler context with the standard test assembly
@@ -518,8 +518,14 @@ fn test_constants_cached_in_context() {
     let result = pass.run_on_method(&mut ssa, &MethodRef::from(method_token), &ctx);
     assert!(result.is_ok());
 
-    // Check that constant was cached
-    assert!(ctx.known_value_is(method_token, v0, |v| *v == ConstValue::I32(42)));
+    // What the pass proved is recorded on the value it proved it about, in the
+    // function the pass was handed - not in a table beside it, which would
+    // describe whichever value inherited the id after the next renumbering.
+    assert_eq!(
+        ssa.variable(v0)
+            .and_then(|variable| variable.facts().known_value()),
+        Some(&ConstValue::I32(42))
+    );
 }
 
 #[test]
@@ -690,8 +696,12 @@ fn test_chained_constant_folding() {
     let result = pass.run_on_method(&mut ssa, &MethodRef::from(method_token), &ctx);
     assert!(result.is_ok());
 
-    // Check that v4 was folded to 10
-    assert!(ctx.known_value_is(method_token, v4, |v| *v == ConstValue::I32(10)));
+    // Check that v4 was folded to 10, on the value itself.
+    assert_eq!(
+        ssa.variable(v4)
+            .and_then(|variable| variable.facts().known_value()),
+        Some(&ConstValue::I32(10))
+    );
 }
 
 #[test]
@@ -1258,6 +1268,7 @@ fn test_fold_string_operations_with_decrypted_concat() {
                     dest: Some(v2),
                     method: MethodRef::new(Token::new(0x0A000099)), // fake MemberRef
                     args: vec![v0, v1],
+                    effects: None,
                 });
                 b.ret();
             });
@@ -1287,50 +1298,95 @@ fn test_fold_string_operations_with_decrypted_concat() {
     );
 }
 
-/// `rem.un` reads its operands as unsigned at their own width.
-///
-/// Reaching them through a sign-extending accessor turns `I32(-1)` into
-/// `0xFFFF_FFFF_FFFF_FFFF`, so `-1 rem.un 7` folds to `1` instead of the `3` that
-/// `0xFFFF_FFFF % 7` gives. That is a wrong constant on the default deobfuscation path —
-/// modulus-with-a-key is the canonical decryptor shape.
+/// What the pass folds `left rem right` to, or `None` when it leaves the
+/// remainder in place.
+fn folded_rem(left: ConstValue, right: ConstValue, unsigned: bool) -> Option<ConstValue> {
+    let (v0, v1, v2) = (
+        SsaVarId::from_index(0),
+        SsaVarId::from_index(1),
+        SsaVarId::from_index(2),
+    );
+    let mut ssa = SsaFunctionBuilder::new(0, 0)
+        .build_with(|f| {
+            f.block(0, |b| {
+                b.op(SsaOp::Const {
+                    dest: v0,
+                    value: left,
+                });
+                b.op(SsaOp::Const {
+                    dest: v1,
+                    value: right,
+                });
+                b.op(SsaOp::Rem {
+                    dest: v2,
+                    left: v0,
+                    right: v1,
+                    unsigned,
+                    flags: None,
+                });
+                b.op(SsaOp::Return { value: Some(v2) });
+            });
+        })
+        .unwrap();
+    ConstantPropagationPass::new(10)
+        .run_on_method(
+            &mut ssa,
+            &MethodRef::from(Token::new(0x0600_0001)),
+            &test_context(),
+        )
+        .unwrap();
+    match ssa.get_definition(v2) {
+        Some(SsaOp::Const { value, .. }) => Some(value.clone()),
+        _ => None,
+    }
+}
+
+/// `rem.un` reads its operands as unsigned at their own width: `-1 rem.un 7`
+/// is `0xFFFF_FFFF % 7`, 3, where a sign-extending read gives 1. Modulus with
+/// a key is the canonical decryptor shape. Signed, the remainder takes the
+/// dividend's sign, in Rust and CIL alike.
 #[test]
 fn rem_un_treats_i32_operands_as_unsigned_32_bit() {
-    let l = IntOperand::from_const(&ConstValue::I32(-1)).unwrap();
-    let r = IntOperand::from_const(&ConstValue::I32(7)).unwrap();
-
-    assert_eq!(fold_rem(l, r, true), Some(ConstValue::I32(3)));
-    // Signed: Rust and CIL agree that the remainder takes the dividend's sign.
-    assert_eq!(fold_rem(l, r, false), Some(ConstValue::I32(-1)));
+    assert_eq!(
+        folded_rem(ConstValue::I32(-1), ConstValue::I32(7), true),
+        Some(ConstValue::I32(3))
+    );
+    assert_eq!(
+        folded_rem(ConstValue::I32(-1), ConstValue::I32(7), false),
+        Some(ConstValue::I32(-1))
+    );
 }
 
-/// The folded constant keeps the operands' width.
-///
-/// Narrowing a 64-bit remainder to `I32` is worse than a wrong value: codegen then emits
-/// `ldc.i4` where the stack type requires `ldc.i8`, which fails verification.
+/// The folded constant keeps the operands' width: a 64-bit remainder
+/// narrowed to `I32` would be emitted as `ldc.i4` where the stack holds an
+/// `int64`, which fails verification.
 #[test]
 fn rem_keeps_the_operand_width() {
-    let wide = IntOperand::from_const(&ConstValue::I64(0x1_0000_0000 + 5)).unwrap();
-    let divisor = IntOperand::from_const(&ConstValue::I64(0x1_0000_0000)).unwrap();
-
-    assert_eq!(fold_rem(wide, divisor, false), Some(ConstValue::I64(5)));
+    assert_eq!(
+        folded_rem(
+            ConstValue::I64(0x1_0000_0000 + 5),
+            ConstValue::I64(0x1_0000_0000),
+            false
+        ),
+        Some(ConstValue::I64(5))
+    );
 }
 
-/// Cases the runtime turns into an exception must not be folded away.
+/// What the runtime turns into an exception is not folded away, and neither
+/// is a remainder of mixed widths, which is unverifiable IL.
 #[test]
 fn rem_refuses_to_fold_faulting_and_unverifiable_cases() {
-    let one = IntOperand::from_const(&ConstValue::I32(1)).unwrap();
-    let zero = IntOperand::from_const(&ConstValue::I32(0)).unwrap();
-    let min = IntOperand::from_const(&ConstValue::I32(i32::MIN)).unwrap();
-    let neg_one = IntOperand::from_const(&ConstValue::I32(-1)).unwrap();
-    let wide = IntOperand::from_const(&ConstValue::I64(1)).unwrap();
-
-    // DivideByZeroException
-    assert_eq!(fold_rem(one, zero, false), None);
-    assert_eq!(fold_rem(one, zero, true), None);
-    // OverflowException
-    assert_eq!(fold_rem(min, neg_one, false), None);
-    // Mixed widths are unverifiable IL; folding would invent a promotion.
-    assert_eq!(fold_rem(one, wide, false), None);
+    let (one, zero) = (ConstValue::I32(1), ConstValue::I32(0));
+    assert_eq!(folded_rem(one.clone(), zero.clone(), false), None);
+    assert_eq!(folded_rem(one, zero, true), None);
+    assert_eq!(
+        folded_rem(ConstValue::I32(i32::MIN), ConstValue::I32(-1), false),
+        None
+    );
+    assert_eq!(
+        folded_rem(ConstValue::I32(7), ConstValue::I64(2), false),
+        None
+    );
 }
 
 /// An overflow-checked op must test overflow at the operands' width, signed or unsigned.
@@ -1399,5 +1455,215 @@ fn mul_ovf_by_zero_folds_at_the_operand_width() {
     assert_eq!(
         wide_zero.mul_checked(&wide_hundred, false, ptr),
         Some(ConstValue::I64(0))
+    );
+}
+
+#[test]
+fn chained_involution_chains_resolve_to_the_innermost_value() {
+    // `b = not(not(neg(neg x)))`: two even chains, the second reading the
+    // first's result. Each cancels, and `b`'s use must end at `x` rather than
+    // at the removed `neg(neg x)`.
+    let mut x_out = SsaVarId::from_index(0);
+    let mut ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let x = f.arg(0, SsaType::I32);
+            x_out = x;
+            f.block(0, |b| {
+                let n1 = b.neg(x);
+                let n2 = b.neg(n1);
+                let c1 = b.not(n2);
+                let c2 = b.not(c1);
+                b.ret_val(c2);
+            });
+        })
+        .unwrap();
+
+    let mut changes = EventLog::new();
+    ConstantPropagationPass::simplify_involutory_ops(
+        &mut ssa,
+        Token::new(0x0600_0001),
+        &mut changes,
+    );
+
+    let returned = ssa
+        .block(0)
+        .unwrap()
+        .instructions()
+        .iter()
+        .find_map(|instr| match instr.op() {
+            SsaOp::Return { value } => *value,
+            _ => None,
+        })
+        .expect("a return");
+    assert_eq!(returned, x_out, "not(not(neg(neg x))) is x");
+    assert!(
+        ssa.blocks()
+            .iter()
+            .flat_map(|b| b.instructions())
+            .all(|i| matches!(i.op(), SsaOp::Nop | SsaOp::Return { .. })),
+        "every chain member is gone"
+    );
+}
+
+#[test]
+fn an_odd_chain_after_an_even_one_reads_the_resolved_operand() {
+    // `b = not(not(not(neg(neg x))))`: the even `neg` chain cancels to `x`,
+    // and the odd `not` chain keeps one `not`, which must read `x`.
+    let mut x_out = SsaVarId::from_index(0);
+    let mut ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let x = f.arg(0, SsaType::I32);
+            x_out = x;
+            f.block(0, |b| {
+                let n1 = b.neg(x);
+                let n2 = b.neg(n1);
+                let c1 = b.not(n2);
+                let c2 = b.not(c1);
+                let c3 = b.not(c2);
+                b.ret_val(c3);
+            });
+        })
+        .unwrap();
+
+    let mut changes = EventLog::new();
+    ConstantPropagationPass::simplify_involutory_ops(
+        &mut ssa,
+        Token::new(0x0600_0001),
+        &mut changes,
+    );
+
+    let survivors: Vec<&SsaOp> = ssa
+        .blocks()
+        .iter()
+        .flat_map(|b| b.instructions())
+        .map(|i| i.op())
+        .filter(|op| !matches!(op, SsaOp::Nop | SsaOp::Return { .. }))
+        .collect();
+    assert!(
+        matches!(survivors.as_slice(), [SsaOp::Not { operand, .. }] if *operand == x_out),
+        "one `not x` remains: {survivors:?}"
+    );
+}
+
+#[test]
+fn a_call_that_writes_a_static_is_not_replaced_by_its_result() {
+    // `int F(int x) { Counter = x; return x + 1; }` evaluates to `x + 1`, but a
+    // call to it also sets `Counter`. Folding the call would lose the write.
+    let writes = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let x = f.arg(0, SsaType::I32);
+            f.block(0, |b| {
+                b.op(SsaOp::StoreStaticField {
+                    field: FieldRef::new(Token::new(0x0400_0001)),
+                    value: x,
+                });
+                let one = b.const_i32(1);
+                let result = b.add(x, one);
+                b.ret_val(result);
+            });
+        })
+        .unwrap();
+    assert_eq!(
+        ConstantPropagationPass::evaluate_pure_function(
+            &writes,
+            &[ConstValue::I32(4)],
+            PointerSize::Bit64
+        ),
+        None
+    );
+
+    // The same arithmetic without the write is a value, and folds.
+    let pure = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let x = f.arg(0, SsaType::I32);
+            f.block(0, |b| {
+                let one = b.const_i32(1);
+                let result = b.add(x, one);
+                b.ret_val(result);
+            });
+        })
+        .unwrap();
+    assert_eq!(
+        ConstantPropagationPass::evaluate_pure_function(
+            &pure,
+            &[ConstValue::I32(4)],
+            PointerSize::Bit64
+        ),
+        Some(ConstValue::I32(5))
+    );
+}
+
+/// Only `System.String`'s own methods are string operations to fold.
+/// `StringBuilder.Replace(string, string)` has `String.Replace`'s name and
+/// arity, and its declaring type's name contains `String`; the substring test
+/// this replaced took it for `String.Replace`.
+#[test]
+fn only_system_string_methods_are_string_operations() {
+    let mscorlib = mono_mscorlib();
+    let string_replace = method_token(&mscorlib, "System.String", "Replace", 2);
+    let builder_replace = method_token(&mscorlib, "System.Text.StringBuilder", "Replace", 2);
+    assert!(matches!(
+        ConstantPropagationPass::identify_string_op(&MethodRef::new(string_replace), 3, &mscorlib),
+        Some(StringFoldOp::Replace)
+    ));
+    assert!(
+        ConstantPropagationPass::identify_string_op(&MethodRef::new(builder_replace), 3, &mscorlib)
+            .is_none(),
+        "StringBuilder.Replace is not String.Replace"
+    );
+}
+
+/// A compare-and-branch on constants folds as the runtime compares: `-1 <
+/// 1` read unsigned is `0xFFFF_FFFF < 1`, false, and two floats compare as
+/// floats. Each pair was left unfolded when the comparison went through a
+/// 64-bit integer reading of its operands.
+#[test]
+fn constant_compares_fold_at_their_own_width_and_kind() {
+    let fold = |left: ConstValue, right: ConstValue, unsigned: bool| {
+        let (v0, v1) = (SsaVarId::from_index(0), SsaVarId::from_index(1));
+        let mut ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    b.op(SsaOp::Const {
+                        dest: v0,
+                        value: left,
+                    });
+                    b.op(SsaOp::Const {
+                        dest: v1,
+                        value: right,
+                    });
+                    b.op(SsaOp::BranchCmp {
+                        left: v0,
+                        right: v1,
+                        cmp: CmpKind::Lt,
+                        unsigned,
+                        true_target: 1,
+                        false_target: 2,
+                    });
+                });
+                f.block(1, |b| b.ret());
+                f.block(2, |b| b.ret());
+            })
+            .unwrap();
+        ConstantPropagationPass::new(10)
+            .run_on_method(
+                &mut ssa,
+                &MethodRef::from(Token::new(0x0600_0001)),
+                &test_context(),
+            )
+            .unwrap();
+        match ssa.block(0).unwrap().control_terminator() {
+            Some(SsaOp::Jump { target }) => Some(*target),
+            _ => None,
+        }
+    };
+    assert_eq!(fold(ConstValue::I32(-1), ConstValue::I32(1), true), Some(2));
+    assert_eq!(
+        fold(ConstValue::I32(-1), ConstValue::I32(1), false),
+        Some(1)
+    );
+    assert_eq!(
+        fold(ConstValue::F64(0.5), ConstValue::F64(0.75), false),
+        Some(1)
     );
 }
