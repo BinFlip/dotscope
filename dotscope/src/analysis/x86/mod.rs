@@ -146,6 +146,7 @@ pub use decoder::{
     x86_detect_prologue, x86_native_body_size, X86TraversalDecodeResult,
 };
 // Re-export SSA translation types
+pub use flags::{is_signed_condition, is_unsigned_condition, is_zero_flag_only};
 pub use ssa::X86ToSsaTranslator;
 pub use types::{
     X86Condition, X86DecodedInstruction, X86EdgeKind, X86EpilogueInfo, X86Instruction, X86Memory,
@@ -372,7 +373,7 @@ mod tests {
         );
     }
 
-    // --- mkaring_constants_x86.exe stubs ---
+    // mkaring_constants_x86.exe stubs
 
     #[test]
     fn test_confuserex_constants_x86_stub1() {
@@ -432,7 +433,7 @@ mod tests {
         assert_ne!(r1, r3);
     }
 
-    // --- mkaring_controlflow_x86.exe stubs ---
+    // mkaring_controlflow_x86.exe stubs
 
     #[test]
     fn test_confuserex_controlflow_x86_stub1() {
@@ -467,7 +468,7 @@ mod tests {
         assert_eq!(r, expected);
     }
 
-    // --- mkaring_constants_x86_controlflow.exe stubs ---
+    // mkaring_constants_x86_controlflow.exe stubs
 
     #[test]
     fn test_confuserex_constants_x86_cf_stub4() {
@@ -503,7 +504,7 @@ mod tests {
         assert_eq!(r, expected);
     }
 
-    // --- mkaring_constants_x86_controlflow_x86.exe stubs ---
+    // mkaring_constants_x86_controlflow_x86.exe stubs
 
     #[test]
     fn test_confuserex_identity_stub() {

@@ -24,7 +24,7 @@
 //! let cfg = ControlFlowGraph::from_basic_blocks(blocks)?;
 //!
 //! // Construct SSA form
-//! let ssa = SsaConverter::build(&cfg, 2, 3, &type_provider)?; // 2 args, 3 locals
+//! let ssa = SsaConverter::build(&cfg, 2, 3, &type_provider, Vec::new())?; // 2 args, 3 locals
 //!
 //! // Analyze the SSA form
 //! for block in ssa.blocks() {
@@ -37,7 +37,8 @@
 use std::collections::BTreeMap;
 
 use analyssa::{
-    graph::{algorithms::DominatorTree, NodeId},
+    graph::NodeId,
+    ir::function::{SsaConstructOptions, SsaEditOptions},
     BitSet,
 };
 
@@ -45,11 +46,9 @@ use crate::{
     analysis::{
         cfg::ControlFlowGraph,
         ssa::{
-            decompose::decompose_instruction, liveness, place_pruned_phis,
-            resolve_corelib_valuetype, ConstValue, DefSite, PhiNode, PhiPlacementConfig,
-            SimulationResult, SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaType, SsaVarId,
-            StackSimulator, StackSlot, StackSlotSource, TypeProvider, TypeRef, UseSite,
-            VariableOrigin,
+            decompose::decompose_instruction, resolve_corelib_valuetype, ConstValue, DefSite,
+            RuntimeValueKind, SimulationResult, SsaBlock, SsaExceptionHandler, SsaFunction,
+            SsaInstruction, SsaOp, SsaType, SsaVarId, StackSimulator, TypeProvider, VariableOrigin,
         },
     },
     assembly::{opcodes, Immediate, Instruction, Operand},
@@ -61,39 +60,6 @@ use crate::{
     },
     CilObject, Error, Result,
 };
-
-/// How a read-but-never-written variable gets its default value.
-///
-/// See [`SsaConverter::materialize_undefined_definitions`].
-enum DefaultInit {
-    /// A constant zero or null, emitted as a single `Const`.
-    Const {
-        /// Variable to define.
-        dest: SsaVarId,
-        /// The zero value for the variable's type.
-        value: ConstValue,
-    },
-    /// A zeroed struct, emitted as `ldloca; initobj; ldloc`.
-    ZeroStruct {
-        /// Variable to define.
-        dest: SsaVarId,
-        /// The value type to zero.
-        type_ref: TypeRef,
-        /// CIL local slot backing the variable.
-        local_index: u16,
-    },
-}
-
-/// A variable definition record during SSA construction.
-#[derive(Debug, Clone)]
-struct VarDef {
-    /// The original variable (argument index, local index, or stack slot).
-    origin: VariableOrigin,
-    /// The block where this definition occurs.
-    block: usize,
-    /// Whether this is from a phi node (vs an instruction).
-    is_phi: bool,
-}
 
 /// Builder for constructing SSA form from a control flow graph.
 ///
@@ -115,60 +81,21 @@ pub struct SsaConverter<'a, 'cfg> {
     /// The SSA function being built.
     function: SsaFunction,
 
-    /// Definitions of each variable (by group ID) -> set of defining blocks.
-    /// Used for phi placement.
-    defs: BTreeMap<u32, BitSet>,
-
-    /// Uses of each variable (by group ID) -> set of using blocks.
-    /// Used for pruned SSA phi placement (liveness filtering).
-    uses: BTreeMap<u32, BitSet>,
-
-    /// Current version stack for each variable during renaming.
-    /// Maps group ID -> stack of (version, `SsaVarId`).
-    version_stacks: BTreeMap<u32, Vec<(u32, SsaVarId)>>,
-
-    /// Next version number for each group ID.
-    next_version: BTreeMap<u32, u32>,
-
     /// Variables (by group ID) that have had their address taken.
     address_taken: BitSet,
-
-    /// Maps group ID -> VariableOrigin for the group.
-    /// Used to look up the origin when creating variables from a group.
-    group_origins: BTreeMap<u32, VariableOrigin>,
-
-    /// Maps simulation variable IDs to their load origin (for ldloc/ldarg).
-    ///
-    /// When a variable is loaded via ldloc/ldarg, the simulator records its origin here.
-    /// During SSA rename, this allows us to resolve the variable to the
-    /// correct reaching definition (phi result) instead of the stale
-    /// simulation variable from a non-dominating block.
-    load_origins: BTreeMap<SsaVarId, VariableOrigin>,
-
-    /// Stack state at the exit of each block (with source tracking).
-    ///
-    /// Maps block index -> list of StackSlot values containing both the variable ID
-    /// and source information (Defined vs Inherited). This is used during phi operand
-    /// filling to detect self-referential operands and trace values properly.
-    exit_stacks: BTreeMap<usize, Vec<StackSlot>>,
-
-    /// Stack state at the entry of each block (after reset_stack_to_depth).
-    ///
-    /// Maps block index -> list of placeholder variables created for block entry.
-    /// This is needed to map placeholder variables to PHI results during rename.
-    entry_stacks: BTreeMap<usize, Vec<SsaVarId>>,
-
-    /// Indirect stores discovered during simulation (initobj/stind via ldloca/ldarga).
-    ///
-    /// Maps (block_idx, instr_idx) -> VariableOrigin for indirect stores.
-    /// Used during rename phase to track definitions through pointers.
-    indirect_stores: BTreeMap<(usize, usize), VariableOrigin>,
 
     /// Maps simulation variable IDs to their stack depth positions.
     ///
     /// Used during rename to assign correct stack-derived origins for temporary
     /// variables (those not covered by `infer_origin`, e.g. add, box, call results).
     var_stack_positions: BTreeMap<SsaVarId, usize>,
+
+    /// The argument or local slot each simulation variable is a version of.
+    ///
+    /// Taken from the simulator, which records it for every `stloc`/`starg`
+    /// result and for the value each slot starts with. A simulation variable
+    /// absent here is a value of the evaluation stack, grouped by its depth.
+    slot_versions: BTreeMap<SsaVarId, VariableOrigin>,
 
     /// Type provider for assigning types during SSA construction.
     ///
@@ -214,34 +141,6 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         (self.num_args as u32).saturating_add(idx as u32)
     }
 
-    /// If a group ID corresponds to a stack slot, returns the slot index.
-    fn stack_slot_from_group(&self, group: u32) -> Option<usize> {
-        let base = (self.num_args as u32).saturating_add(self.num_locals as u32);
-        if group >= base {
-            Some(group.saturating_sub(base) as usize)
-        } else {
-            None
-        }
-    }
-
-    /// Returns the origin for a rename group.
-    fn origin_for_group(&self, group: u32) -> VariableOrigin {
-        if let Some(origin) = self.group_origins.get(&group) {
-            *origin
-        } else if (group as usize) < self.num_args {
-            VariableOrigin::Argument(group as u16)
-        } else if (group as usize) < self.num_args.saturating_add(self.num_locals) {
-            VariableOrigin::Local((group as usize).saturating_sub(self.num_args) as u16)
-        } else {
-            VariableOrigin::Phi
-        }
-    }
-
-    /// Returns true if a group ID corresponds to a stack slot.
-    fn is_stack_group(&self, group: u32) -> bool {
-        group >= (self.num_args as u32).saturating_add(self.num_locals as u32)
-    }
-
     /// Returns the SSA type for a variable origin.
     ///
     /// Uses the type context to look up types from the method signature:
@@ -271,7 +170,31 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             return SsaType::Unknown;
         };
 
+        // A type the instruction was built with is the one that holds: a
+        // handler's exception object is typed by its catch clause, which the
+        // operation itself does not name.
+        if let Some(recorded) = instr.result_type().filter(|ty| !ty.is_unknown()) {
+            return recorded.clone();
+        }
         self.infer_op_result_type(instr.op())
+    }
+
+    /// The class `value` computes in as an operand of arithmetic, when its type
+    /// is known ([`SsaType::arithmetic_class`]).
+    fn operand_stack_type(&self, value: SsaVarId) -> Option<SsaType> {
+        self.function.variable(value)?.var_type().arithmetic_class()
+    }
+
+    /// The result type of a binary numeric operation on `left` and `right`
+    /// ([`SsaType::binary_numeric`]); `Unknown` while an operand's type is,
+    /// which the phi typing fixpoint asks again once it is known
+    /// ([`Self::resolve_phi_types`]).
+    fn binary_numeric_type(&self, left: SsaVarId, right: SsaVarId, additive: bool) -> SsaType {
+        let (Some(a), Some(b)) = (self.function.variable(left), self.function.variable(right))
+        else {
+            return SsaType::Unknown;
+        };
+        SsaType::binary_numeric(a.var_type(), b.var_type(), additive).unwrap_or(SsaType::Unknown)
     }
 
     /// Infers the result type of an SSA operation using the TypeContext.
@@ -352,27 +275,32 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             // Conversion - use the target type
             SsaOp::IntConv { target, .. } | SsaOp::IntToPtr { target, .. } | SsaOp::PtrToInt { target, .. } | SsaOp::IntToFloat { target, .. } | SsaOp::FloatToInt { target, .. } | SsaOp::FloatConv { target, .. } => target.clone(),
 
-            // Arithmetic operations - typically I32 for stack operations
-            SsaOp::Add { .. }
-            | SsaOp::AddOvf { .. }
-            | SsaOp::Sub { .. }
-            | SsaOp::SubOvf { .. }
-            | SsaOp::Mul { .. }
-            | SsaOp::MulOvf { .. }
-            | SsaOp::Div { .. }
-            | SsaOp::Rem { .. }
-            | SsaOp::And { .. }
-            | SsaOp::Or { .. }
-            | SsaOp::Xor { .. }
-            | SsaOp::Shl { .. }
-            | SsaOp::Shr { .. }
-            | SsaOp::Neg { .. }
-            | SsaOp::Not { .. }
+            // Arithmetic is typed by what it computes on (ECMA-335 III.1.5):
+            // a `float32` sum is a `float32`, a `long` product a `long`.
+            SsaOp::Add { left, right, .. }
+            | SsaOp::AddOvf { left, right, .. }
+            | SsaOp::Sub { left, right, .. }
+            | SsaOp::SubOvf { left, right, .. } => {
+                self.binary_numeric_type(*left, *right, true)
+            }
+            SsaOp::Mul { left, right, .. }
+            | SsaOp::MulOvf { left, right, .. }
+            | SsaOp::Div { left, right, .. }
+            | SsaOp::Rem { left, right, .. }
+            | SsaOp::And { left, right, .. }
+            | SsaOp::Or { left, right, .. }
+            | SsaOp::Xor { left, right, .. } => self.binary_numeric_type(*left, *right, false),
+            // A shift's result is the value shifted; its count says nothing.
+            SsaOp::Shl { value, .. } | SsaOp::Shr { value, .. } => {
+                self.operand_stack_type(*value).unwrap_or(SsaType::Unknown)
+            }
+            SsaOp::Neg { operand, .. } | SsaOp::Not { operand, .. } => {
+                self.operand_stack_type(*operand).unwrap_or(SsaType::Unknown)
+            }
+
             // Rotate operations
-            | SsaOp::Rol { .. }
+            SsaOp::Rol { .. }
             | SsaOp::Ror { .. }
-            | SsaOp::Rcl { .. }
-            | SsaOp::Rcr { .. }
             // Bit manipulation operations
             | SsaOp::BSwap { .. }
             | SsaOp::BRev { .. }
@@ -414,6 +342,24 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                     SsaType::Class(*target_type)
                 }
             }
+
+            // The address a typed reference designates, like an unboxed value's.
+            SsaOp::TypedRefValue { value_type, .. } => {
+                let resolved = if let Some(asm) = self.type_provider.assembly() {
+                    SsaType::from_type_token(value_type.token(), asm)
+                } else {
+                    SsaType::ValueType(*value_type)
+                };
+                SsaType::ByRef(Box::new(resolved))
+            }
+            SsaOp::MakeTypedRef { .. } => SsaType::TypedReference,
+            // The two handles are corelib value types, as `ldtoken`'s are.
+            SsaOp::ArgList { .. } => self.type_provider.assembly().map_or(SsaType::Unknown, |a| {
+                resolve_corelib_valuetype(a, "System.RuntimeArgumentHandle")
+            }),
+            SsaOp::TypedRefType { .. } => self.type_provider.assembly().map_or(SsaType::Unknown, |a| {
+                resolve_corelib_valuetype(a, "System.RuntimeTypeHandle")
+            }),
 
             // Unbox operations - resolve value type through type provider for primitives
             SsaOp::Unbox { value_type, .. } => {
@@ -548,32 +494,11 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         }
     }
 
-    /// Creates and registers an "undefined" variable for a phi operand.
-    ///
-    /// This is called when no reaching definition is found for a phi operand,
-    /// which can happen legitimately (e.g., uninitialized locals) or may indicate
-    /// malformed CIL. Rather than creating a ghost ID (one without a registered
-    /// SsaVariable), we create and register a proper variable to ensure the
-    /// variable table is complete for analysis passes.
-    ///
-    /// # Arguments
-    ///
-    /// * `origin` - The origin type of the variable (Stack, Argument, Local, or Phi)
-    ///
-    /// # Returns
-    ///
-    /// A properly registered variable ID representing an undefined value.
-    fn create_undefined_var(&mut self, origin: VariableOrigin) -> SsaVarId {
-        let var_type = self.type_for_origin(origin);
-        self.function
-            .create_variable(origin, 0, DefSite::entry(), var_type)
-    }
-
     /// Returns the constant zero for a type, or `None` if it has no constant form.
     ///
     /// Mirrors CIL's `.locals init` semantics: integers and floats zero, references
-    /// null. Value types are not covered here — a zeroed struct is not `ldnull` —
-    /// and are handled by [`zero_init_value_type`](Self::zero_init_value_type).
+    /// null. A value type has no constant form - a zeroed struct is not `ldnull` -
+    /// so it has none here.
     fn zero_value_for(ty: &SsaType) -> Option<ConstValue> {
         Some(match ty {
             SsaType::Bool => ConstValue::False,
@@ -603,234 +528,76 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         })
     }
 
-    /// How a read-but-never-written variable should be given its default value.
+    /// States what `.locals init` puts in each primitive local that is read
+    /// before anything writes it.
     ///
-    /// Named rather than expressed as a tuple because the two cases produce a
-    /// different number of instructions, which the insertion accounting depends on.
-    fn default_init_plan(&self, var_id: SsaVarId) -> Option<DefaultInit> {
-        let variable = self.function.variable(var_id)?;
-        // Arguments arrive from the caller — never synthesize a value.
-        if matches!(variable.origin(), VariableOrigin::Argument(_)) {
-            return None;
-        }
-
-        let var_type = variable.var_type();
-        if let Some(value) = Self::zero_value_for(var_type) {
-            return Some(DefaultInit::Const {
-                dest: var_id,
-                value,
-            });
-        }
-
-        // A struct is zeroed with `ldloca; initobj`, then read back. That needs a
-        // real local slot to take the address of, so it only works for variables
-        // that correspond to a CIL local. Stack temporaries of value type have no
-        // slot and are left undefined.
-        if let (SsaType::ValueType(type_ref), VariableOrigin::Local(local_index)) =
-            (var_type, variable.origin())
-        {
-            return Some(DefaultInit::ZeroStruct {
-                dest: var_id,
-                type_ref: *type_ref,
-                local_index,
-            });
-        }
-
-        None
-    }
-
-    /// Materializes explicit default definitions for variables that are read but
-    /// never written.
+    /// Construction resolves such a read to the local's entry value: a
+    /// definition of the slot's group at entry, which says the local holds
+    /// *something* before the body runs but not what. With `.locals init` that
+    /// something is zero - or null, for a reference - and a pass that folds a
+    /// comparison or a switch needs the value itself. So the entry value is
+    /// given a definition: a `Const` at the top of the entry block, which
+    /// construction has already made a block no edge enters, so the constant
+    /// dominates every read.
     ///
-    /// SSA construction registers a placeholder variable whenever no reaching
-    /// definition can be found — an uninitialized local, or a stack slot that no
-    /// predecessor supplies (see [`create_undefined_var`](Self::create_undefined_var)).
-    /// The placeholder is entered in the variable table with `DefSite::entry()`
-    /// but no instruction ever defines it.
+    /// A value type has no constant form and keeps its entry value, which is
+    /// what a zeroed slot is: code generation reads the slot, and the runtime
+    /// zeroed it. Stating it with `ldloca; initobj` instead would take the
+    /// slot's address, and a slot whose address is taken is memory rather than
+    /// a value to every analysis after this one.
     ///
-    /// That is stable only for as long as nobody rebuilds the function.
-    /// `SsaFunction::rebuild_ssa` reconstructs the variable table from actual
-    /// definitions, so the placeholders disappear and every remaining read of one
-    /// becomes an undefined use that fails verification. Passes that legitimately
-    /// promote a phi operand into an instruction operand — CFF unflattening
-    /// materializing dispatcher phis, for example — turn a tolerated dangling phi
-    /// operand into exactly such a read.
+    /// Only entry values something reads are defined, so a local written before
+    /// every read costs nothing.
     ///
-    /// Emitting a real definition in the entry block, which dominates everything,
-    /// makes the invariant hold by construction. The values match what the runtime
-    /// would supply for a zero-initialized local, so behaviour is unchanged: zero
-    /// for primitives, null for references, and an `initobj`-zeroed struct for
-    /// value types. Only variables that are actually read get a definition, so
-    /// unused entry seeds do not accumulate dead code.
-    fn materialize_undefined_definitions(&mut self) {
-        let entry_block = self.cfg.entry().index();
-
-        let mut defined: BTreeMap<SsaVarId, ()> = BTreeMap::new();
-        let mut used: BTreeMap<SsaVarId, ()> = BTreeMap::new();
+    /// # Errors
+    ///
+    /// Returns an error if the insertion's repair fails.
+    fn materialize_local_zero_init(&mut self) -> Result<()> {
+        let mut read: BitSet = BitSet::new(self.function.var_id_capacity());
         for block in self.function.blocks() {
             for phi in block.phi_nodes() {
-                defined.insert(phi.result(), ());
                 for operand in phi.operands() {
-                    used.insert(operand.value(), ());
+                    read.insert(operand.value().index());
                 }
             }
             for instr in block.instructions() {
-                if let Some(dest) = instr.def() {
-                    defined.insert(dest, ());
-                }
-                for use_var in instr.uses() {
-                    used.insert(use_var, ());
-                }
+                instr.for_each_use(|used| {
+                    read.insert(used.index());
+                });
             }
         }
 
-        let plans: Vec<DefaultInit> = used
-            .keys()
-            .filter(|var_id| !defined.contains_key(*var_id))
-            .filter_map(|var_id| self.default_init_plan(*var_id))
-            .collect();
-
-        if plans.is_empty() {
-            return;
-        }
-
-        // Build the instruction sequence first: a struct default needs an extra
-        // address temporary, so the instruction count is not the plan count.
-        let mut prologue: Vec<SsaInstruction> = Vec::new();
-        for plan in plans {
-            match plan {
-                DefaultInit::Const { dest, value } => {
-                    prologue.push(SsaInstruction::synthetic(SsaOp::Const { dest, value }));
-                }
-                DefaultInit::ZeroStruct {
-                    dest,
-                    type_ref,
-                    local_index,
-                } => {
-                    // ldloca local_index; initobj T; ldloc local_index
-                    let addr = self.function.create_variable(
-                        VariableOrigin::Phi,
-                        0,
-                        DefSite::instruction(entry_block, prologue.len()),
-                        SsaType::ByRef(Box::new(SsaType::ValueType(type_ref))),
-                    );
-                    prologue.push(SsaInstruction::synthetic(SsaOp::LoadLocalAddr {
-                        dest: addr,
-                        local_index,
-                    }));
-                    prologue.push(SsaInstruction::synthetic(SsaOp::InitObj {
-                        dest_addr: addr,
-                        value_type: type_ref,
-                    }));
-                    prologue.push(SsaInstruction::synthetic(SsaOp::LoadLocal {
-                        dest,
-                        local_index,
-                    }));
-                }
-            }
-        }
-
-        // Inserting at the front of the entry block shifts every instruction
-        // already there, so def sites recorded against it must move too. The
-        // address temporaries created above are corrected afterwards.
-        let inserted = prologue.len();
-        for variable in self.function.variables_mut() {
-            let site = variable.def_site();
-            if site.block == entry_block {
-                if let Some(idx) = site.instruction {
-                    variable.set_def_site(DefSite::instruction(
-                        entry_block,
-                        idx.saturating_add(inserted),
-                    ));
-                }
-            }
-        }
-
-        let Some(entry) = self.function.block_mut(entry_block) else {
-            return;
-        };
-        for (offset, instr) in prologue.into_iter().enumerate() {
-            entry.instructions_mut().insert(offset, instr);
-        }
-
-        // Record where each prologue instruction actually defines its variable.
-        // This runs after the shift above so it is not displaced by it.
-        let defs: Vec<(usize, SsaVarId)> = self
+        let zeros: Vec<(SsaVarId, ConstValue)> = self
             .function
-            .block(entry_block)
-            .map(|block| {
-                block
-                    .instructions()
-                    .iter()
-                    .take(inserted)
-                    .enumerate()
-                    .filter_map(|(idx, instr)| instr.def().map(|dest| (idx, dest)))
-                    .collect()
+            .variables()
+            .iter()
+            .filter(|var| {
+                matches!(var.origin(), VariableOrigin::Local(_))
+                    && var.version() == 0
+                    && var.def_site() == DefSite::entry()
+                    && read.contains(var.id().index())
             })
-            .unwrap_or_default();
-        for (idx, dest) in defs {
-            if let Some(variable) = self.function.variable_mut(dest) {
-                variable.set_def_site(DefSite::instruction(entry_block, idx));
-            }
+            .filter_map(|var| Some((var.id(), Self::zero_value_for(var.var_type())?)))
+            .collect();
+        if zeros.is_empty() {
+            return Ok(());
         }
-    }
 
-    /// Tries to map a placeholder variable to a value from a predecessor's exit stack.
-    ///
-    /// This is used when the immediate dominator's exit stack doesn't have the needed
-    /// slot (can happen with `br.s +0` anti-disassembly patterns where different
-    /// predecessors contribute different stack depths).
-    ///
-    /// # Arguments
-    ///
-    /// * `block_idx` - The current block being renamed
-    /// * `slot` - The stack slot index to map
-    /// * `placeholder` - The placeholder variable to map
-    /// * `rename_map` - The current rename mapping
-    fn try_map_from_predecessors(
-        &mut self,
-        block_idx: usize,
-        slot: usize,
-        placeholder: SsaVarId,
-        rename_map: &mut BTreeMap<SsaVarId, SsaVarId>,
-    ) {
-        let origin = self.stack_slot_origin(slot);
-
-        // Iterate over actual predecessors to find one with the needed slot
-        for pred_id in self.cfg.predecessors(NodeId::new(block_idx)) {
-            if let Some(pred_exit) = self.exit_stacks.get(&pred_id.index()) {
-                if let Some(stack_slot) = pred_exit.get(slot) {
-                    // Found a predecessor with this slot
-                    // Check if there's a mapping in rename_map
-                    if let Some(&mapped) = rename_map.get(&stack_slot.var) {
-                        // Ensure the mapped variable exists in the function
-                        if self.function.variable(mapped).is_none() {
-                            let new_id = self.function.create_variable_for_origin(
-                                origin,
-                                0,
-                                DefSite::entry(),
-                            );
-                            rename_map.insert(placeholder, new_id);
-                        } else {
-                            rename_map.insert(placeholder, mapped);
-                        }
-                        return;
-                    }
-                    // No mapping exists - stack_slot.var is a simulation variable.
-                    // Create a proper variable and map both the original and placeholder.
-                    let new_id =
-                        self.function
-                            .create_variable_for_origin(origin, 0, DefSite::entry());
-                    rename_map.insert(stack_slot.var, new_id);
-                    rename_map.insert(placeholder, new_id);
-                    return;
+        // Block 0 is the entry, and construction left it without predecessors.
+        let entry_block = 0;
+        self.function
+            .edit(SsaEditOptions::new(), |editor| {
+                for (dest, value) in zeros {
+                    editor.insert_instruction(
+                        entry_block,
+                        0,
+                        SsaInstruction::synthetic(SsaOp::Const { dest, value }),
+                    )?;
                 }
-            }
-        }
-
-        // No predecessor has this slot - create a synthetic variable to avoid orphan uses.
-        let new_var_id = self.create_undefined_var(origin);
-        rename_map.insert(placeholder, new_var_id);
+                Ok(())
+            })
+            .map_err(|e| Error::SsaError(e.to_string()))?;
+        Ok(())
     }
 
     /// Builds SSA form from a control flow graph.
@@ -843,6 +610,19 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
     /// * `type_provider` - Type provider for assigning types during construction.
     ///   Variables are assigned correct types based on method signature,
     ///   local variable signature, and call return types.
+    /// * `handlers` - The method's exception clauses as block ranges, empty for
+    ///   a method with none.
+    ///
+    /// # The exception table is an input
+    ///
+    /// Taken here rather than attached to the result, and the difference is not
+    /// cosmetic. Construction reads it: which blocks control can enter without
+    /// a terminator naming them decides where the dominator walk is rooted,
+    /// which blocks are reachable at all, and - since a throw leaves a
+    /// protected block from wherever it happened - what a phi at a handler
+    /// entry merges. A table attached afterwards answers none of those
+    /// questions in time, and the handler ends up with phis that name no
+    /// predecessor and account for no throw.
     ///
     /// # Returns
     ///
@@ -853,12 +633,13 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
     /// Returns an error if:
     /// - The CFG is empty
     /// - Stack simulation encounters inconsistencies
-    /// - Internal invariants are violated
+    /// - Reconstruction cannot resolve a read
     pub fn build(
         cfg: &'a ControlFlowGraph<'cfg>,
         num_args: usize,
         num_locals: usize,
         type_provider: &'a dyn TypeProvider,
+        handlers: Vec<SsaExceptionHandler>,
     ) -> Result<SsaFunction> {
         let block_count = cfg.block_count();
         if block_count == 0 {
@@ -872,17 +653,9 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             num_args,
             num_locals,
             function: SsaFunction::with_capacity(num_args, num_locals, block_count, 0),
-            defs: BTreeMap::new(),
-            uses: BTreeMap::new(),
-            version_stacks: BTreeMap::new(),
-            next_version: BTreeMap::new(),
             address_taken: BitSet::new(num_args.saturating_add(num_locals)),
-            group_origins: BTreeMap::new(),
-            load_origins: BTreeMap::new(),
-            exit_stacks: BTreeMap::new(),
-            entry_stacks: BTreeMap::new(),
-            indirect_stores: BTreeMap::new(),
             var_stack_positions: BTreeMap::new(),
+            slot_versions: BTreeMap::new(),
             type_provider,
         };
 
@@ -892,34 +665,307 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         // Phase 1: Simulate stack and collect definitions
         builder.simulate_all_blocks(assembly)?;
 
-        // Phase 2: Place phi nodes at dominance frontiers
-        builder.place_phi_nodes();
+        // The exception table, before anything reads the flow graph. Everything
+        // below - phi placement, the rename walk, and the reconstruction that
+        // finishes the job - asks where control can enter, and a handler entry
+        // is an answer only this table gives.
+        if !handlers.is_empty() {
+            builder.function.set_exception_handlers(handlers);
+        }
 
-        // Phase 3: Rename variables using dominator tree traversal
-        builder.rename_variables()?;
-
-        // Phase 3b: Strip Nops left by LoadLocal/LoadArg resolution during rename.
-        // Resolved loads are converted to Nop during rename; removing them here
-        // keeps the initial SSA clean and avoids stale instruction indices.
-        builder.strip_resolved_loads();
-
-        // Phase 3c: Give every read-but-never-written variable a real definition.
-        // Must run after `strip_resolved_loads` so entry-block instruction
-        // indices are final, and before `reindex_variables`.
-        builder.materialize_undefined_definitions();
+        // Phase 2: give every value the simulation named a variable of the
+        // function, carrying the storage location it is a version of.
+        builder.materialize_simulation_variables()?;
 
         // Set original local type signatures from type provider for code generation
         if let Some(local_types) = type_provider.local_type_signatures() {
             builder.function.set_original_local_types(local_types);
         }
 
-        // Establish dense variable indexing for O(1) lookups in subsequent passes.
-        builder.function.reindex_variables();
+        // Phase 3: construction, from the crate that owns it. It places the
+        // phis over the iterated dominance frontier and resolves every read to
+        // the definition that reaches it, using the grouping phase 2 attached,
+        // then finishes: instruction identities, address-taken slots, the prune
+        // rooted at the entry and at every handler, definition sites, the use
+        // index, and the dense renumbering.
+        //
+        // Not verified here: a finding is not this function's to act on, and a
+        // caller that wants one asks for it. `Method::ssa` returns the IR
+        // whatever its state, exactly as it did.
+        builder
+            .function
+            .construct_ssa(&SsaConstructOptions::unverified())
+            .map_err(|e| Error::SsaError(e.to_string()))?;
+
+        if type_provider.locals_zero_initialized() {
+            builder.materialize_local_zero_init()?;
+        }
+
+        // Phi types follow from the operands construction gave them.
+        builder.resolve_phi_types();
+
+        // Conversions are chosen once the values they convert have types.
+        builder.select_conversions();
+
+        // A store into a slot narrower than four bytes truncates; stated as the
+        // conversion it is, once the stored values have types.
+        builder.make_narrow_stores_explicit();
 
         // Validate no Unknown types remain on used variables
         builder.function.validate_types().map_err(Error::SsaError)?;
 
         Ok(builder.function)
+    }
+
+    /// Classifies a simulation variable: what it is a version of, and its type.
+    ///
+    /// A value the simulation named is a version of exactly one storage
+    /// location: an argument or local slot when a store produced it, and the
+    /// evaluation stack at the depth it was pushed to otherwise. The rename
+    /// group is that location, and it is what tells SSA construction which
+    /// definitions are the same variable.
+    ///
+    /// # Arguments
+    ///
+    /// * `var` - The simulation variable to classify.
+    /// * `site` - Where it is defined, when it is defined by an instruction.
+    ///   A value's type is the one its defining operation produces, so a value
+    ///   with no definition in the block is left [`SsaType::Unknown`] for
+    ///   construction to resolve from the definition that reaches it.
+    fn classify_simulation_var(
+        &self,
+        var: SsaVarId,
+        site: Option<(usize, usize)>,
+    ) -> (VariableOrigin, Option<u32>, SsaType) {
+        if let Some(&origin) = self.slot_versions.get(&var) {
+            let group = match origin {
+                VariableOrigin::Argument(idx) => Some(self.arg_group(idx)),
+                VariableOrigin::Local(idx) => Some(self.local_group(idx)),
+                VariableOrigin::Phi | VariableOrigin::EntryLiveIn => None,
+            };
+            return (origin, group, self.type_for_origin(origin));
+        }
+
+        let var_type = site.map_or(SsaType::Unknown, |(block_idx, instr_idx)| {
+            self.infer_instruction_result_type(block_idx, instr_idx)
+        });
+
+        // A value the simulation put on the evaluation stack belongs to the
+        // slot at that depth. One it never placed there belongs to no storage
+        // location at all: a temporary some decomposition invented, live only
+        // between the instruction that makes it and the one that reads it.
+        //
+        // Such a value must stay ungrouped. Folded into a slot's group - and
+        // depth zero is what a missing entry would otherwise read as - it
+        // becomes a version of that slot, aliasing every real value there and
+        // answering reads that were never about it.
+        let Some(&slot) = self.var_stack_positions.get(&var) else {
+            return (VariableOrigin::Phi, None, var_type);
+        };
+        (
+            self.stack_slot_origin(slot),
+            Some(self.stack_group(slot)),
+            var_type,
+        )
+    }
+
+    /// Turns the simulation's placeholder values into variables of the function.
+    ///
+    /// Stack simulation names values with ids from a range of its own and
+    /// records, for each, the storage location it is a version of. This gives
+    /// every one of them a variable of the function carrying that grouping, and
+    /// rewrites the instructions to name it.
+    ///
+    /// What it deliberately does not do is decide which definition each read
+    /// names. That question is the same for every front end and
+    /// [`SsaFunction::construct_ssa`] answers it from this grouping - placing
+    /// the phis over the iterated dominance frontier and walking the dominator
+    /// tree, rooted at the entry *and* at every handler, which is the part a
+    /// hand-written renamer here used to get wrong for blocks only an exception
+    /// reaches.
+    fn materialize_simulation_variables(&mut self) -> Result<()> {
+        // Every argument and local is defined on entry, before any instruction
+        // runs: the caller supplies the arguments and `.locals init` zeroes the
+        // locals. Stated as a definition of the slot's group, so a read that no
+        // store dominates resolves to it rather than to nothing - which is what
+        // "uses undefined variable" means when a front end leaves this out.
+        let mut slot_entry: BTreeMap<u32, SsaVarId> = BTreeMap::new();
+        for i in 0..self.num_args {
+            let idx = Self::idx_to_u16(i)?;
+            let origin = VariableOrigin::Argument(idx);
+            let var_type = self.type_for_origin(origin);
+            self.function.register_origin_type(origin, var_type.clone());
+            let group = self.arg_group(idx);
+            let entry = self
+                .function
+                .create_variable(origin, 0, DefSite::entry(), var_type);
+            self.function.set_rename_group(entry, group);
+            slot_entry.insert(group, entry);
+        }
+        for i in 0..self.num_locals {
+            let idx = Self::idx_to_u16(i)?;
+            let origin = VariableOrigin::Local(idx);
+            let var_type = self.type_for_origin(origin);
+            self.function.register_origin_type(origin, var_type.clone());
+            let group = self.local_group(idx);
+            let entry = self
+                .function
+                .create_variable(origin, 0, DefSite::entry(), var_type);
+            self.function.set_rename_group(entry, group);
+            slot_entry.insert(group, entry);
+        }
+
+        let mut map: BTreeMap<SsaVarId, SsaVarId> = BTreeMap::new();
+        let block_count = self.function.blocks().len();
+
+        // Definitions first, because a value's type is the one its defining
+        // operation produces and that operation is only in hand here.
+        for block_idx in 0..block_count {
+            let instr_count = self
+                .function
+                .block(block_idx)
+                .map_or(0, |block| block.instructions().len());
+            for instr_idx in 0..instr_count {
+                let Some(sim_def) = self
+                    .function
+                    .block(block_idx)
+                    .and_then(|block| block.instruction(instr_idx))
+                    .and_then(|instr| instr.op().dest())
+                else {
+                    continue;
+                };
+                if map.contains_key(&sim_def) {
+                    continue;
+                }
+                let (origin, group, mut var_type) =
+                    self.classify_simulation_var(sim_def, Some((block_idx, instr_idx)));
+                // A copy is typed as what it copies, and the instruction still
+                // names that as a simulation value here, which inference cannot
+                // look up. Its variable is already made when it was defined
+                // earlier in this walk; a copy left untyped would be given its
+                // stack slot's type instead, which is whatever the slot held
+                // first.
+                if var_type.is_unknown() {
+                    if let Some(SsaOp::Copy { src, .. }) = self
+                        .function
+                        .block(block_idx)
+                        .and_then(|block| block.instruction(instr_idx))
+                        .map(SsaInstruction::op)
+                    {
+                        if let Some(source) =
+                            map.get(src).and_then(|real| self.function.variable(*real))
+                        {
+                            var_type = source.var_type().clone();
+                        }
+                    }
+                }
+                let def_site = DefSite::instruction(block_idx, instr_idx);
+                let real = self.function.create_variable(origin, 0, def_site, var_type);
+                if let Some(group) = group {
+                    self.function.set_rename_group(real, group);
+                }
+                map.insert(sim_def, real);
+            }
+        }
+
+        // Then the reads with no definition among them: a value the block was
+        // entered with on the evaluation stack, or a slot read before anything
+        // wrote it. Each is a version of its location like any other, and
+        // construction resolves the read to whatever reaches it.
+        let mut pending: Vec<SsaVarId> = Vec::new();
+        for block_idx in 0..block_count {
+            let Some(block) = self.function.block(block_idx) else {
+                continue;
+            };
+            for instr in block.instructions() {
+                for used in instr.op().uses() {
+                    if !map.contains_key(&used) {
+                        pending.push(used);
+                    }
+                }
+            }
+        }
+        for sim_use in pending {
+            if map.contains_key(&sim_use) {
+                continue;
+            }
+            let (origin, group, var_type) = self.classify_simulation_var(sim_use, None);
+            let real = self
+                .function
+                .create_variable(origin, 0, DefSite::entry(), var_type);
+            if let Some(group) = group {
+                self.function.set_rename_group(real, group);
+            }
+            map.insert(sim_use, real);
+        }
+
+        // Rewriting can be done one replacement at a time: simulation ids come
+        // from a range disjoint from the function's, so no id being written can
+        // collide with one still to be read, and the aliasing a simultaneous
+        // substitution would have to handle cannot arise.
+        let address_taken = self.address_taken.clone();
+        // The group of a slot is a function of the counts alone, and those do
+        // not change here; taken up front so the rewrite below borrows only the
+        // blocks it is editing.
+        let num_args_u32 = u32::try_from(self.num_args).unwrap_or(u32::MAX);
+        for block_idx in 0..block_count {
+            let Some(block) = self.function.block_mut(block_idx) else {
+                continue;
+            };
+            for instr in block.instructions_mut() {
+                let op = instr.op_mut();
+                if let Some(sim_def) = op.dest() {
+                    if let Some(&real) = map.get(&sim_def) {
+                        op.replace_def(sim_def, real);
+                    }
+                }
+                for sim_use in op.uses() {
+                    if let Some(&real) = map.get(&sim_use) {
+                        op.replace_uses(sim_use, real);
+                    }
+                }
+
+                // A slot load, written as the transfer it is.
+                //
+                // `LoadArg`/`LoadLocal` name a slot, and construction reads them
+                // as defining a value *of that slot's group*. In CIL they do not:
+                // the value they produce lives on the evaluation stack, which is
+                // a group of its own. Left as loads, construction resolves the
+                // destination to the slot's reaching definition and drops the
+                // instruction, and with it the only definition the stack slot had
+                // in this block - so a later block reading that slot finds nothing
+                // and the function fails to build.
+                //
+                // Written as a copy, both halves are stated: the use names the
+                // slot, so construction redirects it to whatever definition
+                // reaches here, and the definition names the stack slot, so the
+                // value remains available to the blocks that go on to read it.
+                //
+                // A slot whose address is taken keeps its load. The value there
+                // can change through the pointer, so the load is a read of memory
+                // and not a transfer of a value construction could trace.
+                let bridge = match op {
+                    SsaOp::LoadArg { dest, arg_index } => {
+                        let group = u32::from(*arg_index);
+                        (!address_taken.contains(group as usize))
+                            .then(|| slot_entry.get(&group).map(|&src| (*dest, src)))
+                            .flatten()
+                    }
+                    SsaOp::LoadLocal { dest, local_index } => {
+                        let group = num_args_u32.saturating_add(u32::from(*local_index));
+                        (!address_taken.contains(group as usize))
+                            .then(|| slot_entry.get(&group).map(|&src| (*dest, src)))
+                            .flatten()
+                    }
+                    _ => None,
+                };
+                if let Some((dest, src)) = bridge {
+                    instr.set_op(SsaOp::Copy { dest, src });
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Phase 1: Simulates the stack for all blocks to identify variable definitions.
@@ -971,25 +1017,9 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             self.function.add_block(SsaBlock::new(i));
         }
 
-        for i in 0..self.num_args {
-            let idx = Self::idx_to_u16(i)?;
-            let group = self.arg_group(idx);
-            self.group_origins
-                .insert(group, VariableOrigin::Argument(idx));
-            self.defs
-                .entry(group)
-                .or_insert_with(|| BitSet::new(block_count))
-                .insert(0);
-        }
-        for i in 0..self.num_locals {
-            let idx = Self::idx_to_u16(i)?;
-            let group = self.local_group(idx);
-            self.group_origins.insert(group, VariableOrigin::Local(idx));
-            self.defs
-                .entry(group)
-                .or_insert_with(|| BitSet::new(block_count))
-                .insert(0);
-        }
+        // Every argument and local is named by a `u16` index.
+        Self::idx_to_u16(self.num_args.saturating_sub(1))?;
+        Self::idx_to_u16(self.num_locals.saturating_sub(1))?;
 
         // First pass: compute stack depths at block exits (including all handler-reachable blocks)
         let mut all_blocks = rpo.clone();
@@ -1016,18 +1046,20 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             self.simulate_block(block_idx, entry_depth, &mut simulator, assembly)?;
         }
 
-        // Store load_origins for use during rename phase.
-        // This maps simulation variables from ldloc/ldarg to their origins.
-        self.load_origins = simulator
-            .load_origins()
-            .iter()
-            .map(|(&k, &v)| (k, v))
-            .collect();
-
         // Store stack positions for use during rename phase.
         // Maps simulation variable IDs to their stack depth at allocation time.
         self.var_stack_positions = simulator
             .var_stack_positions()
+            .iter()
+            .map(|(&k, &v)| (k, v))
+            .collect();
+
+        // The slot each simulation variable is a version of. With the stack
+        // positions above, this is the whole of the grouping SSA construction
+        // needs: together they say, for every value the simulation named, which
+        // storage location it belongs to.
+        self.slot_versions = simulator
+            .slot_versions()
             .iter()
             .map(|(&k, &v)| (k, v))
             .collect();
@@ -1216,7 +1248,6 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         simulator: &mut StackSimulator,
         assembly: Option<&CilObject>,
     ) -> Result<()> {
-        let block_count = self.cfg.block_count();
         let node_id = NodeId::new(block_idx);
         let cfg_block = self
             .cfg
@@ -1231,15 +1262,41 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         // This is needed to map placeholders to PHI results during rename
         let entry_stack = simulator.stack_snapshot();
 
-        self.entry_stacks.insert(block_idx, entry_stack);
+        // A catch handler or a filter is entered with the exception on the
+        // stack. Nothing computes it - the runtime put it there - so it is
+        // stated as the definition it is, at the one position it can hold:
+        // before anything in the block runs. Left implicit, the value has no
+        // definition at all, and every reader of the IR has to know the
+        // convention that a handler's first stack slot means something
+        // different from every other value.
+        if let Some(handler_info) = cfg_block.handler_entry.as_ref() {
+            if handler_info.entry_stack_depth() > 0 {
+                if let Some(&object) = entry_stack.first() {
+                    let exception_type = self
+                        .type_provider
+                        .handler_catch_type(handler_info.handler_index);
+                    if let Some(variable) = self.function.variable_mut(object) {
+                        variable.set_type(exception_type.clone());
+                    }
+                    let mut instr = SsaInstruction::synthetic(SsaOp::RuntimeValue {
+                        dest: object,
+                        kind: RuntimeValueKind::ExceptionObject,
+                    });
+                    if !exception_type.is_unknown() {
+                        instr = instr.with_result_type(exception_type);
+                    }
+                    if let Some(block) = self.function.block_mut(block_idx) {
+                        block.add_instruction(instr);
+                    }
+                }
+            }
+        }
 
         // Get the block's successors for branch target resolution
         let successors = &cfg_block.successors;
 
         let instr_count = cfg_block.instructions.len();
         for (instr_idx, cil_instr) in cfg_block.instructions.iter().enumerate() {
-            // Set the instruction index for source tracking
-            simulator.set_instruction_index(instr_idx);
             let result = Self::simulate_instruction(simulator, cil_instr, assembly)?;
 
             // Pass successors only for the last instruction (terminator)
@@ -1269,50 +1326,6 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 
             if let Some(block) = self.function.block_mut(block_idx) {
                 block.add_instruction(ssa_instr);
-            }
-
-            // Record direct stores (stloc/starg) as definitions
-            if let Some(origin) = Self::infer_origin(cil_instr)? {
-                let group = match origin {
-                    VariableOrigin::Argument(idx) => self.arg_group(idx),
-                    VariableOrigin::Local(idx) => self.local_group(idx),
-                    VariableOrigin::Phi | VariableOrigin::EntryLiveIn => continue,
-                };
-                self.defs
-                    .entry(group)
-                    .or_insert_with(|| BitSet::new(block_count))
-                    .insert(block_idx);
-            }
-
-            // Record loads (ldloc/ldarg) as uses for pruned SSA liveness
-            if let Some(use_origin) = Self::infer_use_origin(cil_instr)? {
-                let use_group = match use_origin {
-                    VariableOrigin::Argument(idx) => self.arg_group(idx),
-                    VariableOrigin::Local(idx) => self.local_group(idx),
-                    VariableOrigin::Phi | VariableOrigin::EntryLiveIn => continue,
-                };
-                self.uses
-                    .entry(use_group)
-                    .or_insert_with(|| BitSet::new(block_count))
-                    .insert(block_idx);
-            }
-
-            // Record indirect stores (initobj/stind via ldloca/ldarga) as definitions
-            // This ensures phi nodes are placed correctly for variables initialized
-            // through pointers rather than through direct stloc/starg
-            if let Some(store_target) = result.store_target {
-                let store_group = match store_target {
-                    VariableOrigin::Argument(idx) => self.arg_group(idx),
-                    VariableOrigin::Local(idx) => self.local_group(idx),
-                    VariableOrigin::Phi | VariableOrigin::EntryLiveIn => continue,
-                };
-                self.defs
-                    .entry(store_group)
-                    .or_insert_with(|| BitSet::new(block_count))
-                    .insert(block_idx);
-                // Also store for rename phase
-                self.indirect_stores
-                    .insert((block_idx, instr_idx), store_target);
             }
         }
 
@@ -1347,10 +1360,6 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                 self.address_taken.insert(self.local_group(idx) as usize);
             }
         }
-
-        // Record the exit stack state with source tracking for phi operand filling
-        self.exit_stacks
-            .insert(block_idx, simulator.stack_snapshot_enhanced());
 
         Ok(())
     }
@@ -1659,418 +1668,175 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         }
     }
 
-    /// Infers the variable origin for a load (use) instruction (ldarg/ldloc).
-    /// Returns `Some(origin)` for load instructions, `None` for others.
-    fn infer_use_origin(instr: &Instruction) -> Result<Option<VariableOrigin>> {
-        if instr.prefix == opcodes::FE_PREFIX {
-            match instr.opcode {
-                opcodes::FE_LDARG | opcodes::FE_LDARGA => {
-                    match Self::extract_index(&instr.operand) {
-                        Some(idx) => Ok(Some(VariableOrigin::Argument(Self::idx_to_u16(idx)?))),
-                        None => Ok(None),
+    /// Re-chooses every conversion from the type of the value it converts.
+    ///
+    /// A CIL `conv.*` names only its destination: `conv.i8` truncates a
+    /// `float64` and widens an `int32`, and `conv.r8` widens a `float32` and
+    /// converts an integer. Decomposition happens before operand types exist,
+    /// so it chose from the destination alone, and every conversion *from* a
+    /// float came out as an integer conversion of it. That is not only
+    /// imprecise: an analysis that reads `IntConv` as moving bits sees a
+    /// same-width "integer" conversion of a `float64` as a bit-for-bit
+    /// reinterpretation, and rewrote a truncation into one. Chosen here, from
+    /// both endpoints, through analyssa's own classification.
+    fn select_conversions(&mut self) {
+        for block_idx in 0..self.function.blocks().len() {
+            let instr_count = self
+                .function
+                .block(block_idx)
+                .map_or(0, |block| block.instructions().len());
+            for instr_idx in 0..instr_count {
+                let Some(op) = self
+                    .function
+                    .block(block_idx)
+                    .and_then(|block| block.instruction(instr_idx))
+                    .map(|instr| instr.op().clone())
+                else {
+                    continue;
+                };
+                let (dest, operand, target, unsigned, overflow_check) = match &op {
+                    SsaOp::IntConv {
+                        dest,
+                        operand,
+                        target,
+                        overflow_check,
+                        unsigned,
                     }
-                }
-                opcodes::FE_LDLOC | opcodes::FE_LDLOCA => {
-                    match Self::extract_index(&instr.operand) {
-                        Some(idx) => Ok(Some(VariableOrigin::Local(Self::idx_to_u16(idx)?))),
-                        None => Ok(None),
-                    }
-                }
-                _ => Ok(None),
-            }
-        } else {
-            match instr.opcode {
-                opcodes::LDARG_0 => Ok(Some(VariableOrigin::Argument(0))),
-                opcodes::LDARG_1 => Ok(Some(VariableOrigin::Argument(1))),
-                opcodes::LDARG_2 => Ok(Some(VariableOrigin::Argument(2))),
-                opcodes::LDARG_3 => Ok(Some(VariableOrigin::Argument(3))),
-                opcodes::LDLOC_0 => Ok(Some(VariableOrigin::Local(0))),
-                opcodes::LDLOC_1 => Ok(Some(VariableOrigin::Local(1))),
-                opcodes::LDLOC_2 => Ok(Some(VariableOrigin::Local(2))),
-                opcodes::LDLOC_3 => Ok(Some(VariableOrigin::Local(3))),
-                opcodes::LDARG_S | opcodes::LDARGA_S => match Self::extract_index(&instr.operand) {
-                    Some(idx) => Ok(Some(VariableOrigin::Argument(Self::idx_to_u16(idx)?))),
-                    None => Ok(None),
-                },
-                opcodes::LDLOC_S | opcodes::LDLOCA_S => match Self::extract_index(&instr.operand) {
-                    Some(idx) => Ok(Some(VariableOrigin::Local(Self::idx_to_u16(idx)?))),
-                    None => Ok(None),
-                },
-                _ => Ok(None),
-            }
-        }
-    }
-
-    /// Infers the variable origin from a store (def) instruction (starg/stloc).
-    fn infer_origin(instr: &Instruction) -> Result<Option<VariableOrigin>> {
-        if instr.prefix == opcodes::FE_PREFIX {
-            match instr.opcode {
-                opcodes::FE_STARG => match Self::extract_index(&instr.operand) {
-                    Some(idx) => Ok(Some(VariableOrigin::Argument(Self::idx_to_u16(idx)?))),
-                    None => Ok(None),
-                },
-                opcodes::FE_STLOC => match Self::extract_index(&instr.operand) {
-                    Some(idx) => Ok(Some(VariableOrigin::Local(Self::idx_to_u16(idx)?))),
-                    None => Ok(None),
-                },
-                _ => Ok(None),
-            }
-        } else {
-            match instr.opcode {
-                opcodes::STLOC_0 => Ok(Some(VariableOrigin::Local(0))),
-                opcodes::STLOC_1 => Ok(Some(VariableOrigin::Local(1))),
-                opcodes::STLOC_2 => Ok(Some(VariableOrigin::Local(2))),
-                opcodes::STLOC_3 => Ok(Some(VariableOrigin::Local(3))),
-                opcodes::STARG_S => match Self::extract_index(&instr.operand) {
-                    Some(idx) => Ok(Some(VariableOrigin::Argument(Self::idx_to_u16(idx)?))),
-                    None => Ok(None),
-                },
-                opcodes::STLOC_S => match Self::extract_index(&instr.operand) {
-                    Some(idx) => Ok(Some(VariableOrigin::Local(Self::idx_to_u16(idx)?))),
-                    None => Ok(None),
-                },
-                _ => Ok(None),
-            }
-        }
-    }
-
-    /// Phase 2: Places phi nodes at dominance frontiers.
-    ///
-    /// For each variable that has multiple definitions, we place phi nodes
-    /// at the iterated dominance frontier of its definition sites.
-    ///
-    /// This also places PHI nodes for stack positions at merge points where
-    /// values flow from different predecessors via the stack.
-    fn place_phi_nodes(&mut self) {
-        let dominance_frontiers = self.cfg.dominance_frontiers();
-
-        // Compute liveness for pruned SSA: only place phis where variable is live.
-        // Build CFG successor list for liveness analysis.
-        let block_count = self.cfg.block_count();
-        let successors_list: Vec<Vec<usize>> = (0..block_count)
-            .map(|i| {
-                self.cfg
-                    .successors(NodeId::new(i))
-                    .map(NodeId::index)
-                    .collect()
-            })
-            .collect();
-
-        let live_in =
-            liveness::compute_live_in_blocks(&self.defs, &self.uses, &successors_list, block_count);
-
-        // Place PHI nodes for all groups at dominance frontiers (pruned algorithm)
-        // NOTE: We place phi nodes even for address-taken variables. While address-taken
-        // variables may also be modified through pointers, they still have normal definitions
-        // via stloc/starg that need phi nodes at merge points. The address-taken tracking
-        // is used elsewhere for memory modeling, not for skipping phi placement.
-        let group_origins = self.group_origins.clone();
-        let num_args = self.num_args;
-        let num_locals = self.num_locals;
-        let _ = place_pruned_phis(
-            self.function.blocks_mut(),
-            PhiPlacementConfig {
-                defs: &self.defs,
-                live_in: &live_in,
-                dominance_frontiers,
-                reachable: None, // All blocks reachable during initial construction
-                group_filter: &|_| true, // Process all groups
-                group_to_origin: &|group| {
-                    group_origins.get(&group).copied().unwrap_or_else(|| {
-                        if (group as usize) < num_args {
-                            VariableOrigin::Argument(group as u16)
-                        } else if (group as usize) < num_args.saturating_add(num_locals) {
-                            VariableOrigin::Local((group as usize).saturating_sub(num_args) as u16)
-                        } else {
-                            VariableOrigin::Phi
-                        }
-                    })
-                },
-                leave_target_fn: None, // No Leave target handling during initial construction
-            },
-        );
-
-        // Second, place PHI nodes for stack positions at merge points
-        // A merge point is a block with multiple predecessors
-        self.place_stack_phi_nodes();
-    }
-
-    /// Places PHI nodes for stack positions at blocks with multiple predecessors.
-    ///
-    /// When values flow between blocks via the stack (not stored to locals),
-    /// we need PHI nodes at merge points to properly track which value is used.
-    ///
-    /// Uses enhanced stack tracking to only place phis for slots that have
-    /// DEFINED values on at least one path, avoiding phantom slots.
-    fn place_stack_phi_nodes(&mut self) {
-        for block_idx in 0..self.cfg.block_count() {
-            let node_id = NodeId::new(block_idx);
-            let predecessors: Vec<usize> =
-                self.cfg.predecessors(node_id).map(NodeId::index).collect();
-
-            if predecessors.len() < 2 {
-                continue;
-            }
-
-            // Exception handler entries never inherit the protected region's evaluation
-            // stack. Per ECMA-335 the stack at handler entry holds only the exception
-            // object the runtime pushes (catch/filter) or nothing at all (finally/fault),
-            // so the try blocks' exit stacks are not values that merge here. Now that the
-            // CFG carries exception edges these blocks do have multiple predecessors, and
-            // without this guard every one of those exit-stack slots would grow a phi —
-            // including slot 0, which `rename_block_process` defines directly as the
-            // exception object.
-            if self
-                .cfg
-                .block(node_id)
-                .is_some_and(|block| block.handler_entry.is_some())
-            {
-                continue;
-            }
-
-            // Get enhanced stacks from all predecessors
-            let pred_stacks: Vec<Option<&Vec<StackSlot>>> = predecessors
-                .iter()
-                .map(|&pred_idx| self.exit_stacks.get(&pred_idx))
-                .collect();
-
-            // Find slots that have DEFINED values on at least one predecessor
-            let max_stack_len = pred_stacks
-                .iter()
-                .filter_map(|s| s.as_ref().map(|v| v.len()))
-                .chain(self.entry_stacks.get(&block_idx).map(|e| e.len()))
-                .max()
-                .unwrap_or(0);
-            let mut slots_with_data = BitSet::new(max_stack_len);
-            for stack in pred_stacks.iter().flatten() {
-                for (slot, s) in stack.iter().enumerate() {
-                    if matches!(s.source, StackSlotSource::Defined { .. }) {
-                        slots_with_data.insert(slot);
-                    }
-                }
-            }
-
-            // Also include slots from entry_stack (placeholders that need resolution)
-            if let Some(entry_stack) = self.entry_stacks.get(&block_idx) {
-                for slot in 0..entry_stack.len() {
-                    slots_with_data.insert(slot);
-                }
-            }
-
-            // Create PHI nodes for slots with actual data flow
-            for slot in slots_with_data.iter() {
-                // Check if ALL predecessors carry values from the same Local/Arg
-                // origin for this slot. If so, the existing Local/Arg PHI handles
-                // the merge and a redundant Stack PHI is not needed.
-                if self.all_preds_same_local_arg_origin(&predecessors, slot) {
+                    | SsaOp::FloatToInt {
+                        dest,
+                        operand,
+                        target,
+                        overflow_check,
+                        unsigned,
+                    } => (*dest, *operand, target.clone(), *unsigned, *overflow_check),
+                    SsaOp::IntToFloat {
+                        dest,
+                        operand,
+                        target,
+                        unsigned,
+                    } => (*dest, *operand, target.clone(), *unsigned, false),
+                    _ => continue,
+                };
+                let from = self
+                    .function
+                    .variable(operand)
+                    .map(|var| var.var_type().clone())
+                    .filter(|ty| *ty != SsaType::Unknown);
+                let chosen = SsaOp::conversion_between(
+                    dest,
+                    operand,
+                    target,
+                    from.as_ref(),
+                    unsigned,
+                    overflow_check,
+                );
+                if chosen == op {
                     continue;
                 }
-
-                let origin = self.stack_slot_origin(slot);
-                let group = self.stack_group(slot);
-                let phi_var_id =
-                    self.function
-                        .create_variable_for_origin(origin, 0, DefSite::entry());
-                self.function.set_rename_group(phi_var_id, group);
-                if let Some(block) = self.function.block_mut(block_idx) {
-                    let phi = PhiNode::new(phi_var_id, origin);
-                    block.add_phi(phi);
-                }
-            }
-        }
-    }
-
-    /// Returns true if ALL predecessors have a Defined exit stack value for `slot`
-    /// that traces back to the same Local or Argument origin via `load_origins`.
-    ///
-    /// When this returns true, the value merge at this slot is already handled by
-    /// the Local/Arg PHI — creating a Stack PHI would be redundant and creates
-    /// dual-origin variables that break `rebuild_ssa()`.
-    fn all_preds_same_local_arg_origin(&self, predecessors: &[usize], slot: usize) -> bool {
-        let mut common_origin: Option<VariableOrigin> = None;
-
-        for &pred_idx in predecessors {
-            let Some(exit_stack) = self.exit_stacks.get(&pred_idx) else {
-                return false;
-            };
-            let Some(stack_slot) = exit_stack.get(slot) else {
-                return false;
-            };
-
-            // Only handle Defined values — Inherited values would need tracing
-            // back through dominator chains which is complex and error-prone
-            if !matches!(stack_slot.source, StackSlotSource::Defined { .. }) {
-                return false;
-            }
-
-            // Check if this variable traces to a Local/Arg via load_origins
-            let Some(&origin) = self.load_origins.get(&stack_slot.var) else {
-                return false;
-            };
-
-            // Verify it's actually a Local or Argument origin
-            if !matches!(
-                origin,
-                VariableOrigin::Argument(_) | VariableOrigin::Local(_)
-            ) {
-                return false;
-            }
-
-            match common_origin {
-                None => common_origin = Some(origin),
-                Some(existing) if existing == origin => {}
-                _ => return false,
-            }
-        }
-
-        common_origin.is_some()
-    }
-
-    /// Phase 3: Renames variables using dominator tree traversal.
-    ///
-    /// This assigns unique SSA versions to each variable definition and
-    /// updates uses to reference the correct reaching definition.
-    fn rename_variables(&mut self) -> Result<()> {
-        // Initialize version stacks and create initial variables for args/locals
-        for i in 0..self.num_args {
-            let idx = Self::idx_to_u16(i)?;
-            let origin = VariableOrigin::Argument(idx);
-            let group = self.arg_group(idx);
-            let var_type = self.type_for_origin(origin);
-            self.function.register_origin_type(origin, var_type.clone());
-            let initial_var = self
-                .function
-                .create_variable(origin, 0, DefSite::entry(), var_type);
-            self.function.set_rename_group(initial_var, group);
-            self.version_stacks.insert(group, vec![(0, initial_var)]);
-            self.next_version.insert(group, 1);
-        }
-        for i in 0..self.num_locals {
-            let idx = Self::idx_to_u16(i)?;
-            let origin = VariableOrigin::Local(idx);
-            let group = self.local_group(idx);
-            let var_type = self.type_for_origin(origin);
-            self.function.register_origin_type(origin, var_type.clone());
-            let initial_var = self
-                .function
-                .create_variable(origin, 0, DefSite::entry(), var_type);
-            self.function.set_rename_group(initial_var, group);
-            self.version_stacks.insert(group, vec![(0, initial_var)]);
-            self.next_version.insert(group, 1);
-        }
-
-        // Create v0 entries for stack groups that have phi nodes.
-        // In the old code, num_locals was inflated to include stack depths,
-        // so the local init loop above covered them. Now that num_locals is
-        // no longer inflated, stack groups need explicit v0 entries so that
-        // phi operands from predecessors without definitions can resolve.
-        // Scan placed phi nodes to find which stack groups exist.
-        // Compute max group ID across all phi nodes to size the BitSet
-        let max_phi_group = self
-            .function
-            .blocks()
-            .iter()
-            .flat_map(|b| b.phi_nodes())
-            .map(|phi| self.function.rename_group(phi.result()))
-            .filter(|&g| g != u32::MAX)
-            .max()
-            .unwrap_or(0) as usize;
-        let group_capacity = max_phi_group.saturating_add(1);
-        let mut stack_groups_needing_v0 = BitSet::new(group_capacity);
-        for block in self.function.blocks() {
-            for phi in block.phi_nodes() {
-                let group = self.function.rename_group(phi.result());
-                if group != u32::MAX
-                    && self.is_stack_group(group)
-                    && !self.version_stacks.contains_key(&group)
+                if let Some(instr) = self
+                    .function
+                    .block_mut(block_idx)
+                    .and_then(|block| block.instructions_mut().get_mut(instr_idx))
                 {
-                    stack_groups_needing_v0.insert(group as usize);
+                    instr.set_op(chosen);
                 }
             }
         }
-        for group_idx in stack_groups_needing_v0.iter() {
-            let group = group_idx as u32;
-            let origin = VariableOrigin::Phi;
-            let var_type = SsaType::Unknown;
-            let initial_var = self
+    }
+
+    /// Makes the truncation of a store into a narrow slot explicit.
+    ///
+    /// `stloc` and `starg` into a local or argument narrower than four bytes
+    /// keep only the slot's width: a `uint` stored into a `ushort` local reads
+    /// back as its low sixteen bits. Decomposed as a copy, the store claimed
+    /// the slot held the whole value, and every pass reading the local later
+    /// computed with a value the program never has. Each such copy becomes the
+    /// conversion the store performs, unless the value is known to fit: a
+    /// constant in range, a comparison, or a value whose own type fits the
+    /// slot. A `bool` slot is left alone: compilers only store 0 or 1 into one,
+    /// and a conversion to `bool` is not an integer conversion CIL has.
+    fn make_narrow_stores_explicit(&mut self) {
+        /// The values a narrow integer type holds.
+        fn range(ty: &SsaType) -> Option<(i128, i128)> {
+            match ty {
+                SsaType::I8 => Some((-128, 127)),
+                SsaType::U8 => Some((0, 255)),
+                SsaType::I16 => Some((-32768, 32767)),
+                SsaType::U16 | SsaType::Char => Some((0, 65535)),
+                SsaType::Bool => Some((0, 1)),
+                _ => None,
+            }
+        }
+        for block_idx in 0..self.function.blocks().len() {
+            let instr_count = self
                 .function
-                .create_variable(origin, 0, DefSite::entry(), var_type);
-            self.function.set_rename_group(initial_var, group);
-            self.version_stacks.insert(group, vec![(0, initial_var)]);
-            self.next_version.insert(group, 1);
-        }
-
-        // Start renaming from entry block
-        let dom_tree = self.cfg.dominators();
-        let mut rename_map = BTreeMap::new();
-        self.rename_block(self.cfg.entry().index(), dom_tree, &mut rename_map)?;
-
-        // Fallback for handler blocks the dominator traversal did not reach.
-        //
-        // Now that the CFG carries exception edges, a handler covering a reachable try
-        // region is itself reachable from the method entry, so it is renamed by the main
-        // traversal above and this loop skips it. What remains are handlers with no
-        // incoming exception edge at all: `wire_exception_edges` drops a handler whose
-        // RVA does not resolve to a block start, and a handler over an unreachable try
-        // region has no reachable predecessor. Those blocks still need renaming, and they
-        // have no try scope to inherit from, so they simply start from the entry stacks.
-        let entry_idx = self.cfg.entry().index();
-
-        // Collect handler entry blocks
-        let mut handler_entries: Vec<usize> = Vec::new();
-        for node_id in self.cfg.node_ids() {
-            let block_idx = node_id.index();
-            if block_idx == entry_idx {
-                continue;
-            }
-            if let Some(block) = self.cfg.block(node_id) {
-                if block.handler_entry.is_some() {
-                    handler_entries.push(block_idx);
-                }
-            }
-        }
-
-        // Process all blocks reachable from handler entries that weren't reached
-        // from the main entry point. Use BFS to ensure we visit all reachable blocks.
-        let mut visited = BitSet::new(self.cfg.block_count());
-
-        // Mark blocks reachable from main entry as visited (they were already processed)
-        let mut main_reachable: Vec<usize> = vec![entry_idx];
-        while let Some(idx) = main_reachable.pop() {
-            if !visited.insert(idx) {
-                continue;
-            }
-            for succ_id in self.cfg.successors(NodeId::new(idx)) {
-                main_reachable.push(succ_id.index());
-            }
-        }
-
-        // Now process handler regions that the main traversal did not reach.
-        for handler_entry in handler_entries {
-            // BFS through all blocks reachable from this handler
-            let mut worklist: Vec<usize> = vec![handler_entry];
-            while let Some(block_idx) = worklist.pop() {
-                if visited.contains(block_idx) {
+                .block(block_idx)
+                .map_or(0, |block| block.instructions().len());
+            for instr_idx in 0..instr_count {
+                let Some(SsaOp::Copy { dest, src }) = self
+                    .function
+                    .block(block_idx)
+                    .and_then(|block| block.instruction(instr_idx))
+                    .map(|instr| instr.op().clone())
+                else {
+                    continue;
+                };
+                let Some(origin) = self.function.variable(dest).map(|var| var.origin()) else {
+                    continue;
+                };
+                if !matches!(
+                    origin,
+                    VariableOrigin::Local(_) | VariableOrigin::Argument(_)
+                ) {
                     continue;
                 }
-                visited.insert(block_idx);
-
-                // Rename this block
-                self.rename_block(block_idx, dom_tree, &mut rename_map)?;
-
-                // Add successors to worklist
-                for succ_id in self.cfg.successors(NodeId::new(block_idx)) {
-                    if !visited.contains(succ_id.index()) {
-                        worklist.push(succ_id.index());
-                    }
+                let slot_type = self.function.origin_type(origin);
+                let Some((min, max)) = range(&slot_type) else {
+                    continue;
+                };
+                if slot_type == SsaType::Bool {
+                    continue;
+                }
+                let src_type = self
+                    .function
+                    .variable(src)
+                    .map_or(SsaType::Unknown, |var| var.var_type().clone());
+                let fits = match self.function.get_definition(src) {
+                    Some(SsaOp::Const { value, .. }) => value
+                        .as_i64()
+                        .is_some_and(|v| (min..=max).contains(&i128::from(v))),
+                    Some(SsaOp::Ceq { .. } | SsaOp::Clt { .. } | SsaOp::Cgt { .. }) => true,
+                    _ => range(&src_type).is_some_and(|(lo, hi)| min <= lo && hi <= max),
+                };
+                if fits || !src_type.is_integer() {
+                    continue;
+                }
+                let conversion = SsaOp::conversion_between(
+                    dest,
+                    src,
+                    slot_type,
+                    Some(&src_type),
+                    matches!(
+                        src_type,
+                        SsaType::U8
+                            | SsaType::U16
+                            | SsaType::U32
+                            | SsaType::U64
+                            | SsaType::NativeUInt
+                            | SsaType::Char
+                            | SsaType::Bool
+                    ),
+                    false,
+                );
+                if let Some(instr) = self
+                    .function
+                    .block_mut(block_idx)
+                    .and_then(|block| block.instructions_mut().get_mut(instr_idx))
+                {
+                    instr.set_op(conversion);
                 }
             }
         }
-
-        // Resolve phi types from their operands
-        self.resolve_phi_types();
-
-        Ok(())
     }
 
     /// Resolves Unknown-typed phi variables from their operands.
@@ -2084,7 +1850,78 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
     /// After fixpoint, resolves any remaining Unknown-typed variables by
     /// examining their defining instruction's result type.
     fn resolve_phi_types(&mut self) {
-        // Phase 1: Fixpoint iteration over phi nodes (bidirectional)
+        // Phases 1 and 2 feed each other: an arithmetic result is typed by
+        // its operands, which a phi may type, and a phi by its operands, which
+        // arithmetic may define. Both only turn `Unknown` into a type, so the
+        // loop ends.
+        loop {
+            loop {
+                self.resolve_phi_types_once();
+                if !self.resolve_unknown_from_definitions() {
+                    break;
+                }
+            }
+            // An arithmetic result whose operands no evidence types is the
+            // stack's default `int32`, as an untyped integer computation is;
+            // what is computed from it is typed again from there.
+            if !self.default_untyped_arithmetic() {
+                break;
+            }
+        }
+        self.propagate_group_types();
+    }
+
+    /// Types every `Unknown` arithmetic result `int32`. Returns whether any
+    /// was typed.
+    fn default_untyped_arithmetic(&mut self) -> bool {
+        let mut typed = false;
+        let var_count = self.function.variables().len();
+        for var_idx in 0..var_count {
+            let var_id = SsaVarId::from_index(var_idx);
+            let Some(var) = self.function.variable(var_id) else {
+                continue;
+            };
+            let (Some(instr), true) = (var.def_site().instruction, var.var_type().is_unknown())
+            else {
+                continue;
+            };
+            let arithmetic = self
+                .function
+                .block(var.def_site().block)
+                .and_then(|block| block.instruction(instr))
+                .is_some_and(|instruction| {
+                    matches!(
+                        instruction.op(),
+                        SsaOp::Add { .. }
+                            | SsaOp::AddOvf { .. }
+                            | SsaOp::Sub { .. }
+                            | SsaOp::SubOvf { .. }
+                            | SsaOp::Mul { .. }
+                            | SsaOp::MulOvf { .. }
+                            | SsaOp::Div { .. }
+                            | SsaOp::Rem { .. }
+                            | SsaOp::And { .. }
+                            | SsaOp::Or { .. }
+                            | SsaOp::Xor { .. }
+                            | SsaOp::Shl { .. }
+                            | SsaOp::Shr { .. }
+                            | SsaOp::Neg { .. }
+                            | SsaOp::Not { .. }
+                    )
+                });
+            if arithmetic {
+                if let Some(var) = self.function.variable_mut(var_id) {
+                    var.set_type(SsaType::I32);
+                    typed = true;
+                }
+            }
+        }
+        typed
+    }
+
+    /// Phase 1: types phi results from their operands and operands from their
+    /// phi, to a fixpoint.
+    fn resolve_phi_types_once(&mut self) {
         let mut changed = true;
         while changed {
             changed = false;
@@ -2111,17 +1948,27 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                             .map(|v| v.var_type().clone())
                             .filter(|t| !t.is_unknown());
 
+                        // The join of every operand's type, not the first one
+                        // seen: a merge of a `ushort` and a `uint` holds the
+                        // `uint`, and typed `ushort` it gave the merge a slot
+                        // that truncates the other arm.
                         result_type.or_else(|| {
-                            operand_ids.iter().find_map(|&op_id| {
-                                self.function
-                                    .variable(op_id)
-                                    .map(|v| v.var_type().clone())
-                                    .filter(|t| !t.is_unknown())
-                            })
+                            operand_ids
+                                .iter()
+                                .filter_map(|&op_id| {
+                                    self.function
+                                        .variable(op_id)
+                                        .map(|v| v.var_type().clone())
+                                        .filter(|t| !t.is_unknown())
+                                })
+                                .reduce(|joined, ty| join_merge_types(&joined, &ty))
                         })
                     };
 
-                    let Some(ty) = known_type else {
+                    // A merge no type holds is as unknown as no operand at all:
+                    // writing `Unknown` over `Unknown` changes nothing, and
+                    // counting it as a change never lets the fixpoint end.
+                    let Some(ty) = known_type.filter(|ty| !ty.is_unknown()) else {
                         continue;
                     };
 
@@ -2149,8 +1996,12 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                 }
             }
         }
+    }
 
-        // Phase 2: Resolve remaining Unknown-typed variables from their def instructions
+    /// Phase 2: types every `Unknown` variable an instruction defines from
+    /// that instruction. Returns whether any was typed.
+    fn resolve_unknown_from_definitions(&mut self) -> bool {
+        let mut typed = false;
         let var_count = self.function.variables().len();
         for var_idx in 0..var_count {
             let var_id = SsaVarId::from_index(var_idx);
@@ -2169,22 +2020,31 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                 if !resolved.is_unknown() {
                     if let Some(var) = self.function.variable_mut(var_id) {
                         var.set_type(resolved);
+                        typed = true;
                     }
                 }
             }
         }
+        typed
+    }
 
-        // Phase 3: Propagate types within rename groups.
-        // All variables in the same rename group represent the same logical value
-        // and should share the same type. Find the known type per group, then apply.
+    /// Phase 3: types every `Unknown` version of an argument or local from the
+    /// other versions of its slot.
+    fn propagate_group_types(&mut self) {
+        // Phase 3: Propagate types within the groups of arguments and locals.
+        // Every version of a slot has the slot's type. A stack slot's group is
+        // not one: the values pushed at a depth over a method are unrelated,
+        // and typing one by another gave a copy of an object the `int32` a
+        // slot held first.
         let var_count = self.function.variables().len();
         let mut group_types: BTreeMap<u32, SsaType> = BTreeMap::new();
+        let slot_groups = self.stack_group(0);
 
         // Collect known types per group
         for var_idx in 0..var_count {
             let var_id = SsaVarId::from_index(var_idx);
             let group = self.function.rename_group(var_id);
-            if group == u32::MAX {
+            if group >= slot_groups {
                 continue;
             }
             if let Some(var) = self.function.variable(var_id) {
@@ -2200,7 +2060,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         for var_idx in 0..var_count {
             let var_id = SsaVarId::from_index(var_idx);
             let group = self.function.rename_group(var_id);
-            if group == u32::MAX {
+            if group >= slot_groups {
                 continue;
             }
             if let Some(var) = self.function.variable(var_id) {
@@ -2214,855 +2074,86 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             }
         }
     }
+}
 
-    /// Strips Nop instructions left by LoadLocal/LoadArg resolution.
-    ///
-    /// During rename, resolved LoadLocal/LoadArg instructions are converted to
-    /// Nop. This method removes them and updates variable DefSites to reflect
-    /// the new instruction positions.
-    fn strip_resolved_loads(&mut self) {
-        for block_idx in 0..self.function.blocks().len() {
-            let Some(block) = self.function.block_mut(block_idx) else {
-                continue;
-            };
-            let instructions = block.instructions_mut();
-
-            if !instructions.iter().any(|i| matches!(i.op(), SsaOp::Nop)) {
-                continue;
-            }
-
-            // Build old→new index remapping for non-Nop instructions
-            let mut index_remap: BTreeMap<usize, usize> = BTreeMap::new();
-            let mut new_idx = 0usize;
-            for (old_idx, instr) in instructions.iter().enumerate() {
-                if !matches!(instr.op(), SsaOp::Nop) {
-                    if old_idx != new_idx {
-                        index_remap.insert(old_idx, new_idx);
-                    }
-                    new_idx = new_idx.saturating_add(1);
-                }
-            }
-
-            instructions.retain(|instr| !matches!(instr.op(), SsaOp::Nop));
-
-            // Update variable DefSites that referenced shifted instructions
-            if !index_remap.is_empty() {
-                for var in self.function.variables_mut() {
-                    let site = var.def_site();
-                    if site.block == block_idx {
-                        if let Some(old_instr) = site.instruction {
-                            if let Some(&new_instr) = index_remap.get(&old_instr) {
-                                var.set_def_site(DefSite::instruction(block_idx, new_instr));
-                            }
-                        }
-                    }
-                }
-            }
-        }
+/// The type a merge of values of types `a` and `b` holds.
+///
+/// Equal types are that type. Integers of one storage width join to the type
+/// that holds both: the wider unsigned type when both are unsigned, else the
+/// signed type of the width. The other merges are of what the evaluation stack
+/// held, so they join to the stack's type: a 32-bit integer meeting a 64-bit
+/// one is the 64-bit type; pointers and native integers are `native int`; a
+/// value type meeting an integer is an enum, and the integer's stack width
+/// holds it; two reference types meet at `object`. Anything else is `Unknown`:
+/// no slot is chosen by guessing.
+fn join_merge_types(a: &SsaType, b: &SsaType) -> SsaType {
+    if a == b {
+        return a.clone();
     }
-
-    /// Gets the current SSA variable for a given group ID.
-    fn current_def(&self, group: u32) -> Option<SsaVarId> {
-        self.version_stacks
-            .get(&group)
-            .and_then(|stack| stack.last())
-            .map(|(_, var_id)| *var_id)
-    }
-
-    /// Gets the current SSA variable for a given origin (convenience wrapper).
-    fn current_def_for_origin(&self, origin: VariableOrigin) -> Option<SsaVarId> {
-        let group = match origin {
-            VariableOrigin::Argument(idx) => self.arg_group(idx),
-            VariableOrigin::Local(idx) => self.local_group(idx),
-            VariableOrigin::Phi | VariableOrigin::EntryLiveIn => return None,
-        };
-        self.current_def(group)
-    }
-
-    /// Creates a new SSA variable for a definition and pushes it on the version stack.
-    ///
-    /// The caller must provide the correct type for the variable and the
-    /// rename group. This ensures every variable gets its type from the
-    /// caller who has the right context, rather than guessing internally.
-    fn new_def(
-        &mut self,
-        origin: VariableOrigin,
-        group: u32,
-        block_idx: usize,
-        instr_idx: Option<usize>,
-        var_type: SsaType,
-    ) -> SsaVarId {
-        let version = *self.next_version.get(&group).unwrap_or(&0);
-        let next = self.next_version.entry(group).or_insert(0);
-        *next = next.saturating_add(1);
-
-        let def_site = match instr_idx {
-            Some(idx) => DefSite::instruction(block_idx, idx),
-            None => DefSite::phi(block_idx),
-        };
-
-        let var_id = self
-            .function
-            .create_variable(origin, version, def_site, var_type);
-        self.function.set_rename_group(var_id, group);
-
-        self.version_stacks
-            .entry(group)
-            .or_default()
-            .push((version, var_id));
-        var_id
-    }
-
-    /// Records a use of an SSA variable at the given site.
-    fn record_use(&mut self, var_id: SsaVarId, use_site: UseSite) {
-        if let Some(var) = self.function.variable_mut(var_id) {
-            var.add_use(use_site);
-        }
-    }
-
-    /// Resolves the phi operand for a stack slot, avoiding self-references.
-    ///
-    /// When a block loops back to a dominator, its exit stack may contain
-    /// inherited placeholders that map to the phi result itself. This method
-    /// detects such cases and finds the actual computed value instead.
-    fn resolve_stack_phi_operand(
-        &mut self,
-        slot: u32,
-        phi_result: SsaVarId,
-        exit_stack: Option<&Vec<StackSlot>>,
-        rename_map: &BTreeMap<SsaVarId, SsaVarId>,
-    ) -> SsaVarId {
-        let origin = self.stack_slot_origin(slot as usize);
-        let group = self.stack_group(slot as usize);
-
-        let Some(stack) = exit_stack else {
-            return self.create_undefined_var(origin);
-        };
-
-        let slot_idx = slot as usize;
-
-        // Get the slot value, falling back to TOS for depth mismatch
-        let stack_slot = if let Some(s) = stack.get(slot_idx) {
-            s
-        } else if let Some(last) = stack.last() {
-            last
-        } else {
-            return self.create_undefined_var(origin);
-        };
-
-        // Get the renamed variable, ensuring it exists in the function
-        let renamed = if let Some(&mapped) = rename_map.get(&stack_slot.var) {
-            // Ensure the mapped variable exists
-            self.ensure_or_create(mapped, origin)
-        } else {
-            // No mapping - use stack_slot.var directly, ensuring it exists
-            self.ensure_or_create(stack_slot.var, origin)
-        };
-
-        // If the value was computed in this block, use it directly
-        if matches!(stack_slot.source, StackSlotSource::Defined { .. }) {
-            return renamed;
-        }
-
-        // Value is inherited. Check if it would be a self-reference.
-        if renamed != phi_result {
-            return renamed;
-        }
-
-        // Self-reference detected. Find the most recent DEFINED value in the stack.
-        for s in stack.iter().rev() {
-            if matches!(s.source, StackSlotSource::Defined { .. }) {
-                let result = if let Some(&mapped) = rename_map.get(&s.var) {
-                    // Ensure the mapped variable exists
-                    self.ensure_or_create(mapped, origin)
+    let unsigned = |ty: &SsaType| {
+        matches!(
+            ty,
+            SsaType::Bool | SsaType::U8 | SsaType::U16 | SsaType::Char | SsaType::U32
+        )
+    };
+    let native = |ty: &SsaType| {
+        matches!(
+            ty,
+            SsaType::NativeInt | SsaType::NativeUInt | SsaType::Pointer(_) | SsaType::FnPtr(_)
+        )
+    };
+    let width = |ty: &SsaType| match ty {
+        SsaType::Bool | SsaType::I8 | SsaType::U8 => Some(1u8),
+        SsaType::I16 | SsaType::U16 | SsaType::Char => Some(2),
+        SsaType::I32 | SsaType::U32 => Some(4),
+        _ => None,
+    };
+    match (width(a), width(b)) {
+        (Some(wa), Some(wb)) => {
+            if unsigned(a) && unsigned(b) {
+                if wa >= wb && !matches!(a, SsaType::Bool | SsaType::Char) {
+                    a.clone()
+                } else if wb > wa && !matches!(b, SsaType::Bool | SsaType::Char) {
+                    b.clone()
+                } else if wa.max(wb) >= 4 {
+                    SsaType::U32
+                } else if wa.max(wb) == 2 {
+                    SsaType::U16
                 } else {
-                    // Ensure s.var exists
-                    self.ensure_or_create(s.var, origin)
-                };
-                return result;
-            }
-        }
-
-        // No defined value found. Try version stack as last resort.
-        self.current_def(group)
-            .unwrap_or_else(|| self.create_undefined_var(origin))
-    }
-
-    /// Ensures a variable with the given ID exists in the function, or creates a new one.
-    ///
-    /// If the variable exists, returns the same `var_id`. If it doesn't exist,
-    /// creates a new variable via the allocator with the given origin and returns
-    /// the newly allocated ID.
-    fn ensure_or_create(&mut self, var_id: SsaVarId, origin: VariableOrigin) -> SsaVarId {
-        if self.function.variable(var_id).is_some() {
-            var_id
-        } else {
-            self.create_undefined_var(origin)
-        }
-    }
-
-    /// Resolves a stack slot variable from a predecessor or idom exit stack.
-    ///
-    /// Given a stack slot's variable from an exit stack, resolves it through:
-    /// 1. rename_map (already renamed)
-    /// 2. load_origins → current_def (simulation variable from ldarg/ldloc)
-    /// 3. Direct use (untracked stack variable)
-    ///
-    /// In all cases, ensures the resolved variable exists in the function.
-    fn resolve_exit_stack_var(
-        &mut self,
-        stack_var: SsaVarId,
-        origin: VariableOrigin,
-        rename_map: &BTreeMap<SsaVarId, SsaVarId>,
-    ) -> SsaVarId {
-        if let Some(&already_renamed) = rename_map.get(&stack_var) {
-            self.ensure_or_create(already_renamed, origin)
-        } else if let Some(&load_origin) = self.load_origins.get(&stack_var) {
-            if let Some(resolved) = self.current_def_for_origin(load_origin) {
-                self.ensure_or_create(resolved, load_origin)
+                    SsaType::U8
+                }
             } else {
-                self.ensure_or_create(stack_var, origin)
-            }
-        } else {
-            self.ensure_or_create(stack_var, origin)
-        }
-    }
-
-    /// Resolves a use variable to its SSA-renamed counterpart.
-    ///
-    /// For Argument/Local origins, uses current_def from the version stack.
-    /// For Stack origins, uses the rename_map.
-    /// Ensures the resolved variable exists in the function.
-    fn resolve_use(
-        &mut self,
-        use_var: SsaVarId,
-        rename_map: &BTreeMap<SsaVarId, SsaVarId>,
-    ) -> SsaVarId {
-        if let Some(&mapped) = rename_map.get(&use_var) {
-            self.resolve_mapped_use(mapped)
-        } else {
-            self.resolve_unmapped_use(use_var)
-        }
-    }
-
-    /// Resolves a use variable that was found in the rename_map.
-    fn resolve_mapped_use(&mut self, mapped: SsaVarId) -> SsaVarId {
-        if let Some(var_info) = self.function.variable(mapped) {
-            let origin = var_info.origin();
-            match origin {
-                VariableOrigin::Argument(_) | VariableOrigin::Local(_) => {
-                    if let Some(resolved) = self.current_def_for_origin(origin) {
-                        self.ensure_or_create(resolved, origin)
-                    } else {
-                        mapped
-                    }
-                }
-                VariableOrigin::Phi | VariableOrigin::EntryLiveIn => {
-                    // Stack temps have Phi origin — resolve via rename group or
-                    // var_stack_positions (simulation variables may not have groups yet)
-                    let group = self.function.rename_group(mapped);
-                    let group = if group != u32::MAX {
-                        group
-                    } else if let Some(&slot) = self.var_stack_positions.get(&mapped) {
-                        self.stack_group(slot)
-                    } else {
-                        u32::MAX
-                    };
-                    if group != u32::MAX {
-                        if let Some(resolved) = self.current_def(group) {
-                            self.ensure_or_create(resolved, origin)
-                        } else {
-                            mapped
-                        }
-                    } else {
-                        mapped
-                    }
-                }
-            }
-        } else {
-            let origin = self.stack_slot_origin(0);
-            self.ensure_or_create(mapped, origin)
-        }
-    }
-
-    /// Resolves a use variable that was NOT found in the rename_map.
-    fn resolve_unmapped_use(&mut self, use_var: SsaVarId) -> SsaVarId {
-        if let Some(var_info) = self.function.variable(use_var) {
-            let origin = var_info.origin();
-            match origin {
-                VariableOrigin::Argument(_) | VariableOrigin::Local(_) => {
-                    if let Some(resolved) = self.current_def_for_origin(origin) {
-                        self.ensure_or_create(resolved, origin)
-                    } else {
-                        use_var
-                    }
-                }
-                VariableOrigin::Phi | VariableOrigin::EntryLiveIn => {
-                    // Stack temps have Phi origin — resolve via rename group or
-                    // var_stack_positions (simulation variables may not have groups yet)
-                    let group = self.function.rename_group(use_var);
-                    let group = if group != u32::MAX {
-                        group
-                    } else if let Some(&slot) = self.var_stack_positions.get(&use_var) {
-                        self.stack_group(slot)
-                    } else {
-                        u32::MAX
-                    };
-                    if group != u32::MAX {
-                        if let Some(resolved) = self.current_def(group) {
-                            self.ensure_or_create(resolved, origin)
-                        } else {
-                            use_var
-                        }
-                    } else {
-                        use_var
-                    }
-                }
-            }
-        } else if let Some(&origin) = self.load_origins.get(&use_var) {
-            if let Some(resolved) = self.current_def_for_origin(origin) {
-                self.ensure_or_create(resolved, origin)
-            } else {
-                self.ensure_or_create(use_var, origin)
-            }
-        } else {
-            self.ensure_or_create(use_var, self.stack_slot_origin(0))
-        }
-    }
-
-    /// Resolves an entry stack slot to its reaching definition.
-    ///
-    /// For Stack origins, tries (in order):
-    /// 1. Predecessor exit stacks
-    /// 2. Immediate dominator exit stack
-    /// 3. current_def from version stack
-    ///
-    /// Returns `None` if all resolution strategies fail.
-    fn resolve_entry_stack_slot(
-        &mut self,
-        block_idx: usize,
-        slot: usize,
-        origin: VariableOrigin,
-        idom_exit_stack: &Option<Vec<StackSlot>>,
-        rename_map: &BTreeMap<SsaVarId, SsaVarId>,
-    ) -> Option<SsaVarId> {
-        // Try direct predecessors first (most accurate for stack values)
-        for pred_id in self.cfg.predecessors(NodeId::new(block_idx)) {
-            if let Some(pred_exit) = self.exit_stacks.get(&pred_id.index()) {
-                if let Some(stack_slot) = pred_exit.get(slot) {
-                    let resolved = self.resolve_exit_stack_var(stack_slot.var, origin, rename_map);
-                    return Some(resolved);
-                }
+                SsaType::I32
             }
         }
-
-        // Fall back to immediate dominator's exit stack
-        if let Some(ref idom_exit) = idom_exit_stack {
-            if let Some(stack_slot) = idom_exit.get(slot) {
-                let resolved = self.resolve_exit_stack_var(stack_slot.var, origin, rename_map);
-                return Some(resolved);
+        _ => match (a, b) {
+            (SsaType::I64 | SsaType::U64, SsaType::I64 | SsaType::U64) => SsaType::I64,
+            // A 32-bit integer meeting a 64-bit one: the wider type holds both.
+            (SsaType::I64 | SsaType::U64, other) | (other, SsaType::I64 | SsaType::U64)
+                if width(other).is_some() =>
+            {
+                SsaType::I64
             }
-        }
-
-        // Last resort: current_def via group (may be stale but better than nothing)
-        // For stack origins, use the stack group
-        let group = self.stack_group(slot);
-        self.current_def(group)
-    }
-
-    /// Iteratively renames variables in a block and its dominated children.
-    ///
-    /// Uses an explicit work stack instead of recursion to avoid stack overflow
-    /// on deeply nested dominator trees (common in obfuscated code).
-    fn rename_block(
-        &mut self,
-        entry_block_idx: usize,
-        dom_tree: &DominatorTree,
-        rename_map: &mut BTreeMap<SsaVarId, SsaVarId>,
-    ) -> Result<()> {
-        // Work stack: Enter processes a block, Exit pops its version stack entries
-        enum RenameAction {
-            Enter(usize),
-            Exit(BTreeMap<u32, usize>),
-        }
-
-        let mut work_stack = vec![RenameAction::Enter(entry_block_idx)];
-
-        while let Some(action) = work_stack.pop() {
-            match action {
-                RenameAction::Exit(pushed_counts) => {
-                    // Pop pushed definitions from version stacks
-                    for (group, count) in pushed_counts {
-                        if let Some(stack) = self.version_stacks.get_mut(&group) {
-                            for _ in 0..count {
-                                stack.pop();
-                            }
-                        }
-                    }
-                }
-                RenameAction::Enter(block_idx) => {
-                    let pushed_counts =
-                        self.rename_block_process(block_idx, dom_tree, rename_map)?;
-
-                    // Schedule exit (pop) BEFORE children so it runs AFTER children
-                    // (work_stack is LIFO: last pushed = first processed)
-                    let children: Vec<_> = dom_tree.children(NodeId::new(block_idx)).to_vec();
-
-                    // Push exit action first (will be processed after all children)
-                    work_stack.push(RenameAction::Exit(pushed_counts));
-
-                    // Push children in reverse order so they're processed in forward order
-                    for child in children.into_iter().rev() {
-                        work_stack.push(RenameAction::Enter(child.index()));
-                    }
-                }
+            // Pointers and native integers are one stack type, and a 32-bit
+            // integer meeting one widens to it.
+            _ if native(a) && (native(b) || width(b).is_some())
+                || native(b) && width(a).is_some() =>
+            {
+                SsaType::NativeInt
             }
-        }
-
-        Ok(())
-    }
-
-    /// Processes a single block during rename: phi nodes, entry stack, instructions,
-    /// and successor phi operands. Returns the pushed_counts for version stack cleanup.
-    fn rename_block_process(
-        &mut self,
-        block_idx: usize,
-        dom_tree: &DominatorTree,
-        rename_map: &mut BTreeMap<SsaVarId, SsaVarId>,
-    ) -> Result<BTreeMap<u32, usize>> {
-        // Handler blocks need no seeding of their own. An exception can be raised at any
-        // instruction in a protected region, so a handler's reaching definition for a local
-        // is the *join* over every program point in that region — which a snapshot of one
-        // try-body block's version stacks cannot express.
-        //
-        // The CFG carries real exception edges, which makes handler entries ordinary join
-        // points: `place_phi_nodes` puts a phi there via the dominance frontier, and Step 3
-        // below fills one operand per try-region predecessor.
-
-        let mut pushed_counts: BTreeMap<u32, usize> = BTreeMap::new();
-
-        // Step 1: Process phi nodes - they define new versions
-        let phi_count = self
-            .function
-            .block(block_idx)
-            .map_or(0, SsaBlock::phi_count);
-
-        let entry_stack = self.entry_stacks.get(&block_idx).cloned();
-        // Capacity: at least entry_stack length, plus one for slot 0
-        let slots_capacity = entry_stack.as_ref().map_or(1, |e| e.len().max(1));
-        let mut slots_with_phis = BitSet::new(slots_capacity);
-
-        for phi_idx in 0..phi_count {
-            if let Some(block) = self.function.block(block_idx) {
-                if let Some(phi) = block.phi(phi_idx) {
-                    let origin = phi.origin();
-                    // Determine group from phi result's rename_group (set during phi placement)
-                    let group = self.function.rename_group(phi.result());
-                    let group = if group == u32::MAX {
-                        // Fallback: determine group from origin
-                        match origin {
-                            VariableOrigin::Argument(idx) => self.arg_group(idx),
-                            VariableOrigin::Local(idx) => self.local_group(idx),
-                            VariableOrigin::Phi | VariableOrigin::EntryLiveIn => {
-                                // Stack phi — find slot from entry stack
-                                self.stack_group(0)
-                            }
-                        }
-                    } else {
-                        group
-                    };
-                    // Phi type starts Unknown, resolved by resolve_phi_types() after rename
-                    let new_var = self.new_def(origin, group, block_idx, None, SsaType::Unknown);
-                    {
-                        let entry = pushed_counts.entry(group).or_insert(0);
-                        *entry = entry.saturating_add(1);
-                    }
-
-                    if let Some(slot) = self.stack_slot_from_group(group) {
-                        if slot < slots_capacity {
-                            slots_with_phis.insert(slot);
-                        }
-                        if let Some(ref entry) = entry_stack {
-                            if let Some(&placeholder) = entry.get(slot) {
-                                rename_map.insert(placeholder, new_var);
-                            }
-                        }
-                    }
-
-                    if let Some(block) = self.function.block_mut(block_idx) {
-                        if let Some(phi) = block.phi_mut(phi_idx) {
-                            phi.set_result(new_var);
-                        }
-                    }
-                }
+            (SsaType::ValueType(_), other) | (other, SsaType::ValueType(_))
+                if width(other).is_some() =>
+            {
+                SsaType::I32
             }
-        }
-
-        // Step 1b: Handler entry blocks — create properly-typed exception variables.
-        //
-        // ECMA-335 §I.12.4.2.5: When control transfers to a catch/filter handler,
-        // the runtime pushes the exception object on the stack. This is an implicit
-        // definition that doesn't flow from any predecessor — it's created by the
-        // runtime. Handler entries do have predecessors now that the CFG carries
-        // exception edges, but they are the *try* blocks, whose exit stacks say nothing
-        // about the exception object; `place_stack_phi_nodes` deliberately places no
-        // stack phi here, so predecessor-based resolution must not be relied on.
-        //
-        // We create a new SSA variable with the correct exception type here, before
-        // the normal entry stack resolution loop, so the exception object has proper
-        // typing from the start.
-        if let Some(cfg_block) = self.cfg.block(NodeId::new(block_idx)) {
-            if let Some(handler_info) = &cfg_block.handler_entry {
-                if handler_info.entry_stack_depth() > 0 {
-                    let handler_index = handler_info.handler_index;
-                    let exception_type = self.type_provider.handler_catch_type(handler_index);
-
-                    if let Some(ref entry) = entry_stack {
-                        if let Some(&placeholder) = entry.first() {
-                            let origin = self.stack_slot_origin(0);
-                            let group = self.stack_group(0);
-                            let new_var =
-                                self.new_def(origin, group, block_idx, None, exception_type);
-                            {
-                                let entry = pushed_counts.entry(group).or_insert(0);
-                                *entry = entry.saturating_add(1);
-                            }
-                            rename_map.insert(placeholder, new_var);
-                            // Mark slot 0 as handled so the resolution loop below skips it
-                            slots_with_phis.insert(0);
-                        }
-                    }
-                }
+            (SsaType::ValueType(_), SsaType::I64 | SsaType::U64)
+            | (SsaType::I64 | SsaType::U64, SsaType::ValueType(_)) => SsaType::I64,
+            (SsaType::Null, other) | (other, SsaType::Null) if other.is_reference() => {
+                other.clone()
             }
-        }
-
-        // Map entry stack slots without PHIs to reaching definitions.
-        // For Stack groups, prefer predecessor exit stacks over current_def.
-        let idom = dom_tree.immediate_dominator(NodeId::new(block_idx));
-        let idom_exit_stack = idom.and_then(|d| self.exit_stacks.get(&d.index()).cloned());
-
-        if let Some(ref entry) = entry_stack {
-            for (slot, &placeholder) in entry.iter().enumerate() {
-                if slot < slots_capacity && slots_with_phis.contains(slot) {
-                    continue;
-                }
-                let origin = self.stack_slot_origin(slot);
-
-                // Stack-derived locals: prefer predecessor exit stacks over current_def
-                if let Some(resolved) = self.resolve_entry_stack_slot(
-                    block_idx,
-                    slot,
-                    origin,
-                    &idom_exit_stack,
-                    rename_map,
-                ) {
-                    rename_map.insert(placeholder, resolved);
-                    // Also push to version stack so that resolve_mapped_use (which
-                    // checks current_def for the group) finds the correct reaching
-                    // definition. Without this, handler blocks processed via BFS
-                    // have stale version stacks (the predecessor's push was already
-                    // popped by the Exit action), causing resolve_mapped_use to
-                    // return the wrong variable.
-                    let group = self.stack_group(slot);
-                    self.version_stacks
-                        .entry(group)
-                        .or_default()
-                        .push((0, resolved));
-                    {
-                        let entry = pushed_counts.entry(group).or_insert(0);
-                        *entry = entry.saturating_add(1);
-                    }
-                } else {
-                    self.try_map_from_predecessors(block_idx, slot, placeholder, rename_map);
-                }
-            }
-        }
-
-        // Step 2: Process instructions - update uses and create new defs
-        let instr_count = self
-            .function
-            .block(block_idx)
-            .map_or(0, SsaBlock::instruction_count);
-
-        for instr_idx in 0..instr_count {
-            let instr_info = self.function.block(block_idx).and_then(|b| {
-                b.instruction(instr_idx).map(|instr| {
-                    // Detect LoadLocal/LoadArg for direct resolution to
-                    // reaching definitions (avoids leaving unresolved
-                    // memory-access ops that no optimisation pass can handle).
-                    let load_target = match instr.op() {
-                        SsaOp::LoadArg { arg_index, .. } => {
-                            Some(VariableOrigin::Argument(*arg_index))
-                        }
-                        SsaOp::LoadLocal { local_index, .. } => {
-                            Some(VariableOrigin::Local(*local_index))
-                        }
-                        _ => None,
-                    };
-                    (
-                        instr.original().clone(),
-                        instr.uses(),
-                        instr.def(),
-                        load_target,
-                    )
-                })
-            });
-
-            if let Some((cil_instr, uses, old_def, mut load_target)) = instr_info {
-                // Skip resolution for address-taken locals/args: they may be
-                // modified through pointers, so the reaching definition is
-                // unsound.
-                if let Some(ref origin) = load_target {
-                    let is_address_taken = match origin {
-                        VariableOrigin::Argument(idx) => {
-                            self.address_taken.contains(self.arg_group(*idx) as usize)
-                        }
-                        VariableOrigin::Local(idx) => {
-                            self.address_taken.contains(self.local_group(*idx) as usize)
-                        }
-                        _ => false,
-                    };
-                    if is_address_taken {
-                        load_target = None;
-                    }
-                }
-                let mut renamed_uses = Vec::with_capacity(uses.len());
-                for &use_var in &uses {
-                    renamed_uses.push(self.resolve_use(use_var, rename_map));
-                }
-
-                for &use_var in &renamed_uses {
-                    let use_site = UseSite::instruction(block_idx, instr_idx);
-                    self.record_use(use_var, use_site);
-                }
-
-                if renamed_uses != uses {
-                    if let Some(block) = self.function.block_mut(block_idx) {
-                        if let Some(instr) = block.instruction_mut(instr_idx) {
-                            let op = instr.op_mut();
-                            // Apply the placeholder→final renaming atomically.
-                            //
-                            // `replace_uses(old, new)` rewrites EVERY operand
-                            // equal to `old`, so a naive sequential loop
-                            // miscompiles whenever a freshly-written value
-                            // aliases a not-yet-processed operand's old value
-                            // (e.g. uses=[a,b] renamed=[b,c] collapses both
-                            // operands to `c`). SSA var-id numbering can make a
-                            // final id equal a sibling operand's placeholder id,
-                            // so this is not hypothetical.
-                            //
-                            // Move each changing operand to a unique temporary id
-                            // first, then from the temporary to its final value.
-                            // This is position-wise exact and handles aliasing,
-                            // cycles (swaps), and repeated operands.
-                            //
-                            // Temps only have to be distinct from this op's own
-                            // operands (and each other) — `replace_uses` touches
-                            // no other instruction — so the lowest unused ids
-                            // suffice. They must NOT be derived from `max id + 1`:
-                            // operand ids include the reserved placeholder
-                            // (`u32::MAX - 1`), which would overflow the index
-                            // space and reintroduce collisions.
-                            let mut temps: Vec<SsaVarId> = Vec::with_capacity(uses.len());
-                            let mut candidate = 0usize;
-                            for _ in 0..uses.len() {
-                                loop {
-                                    let id = SsaVarId::from_index(candidate);
-                                    candidate = candidate.saturating_add(1);
-                                    if !uses.contains(&id)
-                                        && !renamed_uses.contains(&id)
-                                        && !temps.contains(&id)
-                                    {
-                                        temps.push(id);
-                                        break;
-                                    }
-                                }
-                            }
-                            for (&temp, (old_use, &new_use)) in
-                                temps.iter().zip(uses.iter().zip(renamed_uses.iter()))
-                            {
-                                if *old_use != new_use {
-                                    op.replace_uses(*old_use, temp);
-                                }
-                            }
-                            for (&temp, (old_use, &new_use)) in
-                                temps.iter().zip(uses.iter().zip(renamed_uses.iter()))
-                            {
-                                if *old_use != new_use {
-                                    op.replace_uses(temp, new_use);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // LoadLocal/LoadArg: convert to a Copy from the reaching definition
-                // to a new stack-temp variable. This preserves an explicit bridge
-                // between the local/arg group and the stack-temp group so that
-                // rebuild_ssa (which operates per-group) can correctly recreate
-                // the data flow across groups.
-                if let (Some(sim_var), Some(target_origin)) = (old_def, load_target) {
-                    let target_group = match target_origin {
-                        VariableOrigin::Argument(idx) => self.arg_group(idx),
-                        VariableOrigin::Local(idx) => self.local_group(idx),
-                        _ => u32::MAX,
-                    };
-                    if let Some(reaching_def) = self.current_def(target_group) {
-                        // Create a new stack-temp variable for the Copy dest
-                        let slot = self.var_stack_positions.get(&sim_var).copied().unwrap_or(0);
-                        let origin = self.stack_slot_origin(slot);
-                        let dest_group = self.stack_group(slot);
-                        let var_type = self.type_for_origin(target_origin);
-                        let new_var =
-                            self.new_def(origin, dest_group, block_idx, Some(instr_idx), var_type);
-                        {
-                            let entry = pushed_counts.entry(dest_group).or_insert(0);
-                            *entry = entry.saturating_add(1);
-                        }
-
-                        rename_map.insert(sim_var, new_var);
-
-                        // Record the use of reaching_def by this Copy
-                        let use_site = UseSite::instruction(block_idx, instr_idx);
-                        self.record_use(reaching_def, use_site);
-
-                        // Convert to Copy; the bridge instruction survives rebuild.
-                        if let Some(block) = self.function.block_mut(block_idx) {
-                            if let Some(instr) = block.instruction_mut(instr_idx) {
-                                instr.set_op(SsaOp::Copy {
-                                    dest: new_var,
-                                    src: reaching_def,
-                                });
-                            }
-                        }
-                        continue;
-                    }
-                }
-
-                let def_origin = Self::infer_origin(&cil_instr)?;
-
-                if let Some(sim_var) = old_def {
-                    let new_var = if let Some(origin) = def_origin {
-                        let group = match origin {
-                            VariableOrigin::Argument(idx) => self.arg_group(idx),
-                            VariableOrigin::Local(idx) => self.local_group(idx),
-                            VariableOrigin::Phi | VariableOrigin::EntryLiveIn => u32::MAX, // shouldn't happen for infer_origin
-                        };
-                        let var_type = self.type_for_origin(origin);
-                        let v = self.new_def(origin, group, block_idx, Some(instr_idx), var_type);
-                        {
-                            let entry = pushed_counts.entry(group).or_insert(0);
-                            *entry = entry.saturating_add(1);
-                        }
-                        v
-                    } else {
-                        // Use the stack depth position recorded during simulation,
-                        // NOT sim_var.index() which is a globally unique ID.
-                        // This ensures the group matches the PHI group at successor
-                        // blocks (placed by place_stack_phi_nodes with stack_group).
-                        let slot = self.var_stack_positions.get(&sim_var).copied().unwrap_or(0);
-                        let origin = self.stack_slot_origin(slot);
-                        let group = self.stack_group(slot);
-                        let var_type = self.infer_instruction_result_type(block_idx, instr_idx);
-                        let v = self.new_def(origin, group, block_idx, Some(instr_idx), var_type);
-                        {
-                            let entry = pushed_counts.entry(group).or_insert(0);
-                            *entry = entry.saturating_add(1);
-                        }
-                        v
-                    };
-
-                    rename_map.insert(sim_var, new_var);
-
-                    if let Some(block) = self.function.block_mut(block_idx) {
-                        if let Some(instr) = block.instruction_mut(instr_idx) {
-                            instr.op_mut().replace_def(sim_var, new_var);
-                        }
-                    }
-                }
-
-                if let Some(&store_target) = self.indirect_stores.get(&(block_idx, instr_idx)) {
-                    let store_group = match store_target {
-                        VariableOrigin::Argument(idx) => self.arg_group(idx),
-                        VariableOrigin::Local(idx) => self.local_group(idx),
-                        VariableOrigin::Phi | VariableOrigin::EntryLiveIn => u32::MAX,
-                    };
-                    let var_type = self.type_for_origin(store_target);
-                    let _new_version = self.new_def(
-                        store_target,
-                        store_group,
-                        block_idx,
-                        Some(instr_idx),
-                        var_type,
-                    );
-                    {
-                        let entry = pushed_counts.entry(store_group).or_insert(0);
-                        *entry = entry.saturating_add(1);
-                    }
-                }
-            }
-        }
-
-        // Step 3: Fill in phi operands in successor blocks
-        let successors: Vec<usize> = self
-            .cfg
-            .successors(NodeId::new(block_idx))
-            .map(NodeId::index)
-            .collect();
-
-        let exit_stack_enhanced = self.exit_stacks.get(&block_idx).cloned();
-
-        for succ_idx in successors {
-            let succ_phi_count = self.function.block(succ_idx).map_or(0, SsaBlock::phi_count);
-
-            for phi_idx in 0..succ_phi_count {
-                let (phi_result, phi_group) =
-                    match self.function.block(succ_idx).and_then(|b| b.phi(phi_idx)) {
-                        Some(phi) => {
-                            let mut group = self.function.rename_group(phi.result());
-                            // If the phi result hasn't been renamed yet (still a
-                            // placeholder from phi placement), determine the group
-                            // from the phi's origin — same fallback as Step 1.
-                            if group == u32::MAX {
-                                group = match phi.origin() {
-                                    VariableOrigin::Argument(idx) => self.arg_group(idx),
-                                    VariableOrigin::Local(idx) => self.local_group(idx),
-                                    VariableOrigin::Phi | VariableOrigin::EntryLiveIn => u32::MAX,
-                                };
-                            }
-                            (phi.result(), group)
-                        }
-                        None => continue,
-                    };
-
-                let reaching_def = if let Some(slot) = self.stack_slot_from_group(phi_group) {
-                    #[allow(clippy::cast_possible_truncation)]
-                    self.resolve_stack_phi_operand(
-                        slot as u32,
-                        phi_result,
-                        exit_stack_enhanced.as_ref(),
-                        rename_map,
-                    )
-                } else if phi_group != u32::MAX {
-                    let origin = self.origin_for_group(phi_group);
-                    self.current_def(phi_group)
-                        .unwrap_or_else(|| self.create_undefined_var(origin))
-                } else {
-                    self.create_undefined_var(VariableOrigin::Phi)
-                };
-
-                if let Some(block) = self.function.block_mut(succ_idx) {
-                    if let Some(phi) = block.phi_mut(phi_idx) {
-                        phi.set_operand(block_idx, reaching_def);
-                    }
-                }
-
-                let use_site = UseSite::phi_operand(succ_idx, phi_idx);
-                self.record_use(reaching_def, use_site);
-            }
-        }
-
-        Ok(pushed_counts)
+            _ if a.is_reference() && b.is_reference() => SsaType::Object,
+            _ => SsaType::Unknown,
+        },
     }
 }
 
@@ -3072,6 +2163,7 @@ mod tests {
 
     use super::*;
     use crate::{
+        analysis::{SsaVerifier, TypeRef, VerifyLevel},
         assembly::{decode_blocks, InstructionAssembler},
         test::TestTypeProvider,
     };
@@ -3098,7 +2190,7 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 2, 0, &TestTypeProvider::new(2, 0))
+        let ssa = SsaConverter::build(&cfg, 2, 0, &TestTypeProvider::new(2, 0), Vec::new())
             .expect("SSA construction failed");
 
         // Should have 1 block
@@ -3122,7 +2214,7 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 1, &TestTypeProvider::new(1, 1))
+        let ssa = SsaConverter::build(&cfg, 1, 1, &TestTypeProvider::new(1, 1), Vec::new())
             .expect("SSA construction failed");
 
         // Should have 1 block
@@ -3130,6 +2222,371 @@ mod tests {
 
         // Should have variables for arg and local
         assert!(ssa.variable_count() >= 2);
+    }
+
+    /// The operation that defines `var`, if an instruction does.
+    #[test]
+    fn a_merge_no_type_holds_does_not_stall_phi_typing() {
+        // arg ? null : 1.0 on the stack, then dropped: a phi of a reference
+        // and a double, which no type holds. Typing it must still finish.
+        let mut asm = InstructionAssembler::new();
+        asm.ldarg_0()
+            .unwrap()
+            .brtrue_s("reference")
+            .unwrap()
+            .ldc_r8(1.0)
+            .unwrap()
+            .br_s("merge")
+            .unwrap()
+            .label("reference")
+            .unwrap()
+            .ldnull()
+            .unwrap()
+            .label("merge")
+            .unwrap()
+            .pop()
+            .unwrap()
+            .ldc_i4_0()
+            .unwrap()
+            .ret()
+            .unwrap();
+        let cfg = build_cfg(asm);
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let built =
+                SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0), Vec::new()).is_ok();
+            let _ = sender.send(built);
+        });
+        let built = receiver
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("phi typing did not finish");
+        assert!(built);
+    }
+
+    #[test]
+    fn a_merge_joins_to_the_type_the_stack_held() {
+        let enum_type = SsaType::ValueType(TypeRef::new(Token::new(0x0100_0002)));
+        let class = SsaType::Class(TypeRef::new(Token::new(0x0100_0003)));
+        let other_class = SsaType::Class(TypeRef::new(Token::new(0x0100_0004)));
+
+        assert_eq!(join_merge_types(&SsaType::U8, &SsaType::U16), SsaType::U16);
+        assert_eq!(join_merge_types(&SsaType::I16, &SsaType::U16), SsaType::I32);
+        // An enum meeting a short: both were int32 on the stack.
+        assert_eq!(join_merge_types(&SsaType::I16, &enum_type), SsaType::I32);
+        assert_eq!(join_merge_types(&enum_type, &SsaType::I16), SsaType::I32);
+        assert_eq!(join_merge_types(&enum_type, &SsaType::I64), SsaType::I64);
+        assert_eq!(join_merge_types(&SsaType::Null, &class), class);
+        assert_eq!(join_merge_types(&class, &other_class), SsaType::Object);
+        assert_eq!(join_merge_types(&SsaType::I32, &SsaType::I64), SsaType::I64);
+        assert_eq!(
+            join_merge_types(
+                &SsaType::Pointer(Box::new(SsaType::U8)),
+                &SsaType::NativeUInt
+            ),
+            SsaType::NativeInt
+        );
+        assert_eq!(
+            join_merge_types(&SsaType::I32, &SsaType::NativeInt),
+            SsaType::NativeInt
+        );
+        // No stack type holds both: no guess.
+        assert_eq!(join_merge_types(&SsaType::F64, &class), SsaType::Unknown);
+    }
+
+    fn defining_op(ssa: &SsaFunction, var: SsaVarId) -> Option<&SsaOp> {
+        ssa.blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+            .map(SsaInstruction::op)
+            .find(|op| op.dest() == Some(var))
+    }
+
+    /// The value the function's first `ret` returns, seen through copies.
+    fn returned_value(ssa: &SsaFunction) -> SsaVarId {
+        let mut value = ssa
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+            .find_map(|instr| match instr.op() {
+                SsaOp::Return { value } => *value,
+                _ => None,
+            })
+            .expect("a value-returning ret");
+        while let Some(SsaOp::Copy { src, .. }) = defining_op(ssa, value) {
+            value = *src;
+        }
+        value
+    }
+
+    #[test]
+    fn a_local_read_before_any_write_holds_zero() {
+        let mut asm = InstructionAssembler::new();
+        asm.ldloc_0().unwrap().ret().unwrap();
+
+        let cfg = build_cfg(asm);
+        let ssa = SsaConverter::build(&cfg, 0, 1, &TestTypeProvider::new(0, 1), Vec::new())
+            .expect("SSA construction failed");
+
+        assert!(
+            matches!(
+                defining_op(&ssa, returned_value(&ssa)),
+                Some(SsaOp::Const {
+                    value: ConstValue::I32(0),
+                    ..
+                })
+            ),
+            "`.locals init` zeroes the local, and the read sees that zero:\n{ssa}"
+        );
+        let findings = SsaVerifier::new(&ssa).verify(VerifyLevel::Full);
+        assert!(
+            findings.is_empty(),
+            "the zero is a definition like any other: {findings:?}\n{ssa}"
+        );
+    }
+
+    /// The conversion `ret`urned by a two-instruction body.
+    fn conversion_of(asm: InstructionAssembler) -> SsaOp {
+        let cfg = build_cfg(asm);
+        let ssa = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0), Vec::new())
+            .expect("SSA construction failed");
+        defining_op(&ssa, returned_value(&ssa))
+            .cloned()
+            .expect("the returned value has a definition")
+    }
+
+    /// The type of the value a function built from `asm` returns.
+    fn returned_type(asm: InstructionAssembler) -> SsaType {
+        let cfg = build_cfg(asm);
+        let ssa = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0), Vec::new())
+            .expect("SSA construction failed");
+        ssa.variable(returned_value(&ssa))
+            .map(|variable| variable.var_type().clone())
+            .expect("the returned value is a variable")
+    }
+
+    /// Arithmetic is typed by what it computes on (ECMA-335 III.1.5), not
+    /// as `int32` whatever its operands: a `float32` product, an `int64`
+    /// quotient, a shifted `int64`.
+    ///
+    /// Every arithmetic result used to be typed `int32`, so `conv.r8` of a
+    /// `float32` division read as converting an integer, and a store forwarded
+    /// to a `float32` field load was reconciled with a bitcast nothing could
+    /// lower.
+    #[test]
+    fn arithmetic_is_typed_by_its_operands() {
+        let mut asm = InstructionAssembler::new();
+        asm.ldc_r4(1.5)
+            .unwrap()
+            .ldc_r4(2.0)
+            .unwrap()
+            .mul()
+            .unwrap()
+            .ret()
+            .unwrap();
+        assert_eq!(returned_type(asm), SsaType::F32);
+
+        let mut asm = InstructionAssembler::new();
+        asm.ldc_i8(10)
+            .unwrap()
+            .ldc_i8(3)
+            .unwrap()
+            .div()
+            .unwrap()
+            .ret()
+            .unwrap();
+        assert_eq!(returned_type(asm), SsaType::I64);
+
+        let mut asm = InstructionAssembler::new();
+        asm.ldc_i8(1)
+            .unwrap()
+            .ldc_i4(3)
+            .unwrap()
+            .shl()
+            .unwrap()
+            .ret()
+            .unwrap();
+        assert_eq!(returned_type(asm), SsaType::I64);
+
+        let mut asm = InstructionAssembler::new();
+        asm.ldc_r4(1.0)
+            .unwrap()
+            .ldc_r4(4.0)
+            .unwrap()
+            .div()
+            .unwrap()
+            .conv_r8()
+            .unwrap()
+            .ret()
+            .unwrap();
+        assert!(
+            matches!(conversion_of(asm), SsaOp::FloatConv { .. }),
+            "conv.r8 of a float32 quotient widens a float"
+        );
+    }
+
+    /// `conv.i8` of a `float64` truncates it: a float-to-integer conversion,
+    /// not an integer conversion of a float.
+    ///
+    /// Chosen from the destination alone, it came out as `IntConv`, which an
+    /// analysis reading integer conversions as moving bits turned into a
+    /// reinterpretation of the double's bits - a different number.
+    #[test]
+    fn conv_i8_of_a_double_truncates_it() {
+        let mut asm = InstructionAssembler::new();
+        asm.ldc_r8(2.5).unwrap().conv_i8().unwrap().ret().unwrap();
+        assert!(
+            matches!(conversion_of(asm), SsaOp::FloatToInt { .. }),
+            "a float converted to an integer"
+        );
+    }
+
+    /// `conv.r8` of a `float32` widens a float; of an `int32` it converts an
+    /// integer.
+    #[test]
+    fn conv_r8_is_chosen_by_what_it_converts() {
+        let mut asm = InstructionAssembler::new();
+        asm.ldc_r4(1.5).unwrap().conv_r8().unwrap().ret().unwrap();
+        assert!(matches!(conversion_of(asm), SsaOp::FloatConv { .. }));
+
+        let mut asm = InstructionAssembler::new();
+        asm.ldc_i4(3).unwrap().conv_r8().unwrap().ret().unwrap();
+        assert!(matches!(conversion_of(asm), SsaOp::IntToFloat { .. }));
+    }
+
+    /// The control: `conv.i8` of an `int32` stays an integer conversion.
+    #[test]
+    fn conv_i8_of_an_int_is_an_integer_conversion() {
+        let mut asm = InstructionAssembler::new();
+        asm.ldc_i4(3).unwrap().conv_i8().unwrap().ret().unwrap();
+        assert!(matches!(conversion_of(asm), SsaOp::IntConv { .. }));
+    }
+
+    /// A `dup` copies the value on top of the stack, and is typed as that
+    /// value - not as whatever the stack slot it lands in held first. Depth 1
+    /// holds an `int64` before it holds the copy of a `float64` here.
+    #[test]
+    fn a_dup_is_typed_as_what_it_copies() {
+        let mut asm = InstructionAssembler::new();
+        asm.ldc_i4(1)
+            .unwrap()
+            .ldc_i8(7)
+            .unwrap()
+            .pop()
+            .unwrap()
+            .pop()
+            .unwrap()
+            .ldc_r8(2.5)
+            .unwrap()
+            .dup()
+            .unwrap()
+            .mul()
+            .unwrap()
+            .ret()
+            .unwrap();
+
+        let cfg = build_cfg(asm);
+        let provider = TestTypeProvider::new(0, 0);
+        let ssa = SsaConverter::build(&cfg, 0, 0, &provider, Vec::new())
+            .expect("SSA construction failed");
+
+        let copies: Vec<SsaType> = ssa
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+            .filter_map(|instr| match instr.op() {
+                SsaOp::Copy { dest, .. } => ssa.variable(*dest).map(|v| v.var_type().clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(copies, vec![SsaType::F64], "{ssa}");
+    }
+
+    #[test]
+    fn without_locals_init_an_unwritten_local_is_not_assumed_zero() {
+        let mut asm = InstructionAssembler::new();
+        asm.ldloc_0().unwrap().ret().unwrap();
+
+        let cfg = build_cfg(asm);
+        let provider = TestTypeProvider::new(0, 1).without_locals_init();
+        let ssa = SsaConverter::build(&cfg, 0, 1, &provider, Vec::new())
+            .expect("SSA construction failed");
+
+        assert!(
+            defining_op(&ssa, returned_value(&ssa)).is_none(),
+            "the local's initial contents are unspecified:\n{ssa}"
+        );
+    }
+
+    #[test]
+    fn a_loop_at_the_first_instruction_starts_from_the_zeroed_local() {
+        // loop: local0 = local0 + arg0; if (local0 < 10) goto loop; return local0
+        let mut asm = InstructionAssembler::new();
+        asm.label("loop")
+            .unwrap()
+            .ldloc_0()
+            .unwrap()
+            .ldarg_0()
+            .unwrap()
+            .add()
+            .unwrap()
+            .stloc_0()
+            .unwrap()
+            .ldloc_0()
+            .unwrap()
+            .ldc_i4_s(10)
+            .unwrap()
+            .blt("loop")
+            .unwrap()
+            .ldloc_0()
+            .unwrap()
+            .ret()
+            .unwrap();
+
+        let cfg = build_cfg(asm);
+        let ssa = SsaConverter::build(&cfg, 1, 1, &TestTypeProvider::new(1, 1), Vec::new())
+            .expect("SSA construction failed");
+
+        let findings = SsaVerifier::new(&ssa).verify(VerifyLevel::Full);
+        assert!(
+            findings.is_empty(),
+            "the zero must dominate the loop it enters: {findings:?}\n{ssa}"
+        );
+        let entry_operand_is_zero = ssa.blocks().iter().flat_map(|b| b.phi_nodes()).any(|phi| {
+            phi.operands().iter().any(|operand| {
+                matches!(
+                    defining_op(&ssa, operand.value()),
+                    Some(SsaOp::Const {
+                        value: ConstValue::I32(0),
+                        ..
+                    })
+                )
+            })
+        });
+        assert!(
+            entry_operand_is_zero,
+            "the loop header merges the zeroed local on its entry edge:\n{ssa}"
+        );
+    }
+
+    #[test]
+    fn a_struct_local_read_before_any_write_does_not_take_its_address() {
+        let mut asm = InstructionAssembler::new();
+        asm.ldloc_0().unwrap().ret().unwrap();
+
+        let cfg = build_cfg(asm);
+        let provider = TestTypeProvider::new(0, 1)
+            .with_local_type(0, SsaType::ValueType(TypeRef::new(Token::new(0x0200_0002))));
+        let ssa = SsaConverter::build(&cfg, 0, 1, &provider, Vec::new())
+            .expect("SSA construction failed");
+
+        assert!(
+            ssa.blocks()
+                .iter()
+                .flat_map(|b| b.instructions())
+                .all(|i| !matches!(i.op(), SsaOp::LoadLocalAddr { .. } | SsaOp::InitObj { .. })),
+            "a zeroed struct is the slot's entry value, not an `initobj` through its address:\n{ssa}"
+        );
     }
 
     #[test]
@@ -3153,7 +2610,7 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0))
+        let ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0), Vec::new())
             .expect("SSA construction failed");
 
         // Should have 3 blocks: entry, then, else
@@ -3191,7 +2648,7 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 1, &TestTypeProvider::new(1, 1))
+        let ssa = SsaConverter::build(&cfg, 1, 1, &TestTypeProvider::new(1, 1), Vec::new())
             .expect("SSA construction failed");
 
         // Should have 4 blocks: entry, then, else, merge
@@ -3236,7 +2693,7 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 1, &TestTypeProvider::new(1, 1))
+        let ssa = SsaConverter::build(&cfg, 1, 1, &TestTypeProvider::new(1, 1), Vec::new())
             .expect("SSA construction failed");
 
         // Should have multiple blocks
@@ -3254,7 +2711,7 @@ mod tests {
         asm.ret().unwrap();
 
         let cfg = build_cfg(asm);
-        let result = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0));
+        let result = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0), Vec::new());
         assert!(result.is_ok());
     }
 
@@ -3281,7 +2738,7 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 1, &TestTypeProvider::new(0, 1))
+        let ssa = SsaConverter::build(&cfg, 0, 1, &TestTypeProvider::new(0, 1), Vec::new())
             .expect("SSA construction failed");
 
         // Collect all versions of local0
@@ -3338,7 +2795,7 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 1, &TestTypeProvider::new(1, 1))
+        let ssa = SsaConverter::build(&cfg, 1, 1, &TestTypeProvider::new(1, 1), Vec::new())
             .expect("SSA construction failed");
 
         // Find the merge block (block 3 in 0-indexed: entry=0, then=1, else=2, merge=3)
@@ -3412,7 +2869,7 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 1, &TestTypeProvider::new(0, 1))
+        let ssa = SsaConverter::build(&cfg, 0, 1, &TestTypeProvider::new(0, 1), Vec::new())
             .expect("SSA construction failed");
 
         // Loop header should have a phi node for local0 (merges initial value and loop value)
@@ -3477,7 +2934,7 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 2, 1, &TestTypeProvider::new(2, 1))
+        let ssa = SsaConverter::build(&cfg, 2, 1, &TestTypeProvider::new(2, 1), Vec::new())
             .expect("SSA construction failed");
 
         // All variable IDs should be unique
@@ -3510,7 +2967,7 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 3, 0, &TestTypeProvider::new(3, 0))
+        let ssa = SsaConverter::build(&cfg, 3, 0, &TestTypeProvider::new(3, 0), Vec::new())
             .expect("SSA construction failed");
 
         // Check that we have argument variables
@@ -3555,7 +3012,7 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0))
+        let ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0), Vec::new())
             .expect("SSA construction failed");
 
         // Should succeed without error (this was failing before the stack depth fix)
@@ -3611,7 +3068,7 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 2, 1, &TestTypeProvider::new(2, 1))
+        let ssa = SsaConverter::build(&cfg, 2, 1, &TestTypeProvider::new(2, 1), Vec::new())
             .expect("SSA construction failed");
 
         // Should have phi nodes at merge points
@@ -3645,7 +3102,7 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0))
+        let ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0), Vec::new())
             .expect("SSA construction failed");
 
         // Should have multiple versions of arg0
@@ -3689,7 +3146,7 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 1, &TestTypeProvider::new(1, 1))
+        let ssa = SsaConverter::build(&cfg, 1, 1, &TestTypeProvider::new(1, 1), Vec::new())
             .expect("SSA construction failed");
 
         // For each phi node, verify all operand values reference valid variables
@@ -3720,7 +3177,7 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 1, &TestTypeProvider::new(0, 1))
+        let ssa = SsaConverter::build(&cfg, 0, 1, &TestTypeProvider::new(0, 1), Vec::new())
             .expect("SSA construction failed");
 
         // Find the non-initial version of local0 (the one from stloc)
@@ -3777,7 +3234,7 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0))
+        let ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0), Vec::new())
             .expect("SSA construction failed");
 
         // Find the merge block (should be the last block)
@@ -3854,7 +3311,7 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0))
+        let ssa = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0), Vec::new())
             .expect("SSA construction failed");
 
         // The dispatcher block should use the constant from block 0 in rem.un
@@ -3922,7 +3379,7 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0))
+        let ssa = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0), Vec::new())
             .expect("SSA construction failed");
 
         // Find the add instruction and check its operands
@@ -3979,7 +3436,7 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0))
+        let ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0), Vec::new())
             .expect("SSA construction failed");
 
         // Find the switch instruction
@@ -4071,7 +3528,7 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0))
+        let ssa = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0), Vec::new())
             .expect("SSA construction failed");
 
         // Verify ALL instruction operands are in the variable table
@@ -4189,7 +3646,7 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0))
+        let ssa = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0), Vec::new())
             .expect("SSA construction failed");
 
         // Collect all variables used in the SSA
@@ -4266,7 +3723,7 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0))
+        let ssa = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0), Vec::new())
             .expect("SSA construction failed");
 
         // Find the pop instruction and verify its operand is registered
@@ -4347,7 +3804,7 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 3, &TestTypeProvider::new(0, 3))
+        let ssa = SsaConverter::build(&cfg, 0, 3, &TestTypeProvider::new(0, 3), Vec::new())
             .expect("SSA construction failed");
 
         // Verify ALL uses are registered

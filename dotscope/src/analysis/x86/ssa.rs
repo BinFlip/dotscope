@@ -8,21 +8,20 @@
 //! The translation pipeline:
 //!
 //! ```text
-//! X86Function (CFG) → analyze dominance → place phi nodes → translate blocks → SsaFunction
+//! X86Function (CFG) → translate blocks → construct SSA at the boundaries → SsaFunction
 //! ```
 //!
 //! # Register Versioning
 //!
 //! Each x86 register is tracked as a versioned SSA variable. When a register
-//! is written, a new SSA variable is created. At control flow join points,
-//! phi nodes merge the different versions.
+//! is written, a new SSA variable is created. Each block is translated on its
+//! own, entered with one placeholder per register; analyssa's
+//! [`BoundaryRecorder`] then answers every placeholder with the definition
+//! that reaches the block and places the phis the joins need.
 //!
-//! # Phi Node Placement
-//!
-//! Phi nodes are placed using the dominance frontier algorithm:
-//! 1. Compute dominance frontiers for the CFG
-//! 2. For each register defined in a block, place phi nodes at its dominance frontier
-//! 3. Iterate until fixed point (phi nodes can themselves require more phi nodes)
+//! A register read on some path before anything writes it is an error: these
+//! stubs are entered with their one argument on the stack, and no register
+//! holds anything the translation could name.
 //!
 //! # Example
 //!
@@ -39,14 +38,18 @@
 //! let ssa_function = translator.translate()?;
 //! ```
 
-use analyssa::graph::NodeId;
-use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::{BTreeMap, BTreeSet};
+
+use analyssa::{
+    analysis::VerifyLevel,
+    ir::function::{BoundaryRecorder, SsaConstructOptions},
+};
 
 use crate::{
     analysis::{
         ssa::{
-            CmpKind, ConstValue, DefSite, PhiNode, PhiOperand, SsaBlock, SsaFunction,
-            SsaInstruction, SsaOp, SsaType, SsaVarId, SsaVariable, VariableOrigin,
+            CmpKind, ConstValue, DefSite, SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaType,
+            SsaVarId, SsaVariable, VariableOrigin,
         },
         x86::{
             cfg::X86Function,
@@ -104,16 +107,13 @@ fn address_space_for(mem: &X86Memory) -> Option<u16> {
 struct RegisterState {
     /// Current SSA variable for each register (indexed by `X86Register::base_index()`).
     registers: [Option<SsaVarId>; MAX_REGISTERS],
-    /// The bitness (32 or 64) - affects which registers are valid.
-    bitness: u32,
 }
 
 impl RegisterState {
     /// Creates a new register state with all registers undefined.
-    fn new(bitness: u32) -> Self {
+    fn new() -> Self {
         Self {
             registers: [None; MAX_REGISTERS],
-            bitness,
         }
     }
 
@@ -130,65 +130,12 @@ impl RegisterState {
             *slot = Some(var);
         }
     }
-
-    /// Returns an iterator over all defined registers and their SSA variables.
-    fn defined_registers(&self) -> impl Iterator<Item = (usize, SsaVarId)> + '_ {
-        self.registers
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, var)| var.map(|v| (idx, v)))
-    }
-
-    /// Returns the number of valid registers for this bitness.
-    fn register_count(&self) -> usize {
-        if self.bitness == 64 {
-            16
-        } else {
-            8
-        }
-    }
-}
-
-/// Tracks phi nodes needed at each block for each register.
-#[derive(Debug, Default)]
-struct PhiPlacement {
-    /// Maps block index → register index → phi node result variable.
-    phis: FxHashMap<usize, FxHashMap<usize, SsaVarId>>,
-}
-
-impl PhiPlacement {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    /// Returns the phi variable for a register at a block, if one exists.
-    fn get(&self, block: usize, reg_idx: usize) -> Option<SsaVarId> {
-        self.phis.get(&block).and_then(|m| m.get(&reg_idx).copied())
-    }
-
-    /// Sets the phi variable for a register at a block.
-    fn set(&mut self, block: usize, reg_idx: usize, var: SsaVarId) {
-        self.phis.entry(block).or_default().insert(reg_idx, var);
-    }
-
-    /// Returns true if a phi exists for the given block and register.
-    fn has(&self, block: usize, reg_idx: usize) -> bool {
-        self.phis
-            .get(&block)
-            .is_some_and(|m| m.contains_key(&reg_idx))
-    }
 }
 
 /// Translates an x86 function to SSA form.
 pub struct X86ToSsaTranslator<'a> {
     /// The x86 function to translate.
     func: &'a X86Function,
-    /// Register state at the end of each block (for computing phi operands).
-    block_exit_states: Vec<RegisterState>,
-    /// Phi placement information.
-    phi_placement: PhiPlacement,
-    /// Blocks that define each register (for phi placement).
-    reg_def_blocks: Vec<FxHashSet<usize>>,
     /// SSA variables created during translation.
     variables: Vec<SsaVariable>,
     /// Zero constant variable (lazily created).
@@ -199,12 +146,8 @@ impl<'a> X86ToSsaTranslator<'a> {
     /// Creates a new translator for the given x86 function.
     #[must_use]
     pub fn new(func: &'a X86Function) -> Self {
-        let block_count = func.block_count();
         Self {
             func,
-            block_exit_states: vec![RegisterState::new(func.bitness); block_count],
-            phi_placement: PhiPlacement::new(),
-            reg_def_blocks: vec![FxHashSet::default(); MAX_REGISTERS],
             variables: Vec::new(),
             zero_const: None,
         }
@@ -221,18 +164,19 @@ impl<'a> X86ToSsaTranslator<'a> {
     ///
     /// Returns an error if:
     /// - The function is empty
-    /// - The CFG is irreducible
     /// - An unsupported instruction is encountered
     /// - A flag pattern cannot be translated
+    /// - A register is read on some path before anything writes it
     pub fn translate(mut self) -> Result<SsaFunction> {
         if self.func.block_count() == 0 {
             return Err(Error::X86Error("Empty function".to_string()));
         }
 
-        // Translation allocates per-block register state and runs a worklist per register, so
-        // cost grows with block count — and block count comes from decoding a region derived
-        // from attacker-controlled file headers. The decoder's instruction budget bounds this
-        // indirectly; this is the direct statement of the limit.
+        // Translation allocates per-block register state, so cost grows with
+        // block count - and block count comes from decoding a region derived
+        // from attacker-controlled file headers. The decoder's instruction
+        // budget bounds this indirectly; this is the direct statement of the
+        // limit.
         if self.func.block_count() > MAX_TRANSLATABLE_BLOCKS {
             return Err(Error::X86Error(format!(
                 "x86 function has {} blocks, exceeding the {} block translation limit",
@@ -241,25 +185,26 @@ impl<'a> X86ToSsaTranslator<'a> {
             )));
         }
 
-        // Step 1: Analyze which blocks define which registers
-        self.analyze_definitions();
+        let block_count = self.func.block_count();
+        let mut record = BoundaryRecorder::<usize>::new(block_count);
+        // The first pop loads the argument.
+        let arg_var = self.create_variable(
+            VariableOrigin::Argument(0),
+            DefSite::entry(),
+            self.func.bitness,
+        );
+        let mut ssa_blocks = Vec::with_capacity(block_count);
+        for block_idx in 0..block_count {
+            ssa_blocks.push(self.translate_block(block_idx, arg_var, &mut record)?);
+        }
 
-        // Step 2: Place phi nodes using dominance frontiers
-        self.place_phi_nodes()?;
-
-        // Step 3: Translate blocks in dominator tree order
-        let ssa_blocks = self.translate_blocks()?;
-
-        // Step 4: Build the SSA function
         // DynCipher functions take one argument (the input value)
         let mut ssa_func = SsaFunction::new(1, 0);
-
-        // Add blocks
         for block in ssa_blocks {
             ssa_func.add_block(block);
         }
-
-        // Transfer variables — they already have dense IDs from our local allocator
+        // The variables already have dense ids from this translator's own
+        // allocator, which the blocks above name.
         for var in &self.variables {
             ssa_func.create_variable(
                 var.origin(),
@@ -269,150 +214,110 @@ impl<'a> X86ToSsaTranslator<'a> {
             );
         }
 
+        let word = if self.func.bitness == 64 {
+            SsaType::I64
+        } else {
+            SsaType::I32
+        };
+        let recorded = record.construct(&mut ssa_func, |_| word.clone());
+        let constructed = &recorded.construction;
+        // What a register holds when the function is entered: a placeholder
+        // that became its register's entry value, or one construction minted
+        // for a path no write reaches. These stubs are entered with nothing in
+        // their registers, so any of them the code uses is a read of nothing.
+        let mut entry_values: BTreeMap<SsaVarId, usize> = record
+            .reads()
+            .iter()
+            .filter(|read| !constructed.replacements.contains_key(&read.var))
+            .map(|read| (read.var, read.key))
+            .collect();
+        for (group, value) in &constructed.minted_entry_values {
+            if let Some(key) = recorded.key(*group) {
+                entry_values.insert(*value, key);
+            }
+        }
+        if let Some(register) = Self::used_entry_register(&ssa_func, &entry_values) {
+            return Err(Error::X86Error(format!(
+                "Register index {register} is read before anything writes it"
+            )));
+        }
+
+        // The finishing sequence, from the crate that owns it: stamp
+        // instruction identities, refresh definition sites, prune what control
+        // cannot reach, rebuild the use index, and drop the placeholders no
+        // read needed. The use index matters most - a function handed on with
+        // every use list empty tells a dead-code pass that nobody reads a live
+        // definition.
+        let options = SsaConstructOptions::default().verified_at(VerifyLevel::Standard);
+        let report = ssa_func
+            .finish_construction(&options)
+            .map_err(|e| Error::SsaError(e.to_string()))?;
+
+        // Reported rather than refused. A finding means this translation is
+        // wrong, but the caller's fallback for a refusal is to keep the
+        // original native stub, which is not better.
+        for finding in &report.findings {
+            log::warn!("x86 translation produced invalid SSA: {finding:?}");
+        }
+
         Ok(ssa_func)
     }
 
-    /// Analyzes which blocks define which registers.
-    fn analyze_definitions(&mut self) {
-        for node_id in self.func.node_ids() {
-            let block_idx = node_id.index();
-            if let Some(block) = self.func.block(block_idx) {
-                for instr in &block.instructions {
-                    if let Some(reg_idx) = get_defined_register(&instr.instruction) {
-                        if let Some(set) = self.reg_def_blocks.get_mut(reg_idx) {
-                            set.insert(block_idx);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// Places phi nodes at dominance frontiers.
-    fn place_phi_nodes(&mut self) -> Result<()> {
-        let doms = self.func.dominators();
-        let block_count = self.func.block_count();
-        let bitness = self.func.bitness;
-        let register_count = self
-            .block_exit_states
-            .first()
-            .ok_or_else(|| Error::SsaError("place_phi_nodes: block_exit_states is empty".into()))?
-            .register_count();
-
-        // Precompute the dominance frontier once (Cytron et al.), rather than rediscovering it
-        // by scanning every block for every register on every worklist pop.
-        //
-        // The previous shape was O(registers × blocks² × in-degree) with two `dominates` queries
-        // per candidate, over input whose block count is attacker-controlled — the x86 subsystem
-        // decodes regions derived from file headers. This is one pass over the join points.
-        //
-        // DF[runner] gains `b` for every runner on the idom chain from each predecessor of a
-        // join point `b` up to (but excluding) idom(b).
-        let mut frontier: Vec<FxHashSet<usize>> = vec![FxHashSet::default(); block_count];
-        for block_idx in 0..block_count {
-            let node = NodeId::new(block_idx);
-            let preds: Vec<NodeId> = self.func.predecessors(node).collect();
-            if preds.len() < 2 {
-                continue;
-            }
-
-            let idom_of_node = doms.immediate_dominator(node);
-            for pred in preds {
-                let mut runner = pred;
-                while Some(runner) != idom_of_node {
-                    let Some(slot) = frontier.get_mut(runner.index()) else {
-                        break;
-                    };
-                    slot.insert(block_idx);
-
-                    let Some(next) = doms.immediate_dominator(runner) else {
-                        break;
-                    };
-                    if next == runner {
-                        break;
-                    }
-                    runner = next;
-                }
-            }
-        }
-
-        // For each register that is defined somewhere
-        for reg_idx in 0..register_count {
-            // Clone the def_blocks to avoid borrow issues
-            let def_blocks: FxHashSet<usize> = self
-                .reg_def_blocks
-                .get(reg_idx)
-                .ok_or_else(|| {
-                    Error::SsaError("place_phi_nodes: reg_def_blocks index out of bounds".into())
-                })?
-                .clone();
-            if def_blocks.is_empty() {
-                continue;
-            }
-
-            // Worklist of blocks where we might need phi nodes
-            let mut worklist: Vec<usize> = def_blocks.iter().copied().collect();
-            let mut phi_blocks: FxHashSet<usize> = FxHashSet::default();
-
-            while let Some(def_block) = worklist.pop() {
-                let Some(df) = frontier.get(def_block) else {
+    /// The register whose entry value the function uses, if any: read by an
+    /// instruction, or merged by a phi whose result is used.
+    fn used_entry_register(
+        ssa: &SsaFunction,
+        entry_values: &BTreeMap<SsaVarId, usize>,
+    ) -> Option<usize> {
+        let mut used: BTreeSet<SsaVarId> = ssa
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+            .flat_map(SsaInstruction::uses)
+            .collect();
+        let mut pending: Vec<SsaVarId> = used.iter().copied().collect();
+        while let Some(value) = pending.pop() {
+            for phi in ssa.blocks().iter().flat_map(|block| block.phi_nodes()) {
+                if phi.result() != value {
                     continue;
-                };
-
-                for &block_idx in df {
-                    if phi_blocks.contains(&block_idx) {
-                        continue;
-                    }
-                    phi_blocks.insert(block_idx);
-
-                    // Create phi variable
-                    let phi_var =
-                        self.create_variable(VariableOrigin::Phi, DefSite::phi(block_idx), bitness);
-                    self.phi_placement.set(block_idx, reg_idx, phi_var);
-
-                    // Phi defines the register, so add to worklist
-                    if !def_blocks.contains(&block_idx) {
-                        worklist.push(block_idx);
+                }
+                for operand in phi.operands() {
+                    if used.insert(operand.value()) {
+                        pending.push(operand.value());
                     }
                 }
             }
         }
-        Ok(())
+        used.iter()
+            .find_map(|value| entry_values.get(value).copied())
     }
 
-    /// Translates all blocks to SSA form.
-    fn translate_blocks(&mut self) -> Result<Vec<SsaBlock>> {
-        let block_count = self.func.block_count();
-        let mut ssa_blocks = Vec::with_capacity(block_count);
-
-        // Initialize argument variable (first pop loads the argument)
-        let arg_var = self.create_variable(
-            VariableOrigin::Argument(0),
-            DefSite::entry(),
-            self.func.bitness,
-        );
-
-        // Process blocks in order
-        for block_idx in 0..block_count {
-            let ssa_block = self.translate_block(block_idx, arg_var)?;
-            ssa_blocks.push(ssa_block);
-        }
-
-        // Fill in phi operands now that we know exit states
-        self.fill_phi_operands(&mut ssa_blocks);
-
-        Ok(ssa_blocks)
-    }
-
-    /// Translates a single block to SSA form.
-    fn translate_block(&mut self, block_idx: usize, arg_var: SsaVarId) -> Result<SsaBlock> {
+    /// Translates one block, entered with a placeholder for every register.
+    ///
+    /// Each placeholder is recorded as a read the block makes before writing,
+    /// and what the block leaves in each register as its write; construction
+    /// answers the placeholders afterwards. A placeholder nothing reads costs a
+    /// variable that finishing drops.
+    fn translate_block(
+        &mut self,
+        block_idx: usize,
+        arg_var: SsaVarId,
+        record: &mut BoundaryRecorder<usize>,
+    ) -> Result<SsaBlock> {
         let mut ssa_block = SsaBlock::new(block_idx);
 
-        // Initialize register state from predecessors
-        let mut reg_state = self.compute_entry_state(block_idx);
+        let mut reg_state = RegisterState::new();
+        let mut entered = [None; MAX_REGISTERS];
+        for (index, slot) in entered.iter_mut().enumerate() {
+            let placeholder =
+                self.create_variable(VariableOrigin::Phi, DefSite::entry(), self.func.bitness);
+            record.record_read(block_idx, index, placeholder, true);
+            *slot = Some(placeholder);
+        }
+        reg_state.registers = entered;
 
-        // Initialize segment registers with constant 0 for the entry block
-        // (segment registers are constant selectors in user-mode code)
+        // Segment registers are constant selectors in user-mode code: the
+        // entry block defines them, and every other block reads that.
         if block_idx == 0 {
             let seg_regs = [
                 X86Register::Es,
@@ -423,38 +328,25 @@ impl<'a> X86ToSsaTranslator<'a> {
                 X86Register::Gs,
             ];
             for seg in seg_regs {
-                if reg_state.get(seg).is_none() {
-                    let seg_var = self.create_variable(
-                        VariableOrigin::Phi,
-                        DefSite::entry(),
-                        self.func.bitness,
-                    );
-                    reg_state.set(seg, seg_var);
-                }
-            }
-        }
-
-        // Add phi nodes for this block
-        if let Some(block_phis) = self.phi_placement.phis.get(&block_idx) {
-            for (&reg_idx, &phi_var) in block_phis {
-                let origin = VariableOrigin::Phi;
-                let phi = PhiNode::new(phi_var, origin);
-                ssa_block.add_phi(phi);
-
-                // Phi defines this register at block entry
-                if let Some(reg) = index_to_register(reg_idx, self.func.bitness) {
-                    reg_state.set(reg, phi_var);
-                }
+                let seg_var =
+                    self.create_variable(VariableOrigin::Phi, DefSite::entry(), self.func.bitness);
+                reg_state.set(seg, seg_var);
             }
         }
 
         // Track flags for CMP/TEST + Jcc fusion
         let mut flags = FlagState::new();
 
-        // Track if we've seen the first POP (which loads the argument)
-        let mut first_pop = true;
+        // The machine stack this block starts with. The entry block is entered
+        // with the caller's argument on it, which is the calling convention
+        // these stubs are built to; every other block starts with the stack
+        // this translation can see nothing on, and a pop there says so.
+        let mut stack: Vec<SsaVarId> = if block_idx == 0 {
+            vec![arg_var]
+        } else {
+            Vec::new()
+        };
 
-        // Translate each instruction
         let block = self
             .func
             .block(block_idx)
@@ -465,8 +357,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 decoded,
                 &mut reg_state,
                 &mut flags,
-                arg_var,
-                &mut first_pop,
+                &mut stack,
                 block_idx,
             )?;
 
@@ -475,95 +366,15 @@ impl<'a> X86ToSsaTranslator<'a> {
             }
         }
 
-        // Save exit state for phi operand computation
-        let slot = self.block_exit_states.get_mut(block_idx).ok_or_else(|| {
-            Error::SsaError(format!(
-                "translate_block: block_exit_states out of bounds at {block_idx}"
-            ))
-        })?;
-        *slot = reg_state;
+        for (index, (exit, entry)) in reg_state.registers.iter().zip(entered).enumerate() {
+            if let Some(exit) = *exit {
+                if Some(exit) != entry {
+                    record.write(block_idx, index, exit);
+                }
+            }
+        }
 
         Ok(ssa_block)
-    }
-
-    /// Computes the register state at block entry from phi nodes and predecessors.
-    fn compute_entry_state(&self, block_idx: usize) -> RegisterState {
-        let mut state = RegisterState::new(self.func.bitness);
-
-        // If this block has phi nodes, use them
-        if let Some(block_phis) = self.phi_placement.phis.get(&block_idx) {
-            for (&reg_idx, &phi_var) in block_phis {
-                if let Some(reg) = index_to_register(reg_idx, self.func.bitness) {
-                    state.set(reg, phi_var);
-                }
-            }
-        }
-
-        // For entry block, registers start undefined (will be set by instructions)
-        if block_idx == 0 {
-            return state;
-        }
-
-        // For non-entry blocks without phis, try to get value from single predecessor
-        let node = NodeId::new(block_idx);
-        let preds: Vec<_> = self.func.predecessors(node).collect();
-
-        if preds.len() == 1 {
-            if let Some(pred) = preds.first() {
-                let pred_idx = pred.index();
-                // Copy predecessor's exit state for registers without phi nodes
-                if let Some(pred_state) = self.block_exit_states.get(pred_idx) {
-                    for reg_idx in 0..state.register_count() {
-                        if !self.phi_placement.has(block_idx, reg_idx) {
-                            if let Some(Some(var)) = pred_state.registers.get(reg_idx) {
-                                if let Some(slot) = state.registers.get_mut(reg_idx) {
-                                    *slot = Some(*var);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        state
-    }
-
-    /// Fills in phi operands after all blocks have been translated.
-    fn fill_phi_operands(&self, ssa_blocks: &mut [SsaBlock]) {
-        for (block_idx, ssa_block) in ssa_blocks.iter_mut().enumerate() {
-            let node = NodeId::new(block_idx);
-
-            for phi in ssa_block.phi_nodes_mut() {
-                // Find which register this phi is for
-                let phi_var = phi.result();
-                let reg_idx = self.find_phi_register(block_idx, phi_var);
-
-                if let Some(reg_idx) = reg_idx {
-                    // Add operand from each predecessor
-                    for pred in self.func.predecessors(node) {
-                        let pred_idx = pred.index();
-                        if let Some(pred_state) = self.block_exit_states.get(pred_idx) {
-                            if let Some(Some(var)) = pred_state.registers.get(reg_idx) {
-                                phi.add_operand(PhiOperand::new(*var, pred_idx));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// Finds which register index a phi variable is for.
-    fn find_phi_register(&self, block_idx: usize, phi_var: SsaVarId) -> Option<usize> {
-        if let Some(block_phis) = self.phi_placement.phis.get(&block_idx) {
-            for (&reg_idx, &var) in block_phis {
-                if var == phi_var {
-                    return Some(reg_idx);
-                }
-            }
-        }
-        None
     }
 
     /// Translates a single x86 instruction to SSA operations.
@@ -573,8 +384,7 @@ impl<'a> X86ToSsaTranslator<'a> {
         decoded: &X86DecodedInstruction,
         reg_state: &mut RegisterState,
         flags: &mut FlagState,
-        arg_var: SsaVarId,
-        first_pop: &mut bool,
+        stack: &mut Vec<SsaVarId>,
         block_idx: usize,
     ) -> Result<Vec<SsaInstruction>> {
         let mut result = Vec::new();
@@ -603,20 +413,34 @@ impl<'a> X86ToSsaTranslator<'a> {
                 flags.clear();
             }
 
-            X86Instruction::Push { .. } => {
-                // In our simplified model, we don't track stack explicitly
-                // PUSH is used in prologues which we skip
+            X86Instruction::Push { src } => {
+                // The machine stack, as the values on it. A push is the only
+                // thing that puts one there and a pop is the only thing that
+                // takes one off, so the pair is what carries a value across a
+                // save-and-restore - the shape every one of these stubs uses
+                // around the computation it protects.
+                let src_var = self.get_operand_value(src, reg_state, &mut result, block_idx)?;
+                stack.push(src_var);
                 flags.clear();
             }
 
             X86Instruction::Pop { dst } => {
-                // First POP in DynCipher code loads the argument
-                if *first_pop {
-                    *first_pop = false;
-                    reg_state.set(*dst, arg_var);
+                // A pop takes back what the matching push left. The entry
+                // block's stack starts holding the caller's argument, which is
+                // how that argument reaches the first pop, so no rule about
+                // which pop is special is needed here.
+                if let Some(var) = stack.pop() {
+                    reg_state.set(*dst, var);
                 } else {
-                    // Subsequent POPs restore saved registers (prologue handling)
-                    // We create an undefined value
+                    // A pop with nothing pushed. The value comes from outside
+                    // what this translation follows: a push in another block,
+                    // or a frame the caller built. Named as the undefined value
+                    // it is, and reported, because the code that reads it is
+                    // then reading something this model never computed.
+                    log::warn!(
+                        "x86 translation: pop with an empty stack in block {block_idx}; \
+                         the value it reads is not modelled"
+                    );
                     let var = self.create_variable(
                         VariableOrigin::Phi,
                         DefSite::instruction(block_idx, result.len()),
@@ -2504,112 +2328,6 @@ impl<'a> X86ToSsaTranslator<'a> {
     }
 }
 
-/// Returns the register index defined by an instruction, if any.
-fn get_defined_register(instr: &X86Instruction) -> Option<usize> {
-    match instr {
-        X86Instruction::Mov { dst, .. }
-        | X86Instruction::Movzx { dst, .. }
-        | X86Instruction::Movsx { dst, .. }
-        | X86Instruction::Add { dst, .. }
-        | X86Instruction::Sub { dst, .. }
-        | X86Instruction::And { dst, .. }
-        | X86Instruction::Or { dst, .. }
-        | X86Instruction::Xor { dst, .. }
-        | X86Instruction::Not { dst }
-        | X86Instruction::Neg { dst }
-        | X86Instruction::Inc { dst }
-        | X86Instruction::Dec { dst }
-        | X86Instruction::Shl { dst, .. }
-        | X86Instruction::Shr { dst, .. }
-        | X86Instruction::Sar { dst, .. }
-        | X86Instruction::Rol { dst, .. }
-        | X86Instruction::Ror { dst, .. }
-        | X86Instruction::Adc { dst, .. }
-        | X86Instruction::Sbb { dst, .. }
-        | X86Instruction::Setcc { dst, .. }
-        | X86Instruction::Xadd { dst, .. } => {
-            if let X86Operand::Register(reg) = dst {
-                Some(reg.base_index() as usize)
-            } else {
-                None
-            }
-        }
-        X86Instruction::Lea { dst, .. }
-        | X86Instruction::Imul { dst, .. }
-        | X86Instruction::Bswap { dst }
-        | X86Instruction::Cmovcc { dst, .. }
-        | X86Instruction::Bsf { dst, .. }
-        | X86Instruction::Bsr { dst, .. } => Some(dst.base_index() as usize),
-        X86Instruction::Pop { dst } => Some(dst.base_index() as usize),
-        X86Instruction::Mul { .. }
-        | X86Instruction::Div { .. }
-        | X86Instruction::Idiv { .. }
-        | X86Instruction::Cdq => {
-            // These define EAX/EDX
-            Some(0) // EAX
-        }
-        X86Instruction::Xchg { dst, src } => {
-            // Both operands are modified
-            if let X86Operand::Register(reg) = dst {
-                Some(reg.base_index() as usize)
-            } else if let X86Operand::Register(reg) = src {
-                Some(reg.base_index() as usize)
-            } else {
-                None
-            }
-        }
-        _ => None,
-    }
-}
-
-/// Converts a register index back to a register.
-fn index_to_register(index: usize, bitness: u32) -> Option<X86Register> {
-    // Segment registers are the same regardless of bitness
-    match index {
-        16 => return Some(X86Register::Es),
-        17 => return Some(X86Register::Cs),
-        18 => return Some(X86Register::Ss),
-        19 => return Some(X86Register::Ds),
-        20 => return Some(X86Register::Fs),
-        21 => return Some(X86Register::Gs),
-        _ => {}
-    }
-
-    if bitness == 64 {
-        match index {
-            0 => Some(X86Register::Rax),
-            1 => Some(X86Register::Rcx),
-            2 => Some(X86Register::Rdx),
-            3 => Some(X86Register::Rbx),
-            4 => Some(X86Register::Rsp),
-            5 => Some(X86Register::Rbp),
-            6 => Some(X86Register::Rsi),
-            7 => Some(X86Register::Rdi),
-            8 => Some(X86Register::R8),
-            9 => Some(X86Register::R9),
-            10 => Some(X86Register::R10),
-            11 => Some(X86Register::R11),
-            12 => Some(X86Register::R12),
-            13 => Some(X86Register::R13),
-            14 => Some(X86Register::R14),
-            15 => Some(X86Register::R15),
-            _ => None,
-        }
-    } else {
-        match index {
-            0 => Some(X86Register::Eax),
-            1 => Some(X86Register::Ecx),
-            2 => Some(X86Register::Edx),
-            3 => Some(X86Register::Ebx),
-            4 => Some(X86Register::Esp),
-            5 => Some(X86Register::Ebp),
-            6 => Some(X86Register::Esi),
-            7 => Some(X86Register::Edi),
-            _ => None,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2886,9 +2604,62 @@ mod tests {
         assert!(has_branch);
     }
 
+    /// A register defined before a diamond and read after it, with neither
+    /// arm writing it, reads the value from before the diamond: no phi is
+    /// placed for it, and the join is not entered with nothing.
+    #[test]
+    fn a_register_written_before_a_diamond_is_read_after_it() {
+        let bytes = [
+            0x58, // pop eax
+            0x8b, 0xc8, // mov ecx, eax
+            0x83, 0xf8, 0x0a, // cmp eax, 10
+            0x7c, 0x05, // jl +5 (to the second arm)
+            0x83, 0xc0, 0x01, // add eax, 1
+            0xeb, 0x03, // jmp +3 (to the join)
+            0x83, 0xc0, 0x02, // add eax, 2
+            0x01, 0xc8, // add eax, ecx
+            0xc3, // ret
+        ];
+        let instructions = x86_decode_all(&bytes, 32, 0x1000).unwrap();
+        let cfg = X86Function::new(&instructions, 32, 0x1000);
+        let ssa = X86ToSsaTranslator::new(&cfg)
+            .translate()
+            .expect("the diamond translates");
+        assert_eq!(ssa.block_count(), 4);
+    }
+
+    /// A register read before anything writes it is refused, whether no path
+    /// writes it or only some do: these stubs are entered with nothing in
+    /// their registers.
+    #[test]
+    fn a_register_read_before_any_write_is_refused() {
+        let translate = |bytes: &[u8]| {
+            let instructions = x86_decode_all(bytes, 32, 0x1000).unwrap();
+            let cfg = X86Function::new(&instructions, 32, 0x1000);
+            X86ToSsaTranslator::new(&cfg).translate()
+        };
+        // add eax, 5; ret
+        assert!(
+            translate(&[0x83, 0xc0, 0x05, 0xc3]).is_err(),
+            "on every path"
+        );
+        let one_path = [
+            0x59, // pop ecx
+            0x85, 0xc9, // test ecx, ecx
+            0x74, 0x05, // jz +5 (to the join)
+            0xb8, 0x01, 0x00, 0x00, 0x00, // mov eax, 1
+            0x83, 0xc0, 0x02, // add eax, 2
+            0xc3, // ret
+        ];
+        assert!(
+            translate(&one_path).is_err(),
+            "on the path that skips the write"
+        );
+    }
+
     #[test]
     fn test_register_state() {
-        let mut state = RegisterState::new(32);
+        let mut state = RegisterState::new();
 
         let v1 = SsaVarId::from_index(0);
         state.set(X86Register::Eax, v1);

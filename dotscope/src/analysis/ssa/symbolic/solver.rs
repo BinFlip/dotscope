@@ -515,8 +515,6 @@ impl Z3Solver {
                     // Rotate operations.
                     SymbolicOp::Rol => left_z3.bvrotl(&right_z3),
                     SymbolicOp::Ror => left_z3.bvrotr(&right_z3),
-                    // Rotate-through-carry have no direct bitvector mapping.
-                    SymbolicOp::Rcl | SymbolicOp::Rcr => left_z3,
                     // Unary ops shouldn't appear in binary context.
                     SymbolicOp::Neg
                     | SymbolicOp::Not

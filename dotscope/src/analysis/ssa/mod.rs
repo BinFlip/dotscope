@@ -58,7 +58,7 @@
 //! let cfg = ControlFlowGraph::from_basic_blocks(blocks)?;
 //!
 //! // Construct SSA form
-//! let ssa = SsaConverter::build(&cfg, num_args, num_locals, resolver)?;
+//! let ssa = SsaConverter::build(&cfg, num_args, num_locals, resolver, Vec::new())?;
 //!
 //! // Analyze phi nodes at merge points
 //! for block in ssa.blocks() {
@@ -80,6 +80,7 @@ mod builder;
 mod converter;
 mod decompose;
 mod exception;
+mod facts;
 mod function;
 mod ops;
 mod resolver;
@@ -94,28 +95,32 @@ mod value;
 // the `pub use` block below.
 
 // `SsaFunction`/`ReturnInfo`/`MethodPurity` live in `analyssa::ir::function`.
-pub use analyssa::ir::function::MethodPurity;
-pub(crate) use builder::conv_op_for_target;
+pub use analyssa::ir::{
+    function::{AddressTakenSlots, MethodPurity},
+    instruction::InstrId,
+};
 pub use builder::SsaFunctionBuilder;
 pub use converter::SsaConverter;
 pub use exception::{
     BlockRange, ClauseLayout, ClausePart, ExceptionBlocks, ExceptionTableError, HandlerKind,
     LaidOutHandler, SsaExceptionHandler, SsaExceptionHandlerCilExt,
 };
+pub use facts::CilVariableFacts;
 pub use function::{SsaFunctionCilExt, SsaFunctionSemanticsExt};
-pub use ops::{BinaryOpKind, BreakpointOp, CmpKind, SsaOp, SsaOpCilExt, UnaryOpKind};
+pub use ops::{
+    BinaryOpKind, BreakpointOp, CmpKind, RuntimeValueKind, SsaOp, SsaOpCilExt, UnaryOpKind,
+};
 /// CIL-defaulted alias of [`analyssa::ir::function::SsaFunction`].
 pub type SsaFunction<T = CilTarget> = analyssa::ir::function::SsaFunction<T>;
 /// CIL-defaulted alias of [`analyssa::ir::function::ReturnInfo`].
 pub type ReturnInfo<T = CilTarget> = analyssa::ir::function::ReturnInfo<T>;
-#[allow(unused_imports)]
-pub use analyssa::analysis::consts::evaluate_const_op;
 pub use analyssa::{
     analysis::{
         address,
+        consts::evaluate_const_op,
         evaluator::ControlFlow,
         memory::{AliasResult, ArrayIndex, IndirectLocation, MemoryDefSite, MemoryPhiOperand},
-        phis::{place_pruned_phis, PhiAnalyzer, PhiPlacementConfig},
+        phis::PhiAnalyzer,
         pointsto,
     },
     ir::{
@@ -125,7 +130,7 @@ pub use analyssa::{
     Target,
 };
 pub use resolver::ValueResolver;
-pub use stack::{SimulationResult, StackSimulator, StackSlot, StackSlotSource};
+pub use stack::{SimulationResult, StackSimulator};
 #[cfg(feature = "z3")]
 pub use symbolic::Z3Solver;
 pub use symbolic::{SymbolicEvaluator, SymbolicExpr, SymbolicOp};
@@ -144,15 +149,6 @@ pub type SsaInstruction<T = CilTarget> = analyssa::ir::instruction::SsaInstructi
 pub type SsaVariable<T = CilTarget> = analyssa::ir::variable::SsaVariable<T>;
 /// CIL-defaulted alias of [`analyssa::analysis::SsaCfg`].
 pub type SsaCfg<'a, T = CilTarget> = analyssa::analysis::cfg::SsaCfg<'a, T>;
-/// CIL-defaulted alias of [`analyssa::analysis::exceptions::EhCfg`].
-///
-/// The exception-aware flow view. `SsaCfg` carries only the edges a terminator
-/// takes, so a handler block is unreachable in it; this is the view rooted at
-/// handler and filter entries as well as the function entry, and the only one
-/// that implements `RootedGraph` and `DataFlowCfg`. Any solver-based or
-/// dominance-rooted analysis over CIL — which routinely carries protected
-/// regions — belongs here rather than on `SsaCfg`.
-pub type EhCfg<'a, T = CilTarget> = analyssa::analysis::exceptions::EhCfg<'a, T>;
 /// CIL-defaulted alias of [`analyssa::analysis::consts::ConstEvaluator`].
 pub type ConstEvaluator<'a, T = CilTarget> = analyssa::analysis::consts::ConstEvaluator<'a, T>;
 /// CIL-defaulted alias of [`analyssa::analysis::evaluator::SsaEvaluator`].
@@ -190,8 +186,9 @@ pub type MemorySsa<T = CilTarget> = analyssa::analysis::memory::MemorySsa<T>;
 pub type MemorySsaStats = analyssa::analysis::memory::MemorySsaStats;
 /// CIL-defaulted alias of [`analyssa::analysis::verifier::SsaVerifier`].
 pub type SsaVerifier<'a, T = CilTarget> = analyssa::analysis::verifier::SsaVerifier<'a, T>;
-
-/// Liveness analysis lifted to analyssa. Shim kept for back-compat.
-pub mod liveness {
-    pub use analyssa::analysis::liveness::*;
-}
+/// Re-export of [`analyssa::analysis::verifier::VerifierError`]: what the
+/// verifier reports, and what a caller checking its own lift reads.
+pub use analyssa::analysis::verifier::VerifierError;
+/// Re-export of [`analyssa::analysis::verifier::VerifyLevel`], which the
+/// verifier takes and which has nothing CIL-specific about it.
+pub use analyssa::analysis::verifier::VerifyLevel;

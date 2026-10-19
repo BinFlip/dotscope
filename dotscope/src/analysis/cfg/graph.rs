@@ -493,7 +493,8 @@ impl<'a> ControlFlowGraph<'a> {
     /// ```
     #[must_use]
     pub fn loop_forest(&self) -> &LoopForest {
-        self.loop_forest.get_or_init(|| self.detect_loop_forest())
+        self.loop_forest
+            .get_or_init(|| detect_loops(&self.graph, self.dominators()))
     }
 
     /// Returns a slice of all loops in the CFG.
@@ -506,14 +507,6 @@ impl<'a> ControlFlowGraph<'a> {
     #[must_use]
     pub fn loops(&self) -> &[LoopInfo] {
         self.loop_forest().loops()
-    }
-
-    /// Detects all loops and builds a comprehensive [`LoopForest`].
-    ///
-    /// Uses the shared [`detect_loops`] function which implements dominance-based
-    /// back edge detection and computes preheaders, exits, loop types, and nesting.
-    fn detect_loop_forest(&self) -> LoopForest {
-        detect_loops(&self.graph, self.dominators())
     }
 
     /// Returns true if this CFG contains any loops.

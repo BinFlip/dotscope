@@ -71,6 +71,7 @@ mod tests {
             num_args,
             num_locals,
             &TestTypeProvider::new(num_args, num_locals),
+            Vec::new(),
         )
         .expect("SSA construction failed");
         (ssa, cfg)

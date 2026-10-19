@@ -35,8 +35,6 @@ use crate::{
     },
     metadata::typesystem::PointerSize,
 };
-#[cfg(feature = "compiler")]
-use crate::{compiler::CompilerContext, metadata::token::Token};
 
 /// Demand-driven constant resolver composing multiple analysis components.
 ///
@@ -131,26 +129,36 @@ impl<'a, T: Target> ValueResolver<'a, T> {
     }
 }
 
-#[cfg(feature = "compiler")]
-impl<'a> ValueResolver<'a, CilTarget> {
-    /// Bulk-injects all known values for a method from the [`CompilerContext`].
+impl ValueResolver<'_, CilTarget> {
+    /// Loads what earlier passes proved about this function's values into the
+    /// evaluator.
     ///
-    /// This loads values discovered by earlier passes (e.g., constant propagation)
-    /// into the inner [`ConstEvaluator`](crate::analysis::ssa::ConstEvaluator) so they're
-    /// available during resolution.
-    /// CIL-specific because `CompilerContext` stores `ConstValue<CilTarget>` values.
-    pub fn load_known_values(&mut self, ctx: &CompilerContext, method_token: Token) {
-        ctx.for_each_known_value(method_token, |var, val| {
-            self.evaluator.set_known(var, val.clone());
-        });
+    /// Read from the values themselves - constant propagation and the
+    /// decryptors record what they proved on the variable - so this needs
+    /// neither a method token nor a context. It cannot be asked about a
+    /// function other than the one being resolved, which is the mistake the
+    /// token made possible: the context's copy of a method is not the copy a
+    /// pass is transforming.
+    pub fn load_known_values(&mut self) {
+        let known: Vec<(SsaVarId, ConstValue)> = self
+            .ssa
+            .variables()
+            .iter()
+            .filter_map(|variable| {
+                variable
+                    .facts()
+                    .known_value()
+                    .map(|value| (variable.id(), value.clone()))
+            })
+            .collect();
+        for (var, value) in known {
+            self.evaluator.set_known(var, value);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "compiler")]
-    use std::sync::Arc;
-
     use super::*;
     use crate::{
         analysis::ssa::{
@@ -159,8 +167,6 @@ mod tests {
         },
         metadata::typesystem::PointerSize,
     };
-    #[cfg(feature = "compiler")]
-    use crate::{analysis::CallGraph, compiler::CompilerContext, metadata::token::Token};
 
     #[test]
     fn test_resolve_const() {
@@ -358,20 +364,20 @@ mod tests {
         assert_eq!(resolver.resolve(var_id), Some(ConstValue::I32(999)));
     }
 
+    /// What an earlier pass proved is read from the values it proved it about.
     #[test]
-    #[cfg(feature = "compiler")]
     fn test_load_known_values() {
-        let ssa: SsaFunction = SsaFunction::new(0, 0);
-        let ctx = CompilerContext::new(Arc::new(CallGraph::new()));
-        let method = Token::new(0x06000001);
-
-        let var1 = SsaVarId::from_index(0);
-        let var2 = SsaVarId::from_index(1);
-        ctx.add_known_value(method, var1, ConstValue::I32(10));
-        ctx.add_known_value(method, var2, ConstValue::I32(20));
+        let mut ssa: SsaFunction = SsaFunction::new(0, 2);
+        let var1 = ssa.create_variable(VariableOrigin::Local(0), 0, DefSite::entry(), SsaType::I32);
+        let var2 = ssa.create_variable(VariableOrigin::Local(1), 0, DefSite::entry(), SsaType::I32);
+        for (var, value) in [(var1, 10), (var2, 20)] {
+            if let Some(variable) = ssa.variable_mut(var) {
+                variable.facts_mut().set_known_value(ConstValue::I32(value));
+            }
+        }
 
         let mut resolver = ValueResolver::new(&ssa, PointerSize::Bit64);
-        resolver.load_known_values(&ctx, method);
+        resolver.load_known_values();
 
         assert_eq!(resolver.resolve(var1), Some(ConstValue::I32(10)));
         assert_eq!(resolver.resolve(var2), Some(ConstValue::I32(20)));

@@ -84,7 +84,7 @@ pub fn find_token_dependencies(
 }
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use rustc_hash::FxHashSet;
 
     use super::*;
     use crate::analysis::{
@@ -311,7 +311,7 @@ mod tests {
         let (ssa, v0, v1, v2) = create_phi_ssa();
 
         // Only allow propagation from predecessor 0
-        let mut preds = HashSet::new();
+        let mut preds = FxHashSet::default();
         preds.insert(0);
 
         let config = TaintConfig {

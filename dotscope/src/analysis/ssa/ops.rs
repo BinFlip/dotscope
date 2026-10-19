@@ -8,7 +8,7 @@ use analyssa::ir::ops::SsaOp as AnalyssaSsaOp;
 // `BinaryOpInfo`/`UnaryOpInfo` aren't re-exported (the original dotscope
 // `ops.rs` didn't surface them either; direct callers go through
 // `analyssa::ir::ops` if they need them).
-pub use analyssa::ir::ops::{BinaryOpKind, BreakpointOp, CmpKind, UnaryOpKind};
+pub use analyssa::ir::ops::{BinaryOpKind, BreakpointOp, CmpKind, RuntimeValueKind, UnaryOpKind};
 
 use crate::{analysis::ssa::target::CilTarget, metadata::token::Token};
 
@@ -99,6 +99,7 @@ mod tests {
             dest: Some(call_dest),
             method: MethodRef::new(Token::new(0x06000001)),
             args: vec![],
+            effects: None,
         };
         assert_eq!(op.dest(), Some(call_dest));
 
@@ -106,6 +107,7 @@ mod tests {
             dest: None,
             method: MethodRef::new(Token::new(0x06000001)),
             args: vec![],
+            effects: None,
         };
         assert_eq!(op.dest(), None);
     }
@@ -201,7 +203,8 @@ mod tests {
         assert!(!SsaOp::Call {
             dest: None,
             method: MethodRef::new(Token::new(0x06000001)),
-            args: vec![]
+            args: vec![],
+            effects: None
         }
         .is_pure());
     }

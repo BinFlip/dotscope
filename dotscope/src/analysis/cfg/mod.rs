@@ -14,7 +14,7 @@
 //! - [`ControlFlowGraph`] - The main CFG structure wrapping basic blocks
 //! - [`CfgEdge`] / [`CfgEdgeKind`] - Edges and their control-flow classification
 //! - [`LoopAnalyzer`] / [`LoopForest`] / [`LoopInfo`] - Loop detection (re-exported
-//!   from `analyssa::analysis::loops` / `analyssa::analysis::loop_analyzer`)
+//!   from `analyssa::analysis::loops` / `analyssa::analysis::loopanalyzer`)
 //! - [`SemanticAnalyzer`] / [`BlockSemantics`] / [`LoopSemantics`] - Higher-level
 //!   block- and loop-role classification used by deobfuscation passes
 //!
@@ -90,7 +90,7 @@ mod graph;
 mod semantics;
 
 #[cfg(feature = "compiler")]
-pub use analyssa::analysis::loop_analyzer::SsaLoopAnalysis;
+pub use analyssa::analysis::loopanalyzer::SsaLoopAnalysis;
 #[cfg(feature = "x86")]
 pub use analyssa::analysis::loops::has_back_edges;
 pub use analyssa::analysis::loops::{detect_loops, InductionVar, LoopForest, LoopInfo};
@@ -102,5 +102,5 @@ pub use semantics::{BlockSemantics, LoopSemantics, SemanticAnalyzer};
 // callers reach them through these aliases / re-exports.
 use crate::analysis::ssa::CilTarget;
 
-/// CIL-defaulted alias of [`analyssa::analysis::loop_analyzer::LoopAnalyzer`].
-pub type LoopAnalyzer<'a, T = CilTarget> = analyssa::analysis::loop_analyzer::LoopAnalyzer<'a, T>;
+/// CIL-defaulted alias of [`analyssa::analysis::loopanalyzer::LoopAnalyzer`].
+pub type LoopAnalyzer<'a, T = CilTarget> = analyssa::analysis::loopanalyzer::LoopAnalyzer<'a, T>;

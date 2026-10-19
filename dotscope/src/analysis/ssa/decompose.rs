@@ -28,7 +28,6 @@
 
 use crate::{
     analysis::ssa::{
-        conv_op_for_target,
         ops::{BreakpointOp, CmpKind, SsaOp},
         types::{FieldRef, MethodRef, SigRef, SsaType, TypeRef},
         value::ConstValue,
@@ -368,137 +367,137 @@ fn decompose_standard_instruction(
         }),
         0x67 => unary_op(uses, def, |dest, operand| {
             // conv.i1
-            conv_op_for_target(dest, operand, SsaType::I8, false, false)
+            SsaOp::conversion_between(dest, operand, SsaType::I8, None, false, false)
         }),
         0x68 => unary_op(uses, def, |dest, operand| {
             // conv.i2
-            conv_op_for_target(dest, operand, SsaType::I16, false, false)
+            SsaOp::conversion_between(dest, operand, SsaType::I16, None, false, false)
         }),
         0x69 => unary_op(uses, def, |dest, operand| {
             // conv.i4
-            conv_op_for_target(dest, operand, SsaType::I32, false, false)
+            SsaOp::conversion_between(dest, operand, SsaType::I32, None, false, false)
         }),
         0x6A => unary_op(uses, def, |dest, operand| {
             // conv.i8
-            conv_op_for_target(dest, operand, SsaType::I64, false, false)
+            SsaOp::conversion_between(dest, operand, SsaType::I64, None, false, false)
         }),
         0x6B => unary_op(uses, def, |dest, operand| {
             // conv.r4
-            conv_op_for_target(dest, operand, SsaType::F32, false, false)
+            SsaOp::conversion_between(dest, operand, SsaType::F32, None, false, false)
         }),
         0x6C => unary_op(uses, def, |dest, operand| {
             // conv.r8
-            conv_op_for_target(dest, operand, SsaType::F64, false, false)
+            SsaOp::conversion_between(dest, operand, SsaType::F64, None, false, false)
         }),
         0xD1 => unary_op(uses, def, |dest, operand| {
             // conv.u2
-            conv_op_for_target(dest, operand, SsaType::U16, true, false)
+            SsaOp::conversion_between(dest, operand, SsaType::U16, None, true, false)
         }),
         0xD2 => unary_op(uses, def, |dest, operand| {
             // conv.u1
-            conv_op_for_target(dest, operand, SsaType::U8, true, false)
+            SsaOp::conversion_between(dest, operand, SsaType::U8, None, true, false)
         }),
         0x6D => unary_op(uses, def, |dest, operand| {
             // conv.u4
-            conv_op_for_target(dest, operand, SsaType::U32, true, false)
+            SsaOp::conversion_between(dest, operand, SsaType::U32, None, true, false)
         }),
         0x6E => unary_op(uses, def, |dest, operand| {
             // conv.u8
-            conv_op_for_target(dest, operand, SsaType::U64, true, false)
+            SsaOp::conversion_between(dest, operand, SsaType::U64, None, true, false)
         }),
         0xD3 => unary_op(uses, def, |dest, operand| {
             // conv.i
-            conv_op_for_target(dest, operand, SsaType::NativeInt, false, false)
+            SsaOp::conversion_between(dest, operand, SsaType::NativeInt, None, false, false)
         }),
         0xE0 => unary_op(uses, def, |dest, operand| {
             // conv.u
-            conv_op_for_target(dest, operand, SsaType::NativeUInt, true, false)
+            SsaOp::conversion_between(dest, operand, SsaType::NativeUInt, None, true, false)
         }),
         0x76 => unary_op(uses, def, |dest, operand| {
             // conv.r.un
-            conv_op_for_target(dest, operand, SsaType::F64, true, false)
+            SsaOp::conversion_between(dest, operand, SsaType::F64, None, true, false)
         }),
 
         // Overflow-checking conversions
         0xB3 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.i1
-            conv_op_for_target(dest, operand, SsaType::I8, false, true)
+            SsaOp::conversion_between(dest, operand, SsaType::I8, None, false, true)
         }),
         0x82 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.i1.un
-            conv_op_for_target(dest, operand, SsaType::I8, true, true)
+            SsaOp::conversion_between(dest, operand, SsaType::I8, None, true, true)
         }),
         0xB5 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.i2
-            conv_op_for_target(dest, operand, SsaType::I16, false, true)
+            SsaOp::conversion_between(dest, operand, SsaType::I16, None, false, true)
         }),
         0x83 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.i2.un
-            conv_op_for_target(dest, operand, SsaType::I16, true, true)
+            SsaOp::conversion_between(dest, operand, SsaType::I16, None, true, true)
         }),
         0xB7 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.i4
-            conv_op_for_target(dest, operand, SsaType::I32, false, true)
+            SsaOp::conversion_between(dest, operand, SsaType::I32, None, false, true)
         }),
         0x84 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.i4.un
-            conv_op_for_target(dest, operand, SsaType::I32, true, true)
+            SsaOp::conversion_between(dest, operand, SsaType::I32, None, true, true)
         }),
         0xB9 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.i8
-            conv_op_for_target(dest, operand, SsaType::I64, false, true)
+            SsaOp::conversion_between(dest, operand, SsaType::I64, None, false, true)
         }),
         0x85 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.i8.un
-            conv_op_for_target(dest, operand, SsaType::I64, true, true)
+            SsaOp::conversion_between(dest, operand, SsaType::I64, None, true, true)
         }),
         0xD4 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.i
-            conv_op_for_target(dest, operand, SsaType::NativeInt, false, true)
+            SsaOp::conversion_between(dest, operand, SsaType::NativeInt, None, false, true)
         }),
         0x8A => unary_op(uses, def, |dest, operand| {
             // conv.ovf.i.un
-            conv_op_for_target(dest, operand, SsaType::NativeInt, true, true)
+            SsaOp::conversion_between(dest, operand, SsaType::NativeInt, None, true, true)
         }),
         0xB4 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.u1
-            conv_op_for_target(dest, operand, SsaType::U8, false, true)
+            SsaOp::conversion_between(dest, operand, SsaType::U8, None, false, true)
         }),
         0x86 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.u1.un
-            conv_op_for_target(dest, operand, SsaType::U8, true, true)
+            SsaOp::conversion_between(dest, operand, SsaType::U8, None, true, true)
         }),
         0xB6 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.u2
-            conv_op_for_target(dest, operand, SsaType::U16, false, true)
+            SsaOp::conversion_between(dest, operand, SsaType::U16, None, false, true)
         }),
         0x87 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.u2.un
-            conv_op_for_target(dest, operand, SsaType::U16, true, true)
+            SsaOp::conversion_between(dest, operand, SsaType::U16, None, true, true)
         }),
         0xB8 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.u4
-            conv_op_for_target(dest, operand, SsaType::U32, false, true)
+            SsaOp::conversion_between(dest, operand, SsaType::U32, None, false, true)
         }),
         0x88 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.u4.un
-            conv_op_for_target(dest, operand, SsaType::U32, true, true)
+            SsaOp::conversion_between(dest, operand, SsaType::U32, None, true, true)
         }),
         0xBA => unary_op(uses, def, |dest, operand| {
             // conv.ovf.u8
-            conv_op_for_target(dest, operand, SsaType::U64, false, true)
+            SsaOp::conversion_between(dest, operand, SsaType::U64, None, false, true)
         }),
         0x89 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.u8.un
-            conv_op_for_target(dest, operand, SsaType::U64, true, true)
+            SsaOp::conversion_between(dest, operand, SsaType::U64, None, true, true)
         }),
         0xD5 => unary_op(uses, def, |dest, operand| {
             // conv.ovf.u
-            conv_op_for_target(dest, operand, SsaType::NativeUInt, false, true)
+            SsaOp::conversion_between(dest, operand, SsaType::NativeUInt, None, false, true)
         }),
         0x8B => unary_op(uses, def, |dest, operand| {
             // conv.ovf.u.un
-            conv_op_for_target(dest, operand, SsaType::NativeUInt, true, true)
+            SsaOp::conversion_between(dest, operand, SsaType::NativeUInt, None, true, true)
         }),
         0x2A => Some(SsaOp::Return {
             // ret
@@ -612,9 +611,7 @@ fn decompose_standard_instruction(
             successors.first().map(|&target| SsaOp::Leave { target })
         }
 
-        // =====================================================================
         // Load/Store arguments and locals
-        // =====================================================================
         // ldarg and ldloc produce a LoadArg/LoadLocal op with the new stack
         // variable allocated by the simulator as dest. This makes them visible
         // to SSA analysis and enables correct data flow through rebuild_ssa.
@@ -680,9 +677,7 @@ fn decompose_standard_instruction(
             })
         }
 
-        // =====================================================================
         // Object operations
-        // =====================================================================
         0x6F => {
             // callvirt
             call_op(instr, uses, def, true)
@@ -709,6 +704,7 @@ fn decompose_standard_instruction(
                     fptr,
                     signature,
                     args,
+                    effects: None,
                 })
             } else {
                 None
@@ -814,9 +810,7 @@ fn decompose_standard_instruction(
             }
         }
 
-        // =====================================================================
         // Field operations
-        // =====================================================================
         0x7B => {
             // ldfld
             if let (Some(field), Some(&object), Some(dest)) =
@@ -887,9 +881,7 @@ fn decompose_standard_instruction(
             }
         }
 
-        // =====================================================================
         // Array operations
-        // =====================================================================
         0x8E => {
             // ldlen
             if let (Some(&array), Some(dest)) = (uses.first(), def) {
@@ -948,9 +940,7 @@ fn decompose_standard_instruction(
         0xA2 => stelem_typed(uses, SsaType::Object), // stelem.ref
         0x9B => stelem_typed(uses, SsaType::NativeInt), // stelem.i
 
-        // =====================================================================
         // Indirect access (ldind/stind)
-        // =====================================================================
         0x46 => ldind_typed(uses, def, SsaType::I8), // ldind.i1
         0x47 => ldind_typed(uses, def, SsaType::U8), // ldind.u1
         0x48 => ldind_typed(uses, def, SsaType::I16), // ldind.i2
@@ -972,9 +962,7 @@ fn decompose_standard_instruction(
         0x51 => stind_typed(uses, SsaType::Object), // stind.ref
         0xDF => stind_typed(uses, SsaType::NativeInt), // stind.i
 
-        // =====================================================================
         // Object memory operations
-        // =====================================================================
         0x71 => {
             // ldobj
             if let (Some(&src_addr), Some(dest)) = (uses.first(), def) {
@@ -1018,9 +1006,7 @@ fn decompose_standard_instruction(
             }
         }
 
-        // =====================================================================
         // Exception handling
-        // =====================================================================
         0x7A => {
             // throw
             uses.first().map(|&exception| SsaOp::Throw { exception })
@@ -1029,9 +1015,7 @@ fn decompose_standard_instruction(
         // endfinally is DC
         0xDC => Some(SsaOp::EndFinally), // endfinally
 
-        // =====================================================================
         // Misc
-        // =====================================================================
         0x00 => Some(SsaOp::Nop), // nop
         // CIL `break` is a debugger breakpoint, the same operation MIPS
         // spells `break`.
@@ -1062,6 +1046,36 @@ fn decompose_standard_instruction(
             }
         }
 
+        0xC2 => {
+            // refanyval
+            if let (Some(value_type), Some(&typed_ref), Some(dest)) =
+                (extract_type_token(&instr.operand), uses.first(), def)
+            {
+                Some(SsaOp::TypedRefValue {
+                    dest,
+                    typed_ref,
+                    value_type,
+                })
+            } else {
+                None
+            }
+        }
+
+        0xC6 => {
+            // mkrefany
+            if let (Some(value_type), Some(&address), Some(dest)) =
+                (extract_type_token(&instr.operand), uses.first(), def)
+            {
+                Some(SsaOp::MakeTypedRef {
+                    dest,
+                    address,
+                    value_type,
+                })
+            } else {
+                None
+            }
+        }
+
         // Default: unknown opcode
         _ => {
             return Err(Error::SsaError(format!(
@@ -1087,6 +1101,15 @@ fn decompose_fe_instruction(
 ) -> Result<SsaOp> {
     let result = match instr.opcode {
         // Comparison operations
+        0x00 => def.map(|dest| SsaOp::ArgList { dest }), // arglist
+        0x1D => {
+            // refanytype
+            if let (Some(&typed_ref), Some(dest)) = (uses.first(), def) {
+                Some(SsaOp::TypedRefType { dest, typed_ref })
+            } else {
+                None
+            }
+        }
         0x01 => binary_op(uses, def, |dest, left, right| SsaOp::Ceq {
             dest,
             left,
@@ -1358,12 +1381,14 @@ fn call_op(
                 dest: def,
                 method,
                 args: uses.to_vec(),
+                effects: None,
             }
         } else {
             SsaOp::Call {
                 dest: def,
                 method,
                 args: uses.to_vec(),
+                effects: None,
             }
         }
     })
@@ -1705,6 +1730,51 @@ mod tests {
         } else {
             panic!("Expected SsaOp::Ceq");
         }
+    }
+
+    /// The vararg handle and the three typed-reference operations decompose to
+    /// their own operations, with the type token, the value each takes, and
+    /// the value each defines; they used to be rejected as unknown opcodes.
+    #[test]
+    fn test_decompose_arglist_and_typed_references() {
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let token = Token::new(0x0100_0005);
+
+        let arglist = make_instruction(0x00, 0xFE, "arglist", Operand::None, 0, 1);
+        assert_eq!(
+            decompose_instruction(&arglist, &[], Some(v1), &[], None).unwrap(),
+            SsaOp::ArgList { dest: v1 }
+        );
+
+        let mkrefany = make_instruction(0xC6, 0, "mkrefany", Operand::Token(token), 1, 1);
+        assert_eq!(
+            decompose_instruction(&mkrefany, &[v0], Some(v1), &[], None).unwrap(),
+            SsaOp::MakeTypedRef {
+                dest: v1,
+                address: v0,
+                value_type: TypeRef::new(token),
+            }
+        );
+
+        let refanyval = make_instruction(0xC2, 0, "refanyval", Operand::Token(token), 1, 1);
+        assert_eq!(
+            decompose_instruction(&refanyval, &[v0], Some(v1), &[], None).unwrap(),
+            SsaOp::TypedRefValue {
+                dest: v1,
+                typed_ref: v0,
+                value_type: TypeRef::new(token),
+            }
+        );
+
+        let refanytype = make_instruction(0x1D, 0xFE, "refanytype", Operand::None, 1, 1);
+        assert_eq!(
+            decompose_instruction(&refanytype, &[v0], Some(v1), &[], None).unwrap(),
+            SsaOp::TypedRefType {
+                dest: v1,
+                typed_ref: v0,
+            }
+        );
     }
 
     #[test]

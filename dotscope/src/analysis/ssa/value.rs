@@ -774,8 +774,11 @@ mod tests {
         assert_eq!(ConstValue::U16(60000).as_i64(), Some(60000));
         assert_eq!(ConstValue::U32(4_000_000_000).as_i64(), Some(4_000_000_000));
 
-        // U64 is not included in as_i64
-        assert_eq!(ConstValue::U64(1_000_000).as_i64(), None);
+        // A `U64` answers when the value it holds is one an `i64` can hold:
+        // the question is what the value is, not which variant spells it. Only
+        // one too large to represent declines.
+        assert_eq!(ConstValue::U64(1_000_000).as_i64(), Some(1_000_000));
+        assert_eq!(ConstValue::U64(u64::MAX).as_i64(), None);
 
         // Bool values
         assert_eq!(ConstValue::True.as_i64(), Some(1));
@@ -815,15 +818,32 @@ mod tests {
 
     #[test]
     fn test_incompatible_type_arithmetic() {
-        // I32 + F32 returns None (incompatible)
+        // A width mismatch is what makes a fold impossible: an integer and a
+        // float have no common representation to add in.
         let i32_val = ConstValue::I32(10);
         let f32_val = ConstValue::F32(std::f32::consts::PI);
         assert!(i32_val.add(&f32_val, PointerSize::Bit64).is_none());
 
-        // U64 + I64 returns None (signed vs unsigned)
+        // Signedness is not such a mismatch. CIL has one 64-bit integer stack
+        // type and `add` on it does not read a sign, so the two spellings fold
+        // to the same bits - and refusing would leave a constant unfolded that
+        // the runtime folds anyway.
         let u64_val = ConstValue::U64(100);
         let i64_val = ConstValue::I64(200);
-        assert!(u64_val.add(&i64_val, PointerSize::Bit64).is_none());
+        assert!(u64_val.add(&i64_val, PointerSize::Bit64).is_some());
+
+        // A narrower integer against a wider one promotes to the wider, which
+        // is what the stack does: `add` on an int32 and an int64 is an int64
+        // add, and folding it any other way would disagree with the runtime.
+        let i32_narrow = ConstValue::I32(1);
+        assert_eq!(
+            i32_narrow.add(&i64_val, PointerSize::Bit64),
+            Some(ConstValue::I64(201))
+        );
+
+        // A float and an integer have no common representation, so that one
+        // genuinely declines - as the first case above shows.
+        assert!(f32_val.add(&i64_val, PointerSize::Bit64).is_none());
     }
 
     #[test]

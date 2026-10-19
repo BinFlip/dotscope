@@ -75,8 +75,9 @@ impl SsaExceptionHandlerCilExt for AnalyssaSsaExceptionHandler<CilTarget> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use analyssa::ir::HandlerKind;
+
+    use super::*;
 
     /// A method-body clause with the given flags and dual-purpose field.
     ///

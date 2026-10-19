@@ -14,6 +14,8 @@
 // `analyssa::target`.
 use std::fmt;
 
+#[cfg(feature = "compiler")]
+use analyssa::scheduling::DeobfuscationCapability;
 pub use analyssa::target::Target;
 use analyssa::{
     ir::{value::ConstValue, HandlerKind},
@@ -23,7 +25,10 @@ use analyssa::{
 #[cfg(feature = "compiler")]
 use crate::compiler::CilCapability;
 use crate::{
-    analysis::ssa::types::{FieldRef, MethodRef, SigRef, SsaType, TypeRef},
+    analysis::ssa::{
+        facts::CilVariableFacts,
+        types::{FieldRef, MethodRef, SigRef, SsaType, TypeRef},
+    },
     assembly::{FlowType, Instruction, InstructionCategory, Operand, StackBehavior},
     metadata::{
         method::{ExceptionHandlerFlags, ExceptionHandlerKind},
@@ -94,6 +99,9 @@ impl Target for CilTarget {
     type SigRef = SigRef;
     type SymbolRef = NoSymbol;
     type ExceptionKind = ExceptionHandlerFlags;
+    type VariableFacts = CilVariableFacts;
+    type InstructionFacts = ();
+    type FunctionFacts = ();
     type Type = SsaType;
     type OriginalInstruction = Instruction;
     type LocalSignature = SignatureLocalVariable;
@@ -101,6 +109,18 @@ impl Target for CilTarget {
     type Capability = CilCapability;
     #[cfg(not(feature = "compiler"))]
     type Capability = ();
+
+    /// This target's tag for a shared capability milestone.
+    ///
+    /// Every milestone in the shared vocabulary has a CIL spelling, so the
+    /// answer is always `Some`: the conversion is total and lives on
+    /// [`CilCapability`](crate::compiler::CilCapability). Without the
+    /// compiler feature there are no capabilities to name and nothing is
+    /// scheduled by them.
+    #[cfg(feature = "compiler")]
+    fn capability(shared: DeobfuscationCapability) -> Option<Self::Capability> {
+        Some(CilCapability::from(shared))
+    }
 
     fn ptr_bytes(&self) -> u32 {
         self.ptr_bytes
@@ -131,7 +151,14 @@ impl Target for CilTarget {
     }
 
     fn is_integer(t: &Self::Type) -> bool {
-        t.is_integer()
+        // `char` and `bool` are integers to every CIL instruction that reads
+        // them - an unsigned 16-bit and an 8-bit value, widened to `int32` on
+        // the evaluation stack - so they are to anything reasoning about the
+        // arithmetic. Left out, a same-width `conv.i2` of a `char` read as a
+        // conversion between a non-integer and an integer, which analyssa can
+        // only state as a reinterpretation of bits, and CIL has no
+        // instruction for.
+        t.is_integer() || matches!(t, SsaType::Char | SsaType::Bool)
     }
 
     fn is_floating(t: &Self::Type) -> bool {
@@ -237,8 +264,14 @@ impl Target for CilTarget {
         Some(SsaType::Bool)
     }
 
+    /// None: a CIL arithmetic result has its operands' type (ECMA-335
+    /// III.1.5) - a `float32` sum, a `long` product - which the operation
+    /// alone does not say. Answered `int32`, every float and 64-bit result a
+    /// rebuild or a rewrite retyped became an integer; the converter types
+    /// arithmetic from its operands, and a rewritten operation keeps the type
+    /// it had.
     fn arithmetic_result_type() -> Option<Self::Type> {
-        Some(SsaType::I32)
+        None
     }
 
     fn native_int_result_type() -> Option<Self::Type> {
@@ -314,91 +347,151 @@ impl Target for CilTarget {
     }
 }
 
+/// A constant as the CIL evaluation stack holds it: its bits and the width
+/// they occupy.
+///
+/// Every integer narrower than 32 bits is widened to `int32` by the load that
+/// puts it on the stack, keeping its numeric value; `int64` and native integers
+/// keep their own width. A conversion reads this, and what it does with the
+/// high bits is the conversion's decision, not the constant's variant's.
+#[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+fn stack_bits(value: &ConstValue<CilTarget>, ptr_size: PointerSize) -> Option<(u64, u32)> {
+    let narrow = |numeric: i64| Some((u64::from(numeric as i32 as u32), 32));
+    match value {
+        ConstValue::I8(v) => narrow(i64::from(*v)),
+        ConstValue::I16(v) => narrow(i64::from(*v)),
+        ConstValue::I32(v) => narrow(i64::from(*v)),
+        ConstValue::U8(v) => narrow(i64::from(*v)),
+        ConstValue::U16(v) => narrow(i64::from(*v)),
+        ConstValue::U32(v) => Some((u64::from(*v), 32)),
+        ConstValue::True => narrow(1),
+        ConstValue::False => narrow(0),
+        ConstValue::I64(v) => Some((*v as u64, 64)),
+        ConstValue::U64(v) => Some((*v, 64)),
+        ConstValue::NativeInt(v) => Some((*v as u64, ptr_size.bits())),
+        ConstValue::NativeUInt(v) => Some((*v, ptr_size.bits())),
+        _ => None,
+    }
+}
+
+/// `bits` of a `width`-bit stack value read as a number: sign-extended when
+/// `signed`, zero-extended otherwise.
+#[allow(clippy::cast_possible_wrap)]
+fn stack_numeric(bits: u64, width: u32, signed: bool) -> i128 {
+    let masked = if width >= 64 {
+        bits
+    } else {
+        bits & ((1u64 << width).saturating_sub(1))
+    };
+    if signed && width < 64 && masked >> width.saturating_sub(1) & 1 == 1 {
+        // Exact: `masked` is below 2^64 and so is the power subtracted.
+        i128::from(masked).wrapping_sub(1i128 << width)
+    } else if signed && width >= 64 {
+        i128::from(masked as i64)
+    } else {
+        i128::from(masked)
+    }
+}
+
+/// Whether `target` is an unsigned integer type.
+const fn is_unsigned_target(target: &SsaType) -> bool {
+    matches!(
+        target,
+        SsaType::U8
+            | SsaType::U16
+            | SsaType::U32
+            | SsaType::U64
+            | SsaType::NativeUInt
+            | SsaType::Char
+    )
+}
+
+/// `numeric` converted to `target`, truncating to the target's width.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
+fn numeric_to_target(
+    numeric: i128,
+    target: &SsaType,
+    ptr_size: PointerSize,
+) -> Option<ConstValue<CilTarget>> {
+    let converted = match target {
+        SsaType::I8 => ConstValue::I8(numeric as i8),
+        SsaType::U8 => ConstValue::U8(numeric as u8),
+        SsaType::I16 => ConstValue::I16(numeric as i16),
+        SsaType::U16 | SsaType::Char => ConstValue::U16(numeric as u16),
+        SsaType::I32 => ConstValue::I32(numeric as i32),
+        SsaType::U32 => ConstValue::U32(numeric as u32),
+        SsaType::I64 => ConstValue::I64(numeric as i64),
+        SsaType::U64 => ConstValue::U64(numeric as u64),
+        SsaType::NativeInt => ConstValue::NativeInt(numeric as i64),
+        SsaType::NativeUInt => ConstValue::NativeUInt(numeric as u64),
+        SsaType::F32 => ConstValue::F32(numeric as f32),
+        SsaType::F64 => ConstValue::F64(numeric as f64),
+        SsaType::Bool => ConstValue::from_bool(numeric != 0),
+        _ => return None,
+    };
+    Some(converted.mask_native(ptr_size))
+}
+
+/// A CIL conversion of a constant, without overflow checking.
+///
+/// The source is read at its stack width. Widening, it is zero-extended when
+/// the conversion reads it as unsigned (`conv.*.un`) or converts to an unsigned
+/// type - `conv.u8` of an `int32` zero-extends, which is why C# spells
+/// `(ulong)intValue` as `conv.i8` - and sign-extended otherwise. Narrowing
+/// truncates, where the two readings agree.
 fn cil_convert_const(
     value: &ConstValue<CilTarget>,
     target: &SsaType,
     unsigned_source: bool,
     ptr_size: PointerSize,
 ) -> Option<ConstValue<CilTarget>> {
-    let (signed_val, unsigned_val) = if unsigned_source {
-        let u = value.as_u64()?;
-        (i64::from_ne_bytes(u.to_ne_bytes()), u)
-    } else {
-        let s = value.as_i64()?;
-        (s, u64::from_ne_bytes(s.to_ne_bytes()))
-    };
-
-    #[allow(clippy::cast_possible_truncation)]
-    let converted = match target {
-        SsaType::I8 => ConstValue::I8(signed_val as i8),
-        SsaType::U8 => ConstValue::U8(unsigned_val as u8),
-        SsaType::I16 => ConstValue::I16(signed_val as i16),
-        SsaType::U16 | SsaType::Char => ConstValue::U16(unsigned_val as u16),
-        SsaType::I32 => ConstValue::I32(signed_val as i32),
-        SsaType::U32 => ConstValue::U32(unsigned_val as u32),
-        SsaType::I64 => ConstValue::I64(signed_val),
-        SsaType::U64 => ConstValue::U64(unsigned_val),
-        SsaType::NativeInt => ConstValue::NativeInt(signed_val),
-        SsaType::NativeUInt => ConstValue::NativeUInt(unsigned_val),
-        SsaType::F32 =>
-        {
-            #[allow(clippy::cast_precision_loss)]
-            if unsigned_source {
-                ConstValue::F32(unsigned_val as f32)
-            } else {
-                ConstValue::F32(signed_val as f32)
-            }
-        }
-        SsaType::F64 =>
-        {
-            #[allow(clippy::cast_precision_loss)]
-            if unsigned_source {
-                ConstValue::F64(unsigned_val as f64)
-            } else {
-                ConstValue::F64(signed_val as f64)
-            }
-        }
-        SsaType::Bool => ConstValue::from_bool(signed_val != 0),
-        _ => return None,
-    };
-    Some(converted.mask_native(ptr_size))
+    let (bits, width) = stack_bits(value, ptr_size)?;
+    let signed = !(unsigned_source || is_unsigned_target(target));
+    numeric_to_target(stack_numeric(bits, width, signed), target, ptr_size)
 }
 
+/// A CIL conversion of a constant with overflow checking (`conv.ovf.*`).
+///
+/// The source is the number its stack bits spell, read as unsigned for
+/// `conv.ovf.*.un` and as signed otherwise, and the conversion succeeds only
+/// when that number is representable in the target: `conv.ovf.u4` of `-1`
+/// throws, `conv.ovf.u4.un` of the same bits is `0xFFFF_FFFF`.
 fn cil_convert_const_checked(
     value: &ConstValue<CilTarget>,
     target: &SsaType,
     unsigned_source: bool,
     ptr_size: PointerSize,
 ) -> Option<ConstValue<CilTarget>> {
-    let (signed_val, unsigned_val) = if unsigned_source {
-        let u = value.as_u64()?;
-        (i64::from_ne_bytes(u.to_ne_bytes()), u)
-    } else {
-        let s = value.as_i64()?;
-        (s, u64::from_ne_bytes(s.to_ne_bytes()))
+    let (bits, width) = stack_bits(value, ptr_size)?;
+    let numeric = stack_numeric(bits, width, !unsigned_source);
+    let native_bits = ptr_size.bits();
+    let signed_range = |bits: u32| {
+        let half = 1i128 << bits.saturating_sub(1);
+        half.wrapping_neg()..half
     };
-
+    let unsigned_range = |bits: u32| 0..(1i128 << bits);
     let fits = match target {
-        SsaType::I8 => i8::try_from(signed_val).is_ok(),
-        SsaType::U8 => u8::try_from(unsigned_val).is_ok() && signed_val >= 0,
-        SsaType::I16 => i16::try_from(signed_val).is_ok(),
-        SsaType::U16 => u16::try_from(unsigned_val).is_ok() && signed_val >= 0,
-        SsaType::I32 => i32::try_from(signed_val).is_ok(),
-        SsaType::U32 => u32::try_from(unsigned_val).is_ok() && signed_val >= 0,
-        SsaType::I64
-        | SsaType::NativeInt
-        | SsaType::Bool
-        | SsaType::Char
-        | SsaType::F32
-        | SsaType::F64 => true,
-        SsaType::U64 | SsaType::NativeUInt => signed_val >= 0,
+        SsaType::I8 => signed_range(8).contains(&numeric),
+        SsaType::U8 => unsigned_range(8).contains(&numeric),
+        SsaType::I16 => signed_range(16).contains(&numeric),
+        SsaType::U16 | SsaType::Char => unsigned_range(16).contains(&numeric),
+        SsaType::I32 => signed_range(32).contains(&numeric),
+        SsaType::U32 => unsigned_range(32).contains(&numeric),
+        SsaType::I64 => signed_range(64).contains(&numeric),
+        SsaType::U64 => unsigned_range(64).contains(&numeric),
+        SsaType::NativeInt => signed_range(native_bits).contains(&numeric),
+        SsaType::NativeUInt => unsigned_range(native_bits).contains(&numeric),
+        SsaType::Bool | SsaType::F32 | SsaType::F64 => true,
         _ => return None,
     };
-
     if !fits {
         return None;
     }
-    cil_convert_const(value, target, unsigned_source, ptr_size)
+    numeric_to_target(numeric, target, ptr_size)
 }
 
 /// CIL-side `evaluate_int_conv` body. Mirrors the legacy
@@ -495,6 +588,116 @@ mod tests {
         },
         metadata::token::Token,
     };
+
+    /// A same-width `conv.i2` of a `char` stays an integer conversion.
+    ///
+    /// `char` was no integer to analyssa, so collapsing the conversion found
+    /// the same sixteen bits on both sides of a non-integer and an integer, and
+    /// could only say so as a bit reinterpretation - which has no CIL
+    /// lowering, so the method kept its original IL.
+    #[test]
+    fn a_conversion_from_char_is_between_integers() {
+        let mut ssa: SsaFunction = SsaFunction::new(1, 0);
+        let character = ssa.create_variable(
+            VariableOrigin::Argument(0),
+            0,
+            DefSite::entry(),
+            SsaType::Char,
+        );
+        let narrowed = ssa.create_variable(
+            VariableOrigin::Phi,
+            0,
+            DefSite::instruction(0, 0),
+            SsaType::I16,
+        );
+        let op = SsaOp::IntConv {
+            dest: narrowed,
+            operand: character,
+            target: SsaType::I16,
+            overflow_check: false,
+            unsigned: false,
+        };
+        let mut block = SsaBlock::new(0);
+        block.add_instruction(SsaInstruction::synthetic(op.clone()));
+        block.add_instruction(SsaInstruction::synthetic(SsaOp::Return {
+            value: Some(narrowed),
+        }));
+        ssa.add_block(block);
+        ssa.recompute_uses();
+
+        assert!(CilTarget::is_integer(&SsaType::Char));
+        assert!(CilTarget::is_integer(&SsaType::Bool));
+        let collapsed = analyssa::analysis::reshape::collapse_reshape(&ssa, &op);
+        assert!(
+            !matches!(collapsed, Some(SsaOp::Bitcast { .. })),
+            "a char narrowed to a short is an integer conversion: {collapsed:?}"
+        );
+    }
+
+    /// Converts `value` as CIL would, unchecked.
+    fn conv(value: ConstValue, target: SsaType, unsigned_source: bool) -> Option<ConstValue> {
+        cil_convert_const(&value, &target, unsigned_source, PointerSize::Bit64)
+    }
+
+    /// Converts `value` as CIL would, with overflow checking.
+    fn conv_ovf(value: ConstValue, target: SsaType, unsigned_source: bool) -> Option<ConstValue> {
+        cil_convert_const_checked(&value, &target, unsigned_source, PointerSize::Bit64)
+    }
+
+    #[test]
+    fn widening_an_int32_extends_it_as_the_conversion_says() {
+        // conv.i8 sign-extends; conv.u8 zero-extends, as does any `.un` form.
+        assert_eq!(
+            conv(ConstValue::I32(-1), SsaType::I64, false),
+            Some(ConstValue::I64(-1))
+        );
+        assert_eq!(
+            conv(ConstValue::I32(-1), SsaType::U64, false),
+            Some(ConstValue::U64(0xFFFF_FFFF))
+        );
+        assert_eq!(
+            conv(ConstValue::I32(-1), SsaType::I64, true),
+            Some(ConstValue::I64(0xFFFF_FFFF))
+        );
+        // conv.r.un reads the bits unsigned rather than declining.
+        assert_eq!(
+            conv(ConstValue::I32(-1), SsaType::F64, true),
+            Some(ConstValue::F64(4_294_967_295.0))
+        );
+        // A uint32 on the stack is the same int32 bits: conv.i8 sign-extends it.
+        assert_eq!(
+            conv(ConstValue::U32(0xFFFF_FFFF), SsaType::I64, false),
+            Some(ConstValue::I64(-1))
+        );
+        // Narrowing truncates either way.
+        assert_eq!(
+            conv(ConstValue::I32(0x1234), SsaType::U8, false),
+            Some(ConstValue::U8(0x34))
+        );
+    }
+
+    #[test]
+    fn checked_conversions_range_check_the_source_as_it_is_read() {
+        assert_eq!(conv_ovf(ConstValue::I32(-1), SsaType::U32, false), None);
+        assert_eq!(
+            conv_ovf(ConstValue::I32(-1), SsaType::U32, true),
+            Some(ConstValue::U32(0xFFFF_FFFF))
+        );
+        assert_eq!(conv_ovf(ConstValue::I32(-1), SsaType::I32, true), None);
+        assert_eq!(
+            conv_ovf(ConstValue::I32(-1), SsaType::I8, false),
+            Some(ConstValue::I8(-1))
+        );
+        assert_eq!(conv_ovf(ConstValue::I32(300), SsaType::U8, false), None);
+        assert_eq!(
+            conv_ovf(ConstValue::U64(u64::MAX), SsaType::U64, true),
+            Some(ConstValue::U64(u64::MAX))
+        );
+        assert_eq!(
+            conv_ovf(ConstValue::U64(u64::MAX), SsaType::I64, true),
+            None
+        );
+    }
 
     #[test]
     fn cil_target_ptr_bytes() {
