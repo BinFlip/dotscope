@@ -5,6 +5,176 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Code generation is rebuilt around the order it emits in** (#288). A block's
+  operations are emitted in SSA order; a value read once moves to its use only
+  where analyssa's `FoldForest` proves the move unobservable; slots are shared
+  by analyssa's `Gathering` and typed from every value they hold; phi copies
+  are one parallel copy per edge. `coalescing.rs`, the copy stand-ins, the
+  second scheduler, stack locals and deferred constants are gone.
+- **BREAKING**: `SsaCodeGenerator::compile` is all or nothing. A refused method
+  leaves the tables, heaps, stored data and session interning as they were
+  (change-set savepoints). `generate_with_assembly` is removed.
+- **BREAKING**: A branch's operand is its target: the decoder sets
+  `Operand::Target(rva)` on every branch and `leave`
+  (`Instruction::get_branch_target` reads it).
+- **BREAKING**: Lists that metadata rows attach to (`custom_attributes`,
+  `generic_params`, `interfaces`, `nested_types`, `constraints`, `overrides`,
+  `interface_impls`, `overwrites`) are `utils::RowList`s in table order;
+  `push` no longer returns an index (`push_row` records the row).
+- **BREAKING**: `Resources` is keyed by ManifestResource token and iterates in
+  table order; the name is `value().name`.
+- **BREAKING**: `Method::parse` takes the load's `assembly::DecodedBodies`.
+- **BREAKING**: `Technique::byte_transform` takes `&mut Detection`; once a
+  transform rewrites the image, the remaining techniques are detected again.
+- **BREAKING**: Signed compressed integers follow ECMA-335 (rotated two's
+  complement, not zigzag) in `utils::write_compressed_int`, which returns
+  `Result`, and `Parser::read_compressed_int`. `ArrayDimensions::lower_bound`
+  is `Option<i32>`, and `InstructionEncoder::emit_call` takes its argument
+  count as `u16`.
+- **BREAKING**: Sequence points follow the Portable PDB format:
+  `SequencePoints { local_signature, points }`, each point naming its document;
+  parsing and `SequencePoints::to_bytes` (now `Result`) take the method's
+  document, and `MethodDebugInformationBuilder::sequence_points_parsed` takes
+  the points by value.
+- **BREAKING**: The re-exported analyssa types (`PhiTaintMode`,
+  `TaintAnalysis`, `SymbolicEvaluator`, `SymbolicExpr`,
+  `EventListener::count_by_kind_since`) take and return `FxHashMap` /
+  `FxHashSet`.
+- Output is deterministic: methods are emitted in token order
+  (`CompilerContext::processed_methods` is ordered) and array data fields are
+  named `__StaticArrayInit_N` by interning order.
+- Strength reduction is analyssa's `StrengthReductionPass`.
+- Sort order is validated (`ValidationConfig::enable_sort_order_validation`,
+  on in every preset but `disabled`).
+- `Parser::seek` accepts the end of the data.
+
+### Added
+
+- `dotscope::io`: the binary codecs (ECMA-335 compressed integers, endian
+  readers and writers over `CilIO`, the 7-bit encoded length, prefixed string
+  writers); the compressed-integer codecs and `CilIO` are in the prelude.
+- Exports of functionality that was built but unreachable: `repair_pe`,
+  `RepairAction`, `RepairResult`, `emulation::tokens`, `TokenValidationResult`,
+  the conflict resolution types, control flow unflattening (`unflatten`,
+  `CffDetector` and its pattern types), analyssa's CIL-defaulted aliases and
+  the x86 condition classifiers.
+- `CilObject::resolve_method_declaring_type`.
+- Translation validation of every generated body (`compiler::validate_lift`
+  checks a method's own IL against its lift), and ECMA-335 protected-region
+  checks (`validate_protected_region_flow`). A refused body keeps its original
+  IL and is recorded as `EventKind::CodegenRefused`;
+  `tests/codegen_validation.rs` gains an opt-in pipeline sweep
+  (`CODEGEN_SWEEP_PIPELINE`).
+- SSA forms for `arglist`, `mkrefany`, `refanyval` and `refanytype`.
+- `assembly::decode_blocks_with_handlers` and
+  `Method::ssa_handlers_for_clauses`: methods decoded from their handlers as
+  well as their entry.
+- `InstructionEncoder::instruction_count`, `RowWritable::sort_key`,
+  `RawSortOrderValidator`, `SsaType::substitute_generic_params`,
+  `SsaType::binary_numeric`, `TypeSignature::for_each_value_type`,
+  `CaptureContext::resource_reads`, `CleanupRequest::add_protection_method`,
+  `TypeRegistry::get_corelib_typeref`, `CilAssembly::find_corelib_typeref` and
+  `Error::EhRegionNotContiguous`.
+
+### Removed
+
+- `analysis::conv_op_for_target`: analyssa's `SsaOp::conversion_between`
+  builds the same conversion.
+
+### Fixed
+
+#### Analysis
+
+- x86 stubs that read a register after a branch merge translate: analyssa's
+  boundary construction replaces the translator's own phi placement.
+- Arithmetic is typed by its operands under ECMA-335's binary numeric table,
+  not always as `int32`.
+- `.locals init` locals read their zero; a `dup` is typed from its source;
+  stack merges join into the evaluation stack's type; a store into a narrower
+  slot is an explicit conversion.
+- A handler's exception object is typed and settled at the handler's entry,
+  and a handler whose region ends in undecoded bytes is kept.
+- Members read through a generic instantiation are typed in its terms.
+- Method summaries include a method's own effects, not only its callees'.
+- Constant folding evaluates compares at the operands' width and kind, declines
+  unsigned conversions of negative values, and no longer sign-extends in
+  `conv.u8`/`conv.u`; pure-call folding needs a `Pure` or `ReadOnly` callee (a
+  virtual call also a non-null receiver and no override).
+- Inlining remaps every definition and use, declines callees it cannot inline
+  safely, and keeps calls to methods that never return.
+
+#### Code generation
+
+- The rebuild closes the class of slot-sharing defects behind #288 (stale,
+  overwritten or never-written slots read).
+- `calli` passes its function pointer last; prefixes sit directly before their
+  opcode; rotates and byte swaps are lowered and their temporaries declared.
+- `ldelem`, `stelem`, `ldind` and `stind` use the exact form for every type
+  (a TypeSpec token for generic types), and `conv.*` is chosen from both the
+  source and target types.
+- Values flowing out of a `try` through its `finally` reach the code after
+  it, a back edge leaving a `try` runs its `finally`, and catch handlers
+  generate.
+- Exception regions are laid out contiguously from a region tree; unreached
+  blocks are not emitted, and a clause is never silently dropped.
+- Locals of no type, more than 65535 locals and un-interned strings are
+  refused; unused locals are dropped; decrypted strings and arrays are interned
+  once; array data keeps its `RuntimeHelpers.InitializeArray`; input SSA is
+  verified before generation.
+
+#### Metadata
+
+- Array signatures no longer misparse the types after them (3,392 corpus
+  methods now lift), and lower bounds are read as signed.
+- Imported structs are value types (from the signatures using them), and a
+  type's flavor no longer depends on loader timing.
+- Custom attributes read enums by their underlying type, named arguments in
+  ECMA-335 order, and array-typed named arguments.
+- Sequence points load, and a permission set's `Int32` argument is written as
+  four bytes.
+- Core library types come from the scope `System.Object` is imported from.
+- Token resolution picks by signature and resolves a generic instantiation's
+  member to its definition.
+- A method body shared by several methods is decoded once and given to each.
+- Validation accepts static virtual and abstract interface members, generic
+  parameters that allow ref structs, and `UnsafeAccessor` methods.
+
+#### Write path and cleanup
+
+- The writer sorts the tables the format requires sorted and remaps references
+  into them.
+- Cleanup keeps types surviving metadata still names and the virtual methods
+  filling their vtable slots, and withdraws removals that refused methods'
+  original bodies still need.
+- Protection methods are removed with their call sites: .NET Reactor's trial
+  check, NecroBit's initializer and body patcher, the anti-tamper initializer.
+
+#### Deobfuscation
+
+- Passes remove only instructions nothing reads (reflection, BitMono unmanaged
+  strings and string decryption, the ConfuserEx state machine, opaque fields,
+  delegate proxies), and the anti-debug taint keeps tainted terminators.
+- Reflection devirtualization and folding handle `callvirt`; method names match
+  whole; delegate-proxy detection counts reflection calls; string folding is
+  limited to `System.String`.
+- Proxy devirtualization no longer binds runtime methods to module methods of
+  the same name, and no-op elimination keeps a call whose result is read.
+- A failing pass rolls its method back (`EventKind::PassFailed`) instead of
+  failing the assembly; a failed byte transform waits for another transform to
+  change the assembly instead of rerunning every round.
+- Unflattening declares its callee reads and keeps swaps made through phis.
+- Neutralization edits methods in an edit session and skips methods cleanup
+  deletes.
+- BitMono anti-debug detection requires the injection's divide-by-zero crash.
+- ConfuserEx's restored resources keep the program's order.
+- .NET Reactor: both runtime initializers are removed deterministically, fully
+  protected samples get their resources and `typeof`s back, and the empty
+  `<Assembly>.g.resources` is removed (`netreactor.emptyresource`).
+
 ## [0.9.1] - 2026-09-05
 
 A dependency release, and the defects that adopting the dependency exposed.
