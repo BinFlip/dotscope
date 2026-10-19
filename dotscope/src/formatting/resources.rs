@@ -19,8 +19,8 @@ use crate::{
 /// - `.assembly extern 'name'`: in an external assembly
 pub(super) fn format_resources(w: &mut dyn Write, assembly: &CilObject) -> io::Result<()> {
     for entry in assembly.resources().iter() {
-        let name = entry.key();
         let resource = entry.value();
+        let name = &resource.name;
         let vis = if resource.flags.contains(ManifestResourceAttributes::PUBLIC) {
             "public"
         } else {

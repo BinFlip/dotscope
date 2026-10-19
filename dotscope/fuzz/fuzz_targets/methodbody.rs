@@ -10,7 +10,7 @@
 //!    than run to the end of the buffer.
 //!
 //! The decode runs on the raw input rather than on the body's code window on purpose: it is
-//! the linear-disassembly entry point, and bounding it is the caller's job — which is the
+//! the linear-disassembly entry point, and bounding it is the caller's job - which is the
 //! contract this target covers.
 
 #![no_main]

@@ -2,7 +2,7 @@
 //!
 //! This is the only target that executes attacker-controlled *instructions* rather than just
 //! parsing attacker-controlled bytes, so it reaches the interpreter, the BCL hooks, the managed
-//! heap and the exception-unwind machinery — the surfaces where unbounded allocation and
+//! heap and the exception-unwind machinery - the surfaces where unbounded allocation and
 //! unwind-ordering defects live.
 //!
 //! # Why it is structured this way
@@ -10,14 +10,14 @@
 //! Random bytes almost never form a loadable assembly, so most iterations stop at
 //! `CilObject::from_mem`. That is expected and still useful: the fuzzer's coverage feedback
 //! drives it toward inputs that get further, and the committed corpus seeds it with real
-//! PE-shaped material. The alternative — synthesising a valid PE wrapper around fuzzed IL —
+//! PE-shaped material. The alternative - synthesising a valid PE wrapper around fuzzed IL -
 //! would test a narrower, more artificial surface.
 //!
 //! # Limits
 //!
 //! Every budget is set far below the production default. A fuzz iteration must finish in
 //! milliseconds, and an input that merely *runs for a long time* is not the bug class this
-//! target hunts — unbounded work that ignores the budget entirely is. Keeping the budget tiny
+//! target hunts - unbounded work that ignores the budget entirely is. Keeping the budget tiny
 //! makes a hang stand out instead of blending into normal execution time.
 
 #![no_main]
@@ -71,7 +71,7 @@ fuzz_target!(|data: &[u8]| {
 
     for token in tokens {
         // Errors and limit-reached outcomes are both fine. The property under test is that the
-        // call returns at all — rather than panicking, aborting, exhausting host memory, or
+        // call returns at all - rather than panicking, aborting, exhausting host memory, or
         // running past its budget.
         let _ = process.execute_method(token, Vec::new());
     }

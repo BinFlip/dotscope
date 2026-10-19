@@ -1,7 +1,7 @@
 //! Fuzzes every signature-blob parser against the same input.
 //!
 //! Signature blobs come straight from the `#Blob` heap and are the crate's most recursive
-//! parsing surface — the one that produced a deeply-nested `TypeSignature` whose
+//! parsing surface - the one that produced a deeply-nested `TypeSignature` whose
 //! *drop glue* overflowed the stack. Driving all six entry points from one input is
 //! deliberate: they share `SignatureParser`, so a single crafted blob usually reaches several
 //! of them and any one may be the arm that mishandles it.

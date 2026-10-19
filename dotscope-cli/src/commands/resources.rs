@@ -56,8 +56,8 @@ fn list_resources(
     let mut entries = Vec::new();
 
     for entry in resources {
-        let name = entry.key();
         let resource = entry.value();
+        let name = &resource.name;
 
         if let Some(filter) = name_filter {
             if !name_contains_ignore_case(name, filter) {
@@ -115,8 +115,8 @@ fn extract_resources(
     let mut skipped = 0usize;
 
     for entry in resources {
-        let name = entry.key();
         let resource = entry.value();
+        let name = &resource.name;
 
         if let Some(filter) = name_filter {
             if name != filter {

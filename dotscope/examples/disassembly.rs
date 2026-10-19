@@ -41,16 +41,16 @@ fn main() -> Result<()> {
 
     let assembly = CilObject::from_path(path)?;
 
-    // === Method Body Analysis ===
+    // Method Body Analysis
     print_method_body_analysis(&assembly);
 
-    // === IL Instruction Analysis ===
+    // IL Instruction Analysis
     print_instruction_analysis(&assembly);
 
-    // === Exception Handler Analysis ===
+    // Exception Handler Analysis
     print_exception_analysis(&assembly);
 
-    // === Stack and Local Variable Analysis ===
+    // Stack and Local Variable Analysis
     print_stack_analysis(&assembly);
 
     println!("\n✅ IL disassembly analysis completed!");

@@ -43,19 +43,19 @@ fn main() -> Result<()> {
     // Load assembly using the prelude's CilObject
     let assembly = CilObject::from_path(path)?;
 
-    // === Basic Assembly Information ===
+    // Basic Assembly Information
     print_assembly_info(&assembly);
 
-    // === Type System Analysis ===
+    // Type System Analysis
     print_type_analysis(&assembly);
 
-    // === Method Analysis with Signatures ===
+    // Method Analysis with Signatures
     print_method_analysis(&assembly);
 
-    // === Import Analysis ===
+    // Import Analysis
     print_import_analysis(&assembly);
 
-    // === Instruction Analysis ===
+    // Instruction Analysis
     print_instruction_analysis(&assembly);
 
     println!("\n✨ Advanced analysis completed!");

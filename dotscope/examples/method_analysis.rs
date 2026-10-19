@@ -158,45 +158,45 @@ fn find_suitable_method(assembly: &CilObject) -> Result<MethodRc> {
 
 /// Perform exhaustive analysis of the selected method
 fn analyze_method_completely(_assembly: &CilObject, method: MethodRc) -> Result<()> {
-    // === Basic Method Information ===
+    // Basic Method Information
     print_method_basic_info(&method);
 
-    // === Method Flags and Attributes ===
+    // Method Flags and Attributes
     print_method_flags(&method);
 
-    // === Method Signature Analysis ===
+    // Method Signature Analysis
     print_method_signature(&method);
 
-    // === Parameters Analysis ===
+    // Parameters Analysis
     print_method_parameters(&method);
 
-    // === Local Variables Analysis ===
+    // Local Variables Analysis
     print_local_variables(&method);
 
-    // === Generic Information ===
+    // Generic Information
     print_generic_information(&method);
 
-    // === Method Body Analysis ===
+    // Method Body Analysis
     if let Some(body) = method.body.get() {
         print_method_body_details(&method, body);
 
-        // === IL Instructions Analysis ===
+        // IL Instructions Analysis
         print_il_instructions(&method, body)?;
 
-        // === Exception Handlers ===
+        // Exception Handlers
         print_exception_handlers(body);
     } else {
         println!("\n❌ NO METHOD BODY");
         println!("   This method is abstract, extern, or P/Invoke");
     }
 
-    // === P/Invoke Information ===
+    // P/Invoke Information
     print_pinvoke_info(&method);
 
-    // === Security Information ===
+    // Security Information
     print_security_info(&method);
 
-    // === Additional Metadata ===
+    // Additional Metadata
     print_additional_metadata(&method);
 
     Ok(())
@@ -467,16 +467,16 @@ fn print_il_instructions(method: &Method, body: &MethodBody) -> Result<()> {
         return Ok(());
     }
 
-    // === Basic Statistics ===
+    // Basic Statistics
     print_basic_il_statistics(method, body);
 
-    // === Basic Block Analysis ===
+    // Basic Block Analysis
     print_basic_block_analysis(method);
 
-    // === Instruction Stream Analysis ===
+    // Instruction Stream Analysis
     print_instruction_stream_analysis(method)?;
 
-    // === Control Flow Analysis ===
+    // Control Flow Analysis
     print_control_flow_analysis(method);
 
     Ok(())

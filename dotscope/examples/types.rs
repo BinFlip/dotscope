@@ -41,19 +41,19 @@ fn main() -> Result<()> {
 
     let assembly = CilObject::from_path(path)?;
 
-    // === Type Registry Analysis ===
+    // Type Registry Analysis
     print_type_registry_analysis(&assembly);
 
-    // === Generic Type Analysis ===
+    // Generic Type Analysis
     print_generic_analysis(&assembly);
 
-    // === Inheritance Analysis ===
+    // Inheritance Analysis
     print_inheritance_analysis(&assembly);
 
-    // === Interface Analysis ===
+    // Interface Analysis
     print_interface_analysis(&assembly);
 
-    // === Signature Analysis ===
+    // Signature Analysis
     print_signature_analysis(&assembly);
 
     println!("\n✅ Type system analysis completed!");

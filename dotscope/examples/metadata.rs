@@ -41,19 +41,19 @@ fn main() -> Result<()> {
 
     let assembly = CilObject::from_path(path)?;
 
-    // === Metadata Tables Analysis ===
+    // Metadata Tables Analysis
     print_metadata_tables(&assembly);
 
-    // === String and Blob Heap Analysis ===
+    // String and Blob Heap Analysis
     print_heap_analysis(&assembly);
 
-    // === Type System Deep Dive ===
+    // Type System Deep Dive
     print_type_system_analysis(&assembly);
 
-    // === Custom Attributes Analysis ===
+    // Custom Attributes Analysis
     print_custom_attributes_analysis(&assembly);
 
-    // === Assembly Dependencies ===
+    // Assembly Dependencies
     print_dependency_analysis(&assembly);
 
     println!("\n✅ Metadata exploration completed!");
