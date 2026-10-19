@@ -5,8 +5,12 @@ pub mod verification;
 
 use dotscope::{
     analysis::{ControlFlowGraph, SsaConverter, SsaFunction, SsaType, TypeProvider},
-    assembly::{decode_blocks, InstructionAssembler},
-    metadata::{signatures::SignatureLocalVariable, token::Token},
+    assembly::{decode_blocks, decode_blocks_with_handlers, InstructionAssembler},
+    metadata::{
+        method::{ExceptionHandler, Method},
+        signatures::SignatureLocalVariable,
+        token::Token,
+    },
     CilObject, Result,
 };
 
@@ -99,5 +103,28 @@ pub fn build_ssa(
         num_args,
         num_locals,
         &TestTypeProvider::new(num_args, num_locals),
+        Vec::new(),
+    )
+}
+
+/// Build SSA from assembled CIL with exception clauses, the way a method body
+/// is: decoded from each handler entry as well as the first instruction, with
+/// the clauses mapped onto the blocks and handed to construction.
+#[allow(dead_code)]
+pub fn build_ssa_with_handlers(
+    bytecode: &[u8],
+    clauses: &[ExceptionHandler],
+    num_args: usize,
+    num_locals: usize,
+) -> Result<SsaFunction> {
+    let blocks = decode_blocks_with_handlers(bytecode, 0, 0x1000, Some(bytecode.len()), clauses)?;
+    let handlers = Method::ssa_handlers_for_clauses(clauses, &blocks)?;
+    let cfg = ControlFlowGraph::from_basic_blocks(blocks)?;
+    SsaConverter::build(
+        &cfg,
+        num_args,
+        num_locals,
+        &TestTypeProvider::new(num_args, num_locals),
+        handlers,
     )
 }

@@ -6,7 +6,6 @@
 use std::{
     path::Path,
     process::{Command, Output},
-    time::Duration,
 };
 
 use crate::{
@@ -25,19 +24,16 @@ pub struct ExecutionResult {
     pub stdout: String,
     /// Standard error
     pub stderr: String,
-    /// Which runtime was used
-    pub runtime: Option<Runtime>,
 }
 
 impl ExecutionResult {
     /// Create a successful execution result
-    pub fn success(stdout: String, runtime: Runtime) -> Self {
+    pub fn success(stdout: String) -> Self {
         Self {
             success: true,
             exit_code: Some(0),
             stdout,
             stderr: String::new(),
-            runtime: Some(runtime),
         }
     }
 
@@ -48,24 +44,12 @@ impl ExecutionResult {
             exit_code,
             stdout,
             stderr,
-            runtime: None,
         }
     }
 
     /// Check if execution was successful
     pub fn is_success(&self) -> bool {
         self.success
-    }
-
-    /// Get combined output (stdout + stderr)
-    pub fn combined_output(&self) -> String {
-        if self.stderr.is_empty() {
-            self.stdout.clone()
-        } else if self.stdout.is_empty() {
-            self.stderr.clone()
-        } else {
-            format!("{}\n{}", self.stdout, self.stderr)
-        }
     }
 
     /// Get error summary for display
@@ -121,7 +105,7 @@ pub fn execute_with_runtime(runtime: Runtime, assembly_path: &Path) -> Result<Ex
     let exit_code = output.status.code();
 
     if output.status.success() {
-        let mut result = ExecutionResult::success(stdout, runtime);
+        let mut result = ExecutionResult::success(stdout);
         result.stderr = stderr;
         result.exit_code = exit_code;
         Ok(result)
@@ -159,153 +143,6 @@ fn execute_with_dotnet(assembly_path: &Path) -> Result<Output> {
         .map_err(|e| Error::Other(format!("Failed to execute dotnet: {}", e)))
 }
 
-/// Execute an assembly and verify it produces expected output
-pub fn execute_and_verify(
-    capabilities: &TestCapabilities,
-    assembly_path: &Path,
-    expected_output: &str,
-) -> Result<ExecutionResult> {
-    let result = execute(capabilities, assembly_path)?;
-
-    if result.is_success() {
-        if result.stdout.contains(expected_output) {
-            Ok(result)
-        } else {
-            let output = result.stdout.trim().to_string();
-            Ok(ExecutionResult::failure(
-                result.exit_code,
-                result.stdout,
-                format!(
-                    "Output mismatch: expected '{}', got '{}'",
-                    expected_output, output
-                ),
-            ))
-        }
-    } else {
-        Ok(result)
-    }
-}
-
-/// Execute an assembly with a timeout
-pub fn execute_with_timeout(
-    capabilities: &TestCapabilities,
-    assembly_path: &Path,
-    timeout: Duration,
-) -> Result<ExecutionResult> {
-    let runtime = match capabilities.runtime {
-        Some(r) => r,
-        None => {
-            return Ok(ExecutionResult::failure(
-                None,
-                String::new(),
-                "No .NET runtime available".to_string(),
-            ))
-        }
-    };
-
-    let mut cmd = match runtime {
-        Runtime::Mono => {
-            let mut c = Command::new("mono");
-            c.arg(assembly_path);
-            c
-        }
-        Runtime::DotNet => {
-            let mut c = Command::new("dotnet");
-            if let Some(parent) = assembly_path.parent() {
-                c.current_dir(parent);
-                if let Some(filename) = assembly_path.file_name() {
-                    c.arg(filename);
-                } else {
-                    c.arg(assembly_path);
-                }
-            } else {
-                c.arg(assembly_path);
-            }
-            c
-        }
-    };
-
-    // Spawn and wait with timeout
-    let mut child = cmd
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| Error::Other(format!("Failed to spawn process: {}", e)))?;
-
-    match child.wait_timeout(timeout) {
-        Ok(Some(status)) => {
-            let stdout = child
-                .stdout
-                .take()
-                .map(|mut s| {
-                    let mut buf = String::new();
-                    std::io::Read::read_to_string(&mut s, &mut buf).ok();
-                    buf
-                })
-                .unwrap_or_default();
-
-            let stderr = child
-                .stderr
-                .take()
-                .map(|mut s| {
-                    let mut buf = String::new();
-                    std::io::Read::read_to_string(&mut s, &mut buf).ok();
-                    buf
-                })
-                .unwrap_or_default();
-
-            if status.success() {
-                let mut result = ExecutionResult::success(stdout, runtime);
-                result.stderr = stderr;
-                result.exit_code = status.code();
-                Ok(result)
-            } else {
-                Ok(ExecutionResult::failure(status.code(), stdout, stderr))
-            }
-        }
-        Ok(None) => {
-            // Timeout - kill the process
-            child.kill().ok();
-            Ok(ExecutionResult::failure(
-                None,
-                String::new(),
-                format!("Execution timed out after {:?}", timeout),
-            ))
-        }
-        Err(e) => Err(Error::Other(format!("Failed to wait for process: {}", e))),
-    }
-}
-
-/// Extension trait for Child to add wait_timeout
-trait ChildExt {
-    fn wait_timeout(
-        &mut self,
-        timeout: Duration,
-    ) -> std::io::Result<Option<std::process::ExitStatus>>;
-}
-
-impl ChildExt for std::process::Child {
-    fn wait_timeout(
-        &mut self,
-        timeout: Duration,
-    ) -> std::io::Result<Option<std::process::ExitStatus>> {
-        let start = std::time::Instant::now();
-        let poll_interval = Duration::from_millis(10);
-
-        loop {
-            match self.try_wait()? {
-                Some(status) => return Ok(Some(status)),
-                None => {
-                    if start.elapsed() >= timeout {
-                        return Ok(None);
-                    }
-                    std::thread::sleep(poll_interval);
-                }
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use tempfile::TempDir;
@@ -315,7 +152,7 @@ mod tests {
 
     #[test]
     fn test_execution_result() {
-        let success = ExecutionResult::success("Hello".to_string(), Runtime::Mono);
+        let success = ExecutionResult::success("Hello".to_string());
         assert!(success.is_success());
         assert_eq!(success.stdout, "Hello");
 

@@ -55,50 +55,6 @@ pub fn raw_layout_constraint_validator_file_factory() -> Result<Vec<TestAssembly
     Ok(assemblies)
 }
 
-/// Creates an assembly with overlapping fields at the same offset to test field layout validation.
-///
-/// Originally from: `src/metadata/validation/validators/raw/constraints/layout.rs`
-pub fn create_assembly_with_overlapping_fields() -> Result<TestAssembly> {
-    create_test_assembly_with_error(get_testfile_wb, "Parse", |assembly| {
-        // Create a basic type first
-        let _typedef_token = TypeDefBuilder::new()
-            .name("OverlappingFieldsType")
-            .namespace("Test")
-            .flags(
-                TypeAttributes::BEFORE_FIELD_INIT
-                    | TypeAttributes::SEALED
-                    | TypeAttributes::SEQUENTIAL_LAYOUT,
-            ) // Explicit layout
-            .build(assembly)?;
-
-        // Create a single field
-        let field_token = FieldBuilder::new()
-            .name("TestField")
-            .flags(FieldAttributes::PRIVATE)
-            .signature(&[0x06, 0x08])
-            .build(assembly)?;
-
-        // Create suspiciously large number of field layouts at same offset (>1000 to trigger corruption detection)
-        for i in 1..=1001 {
-            let field_layout = FieldLayoutRaw {
-                field_offset: 4, // All fields at same position
-                field: field_token.placeholder(),
-                rid: i,
-                token: Token::new(0x10000000 + i),
-                offset: ((i - 1) * 8) as usize, // Different metadata stream offsets
-            };
-
-            assembly.table_row_update(
-                TableId::FieldLayout,
-                i,
-                TableDataOwned::FieldLayout(field_layout),
-            )?;
-        }
-
-        Ok(())
-    })
-}
-
 /// Creates an assembly with invalid packing size (not power of 2) to test class layout validation.
 ///
 /// Originally from: `src/metadata/validation/validators/raw/constraints/layout.rs`
@@ -223,46 +179,6 @@ pub fn create_assembly_with_null_field_reference() -> Result<TestAssembly> {
             rid: 1,
             token: Token::new(0x10000001), // FieldLayout table token
             offset: 0,
-        };
-
-        assembly.table_row_update(
-            TableId::FieldLayout,
-            1,
-            TableDataOwned::FieldLayout(field_layout),
-        )?;
-
-        Ok(())
-    })
-}
-
-/// Creates an assembly with field offset at maximum boundary to test overflow detection.
-///
-/// Originally from: `src/metadata/validation/validators/raw/constraints/layout.rs`
-pub fn create_assembly_with_boundary_field_offset() -> Result<TestAssembly> {
-    create_test_assembly_with_error(get_testfile_wb, "Parse", |assembly| {
-        let _typedef_token = TypeDefBuilder::new()
-            .name("BoundaryOffsetType")
-            .namespace("Test")
-            .flags(
-                TypeAttributes::BEFORE_FIELD_INIT
-                    | TypeAttributes::SEALED
-                    | TypeAttributes::SEQUENTIAL_LAYOUT,
-            ) // Explicit layout
-            .build(assembly)?;
-
-        let field_token = FieldBuilder::new()
-            .name("BoundaryField")
-            .flags(FieldAttributes::PRIVATE)
-            .signature(&[0x06, 0x08])
-            .build(assembly)?;
-
-        // Create field layout with field offset at maximum boundary directly
-        let field_layout = FieldLayoutRaw {
-            field_offset: 0x7FFFFFFF, // At maximum boundary - should trigger overflow warning
-            field: field_token.placeholder(),
-            rid: 1,
-            token: Token::new(0x10000001), // FieldLayout table token
-            offset: 0,                     // Metadata stream offset
         };
 
         assembly.table_row_update(

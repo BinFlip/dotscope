@@ -5,8 +5,8 @@
 
 use crate::{
     test::{
-        create_passing_test_assembly, create_test_assembly, create_test_assembly_with_error,
-        get_testfile_wb, TestAssembly,
+        create_passing_test_assembly, create_test_assembly_with_error, get_testfile_wb,
+        TestAssembly,
     },
     Error, Result,
 };
@@ -122,48 +122,6 @@ pub fn create_assembly_with_valid_guid_content() -> Result<TestAssembly> {
         ]);
 
         assembly.guid_add_heap(guid_heap)?;
-        Ok(())
-    })
-}
-
-/// Creates a test assembly with userstring heap size not 4-byte aligned.
-///
-/// Originally from: `src/metadata/validation/validators/raw/structure/heap.rs`
-pub fn create_assembly_with_unaligned_userstring_heap() -> Result<TestAssembly> {
-    create_test_assembly(get_testfile_wb, |assembly| {
-        // Create a userstring heap that is not 4-byte aligned (5 bytes)
-        let userstring_heap = vec![0, 0x03, 0x41, 0x00, 0x01]; // 5 bytes - not 4-byte aligned
-        assembly.userstring_add_heap(userstring_heap)?;
-        Ok(())
-    })
-}
-
-/// Creates a test assembly with individual userstring exceeding character limit.
-///
-/// Creates a userstring heap with a userstring that simulates exceeding the 0x1FFFFFFF character limit.
-///
-/// Originally from: `src/metadata/validation/validators/raw/structure/heap.rs`
-pub fn create_assembly_with_oversized_individual_userstring() -> Result<TestAssembly> {
-    create_test_assembly(get_testfile_wb, |assembly| {
-        // Create a userstring heap with a userstring that would report excessive character count
-        let mut userstring_heap = vec![0]; // Required null byte at index 0
-
-        // Create a userstring with size that appears to exceed 0x1FFFFFFF characters when parsed
-        // Using compressed integer encoding for length prefix
-        userstring_heap.extend_from_slice(&[
-            0xFF, 0xFF, 0xFF,
-            0xFF, // Length prefix indicating very long userstring (compressed integer)
-            0x41, 0x00, // 'A' character in UTF-16
-            0x42, 0x00, // 'B' character in UTF-16
-            0x01, // Terminator byte
-        ]);
-
-        // Pad to 4-byte alignment
-        while !userstring_heap.len().is_multiple_of(4) {
-            userstring_heap.push(0);
-        }
-
-        assembly.userstring_add_heap(userstring_heap)?;
         Ok(())
     })
 }

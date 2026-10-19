@@ -10,7 +10,7 @@ use crate::{
     prelude::*,
     test::mono::{
         capabilities::{Architecture, TestCapabilities},
-        compilation::{compile, CompilationResult},
+        compilation::compile,
         execution::{execute, ExecutionResult},
     },
 };
@@ -20,8 +20,6 @@ use crate::{
 pub struct ReflectionTestResult {
     /// Whether the test passed
     pub success: bool,
-    /// Compilation result for the test harness
-    pub compilation: Option<CompilationResult>,
     /// Execution result
     pub execution: Option<ExecutionResult>,
     /// Error message if failed
@@ -30,22 +28,11 @@ pub struct ReflectionTestResult {
 
 impl ReflectionTestResult {
     /// Create a successful result
-    pub fn success(compilation: CompilationResult, execution: ExecutionResult) -> Self {
+    pub fn success(execution: ExecutionResult) -> Self {
         Self {
             success: true,
-            compilation: Some(compilation),
             execution: Some(execution),
             error: None,
-        }
-    }
-
-    /// Create a failed result
-    pub fn failure(error: String) -> Self {
-        Self {
-            success: false,
-            compilation: None,
-            execution: None,
-            error: Some(error),
         }
     }
 
@@ -109,12 +96,6 @@ impl MethodTest {
         self
     }
 
-    /// Add a string argument
-    pub fn arg_string(mut self, value: &str) -> Self {
-        self.arguments.push(format!("\"{}\"", value));
-        self
-    }
-
     /// Add a boolean argument
     pub fn arg_bool(mut self, value: bool) -> Self {
         self.arguments
@@ -125,12 +106,6 @@ impl MethodTest {
     /// Expect an integer result
     pub fn expect_int(mut self, value: i32) -> Self {
         self.expected_result = Some(value.to_string());
-        self
-    }
-
-    /// Expect a string result
-    pub fn expect_string(mut self, value: &str) -> Self {
-        self.expected_result = Some(format!("\"{}\"", value));
         self
     }
 
@@ -271,7 +246,6 @@ pub fn run_reflection_test(
     if !compile_result.is_success() {
         return Ok(ReflectionTestResult {
             success: false,
-            compilation: Some(compile_result),
             execution: None,
             error: Some("Failed to compile reflection test harness".to_string()),
         });
@@ -281,11 +255,10 @@ pub fn run_reflection_test(
     let exec_result = execute(capabilities, compile_result.assembly_path())?;
 
     if exec_result.is_success() {
-        Ok(ReflectionTestResult::success(compile_result, exec_result))
+        Ok(ReflectionTestResult::success(exec_result))
     } else {
         Ok(ReflectionTestResult {
             success: false,
-            compilation: Some(compile_result),
             execution: Some(exec_result.clone()),
             error: Some(exec_result.error_summary()),
         })
@@ -343,7 +316,6 @@ class Program
     if !compile_result.is_success() {
         return Ok(ReflectionTestResult {
             success: false,
-            compilation: Some(compile_result),
             execution: None,
             error: Some("Failed to compile verification test".to_string()),
         });
@@ -353,11 +325,10 @@ class Program
     let exec_result = execute(capabilities, compile_result.assembly_path())?;
 
     if exec_result.is_success() {
-        Ok(ReflectionTestResult::success(compile_result, exec_result))
+        Ok(ReflectionTestResult::success(exec_result))
     } else {
         Ok(ReflectionTestResult {
             success: false,
-            compilation: Some(compile_result),
             execution: Some(exec_result.clone()),
             error: Some(exec_result.error_summary()),
         })

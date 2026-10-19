@@ -133,11 +133,6 @@ impl CompleteTestResult {
             && self.errors.is_empty()
     }
 
-    /// Check if at least compilation and modification worked
-    pub fn is_buildable(&self) -> bool {
-        self.compilation_success && self.modification_success
-    }
-
     /// Get a summary string
     pub fn summary(&self) -> String {
         if self.is_fully_successful() {
@@ -511,29 +506,6 @@ where
     assembly.to_file(modified_path)?;
 
     Ok(())
-}
-
-/// Check if all complete test results are successful
-pub fn all_successful(results: &[CompleteTestResult]) -> bool {
-    results.iter().all(|r| r.is_fully_successful())
-}
-
-/// Get error summary for failed tests
-pub fn error_summary(results: &[CompleteTestResult]) -> String {
-    let failed: Vec<_> = results
-        .iter()
-        .filter(|r| !r.is_fully_successful())
-        .collect();
-
-    if failed.is_empty() {
-        "All tests passed".to_string()
-    } else {
-        failed
-            .iter()
-            .map(|r| format!("{}: {}", r.architecture.name, r.errors.join(", ")))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
 }
 
 #[cfg(test)]

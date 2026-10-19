@@ -5,12 +5,9 @@
 
 use std::sync::{atomic::AtomicU32, Arc};
 
-use crate::{
-    metadata::{
-        tables::{AssemblyFlags, AssemblyRef, AssemblyRefHash, AssemblyRefRc},
-        token::Token,
-    },
-    utils::LazyList,
+use crate::metadata::{
+    tables::{AssemblyFlags, AssemblyRef, AssemblyRefHash, AssemblyRefRc},
+    token::Token,
 };
 
 /// Builder for creating mock AssemblyRef instances with realistic metadata
@@ -51,37 +48,6 @@ impl AssemblyRefBuilder {
         self
     }
 
-    pub fn with_version(mut self, major: u32, minor: u32, build: u32, revision: u32) -> Self {
-        self.major_version = major;
-        self.minor_version = minor;
-        self.build_number = build;
-        self.revision_number = revision;
-        self
-    }
-
-    pub fn with_culture(mut self, culture: &str) -> Self {
-        self.culture = Some(culture.to_string());
-        self
-    }
-
-    pub fn with_hash(mut self, hash_bytes: &[u8]) -> Self {
-        self.hash = AssemblyRefHash::new(hash_bytes).ok();
-        self
-    }
-
-    /// Create a .NET Framework-style assembly reference
-    pub fn dotnet_framework(name: &str) -> Self {
-        Self::new()
-            .with_name(name)
-            .with_version(4, 0, 0, 0)
-            .with_hash(&[1, 2, 3, 4, 5, 6, 7, 8])
-    }
-
-    /// Create a .NET Core-style assembly reference
-    pub fn dotnet_core(name: &str) -> Self {
-        Self::new().with_name(name).with_version(6, 0, 0, 0)
-    }
-
     pub fn build(self) -> AssemblyRefRc {
         Arc::new(AssemblyRef {
             rid: self.rid,
@@ -100,7 +66,7 @@ impl AssemblyRefBuilder {
             os_major_version: AtomicU32::new(0),
             os_minor_version: AtomicU32::new(0),
             processor: AtomicU32::new(0),
-            custom_attributes: LazyList::new(),
+            custom_attributes: Default::default(),
         })
     }
 }

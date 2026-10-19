@@ -53,13 +53,13 @@ impl MethodBuilder {
         }
     }
 
-    pub fn with_name(mut self, name: &str) -> Self {
-        self.name = name.to_string();
+    pub fn with_rid(mut self, rid: u32) -> Self {
+        self.rid = rid;
         self
     }
 
-    pub fn with_access(mut self, access: MethodAccessFlags) -> Self {
-        self.flags_access = access;
+    pub fn with_name(mut self, name: &str) -> Self {
+        self.name = name.to_string();
         self
     }
 
@@ -96,57 +96,8 @@ impl MethodBuilder {
         })
     }
 
-    /// Create a constructor method
-    pub fn constructor() -> Self {
-        Self::simple_void_method(".ctor").with_access(MethodAccessFlags::PUBLIC)
-    }
-
-    /// Create a static constructor
-    pub fn static_constructor() -> Self {
-        Self::simple_void_method(".cctor")
-            .with_access(MethodAccessFlags::PRIVATE)
-            .with_modifiers(MethodModifiers::STATIC)
-    }
-
-    /// Create a property getter method
-    pub fn property_getter(property_name: &str) -> Self {
-        Self::new()
-            .with_name(&format!("get_{property_name}"))
-            .with_access(MethodAccessFlags::PUBLIC)
-            .with_modifiers(MethodModifiers::SPECIAL_NAME)
-    }
-
-    /// Create a property setter method
-    pub fn property_setter(property_name: &str) -> Self {
-        Self::simple_void_method(&format!("set_{property_name}"))
-            .with_access(MethodAccessFlags::PUBLIC)
-            .with_modifiers(MethodModifiers::SPECIAL_NAME)
-    }
-
     pub fn with_signature(mut self, signature: SignatureMethod) -> Self {
         self.signature = Some(signature);
-        self
-    }
-
-    /// Add a parameter to the method
-    pub fn add_param(mut self, param: ParamBuilder) -> Self {
-        self.param_builders.push(param);
-        self
-    }
-
-    /// Add an input parameter by name
-    pub fn add_input_param(mut self, name: &str) -> Self {
-        let sequence = self.param_builders.len() as u32 + 1;
-        self.param_builders
-            .push(ParamBuilder::input_param(sequence, name));
-        self
-    }
-
-    /// Add an output parameter by name  
-    pub fn add_output_param(mut self, name: &str) -> Self {
-        let sequence = self.param_builders.len() as u32 + 1;
-        self.param_builders
-            .push(ParamBuilder::output_param(sequence, name));
         self
     }
 
@@ -172,21 +123,6 @@ impl MethodBuilder {
         self.param_builders
             .push(ParamBuilder::input_param(sequence, name).with_type_from_flavor(type_flavor));
         self
-    }
-
-    /// Add multiple typed parameters from a slice of (name, type) pairs
-    pub fn add_typed_params(mut self, params: &[(&str, CilFlavor)]) -> Self {
-        for (name, type_flavor) in params {
-            self = self.add_typed_param(name, type_flavor.clone());
-        }
-        self
-    }
-
-    /// Create a constructor with typed parameters
-    pub fn constructor_with_params(params: &[(&str, CilFlavor)]) -> Self {
-        Self::constructor()
-            .without_auto_params()
-            .add_typed_params(params)
     }
 
     /// Create a method with specific parameter types (convenience for custom attribute testing)
@@ -246,7 +182,7 @@ impl MethodBuilder {
             name: self.name,
             params,
             varargs: Arc::new(boxcar::Vec::new()),
-            generic_params: LazyList::new(),
+            generic_params: Default::default(),
             generic_args: LazyList::new(),
             signature: self.signature.unwrap_or_else(|| SignatureMethod {
                 has_this: false,
@@ -270,11 +206,11 @@ impl MethodBuilder {
             rva: self.rva,
             body: OnceLock::new(),
             local_vars: Arc::new(boxcar::Vec::new()),
-            overrides: Arc::new(boxcar::Vec::new()),
-            interface_impls: LazyList::new(),
+            overrides: Default::default(),
+            interface_impls: Default::default(),
             security: OnceLock::new(),
             blocks: OnceLock::new(),
-            custom_attributes: LazyList::new(),
+            custom_attributes: Default::default(),
             declaring_type: OnceLock::new(),
         })
     }

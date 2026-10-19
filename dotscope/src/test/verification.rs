@@ -1055,7 +1055,7 @@ pub fn build_ssa_for_method_with_method(
     let num_locals = declared_locals.max(max_local_used + 1);
 
     let type_context = TypeContext::new(&method, assembly);
-    let ssa = SsaConverter::build(&cfg, num_args, num_locals, &type_context).ok()?;
+    let ssa = SsaConverter::build(&cfg, num_args, num_locals, &type_context, Vec::new()).ok()?;
     Some((ssa, method))
 }
 
@@ -1072,7 +1072,7 @@ pub fn build_ssa_for_method_entry(
     let num_locals = declared_locals.max(max_local_used + 1);
 
     let type_context = TypeContext::new(method, assembly);
-    SsaConverter::build(&cfg, num_args, num_locals, &type_context).ok()
+    SsaConverter::build(&cfg, num_args, num_locals, &type_context, Vec::new()).ok()
 }
 
 pub fn find_max_local_index(cfg: &ControlFlowGraph) -> usize {

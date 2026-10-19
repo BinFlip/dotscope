@@ -42,7 +42,12 @@ use common::{
     },
     verification::{StructuralConfig, VerificationLevel},
 };
-use dotscope::{deobfuscation::EngineConfig, metadata::validation::ValidationConfig, CilObject};
+use dotscope::{
+    assembly::Operand,
+    deobfuscation::{DeobfuscationEngine, EngineConfig},
+    metadata::validation::ValidationConfig,
+    CilObject,
+};
 
 const SAMPLES_DIR: &str = "tests/samples/packers/netreactor/7.5.0";
 
@@ -367,18 +372,10 @@ fn test_netreactor_samples_loadable() {
                 );
             }
             Err(e) => {
-                // Native EXE stubs may not parse as standard .NET assemblies
-                if sample.expected_protections.has_native_exe {
-                    eprintln!(
-                        "  [SKIP] {} — native exe stub, load error expected: {}",
-                        sample.filename, e
-                    );
-                } else {
-                    panic!(
-                        "{}: Failed to load .NET Reactor sample: {}",
-                        sample.filename, e
-                    );
-                }
+                panic!(
+                    "{}: Failed to load .NET Reactor sample: {}",
+                    sample.filename, e
+                );
             }
         }
     }
@@ -405,7 +402,8 @@ fn test_netreactor_samples_loadable() {
 fn test_all_netreactor_samples() {
     let samples = all_samples();
 
-    let original_asm = load_sample(SAMPLES_DIR, "original.exe").ok();
+    let original_asm =
+        Some(load_sample(SAMPLES_DIR, "original.exe").expect("the unprotected original loads"));
 
     let mut results = Vec::new();
     let mut skipped = 0;
@@ -414,21 +412,6 @@ fn test_all_netreactor_samples() {
         let path = format!("{}/{}", SAMPLES_DIR, sample.filename);
         if !std::path::Path::new(&path).exists() {
             eprintln!("Skipping test: sample not found at {}", path);
-            skipped += 1;
-            continue;
-        }
-
-        // A native-stub build is an x86 executable that carries the .NET image
-        // as payload rather than being one, so it never reaches the point where
-        // deobfuscation could be judged — it is rejected at load. That is the
-        // documented limit of what this crate reads, not a deobfuscation
-        // result, and `test_netreactor_samples_load` already asserts the load
-        // error is the expected one. Measuring it here would only restate that.
-        if sample.expected_protections.has_native_exe {
-            eprintln!(
-                "  [SKIP] {} — native exe stub, not a supported input format",
-                sample.filename
-            );
             skipped += 1;
             continue;
         }
@@ -517,4 +500,72 @@ fn test_all_netreactor_samples() {
         // - Verify correct technique detection per sample
         // - Verify semantic preservation
     }
+}
+
+/// The methods whose code loads a string containing `needle`.
+fn methods_loading(assembly: &CilObject, needle: &str) -> Vec<String> {
+    let Some(strings) = assembly.userstrings() else {
+        return Vec::new();
+    };
+    assembly
+        .methods()
+        .iter()
+        .filter(|entry| {
+            entry.value().instructions().any(|instruction| {
+                instruction.mnemonic == "ldstr"
+                    && matches!(instruction.operand, Operand::Token(token)
+                        if strings
+                            .get(token.row() as usize)
+                            .is_ok_and(|text| text.to_string_lossy().contains(needle)))
+            })
+        })
+        .map(|entry| entry.value().name.clone())
+        .collect()
+}
+
+/// .NET Reactor's trial build puts a license check at the start of the
+/// program's constructors, and it throws two weeks after the protection date.
+/// Removing the protection removes the check and every call to it: surviving
+/// code calling it is the reason the check has to go, not a reason to keep it.
+#[test]
+fn the_trial_check_is_removed_with_its_call_sites() {
+    let sample = format!("{SAMPLES_DIR}/reactor_strings.exe");
+    let engine = DeobfuscationEngine::new(EngineConfig::default());
+    let (output, _) = engine.process_file(&sample).unwrap();
+
+    assert_eq!(
+        methods_loading(&output, "unregistered version"),
+        Vec::<String>::new()
+    );
+}
+
+/// With every protection on, .NET Reactor encrypts the resources and hides
+/// how its runtime names them: the resource names are encrypted strings, its
+/// helpers take `object` for every argument, anti-tamper guards the runtime,
+/// and NecroBit encrypts the helpers themselves. The resources come back under
+/// their own names and the encrypted containers go.
+#[test]
+fn fully_protected_resources_are_restored() {
+    let sample = format!("{SAMPLES_DIR}/reactor_full.exe");
+    let engine = DeobfuscationEngine::new(EngineConfig::default());
+    let (output, _) = engine.process_file(&sample).unwrap();
+
+    let names: Vec<String> = output
+        .resources()
+        .iter()
+        .map(|entry| entry.value().name.clone())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "ConfuserExTestApp.Resources.greeting.txt",
+            "ConfuserExTestApp.Resources.data.bin",
+        ]
+    );
+    let greeting = output
+        .resources()
+        .get("ConfuserExTestApp.Resources.greeting.txt")
+        .and_then(|resource| output.resources().get_data(&resource).map(<[u8]>::to_vec))
+        .expect("the greeting's bytes");
+    assert!(String::from_utf8_lossy(&greeting).contains("Hello from embedded resource!"));
 }

@@ -138,12 +138,6 @@ pub struct TestCapabilities {
     pub ildasm_path: Option<std::path::PathBuf>,
     /// Architectures that can be compiled AND executed
     pub supported_architectures: Vec<Architecture>,
-    /// All detected compilers
-    pub available_compilers: Vec<Compiler>,
-    /// All detected runtimes
-    pub available_runtimes: Vec<Runtime>,
-    /// All detected disassemblers
-    pub available_disassemblers: Vec<Disassembler>,
 }
 
 impl TestCapabilities {
@@ -179,9 +173,6 @@ impl TestCapabilities {
             disassembler,
             ildasm_path,
             supported_architectures,
-            available_compilers,
-            available_runtimes,
-            available_disassemblers,
         }
     }
 
@@ -508,47 +499,6 @@ impl TestCapabilities {
                 Vec::new()
             }
         }
-    }
-}
-
-/// Execute an assembly with the detected runtime
-pub fn execute_assembly(
-    runtime: Runtime,
-    assembly_path: &Path,
-) -> std::io::Result<std::process::Output> {
-    match runtime {
-        Runtime::Mono => Command::new("mono").arg(assembly_path).output(),
-        Runtime::DotNet => {
-            // For dotnet, we need to run from the assembly's directory
-            // so it can find the runtimeconfig.json
-            let mut cmd = Command::new("dotnet");
-            if let Some(parent) = assembly_path.parent() {
-                cmd.current_dir(parent);
-                if let Some(filename) = assembly_path.file_name() {
-                    cmd.arg(filename);
-                } else {
-                    cmd.arg(assembly_path);
-                }
-            } else {
-                cmd.arg(assembly_path);
-            }
-            cmd.output()
-        }
-    }
-}
-
-/// Disassemble an assembly with the detected disassembler
-pub fn disassemble_assembly(
-    disassembler: Disassembler,
-    assembly_path: &Path,
-) -> std::io::Result<std::process::Output> {
-    match disassembler {
-        Disassembler::Monodis => Command::new("monodis").arg(assembly_path).output(),
-        Disassembler::Ildasm => Command::new("ildasm")
-            .arg("/text")
-            .arg(assembly_path)
-            .output(),
-        Disassembler::DotNetIldasm => Command::new("dotnet-ildasm").arg(assembly_path).output(),
     }
 }
 

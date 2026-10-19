@@ -90,13 +90,15 @@ mod scenarios;
 mod validator;
 mod windowsbase;
 
+//pub use scenarios::*;
+use std::collections::BTreeMap;
+
 pub use builders::*;
 pub use crafted2::*;
 pub use helpers::*;
 pub use validator::*;
 pub use windowsbase::*;
 
-//pub use scenarios::*;
 use crate::{
     analysis::{SsaType, TypeProvider},
     metadata::{signatures::SignatureLocalVariable, token::Token},
@@ -111,6 +113,10 @@ use crate::{
 pub struct TestTypeProvider {
     num_args: usize,
     num_locals: usize,
+    /// Locals declared with a type other than `I32`.
+    local_types: BTreeMap<u16, SsaType>,
+    /// Whether the body sets `.locals init`.
+    locals_init: bool,
 }
 
 impl TestTypeProvider {
@@ -120,7 +126,23 @@ impl TestTypeProvider {
         Self {
             num_args,
             num_locals,
+            local_types: BTreeMap::new(),
+            locals_init: true,
         }
+    }
+
+    /// Declares local `idx` with `ty` instead of `I32`.
+    #[must_use]
+    pub fn with_local_type(mut self, idx: u16, ty: SsaType) -> Self {
+        self.local_types.insert(idx, ty);
+        self
+    }
+
+    /// Declares a body without `.locals init`.
+    #[must_use]
+    pub fn without_locals_init(mut self) -> Self {
+        self.locals_init = false;
+        self
     }
 }
 
@@ -134,7 +156,9 @@ impl TypeProvider for TestTypeProvider {
     }
 
     fn local_type(&self, idx: u16) -> SsaType {
-        if (idx as usize) < self.num_locals {
+        if let Some(ty) = self.local_types.get(&idx) {
+            ty.clone()
+        } else if (idx as usize) < self.num_locals {
             SsaType::I32
         } else {
             SsaType::Unknown
@@ -163,5 +187,9 @@ impl TypeProvider for TestTypeProvider {
 
     fn local_type_signatures(&self) -> Option<Vec<SignatureLocalVariable>> {
         None
+    }
+
+    fn locals_zero_initialized(&self) -> bool {
+        self.locals_init
     }
 }

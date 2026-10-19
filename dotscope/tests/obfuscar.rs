@@ -150,7 +150,8 @@ fn test_all_obfuscar_samples() {
     let samples = all_samples();
 
     // Load original.exe for semantic comparison
-    let original_asm = load_sample(SAMPLES_DIR, "original.exe").ok();
+    let original_asm =
+        Some(load_sample(SAMPLES_DIR, "original.exe").expect("the unprotected original loads"));
 
     let mut results = Vec::new();
     let mut skipped = 0;

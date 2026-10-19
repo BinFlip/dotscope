@@ -42,7 +42,7 @@ using System.Reflection;
 /// </summary>
 public static class CfgTests
 {
-    // ========== SEQUENTIAL CONTROL FLOW ==========
+    // SEQUENTIAL CONTROL FLOW
 
     /// <summary>
     /// Simple sequential method: single basic block.
@@ -73,7 +73,7 @@ public static class CfgTests
         return 0;
     }
 
-    // ========== CONDITIONAL CONTROL FLOW ==========
+    // CONDITIONAL CONTROL FLOW
 
     /// <summary>
     /// Simple if-then (no else): two exit points.
@@ -138,7 +138,7 @@ public static class CfgTests
         return result;
     }
 
-    // ========== LOOP CONTROL FLOW ==========
+    // LOOP CONTROL FLOW
 
     /// <summary>
     /// Simple while loop.
@@ -233,7 +233,7 @@ public static class CfgTests
         return sum;
     }
 
-    // ========== SWITCH CONTROL FLOW ==========
+    // SWITCH CONTROL FLOW
 
     /// <summary>
     /// Simple switch statement.

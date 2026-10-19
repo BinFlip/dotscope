@@ -5,65 +5,25 @@
 
 use std::sync::{Arc, OnceLock};
 
-use crate::{
-    metadata::{
-        signatures::{SignatureProperty, TypeSignature},
-        tables::{Property, PropertyAttributes, PropertyRc},
-        token::Token,
-        typesystem::CilPrimitive,
-    },
-    prelude::SignatureParameter,
-    utils::LazyList,
+use crate::metadata::{
+    signatures::{SignatureProperty, TypeSignature},
+    tables::{Property, PropertyAttributes, PropertyRc},
+    token::Token,
+    typesystem::CilPrimitive,
 };
 
 /// Property constant value types for default values
 #[derive(Debug, Clone)]
 pub enum PropertyConstant {
-    /// Boolean constant
-    Bool(bool),
-    /// 8-bit signed integer
-    I1(i8),
-    /// 8-bit unsigned integer  
-    U1(u8),
-    /// 16-bit signed integer
-    I2(i16),
-    /// 16-bit unsigned integer
-    U2(u16),
     /// 32-bit signed integer
     I4(i32),
-    /// 32-bit unsigned integer
-    U4(u32),
-    /// 64-bit signed integer
-    I8(i64),
-    /// 64-bit unsigned integer
-    U8(u64),
-    /// 32-bit floating point
-    R4(f32),
-    /// 64-bit floating point
-    R8(f64),
-    /// String constant
-    String(String),
-    /// Null reference
-    Null,
 }
 
 impl PropertyConstant {
     /// Convert to CilPrimitive for use in tests
     pub fn to_primitive(&self) -> CilPrimitive {
         match self {
-            PropertyConstant::Bool(val) => CilPrimitive::boolean(*val),
-            PropertyConstant::I1(val) => CilPrimitive::i1(*val),
-            PropertyConstant::U1(val) => CilPrimitive::u1(*val),
-            PropertyConstant::I2(val) => CilPrimitive::i2(*val),
-            PropertyConstant::U2(val) => CilPrimitive::u2(*val),
             PropertyConstant::I4(val) => CilPrimitive::i4(*val),
-            PropertyConstant::U4(val) => CilPrimitive::u4(*val),
-            PropertyConstant::I8(val) => CilPrimitive::i8(*val),
-            PropertyConstant::U8(val) => CilPrimitive::u8(*val),
-            PropertyConstant::R4(val) => CilPrimitive::r4(*val),
-            PropertyConstant::R8(val) => CilPrimitive::r8(*val),
-            PropertyConstant::String(val) => CilPrimitive::string(val),
-            PropertyConstant::Null => CilPrimitive::null(),
         }
     }
 }
@@ -98,16 +58,6 @@ impl PropertyBuilder {
         self
     }
 
-    pub fn with_flags(mut self, flags: PropertyAttributes) -> Self {
-        self.flags = flags;
-        self
-    }
-
-    pub fn with_params(mut self, params: Vec<SignatureParameter>) -> Self {
-        self.signature.params = params;
-        self
-    }
-
     pub fn with_default(mut self, default: PropertyConstant) -> Self {
         self.default_value = Some(default);
         self
@@ -139,7 +89,7 @@ impl PropertyBuilder {
             fn_setter: OnceLock::new(),
             fn_getter: OnceLock::new(),
             fn_other: OnceLock::new(),
-            custom_attributes: LazyList::new(),
+            custom_attributes: Default::default(),
         };
 
         let property_rc = Arc::new(property);

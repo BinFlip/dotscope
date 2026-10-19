@@ -515,7 +515,7 @@ pub fn build_analysis(
         Some(ctx) => ctx,
         None => &fallback,
     };
-    let ssa = SsaConverter::build(&cfg, num_args, num_locals, provider)
+    let ssa = SsaConverter::build(&cfg, num_args, num_locals, provider, Vec::new())
         .map_err(|e| format!("Failed to build SSA: {}", e))?;
 
     Ok((cfg, ssa))

@@ -263,13 +263,7 @@ impl ExpectedInstruction {
             Some(ExpectedOperand::F64(expected)) => {
                 matches!(actual.operand, Operand::Immediate(Immediate::Float64(v)) if (v - expected).abs() < f64::EPSILON)
             }
-            Some(ExpectedOperand::BranchTarget) => {
-                matches!(
-                    actual.operand,
-                    Operand::Target(_)
-                        | Operand::Immediate(Immediate::Int8(_) | Immediate::Int32(_))
-                )
-            }
+            Some(ExpectedOperand::BranchTarget) => matches!(actual.operand, Operand::Target(_)),
         }
     }
 }
@@ -1693,28 +1687,53 @@ fn test_edge_div_by_one() -> Result<()> {
     run_deobfuscation_test(asm, 1, 0, &[instr!("ldarg.0"), instr!("ret")])
 }
 
-/// Test: 0 divided by anything is 0.
+/// Test: 0 divided by an unknown value is kept.
+///
+/// The quotient is 0 only when the divisor is not: with `arg == 0` the
+/// division raises `DivideByZeroException`, and folding it to 0 would delete
+/// the exception.
 ///
 /// Input:  ldc.i4.0, ldarg.0, div, ret
-/// Output: ldc.i4.0, ret
+/// Output: ldc.i4.0, ldarg.0, div, ret
 #[test]
 fn test_edge_zero_divided() -> Result<()> {
     let mut asm = InstructionAssembler::new();
     asm.ldc_i4_0()?.ldarg_0()?.div()?.ret()?;
 
-    run_deobfuscation_test(asm, 1, 0, &[instr!("ldc.i4.0"), instr!("ret")])
+    run_deobfuscation_test(
+        asm,
+        1,
+        0,
+        &[
+            instr!("ldc.i4.0"),
+            instr!("ldarg.0"),
+            instr!("div"),
+            instr!("ret"),
+        ],
+    )
 }
 
-/// Test: 0 modulo anything is 0.
+/// Test: 0 modulo an unknown value is kept, for the reason
+/// `test_edge_zero_divided` gives.
 ///
 /// Input:  ldc.i4.0, ldarg.0, rem, ret
-/// Output: ldc.i4.0, ret
+/// Output: ldc.i4.0, ldarg.0, rem, ret
 #[test]
 fn test_edge_zero_modulo() -> Result<()> {
     let mut asm = InstructionAssembler::new();
     asm.ldc_i4_0()?.ldarg_0()?.rem()?.ret()?;
 
-    run_deobfuscation_test(asm, 1, 0, &[instr!("ldc.i4.0"), instr!("ret")])
+    run_deobfuscation_test(
+        asm,
+        1,
+        0,
+        &[
+            instr!("ldc.i4.0"),
+            instr!("ldarg.0"),
+            instr!("rem"),
+            instr!("ret"),
+        ],
+    )
 }
 
 /// Test: double negation is identity.

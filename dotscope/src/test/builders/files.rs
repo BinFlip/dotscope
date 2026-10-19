@@ -5,20 +5,17 @@
 
 use std::sync::Arc;
 
-use crate::{
-    metadata::{
-        customattributes::CustomAttributeValue,
-        tables::{AssemblyRefHash, File, FileAttributes, FileRc, ModuleRef, ModuleRefRc},
-        token::Token,
-    },
-    utils::LazyList,
+use crate::metadata::{
+    customattributes::CustomAttributeValueList,
+    tables::{AssemblyRefHash, File, FileAttributes, FileRc, ModuleRef, ModuleRefRc},
+    token::Token,
 };
 
 /// Builder for creating mock ModuleRef instances with various configurations
 pub struct ModuleRefBuilder {
     rid: u32,
     name: String,
-    custom_attributes: Option<LazyList<Arc<CustomAttributeValue>>>,
+    custom_attributes: Option<CustomAttributeValueList>,
 }
 
 impl ModuleRefBuilder {
@@ -85,11 +82,6 @@ impl FileBuilder {
         self
     }
 
-    pub fn with_hash(mut self, hash_bytes: &[u8]) -> Self {
-        self.hash_value = AssemblyRefHash::new(hash_bytes).ok();
-        self
-    }
-
     pub fn build(self) -> FileRc {
         Arc::new(File {
             rid: self.rid,
@@ -100,7 +92,7 @@ impl FileBuilder {
             hash_value: self
                 .hash_value
                 .unwrap_or_else(|| AssemblyRefHash::new(&[1, 2, 3, 4]).unwrap()),
-            custom_attributes: LazyList::new(),
+            custom_attributes: Default::default(),
         })
     }
 }

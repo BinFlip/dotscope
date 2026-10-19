@@ -6,8 +6,8 @@
 use crate::{
     metadata::{
         tables::{
-            CodedIndex, CodedIndexType, FieldRaw, MethodDefRaw, NestedClassRaw, TableDataOwned,
-            TableId, TypeAttributes, TypeDefRaw,
+            CodedIndex, CodedIndexType, FieldRaw, MethodDefRaw, TableDataOwned, TableId,
+            TypeAttributes, TypeDefRaw,
         },
         token::Token,
     },
@@ -40,146 +40,6 @@ pub fn owned_type_ownership_validator_file_factory() -> Result<Vec<TestAssembly>
     assemblies.push(create_assembly_with_invalid_field_visibility()?);
 
     Ok(assemblies)
-}
-
-/// Creates an assembly with nested type having invalid visibility for nesting
-///
-/// Originally from: `src/metadata/validation/validators/owned/types/ownership.rs`
-pub fn create_assembly_with_invalid_nested_visibility() -> Result<TestAssembly> {
-    create_test_assembly(get_testfile_mscorlib, |assembly| {
-        // Create container type
-        let container_name_index = assembly
-            .string_add("ContainerType")
-            .map_err(|e| Error::Other(format!("Failed to add container name: {e}")))?;
-
-        let container_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
-        let container_type = TypeDefRaw {
-            rid: container_rid,
-            token: Token::new(0x02000000 + container_rid),
-            offset: 0,
-            flags: TypeAttributes::PUBLIC.bits(), // Public container
-            type_name: container_name_index.placeholder(),
-            type_namespace: 0,
-            extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
-            field_list: 1,
-            method_list: 1,
-        };
-
-        assembly
-            .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(container_type))
-            .map_err(|e| Error::Other(format!("Failed to add container type: {e}")))?;
-
-        // Create nested type with invalid visibility (value beyond valid range)
-        let nested_name_index = assembly
-            .string_add("ContainerType+NestedType")
-            .map_err(|e| Error::Other(format!("Failed to add nested name: {e}")))?;
-
-        let nested_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
-        let nested_type = TypeDefRaw {
-            rid: nested_rid,
-            token: Token::new(0x02000000 + nested_rid),
-            offset: 0,
-            flags: 0x00000008, // Invalid visibility value (8 is beyond valid range 0-7) - raw u32 intentional
-            type_name: nested_name_index.placeholder(),
-            type_namespace: 0,
-            extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
-            field_list: 1,
-            method_list: 1,
-        };
-
-        assembly
-            .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(nested_type))
-            .map_err(|e| Error::Other(format!("Failed to add nested type: {e}")))?;
-
-        // Create NestedClass entry to establish the ownership relationship
-        let nested_class_rid = assembly.original_table_row_count(TableId::NestedClass) + 1;
-        let nested_class = NestedClassRaw {
-            rid: nested_class_rid,
-            token: Token::new(0x29000000 + nested_class_rid),
-            offset: 0,
-            nested_class: nested_rid,       // Raw index into TypeDef table
-            enclosing_class: container_rid, // Raw index into TypeDef table
-        };
-
-        assembly
-            .table_row_add(
-                TableId::NestedClass,
-                TableDataOwned::NestedClass(nested_class),
-            )
-            .map_err(|e| Error::Other(format!("Failed to add nested class relationship: {e}")))?;
-
-        Ok(())
-    })
-}
-
-/// Creates an assembly with nested type having empty name
-///
-/// Originally from: `src/metadata/validation/validators/owned/types/ownership.rs`
-pub fn create_assembly_with_empty_nested_name() -> Result<TestAssembly> {
-    create_test_assembly(get_testfile_mscorlib, |assembly| {
-        // Create container type
-        let container_name_index = assembly
-            .string_add("ContainerType")
-            .map_err(|e| Error::Other(format!("Failed to add container name: {e}")))?;
-
-        let container_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
-        let container_type = TypeDefRaw {
-            rid: container_rid,
-            token: Token::new(0x02000000 + container_rid),
-            offset: 0,
-            flags: TypeAttributes::PUBLIC.bits(),
-            type_name: container_name_index.placeholder(),
-            type_namespace: 0,
-            extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
-            field_list: 1,
-            method_list: 1,
-        };
-
-        assembly
-            .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(container_type))
-            .map_err(|e| Error::Other(format!("Failed to add container type: {e}")))?;
-
-        // Create nested type with empty name (should trigger validation failure)
-        let empty_name_index = assembly
-            .string_add("")
-            .map_err(|e| Error::Other(format!("Failed to add empty name: {e}")))?;
-
-        let nested_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
-        let nested_type = TypeDefRaw {
-            rid: nested_rid,
-            token: Token::new(0x02000000 + nested_rid),
-            offset: 0,
-            flags: TypeAttributes::NESTED_PUBLIC.bits(),
-            type_name: empty_name_index.placeholder(), // Empty name - this should trigger validation failure
-            type_namespace: 0,
-            extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
-            field_list: 1,
-            method_list: 1,
-        };
-
-        assembly
-            .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(nested_type))
-            .map_err(|e| Error::Other(format!("Failed to add nested type: {e}")))?;
-
-        // Create NestedClass entry to establish the ownership relationship
-        let nested_class_rid = assembly.original_table_row_count(TableId::NestedClass) + 1;
-        let nested_class = NestedClassRaw {
-            rid: nested_class_rid,
-            token: Token::new(0x29000000 + nested_class_rid),
-            offset: 0,
-            nested_class: nested_rid,       // Raw index into TypeDef table
-            enclosing_class: container_rid, // Raw index into TypeDef table
-        };
-
-        assembly
-            .table_row_add(
-                TableId::NestedClass,
-                TableDataOwned::NestedClass(nested_class),
-            )
-            .map_err(|e| Error::Other(format!("Failed to add nested class relationship: {e}")))?;
-
-        Ok(())
-    })
 }
 
 /// Creates an assembly with method having empty name - validation should fail

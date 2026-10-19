@@ -22,8 +22,7 @@ use std::{
 };
 
 use dotscope::{
-    analysis::{ConstValue, ControlFlowGraph, SsaConverter, SsaFunction, SsaOp, TypeContext},
-    assembly::Operand,
+    analysis::{ConstValue, SsaFunction, SsaOp},
     metadata::{
         method::{Method, MethodModifiers},
         signatures::TypeSignature,
@@ -1041,16 +1040,10 @@ pub fn build_ssa_for_method_with_method(
         .find(|e| e.value().name == method_name)
         .map(|e| e.value().clone())?;
 
-    let cfg = method.cfg()?;
-    let is_static = method.flags_modifiers.contains(MethodModifiers::STATIC);
-    let num_args = method.signature.params.len() + if is_static { 0 } else { 1 };
-
-    let declared_locals = method.local_vars.count();
-    let max_local_used = find_max_local_index(&cfg);
-    let num_locals = declared_locals.max(max_local_used + 1);
-
-    let type_context = TypeContext::new(&method, assembly);
-    let ssa = SsaConverter::build(&cfg, num_args, num_locals, &type_context).ok()?;
+    // The library's own construction, exception table included: building
+    // without it cannot place a handler's code, and fails for every method
+    // with a protected region.
+    let ssa = method.ssa(assembly).ok()?;
     Some((ssa, method))
 }
 
@@ -1058,16 +1051,7 @@ pub fn build_ssa_for_method_entry(
     assembly: &CilObject,
     method: &Arc<Method>,
 ) -> Option<SsaFunction> {
-    let cfg = method.cfg()?;
-    let is_static = method.flags_modifiers.contains(MethodModifiers::STATIC);
-    let num_args = method.signature.params.len() + if is_static { 0 } else { 1 };
-
-    let declared_locals = method.local_vars.count();
-    let max_local_used = find_max_local_index(&cfg);
-    let num_locals = declared_locals.max(max_local_used + 1);
-
-    let type_context = TypeContext::new(method, assembly);
-    SsaConverter::build(&cfg, num_args, num_locals, &type_context).ok()
+    method.ssa(assembly).ok()
 }
 
 /// Assert that deobfuscation produced zero warnings and zero errors.
@@ -1085,20 +1069,6 @@ pub fn assert_deobfuscation_diagnostics(filename: &str, warning_count: usize, er
         "{}: Deobfuscation produced {} error(s) — zero errors allowed",
         filename, error_count
     );
-}
-
-pub fn find_max_local_index(cfg: &ControlFlowGraph) -> usize {
-    let mut max_index: usize = 0;
-    for node_id in cfg.node_ids() {
-        if let Some(block) = cfg.block(node_id) {
-            for instr in &block.instructions {
-                if let Operand::Local(idx) = &instr.operand {
-                    max_index = max_index.max(*idx as usize);
-                }
-            }
-        }
-    }
-    max_index
 }
 
 /// Check if a method token refers to an external method.
@@ -1193,7 +1163,7 @@ impl AssemblyStats {
         // Collect resource names
         let mut resource_names = HashSet::new();
         for entry in assembly.resources().iter() {
-            resource_names.insert(entry.key().clone());
+            resource_names.insert(entry.value().name.clone());
         }
 
         Self {

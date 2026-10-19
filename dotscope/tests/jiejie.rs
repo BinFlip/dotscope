@@ -246,7 +246,8 @@ fn test_all_jiejie_samples() {
     let samples = all_samples();
 
     // Load original.exe for semantic and structural comparison
-    let original_asm = load_sample(SAMPLES_DIR, "original.exe").ok();
+    let original_asm =
+        Some(load_sample(SAMPLES_DIR, "original.exe").expect("the unprotected original loads"));
     let original_path = format!("{}/original.exe", SAMPLES_DIR);
     let original_stats = if std::path::Path::new(&original_path).exists() {
         Some(AssemblyStats::from_file(std::path::Path::new(

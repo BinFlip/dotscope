@@ -23,7 +23,7 @@
 
 mod common;
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use common::{
     framework::{
@@ -44,7 +44,15 @@ use dotscope::{
     CilObject,
 };
 
-const SAMPLES_DIR: &str = "tests/samples/packers/bitmono/0.39.0";
+/// The BitMono versions with samples, each protected from the same TestApp with the same
+/// configs: 0.39.0, which the techniques were written against, and 0.45.0, the current
+/// release. Every test runs against each.
+const VERSIONS: &[&str] = &["0.39.0", "0.45.0"];
+
+/// The samples directory of a BitMono version.
+fn samples_dir(version: &str) -> String {
+    format!("tests/samples/packers/bitmono/{version}")
+}
 
 /// Expected protections in a BitMono sample.
 #[derive(Debug, Clone, Default)]
@@ -83,11 +91,15 @@ struct ExpectedProtections {
     // Lossy IL-level (detection only)
     /// FullRenamer space-containing names.
     has_renamed_names: bool,
+
+    // Not in BitMono 0.39.0
+    /// LocalVariableEncoding (locals moved into an encoded store).
+    has_local_variable_encoding: bool,
 }
 
-/// All BitMono samples with their expected characteristics.
-fn all_samples() -> Vec<SampleSpec<ExpectedProtections>> {
-    vec![
+/// All samples of a BitMono version with their expected characteristics.
+fn all_samples(version: &str) -> Vec<SampleSpec<ExpectedProtections>> {
+    let mut samples = vec![
         SampleSpec {
             filename: "original.exe",
             description: "Unprotected original (baseline)",
@@ -98,7 +110,7 @@ fn all_samples() -> Vec<SampleSpec<ExpectedProtections>> {
             check_structural_match: false,
             structural_config: StructuralConfig::default(),
         },
-        // === PE-level packers ===
+        // PE-level packers
         SampleSpec {
             filename: "bitmono_bitdotnet.exe",
             description: "BitDotNet PE signature corruption",
@@ -152,7 +164,7 @@ fn all_samples() -> Vec<SampleSpec<ExpectedProtections>> {
             check_structural_match: false,
             structural_config: StructuralConfig::default(),
         },
-        // === Reversible IL-level ===
+        // Reversible IL-level
         SampleSpec {
             filename: "bitmono_strings.exe",
             description: "StringsEncryption (AES + Rfc2898DeriveBytes)",
@@ -218,7 +230,7 @@ fn all_samples() -> Vec<SampleSpec<ExpectedProtections>> {
             check_structural_match: false,
             structural_config: StructuralConfig::default(),
         },
-        // === Cleanup targets ===
+        // Cleanup targets
         SampleSpec {
             filename: "bitmono_junk.exe",
             description: "BitMethodDotnet junk prefix + BillionNops",
@@ -247,7 +259,7 @@ fn all_samples() -> Vec<SampleSpec<ExpectedProtections>> {
             check_structural_match: false,
             structural_config: StructuralConfig::default(),
         },
-        // === Lossy IL-level ===
+        // Lossy IL-level
         SampleSpec {
             filename: "bitmono_renamer.exe",
             description: "FullRenamer (space-containing word-pool names)",
@@ -261,7 +273,7 @@ fn all_samples() -> Vec<SampleSpec<ExpectedProtections>> {
             check_structural_match: false,
             structural_config: StructuralConfig::default(),
         },
-        // === Combinations ===
+        // Combinations
         SampleSpec {
             filename: "bitmono_combined.exe",
             description: "Multiple IL protections combined",
@@ -317,6 +329,7 @@ fn all_samples() -> Vec<SampleSpec<ExpectedProtections>> {
                 has_junk_prefix: true,
                 has_billion_nops: true,
                 has_renamed_names: true,
+                has_local_variable_encoding: false,
             },
             is_original: false,
             check_semantic_preservation: true,
@@ -324,177 +337,204 @@ fn all_samples() -> Vec<SampleSpec<ExpectedProtections>> {
             check_structural_match: false,
             structural_config: StructuralConfig::default(),
         },
-    ]
+    ];
+    if version != "0.39.0" {
+        samples.push(SampleSpec {
+            filename: "bitmono_localvariableencoding.exe",
+            description: "LocalVariableEncoding",
+            expected_protections: ExpectedProtections {
+                has_local_variable_encoding: true,
+                ..Default::default()
+            },
+            is_original: false,
+            check_semantic_preservation: true,
+            verification_level: VerificationLevel::Normal,
+            check_structural_match: true,
+            structural_config: StructuralConfig::default(),
+        });
+    }
+    samples
 }
 
 /// Main test that runs all BitMono samples through the comprehensive deobfuscation pipeline.
 #[test]
 fn test_all_bitmono_samples() {
-    let samples = all_samples();
+    for version in VERSIONS {
+        let dir = samples_dir(version);
+        let dir = dir.as_str();
+        eprintln!("=== BitMono {version} ===");
+        let samples = all_samples(version);
 
-    // Load original.exe for semantic comparison
-    let original_asm = load_sample(SAMPLES_DIR, "original.exe").ok();
+        // Load original.exe for semantic comparison
+        let original_asm =
+            Some(load_sample(dir, "original.exe").expect("the unprotected original loads"));
 
-    let mut results = Vec::new();
-    let mut skipped = 0;
+        let mut results = Vec::new();
 
-    for sample in &samples {
-        let path = format!("{}/{}", SAMPLES_DIR, sample.filename);
-        if !std::path::Path::new(&path).exists() {
-            eprintln!("Skipping test: sample not found at {}", path);
-            skipped += 1;
-            continue;
-        }
-
-        results.push(run_deobfuscation_test(
-            sample,
-            SAMPLES_DIR,
-            original_asm.as_ref(),
-            SEMANTIC_TEST_METHODS,
-            EngineConfig::default(),
-            ProcessMode::File,
-        ));
-    }
-
-    if results.is_empty() {
-        eprintln!(
-            "All {} BitMono samples skipped (not found in {}). Generate samples with: cd {}/generate && ./generate.sh",
-            skipped, SAMPLES_DIR, SAMPLES_DIR
-        );
-        return;
-    }
-
-    print_bitmono_summary(&results);
-
-    // ASSERTIONS: Verify all protected samples
-    for result in &results {
-        if result.sample.is_original {
-            // Original should NOT be detected as BitMono
-            let score = result.detection.supporting_matched;
+        for sample in &samples {
+            let path = format!("{}/{}", dir, sample.filename);
             assert!(
-                score < 20,
-                "{}: Unprotected original should not be detected as BitMono (score: {})",
-                result.sample.filename,
-                score
+                std::path::Path::new(&path).exists(),
+                "sample not found: {}",
+                path
             );
-            continue;
+
+            results.push(run_deobfuscation_test(
+                sample,
+                dir,
+                original_asm.as_ref(),
+                SEMANTIC_TEST_METHODS,
+                EngineConfig::default(),
+                ProcessMode::File,
+            ));
         }
 
-        let filename = result.sample.filename;
-        let expected = &result.sample.expected_protections;
+        print_bitmono_summary(&results);
 
-        // Common assertions: core validity, semantic preservation, structural match, diagnostics
-        let semantic_threshold = match result.sample.verification_level {
-            VerificationLevel::Normal => 0.90,
-            VerificationLevel::Relaxed => 0.85,
-        };
-        assert_common_requirements(result, None, semantic_threshold, true);
+        // ASSERTIONS: Verify all protected samples
+        for result in &results {
+            if result.sample.is_original {
+                // Original should NOT be detected as BitMono
+                let score = result.detection.supporting_matched;
+                assert!(
+                    score < 20,
+                    "{}: Unprotected original should not be detected as BitMono (score: {})",
+                    result.sample.filename,
+                    score
+                );
+                continue;
+            }
 
-        // === Detection assertions ===
-        let has_attributed_protections = expected.has_pe_corruption
-            || expected.has_clr_header_corruption
-            || expected.has_data_directory_inflation
-            || expected.has_string_encryption
-            || expected.has_call_to_calli
-            || expected.has_dotnethook
-            || expected.has_unmanaged_string
-            || expected.has_anti_debug
-            || expected.has_junk_prefix
-            || expected.has_billion_nops;
+            let filename = result.sample.filename;
+            let expected = &result.sample.expected_protections;
 
-        if has_attributed_protections {
-            let score = if result.detection.obfuscator_name.is_some() {
-                100
-            } else {
-                0
+            // Common assertions: core validity, semantic preservation, structural match, diagnostics
+            let semantic_threshold = match result.sample.verification_level {
+                VerificationLevel::Normal => 0.90,
+                VerificationLevel::Relaxed => 0.85,
             };
+            assert_common_requirements(result, None, semantic_threshold, true);
+
+            // Detection assertions
+            let has_attributed_protections = expected.has_pe_corruption
+                || expected.has_clr_header_corruption
+                || expected.has_data_directory_inflation
+                || expected.has_string_encryption
+                || expected.has_call_to_calli
+                || expected.has_dotnethook
+                || expected.has_unmanaged_string
+                || expected.has_anti_debug
+                || expected.has_junk_prefix
+                || expected.has_billion_nops
+                || expected.has_local_variable_encoding;
+
+            if has_attributed_protections {
+                let score = if result.detection.obfuscator_name.is_some() {
+                    100
+                } else {
+                    0
+                };
+                assert!(
+                    score >= 20,
+                    "{}: Detection score too low for protected sample (score: {}, expected >= 20)",
+                    filename,
+                    score
+                );
+            }
+
+            if expected.has_suppress_ildasm {
+                assert!(
+                    result.detection.has_technique("generic.ildasm"),
+                    "{}: SuppressIldasm not detected",
+                    filename
+                );
+            }
+
+            if expected.has_anti_de4dot {
+                assert!(
+                    result.detection.has_technique("generic.decompiler"),
+                    "{}: AntiDe4dot fake attributes not detected",
+                    filename
+                );
+            }
+
+            if expected.has_string_encryption {
+                assert!(
+                    result.detection.has_technique("bitmono.strings"),
+                    "{}: String encryption decryptor not detected",
+                    filename
+                );
+            }
+
+            if expected.has_anti_debug {
+                assert!(
+                    result.detection.has_technique("bitmono.debug"),
+                    "{}: AntiDebugBreakpoints not detected",
+                    filename
+                );
+            }
+
+            if expected.has_dotnethook {
+                assert!(
+                    result.detection.has_technique("bitmono.hooks"),
+                    "{}: DotNetHook infrastructure type not detected",
+                    filename
+                );
+            }
+
+            if expected.has_local_variable_encoding {
+                assert!(
+                    result.detection.has_technique("bitmono.locals"),
+                    "{}: LocalVariableEncoding not detected",
+                    filename
+                );
+                assert!(
+                    !result.post_detection.has_technique("bitmono.locals"),
+                    "{}: LocalVariableEncoding should be removed after deobfuscation",
+                    filename
+                );
+            }
+
+            // Removal assertions
+            if expected.has_suppress_ildasm {
+                assert!(
+                    !result.post_detection.has_technique("generic.ildasm"),
+                    "{}: SuppressIldasm should be removed after deobfuscation",
+                    filename
+                );
+            }
+
+            if expected.has_anti_de4dot {
+                assert!(
+                    !result.post_detection.has_technique("generic.decompiler"),
+                    "{}: AntiDe4dot fake attributes should be removed (remaining: {})",
+                    filename,
+                    result
+                        .post_detection
+                        .technique_evidence_count("generic.decompiler")
+                );
+            }
+
+            if expected.has_string_encryption {
+                assert!(
+                    !result.post_detection.has_technique("bitmono.strings"),
+                    "{}: String decryptor methods should be removed (remaining: {})",
+                    filename,
+                    result
+                        .post_detection
+                        .technique_evidence_count("bitmono.strings")
+                );
+            }
+
+            // Post-deobfuscation should have low/zero detection score
+            let post_score = result.post_detection.supporting_matched;
             assert!(
-                score >= 20,
-                "{}: Detection score too low for protected sample (score: {}, expected >= 20)",
+                post_score < 20,
+                "{}: Post-deobfuscation detection score should be below threshold (score: {})",
                 filename,
-                score
+                post_score
             );
         }
-
-        if expected.has_suppress_ildasm {
-            assert!(
-                result.detection.has_technique("generic.ildasm"),
-                "{}: SuppressIldasm not detected",
-                filename
-            );
-        }
-
-        if expected.has_anti_de4dot {
-            assert!(
-                result.detection.has_technique("generic.decompiler"),
-                "{}: AntiDe4dot fake attributes not detected",
-                filename
-            );
-        }
-
-        if expected.has_string_encryption {
-            assert!(
-                result.detection.has_technique("bitmono.strings"),
-                "{}: String encryption decryptor not detected",
-                filename
-            );
-        }
-
-        if expected.has_anti_debug {
-            assert!(
-                result.detection.has_technique("bitmono.debug"),
-                "{}: AntiDebugBreakpoints not detected",
-                filename
-            );
-        }
-
-        if expected.has_dotnethook {
-            assert!(
-                result.detection.has_technique("bitmono.hooks"),
-                "{}: DotNetHook infrastructure type not detected",
-                filename
-            );
-        }
-
-        // === Removal assertions ===
-        if expected.has_suppress_ildasm {
-            assert!(
-                !result.post_detection.has_technique("generic.ildasm"),
-                "{}: SuppressIldasm should be removed after deobfuscation",
-                filename
-            );
-        }
-
-        if expected.has_anti_de4dot {
-            assert!(
-                !result.post_detection.has_technique("generic.decompiler"),
-                "{}: AntiDe4dot fake attributes should be removed (remaining: {})",
-                filename,
-                result
-                    .post_detection
-                    .technique_evidence_count("generic.decompiler")
-            );
-        }
-
-        if expected.has_string_encryption {
-            assert!(
-                !result.post_detection.has_technique("bitmono.strings"),
-                "{}: String decryptor methods should be removed (remaining: {})",
-                filename,
-                result
-                    .post_detection
-                    .technique_evidence_count("bitmono.strings")
-            );
-        }
-
-        // Post-deobfuscation should have low/zero detection score
-        let post_score = result.post_detection.supporting_matched;
-        assert!(
-            post_score < 20,
-            "{}: Post-deobfuscation detection score should be below threshold (score: {})",
-            filename,
-            post_score
-        );
     }
 }
 
@@ -595,72 +635,78 @@ fn test_bitmono_no_false_positives_on_obfuscar() {
 /// Test detection scoring: each sample should score above threshold.
 #[test]
 fn test_bitmono_detection_scoring() {
-    let il_samples: &[(&str, &str, &[&str])] = &[
-        (
-            "bitmono_strings.exe",
-            "StringsEncryption",
-            &["bitmono.strings"],
-        ),
-        ("bitmono_calltocalli.exe", "CallToCalli", &["bitmono.calli"]),
-        ("bitmono_dotnethook.exe", "DotNetHook", &["bitmono.hooks"]),
-        (
-            "bitmono_antide4dot.exe",
-            "AntiDe4dot + AntiILdasm",
-            &["generic.decompiler", "generic.ildasm"],
-        ),
-        ("bitmono_combined.exe", "Combined IL", &["bitmono.calli"]),
-        (
-            "bitmono_maximum_il.exe",
-            "Maximum IL",
-            &["bitmono.calli", "generic.ildasm"],
-        ),
-    ];
+    for version in VERSIONS {
+        let dir = samples_dir(version);
+        let dir = dir.as_str();
+        eprintln!("=== BitMono {version} ===");
+        let il_samples: &[(&str, &str, &[&str])] = &[
+            (
+                "bitmono_strings.exe",
+                "StringsEncryption",
+                &["bitmono.strings"],
+            ),
+            ("bitmono_calltocalli.exe", "CallToCalli", &["bitmono.calli"]),
+            ("bitmono_dotnethook.exe", "DotNetHook", &["bitmono.hooks"]),
+            (
+                "bitmono_antide4dot.exe",
+                "AntiDe4dot + AntiILdasm",
+                &["generic.decompiler", "generic.ildasm"],
+            ),
+            ("bitmono_combined.exe", "Combined IL", &["bitmono.calli"]),
+            (
+                "bitmono_maximum_il.exe",
+                "Maximum IL",
+                &["bitmono.calli", "generic.ildasm"],
+            ),
+        ];
 
-    for (filename, description, expected_ids) in il_samples {
-        let path = format!("{}/{}", SAMPLES_DIR, filename);
-        if !std::path::Path::new(&path).exists() {
-            eprintln!("Skipping: {} not found", filename);
-            continue;
-        }
-
-        let assembly = CilObject::from_path_with_validation(&path, ValidationConfig::analysis())
-            .unwrap_or_else(|e| panic!("Failed to load {}: {}", filename, e));
-
-        let engine = DeobfuscationEngine::default();
-        let det = engine.detect(&assembly);
-        let score = det.attribution.as_ref().map_or(0, |a| a.supporting_matched);
-
-        let detected_ids: Vec<_> = det
-            .techniques
-            .iter()
-            .filter(|t| t.detected)
-            .map(|t| t.id.as_str())
-            .collect();
-
-        eprintln!(
-            "{} ({}): score={}, detected={:?}",
-            filename, description, score, detected_ids,
-        );
-
-        for expected in *expected_ids {
+        for (filename, description, expected_ids) in il_samples {
+            let path = format!("{}/{}", dir, filename);
             assert!(
-                detected_ids.contains(expected),
-                "{} ({}): Expected technique '{}' not detected (found: {:?})",
-                filename,
-                description,
-                expected,
-                detected_ids,
+                std::path::Path::new(&path).exists(),
+                "sample not found: {}",
+                path
             );
+
+            let assembly =
+                CilObject::from_path_with_validation(&path, ValidationConfig::analysis())
+                    .unwrap_or_else(|e| panic!("Failed to load {}: {}", filename, e));
+
+            let engine = DeobfuscationEngine::default();
+            let det = engine.detect(&assembly);
+            let score = det.attribution.as_ref().map_or(0, |a| a.supporting_matched);
+
+            let detected_ids: Vec<_> = det
+                .techniques
+                .iter()
+                .filter(|t| t.detected)
+                .map(|t| t.id.as_str())
+                .collect();
+
+            eprintln!(
+                "{} ({}): score={}, detected={:?}",
+                filename, description, score, detected_ids,
+            );
+
+            for expected in *expected_ids {
+                assert!(
+                    detected_ids.contains(expected),
+                    "{} ({}): Expected technique '{}' not detected (found: {:?})",
+                    filename,
+                    description,
+                    expected,
+                    detected_ids,
+                );
+            }
         }
     }
 }
 
-// ============================================================================
 // Per-protection unit tests
-// ============================================================================
 
 /// Runs a PE-level protection test through the full deobfuscation pipeline.
 fn run_pe_protection_test(
+    dir: &str,
     filename: &str,
     semantic_threshold: f64,
 ) -> (
@@ -668,7 +714,7 @@ fn run_pe_protection_test(
     DeobfuscationResult,
     Option<SemanticVerificationResult>,
 ) {
-    let path = format!("{}/{}", SAMPLES_DIR, filename);
+    let path = format!("{}/{}", dir, filename);
     assert!(
         std::path::Path::new(&path).exists(),
         "Sample not found: {}",
@@ -706,7 +752,7 @@ fn run_pe_protection_test(
     );
 
     let semantic_result = {
-        let original_path = format!("{}/original.exe", SAMPLES_DIR);
+        let original_path = format!("{}/original.exe", dir);
         let original_asm =
             CilObject::from_path_with_validation(&original_path, ValidationConfig::analysis())
                 .unwrap_or_else(|e| panic!("Failed to load original.exe: {}", e));
@@ -741,8 +787,8 @@ fn run_pe_protection_test(
 }
 
 /// Runs detection (IL + SSA) on a sample.
-fn run_detection_test(filename: &str) -> DeobfuscationResult {
-    let path = format!("{}/{}", SAMPLES_DIR, filename);
+fn run_detection_test(dir: &str, filename: &str) -> DeobfuscationResult {
+    let path = format!("{}/{}", dir, filename);
     assert!(
         std::path::Path::new(&path).exists(),
         "Sample not found: {}",
@@ -756,245 +802,317 @@ fn run_detection_test(filename: &str) -> DeobfuscationResult {
     engine.detect(&assembly)
 }
 
-// === PE-level protection tests (score >= 50, full pipeline) ===
+// PE-level protection tests (score >= 50, full pipeline)
 
 #[test]
 fn test_protection_bitdotnet() {
-    let (_, result, _) = run_pe_protection_test("bitmono_bitdotnet.exe", 1.0);
-    assert!(
-        result
-            .attribution
-            .as_ref()
-            .is_some_and(|a| a.obfuscator_name.contains("BitMono")),
-        "BitDotNet not detected as BitMono (got: {:?})",
-        result.attribution.as_ref().map(|a| &a.obfuscator_name)
-    );
+    for version in VERSIONS {
+        let dir = samples_dir(version);
+        let dir = dir.as_str();
+        eprintln!("=== BitMono {version} ===");
+        let (_, result, _) = run_pe_protection_test(dir, "bitmono_bitdotnet.exe", 1.0);
+        assert!(
+            result
+                .attribution
+                .as_ref()
+                .is_some_and(|a| a.obfuscator_name.contains("BitMono")),
+            "BitDotNet not detected as BitMono (got: {:?})",
+            result.attribution.as_ref().map(|a| &a.obfuscator_name)
+        );
+    }
 }
 
 #[test]
 fn test_protection_bitdecompiler() {
-    let (_, result, _) = run_pe_protection_test("bitmono_bitdecompiler.exe", 1.0);
-    assert!(
-        result
-            .attribution
-            .as_ref()
-            .is_some_and(|a| a.obfuscator_name.contains("BitMono")),
-        "BitDecompiler not detected as BitMono (got: {:?})",
-        result.attribution.as_ref().map(|a| &a.obfuscator_name)
-    );
+    for version in VERSIONS {
+        let dir = samples_dir(version);
+        let dir = dir.as_str();
+        eprintln!("=== BitMono {version} ===");
+        let (_, result, _) = run_pe_protection_test(dir, "bitmono_bitdecompiler.exe", 1.0);
+        assert!(
+            result
+                .attribution
+                .as_ref()
+                .is_some_and(|a| a.obfuscator_name.contains("BitMono")),
+            "BitDecompiler not detected as BitMono (got: {:?})",
+            result.attribution.as_ref().map(|a| &a.obfuscator_name)
+        );
+    }
 }
 
 #[test]
 fn test_protection_packer() {
-    let (_, result, _) = run_pe_protection_test("bitmono_packer.exe", 1.0);
-    assert!(
-        result
-            .attribution
-            .as_ref()
-            .is_some_and(|a| a.obfuscator_name.contains("BitMono")),
-        "Packer not detected as BitMono (got: {:?})",
-        result.attribution.as_ref().map(|a| &a.obfuscator_name)
-    );
+    for version in VERSIONS {
+        let dir = samples_dir(version);
+        let dir = dir.as_str();
+        eprintln!("=== BitMono {version} ===");
+        let (_, result, _) = run_pe_protection_test(dir, "bitmono_packer.exe", 1.0);
+        assert!(
+            result
+                .attribution
+                .as_ref()
+                .is_some_and(|a| a.obfuscator_name.contains("BitMono")),
+            "Packer not detected as BitMono (got: {:?})",
+            result.attribution.as_ref().map(|a| &a.obfuscator_name)
+        );
+    }
 }
 
 #[test]
 fn test_protection_pe_combined() {
-    let (_, result, _) = run_pe_protection_test("bitmono_pe_combined.exe", 0.4);
-    assert!(
-        result
-            .attribution
-            .as_ref()
-            .is_some_and(|a| a.obfuscator_name.contains("BitMono")),
-        "PE combined not detected as BitMono (got: {:?})",
-        result.attribution.as_ref().map(|a| &a.obfuscator_name)
-    );
-    assert!(
-        result
-            .techniques
-            .iter()
-            .any(|t| t.id == "bitmono.strings" && t.detected),
-        "Expected string encryption technique detected"
-    );
+    for version in VERSIONS {
+        let dir = samples_dir(version);
+        let dir = dir.as_str();
+        eprintln!("=== BitMono {version} ===");
+        let (_, result, _) = run_pe_protection_test(dir, "bitmono_pe_combined.exe", 0.4);
+        assert!(
+            result
+                .attribution
+                .as_ref()
+                .is_some_and(|a| a.obfuscator_name.contains("BitMono")),
+            "PE combined not detected as BitMono (got: {:?})",
+            result.attribution.as_ref().map(|a| &a.obfuscator_name)
+        );
+        assert!(
+            result
+                .techniques
+                .iter()
+                .any(|t| t.id == "bitmono.strings" && t.detected),
+            "Expected string encryption technique detected"
+        );
+    }
 }
 
-// === IL-level protection detection tests (score < 50, detection verification) ===
+// IL-level protection detection tests (score < 50, detection verification)
 
 #[test]
 fn test_protection_strings() {
-    let det = run_detection_test("bitmono_strings.exe");
+    for version in VERSIONS {
+        let dir = samples_dir(version);
+        let dir = dir.as_str();
+        eprintln!("=== BitMono {version} ===");
+        let det = run_detection_test(dir, "bitmono_strings.exe");
 
-    assert!(
-        det.techniques
-            .iter()
-            .any(|t| t.id == "bitmono.strings" && t.detected),
-        "StringsEncryption technique should be detected"
-    );
+        assert!(
+            det.techniques
+                .iter()
+                .any(|t| t.id == "bitmono.strings" && t.detected),
+            "StringsEncryption technique should be detected"
+        );
+    }
 }
 
 #[test]
 fn test_protection_calltocalli() {
-    let det = run_detection_test("bitmono_calltocalli.exe");
+    for version in VERSIONS {
+        let dir = samples_dir(version);
+        let dir = dir.as_str();
+        eprintln!("=== BitMono {version} ===");
+        let det = run_detection_test(dir, "bitmono_calltocalli.exe");
 
-    assert!(
-        det.techniques
-            .iter()
-            .any(|t| t.id == "bitmono.calli" && t.detected),
-        "CallToCalli technique should be detected"
-    );
+        assert!(
+            det.techniques
+                .iter()
+                .any(|t| t.id == "bitmono.calli" && t.detected),
+            "CallToCalli technique should be detected"
+        );
+    }
 }
 
 #[test]
 fn test_protection_dotnethook() {
-    let det = run_detection_test("bitmono_dotnethook.exe");
+    for version in VERSIONS {
+        let dir = samples_dir(version);
+        let dir = dir.as_str();
+        eprintln!("=== BitMono {version} ===");
+        let det = run_detection_test(dir, "bitmono_dotnethook.exe");
 
-    assert!(
-        det.techniques
-            .iter()
-            .any(|t| t.id == "bitmono.hooks" && t.detected),
-        "DotNetHook technique should be detected"
-    );
+        assert!(
+            det.techniques
+                .iter()
+                .any(|t| t.id == "bitmono.hooks" && t.detected),
+            "DotNetHook technique should be detected"
+        );
+    }
 }
 
 #[test]
 fn test_protection_unmanagedstring() {
-    let det = run_detection_test("bitmono_unmanagedstring.exe");
+    for version in VERSIONS {
+        let dir = samples_dir(version);
+        let dir = dir.as_str();
+        eprintln!("=== BitMono {version} ===");
+        let det = run_detection_test(dir, "bitmono_unmanagedstring.exe");
 
-    assert!(
-        det.techniques
-            .iter()
-            .any(|t| t.id == "bitmono.unmanaged" && t.detected),
-        "UnmanagedString technique should be detected"
-    );
+        assert!(
+            det.techniques
+                .iter()
+                .any(|t| t.id == "bitmono.unmanaged" && t.detected),
+            "UnmanagedString technique should be detected"
+        );
+    }
 }
 
 #[test]
 fn test_protection_antidebug() {
-    let det = run_detection_test("bitmono_antidebug.exe");
+    for version in VERSIONS {
+        let dir = samples_dir(version);
+        let dir = dir.as_str();
+        eprintln!("=== BitMono {version} ===");
+        let det = run_detection_test(dir, "bitmono_antidebug.exe");
 
-    assert!(
-        det.techniques
-            .iter()
-            .any(|t| t.id == "bitmono.debug" && t.detected),
-        "AntiDebug technique should be detected"
-    );
+        assert!(
+            det.techniques
+                .iter()
+                .any(|t| t.id == "bitmono.debug" && t.detected),
+            "AntiDebug technique should be detected"
+        );
+    }
 }
 
 #[test]
 fn test_protection_junk() {
-    let det = run_detection_test("bitmono_junk.exe");
+    for version in VERSIONS {
+        let dir = samples_dir(version);
+        let dir = dir.as_str();
+        eprintln!("=== BitMono {version} ===");
+        let det = run_detection_test(dir, "bitmono_junk.exe");
 
-    assert!(
-        det.techniques
-            .iter()
-            .any(|t| t.id == "bitmono.junk" && t.detected),
-        "Junk prefix technique should be detected"
-    );
-    assert!(
-        det.techniques
-            .iter()
-            .any(|t| t.id == "bitmono.nops" && t.detected),
-        "BillionNops technique should be detected"
-    );
+        assert!(
+            det.techniques
+                .iter()
+                .any(|t| t.id == "bitmono.junk" && t.detected),
+            "Junk prefix technique should be detected"
+        );
+        assert!(
+            det.techniques
+                .iter()
+                .any(|t| t.id == "bitmono.nops" && t.detected),
+            "BillionNops technique should be detected"
+        );
+    }
 }
 
 #[test]
 fn test_protection_antide4dot() {
-    let det = run_detection_test("bitmono_antide4dot.exe");
+    for version in VERSIONS {
+        let dir = samples_dir(version);
+        let dir = dir.as_str();
+        eprintln!("=== BitMono {version} ===");
+        let det = run_detection_test(dir, "bitmono_antide4dot.exe");
 
-    assert!(
-        det.techniques
-            .iter()
-            .any(|t| t.id == "generic.decompiler" && t.detected),
-        "Expected fake attributes detected (generic.decompiler)"
-    );
-    assert!(
-        det.techniques
-            .iter()
-            .any(|t| t.id == "generic.ildasm" && t.detected),
-        "Expected SuppressIldasm detected (generic.ildasm)"
-    );
+        assert!(
+            det.techniques
+                .iter()
+                .any(|t| t.id == "generic.decompiler" && t.detected),
+            "Expected fake attributes detected (generic.decompiler)"
+        );
+        assert!(
+            det.techniques
+                .iter()
+                .any(|t| t.id == "generic.ildasm" && t.detected),
+            "Expected SuppressIldasm detected (generic.ildasm)"
+        );
+    }
 }
 
 #[test]
 fn test_protection_renamer() {
-    let det = run_detection_test("bitmono_renamer.exe");
+    for version in VERSIONS {
+        let dir = samples_dir(version);
+        let dir = dir.as_str();
+        eprintln!("=== BitMono {version} ===");
+        let det = run_detection_test(dir, "bitmono_renamer.exe");
 
-    let any_detected = det.techniques.iter().any(|t| t.detected);
-    assert!(
-        any_detected,
-        "Renamer should produce at least one technique detection"
-    );
+        let any_detected = det.techniques.iter().any(|t| t.detected);
+        assert!(
+            any_detected,
+            "Renamer should produce at least one technique detection"
+        );
+    }
 }
 
 #[test]
 fn test_protection_renamer_cleanup() {
-    let path = format!("{}/bitmono_renamer.exe", SAMPLES_DIR);
-    if !std::path::Path::new(&path).exists() {
-        eprintln!("Skipping: bitmono_renamer.exe not found");
-        return;
-    }
+    for version in VERSIONS {
+        let dir = samples_dir(version);
+        let dir = dir.as_str();
+        eprintln!("=== BitMono {version} ===");
+        let path = format!("{}/bitmono_renamer.exe", dir);
+        assert!(
+            std::path::Path::new(&path).exists(),
+            "sample not found: {}",
+            path
+        );
 
-    let config = EngineConfig::default();
-    let engine = DeobfuscationEngine::new(config);
+        let config = EngineConfig::default();
+        let engine = DeobfuscationEngine::new(config);
 
-    let (output, _) = engine
-        .process_file(&path)
-        .unwrap_or_else(|e| panic!("Deobfuscation failed: {}", e));
+        let (output, _) = engine
+            .process_file(&path)
+            .unwrap_or_else(|e| panic!("Deobfuscation failed: {}", e));
 
-    let mut space_types = Vec::new();
-    for entry in output.types().iter() {
-        let t = entry.value();
-        if t.name.contains(' ') && !(t.name.starts_with('<') && t.name.ends_with('>')) {
-            space_types.push(t.name.clone());
+        let mut space_types = Vec::new();
+        for entry in output.types().iter() {
+            let t = entry.value();
+            if t.name.contains(' ') && !(t.name.starts_with('<') && t.name.ends_with('>')) {
+                space_types.push(t.name.clone());
+            }
         }
-    }
-    assert!(
-        space_types.is_empty(),
-        "Found {} type names still containing spaces after deobfuscation: {:?}",
-        space_types.len(),
-        &space_types[..space_types.len().min(5)]
-    );
+        assert!(
+            space_types.is_empty(),
+            "Found {} type names still containing spaces after deobfuscation: {:?}",
+            space_types.len(),
+            &space_types[..space_types.len().min(5)]
+        );
 
-    let mut space_methods = Vec::new();
-    for entry in output.methods().iter() {
-        let m = entry.value();
-        if m.name.contains(' ') && !(m.name.starts_with('<') && m.name.ends_with('>')) {
-            space_methods.push(m.name.clone());
+        let mut space_methods = Vec::new();
+        for entry in output.methods().iter() {
+            let m = entry.value();
+            if m.name.contains(' ') && !(m.name.starts_with('<') && m.name.ends_with('>')) {
+                space_methods.push(m.name.clone());
+            }
         }
-    }
-    assert!(
-        space_methods.is_empty(),
-        "Found {} method names still containing spaces after deobfuscation: {:?}",
-        space_methods.len(),
-        &space_methods[..space_methods.len().min(5)]
-    );
+        assert!(
+            space_methods.is_empty(),
+            "Found {} method names still containing spaces after deobfuscation: {:?}",
+            space_methods.len(),
+            &space_methods[..space_methods.len().min(5)]
+        );
 
-    assert!(
-        output.cor20header().entry_point_token != 0,
-        "Output should have a valid entry point"
-    );
-    let bytes = output.file().data();
-    CilObject::from_mem_with_validation(bytes.to_vec(), ValidationConfig::production())
-        .expect("Deobfuscated assembly should pass production validation");
+        assert!(
+            output.cor20header().entry_point_token != 0,
+            "Output should have a valid entry point"
+        );
+        let bytes = output.file().data();
+        CilObject::from_mem_with_validation(bytes.to_vec(), ValidationConfig::production())
+            .expect("Deobfuscated assembly should pass production validation");
+    }
 }
 
 #[test]
 fn test_dotnethook_call_targets() {
-    for sample in &["bitmono_dotnethook.exe", "bitmono_maximum_il.exe"] {
-        let path = format!("{}/{}", SAMPLES_DIR, sample);
-        if !std::path::Path::new(&path).exists() {
-            eprintln!("Skipping: {} not found", sample);
-            continue;
+    for version in VERSIONS {
+        let dir = samples_dir(version);
+        let dir = dir.as_str();
+        eprintln!("=== BitMono {version} ===");
+        for sample in &["bitmono_dotnethook.exe", "bitmono_maximum_il.exe"] {
+            let path = format!("{}/{}", dir, sample);
+            assert!(
+                std::path::Path::new(&path).exists(),
+                "sample not found: {}",
+                path
+            );
+            eprintln!("\n=== Testing {} ===", sample);
+            test_dotnethook_call_targets_for_sample(dir, sample);
         }
-        eprintln!("\n=== Testing {} ===", sample);
-        test_dotnethook_call_targets_for_sample(sample);
     }
 }
 
-fn test_dotnethook_call_targets_for_sample(sample: &str) {
-    let path = format!("{}/{}", SAMPLES_DIR, sample);
+fn test_dotnethook_call_targets_for_sample(dir: &str, sample: &str) {
+    let path = format!("{}/{}", dir, sample);
 
-    let original_path = format!("{}/original.exe", SAMPLES_DIR);
+    let original_path = format!("{}/original.exe", dir);
     let original =
         CilObject::from_path_with_validation(&original_path, ValidationConfig::analysis())
             .expect("Failed to load original.exe");
@@ -1211,101 +1329,136 @@ fn get_call_target_tokens(
 
 #[test]
 fn test_dotnethook_offset_diagnostic() {
-    let path = format!("{}/bitmono_maximum_il.exe", SAMPLES_DIR);
-    if !std::path::Path::new(&path).exists() {
-        eprintln!("Skipping: bitmono_maximum_il.exe not found");
-        return;
-    }
+    for version in VERSIONS {
+        let dir = samples_dir(version);
+        let dir = dir.as_str();
+        eprintln!("=== BitMono {version} ===");
+        let path = format!("{}/bitmono_maximum_il.exe", dir);
+        assert!(
+            std::path::Path::new(&path).exists(),
+            "sample not found: {}",
+            path
+        );
 
-    let config = EngineConfig::default();
-    let engine = DeobfuscationEngine::new(config);
-    let (output, _) = engine.process_file(&path).expect("Deobfuscation failed");
+        let config = EngineConfig::default();
+        let engine = DeobfuscationEngine::new(config);
+        let (output, _) = engine.process_file(&path).expect("Deobfuscation failed");
 
-    eprintln!("\n[RESULT] Method call targets:");
-    for entry in output.methods().iter() {
-        let m = entry.value();
-        let dt = m
-            .declaring_type_rc()
-            .map(|t| t.name.clone())
-            .unwrap_or_default();
-        let calls: Vec<String> = m
-            .instructions()
-            .filter(|i| i.mnemonic == "call" || i.mnemonic == "callvirt" || i.mnemonic == "newobj")
-            .filter_map(|i| {
-                i.get_token_operand().map(|t| {
-                    let target_name = output
-                        .method(&t)
-                        .map(|tm| {
-                            let tdt = tm
-                                .declaring_type_rc()
-                                .map(|tt| tt.name.clone())
-                                .unwrap_or_default();
-                            format!("{}.{}", tdt, tm.name)
-                        })
-                        .unwrap_or_else(|_| format!("ext:0x{:08X}", t.value()));
-                    format!("{} 0x{:08X}({})", i.mnemonic, t.value(), target_name)
+        eprintln!("\n[RESULT] Method call targets:");
+        for entry in output.methods().iter() {
+            let m = entry.value();
+            let dt = m
+                .declaring_type_rc()
+                .map(|t| t.name.clone())
+                .unwrap_or_default();
+            let calls: Vec<String> = m
+                .instructions()
+                .filter(|i| {
+                    i.mnemonic == "call" || i.mnemonic == "callvirt" || i.mnemonic == "newobj"
                 })
-            })
-            .collect();
-        if !calls.is_empty() && dt != "<Module>" && !dt.starts_with("<>") {
-            eprintln!(
-                "  0x{:08X} {}.{} -> {}",
-                m.token.value(),
-                dt,
-                m.name,
-                calls.join(", ")
-            );
+                .filter_map(|i| {
+                    i.get_token_operand().map(|t| {
+                        let target_name = output
+                            .method(&t)
+                            .map(|tm| {
+                                let tdt = tm
+                                    .declaring_type_rc()
+                                    .map(|tt| tt.name.clone())
+                                    .unwrap_or_default();
+                                format!("{}.{}", tdt, tm.name)
+                            })
+                            .unwrap_or_else(|_| format!("ext:0x{:08X}", t.value()));
+                        format!("{} 0x{:08X}({})", i.mnemonic, t.value(), target_name)
+                    })
+                })
+                .collect();
+            if !calls.is_empty() && dt != "<Module>" && !dt.starts_with("<>") {
+                eprintln!(
+                    "  0x{:08X} {}.{} -> {}",
+                    m.token.value(),
+                    dt,
+                    m.name,
+                    calls.join(", ")
+                );
+            }
         }
     }
 }
 
+/// Names of the assemblies `assembly` references.
+fn assembly_ref_names(assembly: &CilObject) -> HashSet<String> {
+    let strings = assembly.strings().unwrap();
+    assembly
+        .tables()
+        .unwrap()
+        .table::<AssemblyRefRaw>()
+        .into_iter()
+        .flatten()
+        .map(|aref| {
+            let aref = aref.expect("row parses");
+            strings.get(aref.name as usize).unwrap().to_string()
+        })
+        .collect()
+}
+
 #[test]
 fn test_no_obfuscator_metadata_survives() {
-    let path = format!("{}/bitmono_maximum_il.exe", SAMPLES_DIR);
-    if !std::path::Path::new(&path).exists() {
-        eprintln!("Skipping: not found");
-        return;
-    }
+    for version in VERSIONS {
+        let dir = samples_dir(version);
+        let dir = dir.as_str();
+        eprintln!("=== BitMono {version} ===");
+        let original_path = format!("{}/original.exe", dir);
+        assert!(
+            std::path::Path::new(&original_path).exists(),
+            "sample not found: {}",
+            original_path
+        );
+        let original = CilObject::from_path(&original_path).unwrap();
+        let original_refs = assembly_ref_names(&original);
 
-    let config = EngineConfig::default();
-    let engine = DeobfuscationEngine::new(config);
-    let (output, _) = engine.process_file(&path).unwrap();
+        // The code BitMono injects references assemblies the program does not
+        // (its own runtime library, among others). Once the injected code is
+        // gone, the program must import no more than it did before protection.
+        for sample in [
+            "bitmono_calltocalli.exe",
+            "bitmono_combined.exe",
+            "bitmono_maximum.exe",
+            "bitmono_maximum_il.exe",
+        ] {
+            let path = format!("{}/{}", dir, sample);
+            let engine = DeobfuscationEngine::new(EngineConfig::default());
+            let (output, _) = engine.process_file(&path).unwrap();
 
-    let bytes = output.file().data();
-    let reloaded =
-        CilObject::from_mem_with_validation(bytes.to_vec(), ValidationConfig::analysis()).unwrap();
+            let bytes = output.file().data();
+            let reloaded =
+                CilObject::from_mem_with_validation(bytes.to_vec(), ValidationConfig::analysis())
+                    .unwrap();
 
-    let tables = reloaded.tables().unwrap();
-    let strings = reloaded.strings().unwrap();
-
-    if let Some(aref_table) = tables.table::<AssemblyRefRaw>() {
-        for aref in aref_table {
-            let aref = aref.expect("row parses");
-            let name = strings.get(aref.name as usize).unwrap_or("???");
-            // System.Private.CoreLib may survive legitimately if
-            // <PrivateImplementationDetails>/__StaticArrayInitTypeSize=N types
-            // reference System.ValueType from it for RuntimeHelpers.InitializeArray.
-            assert_ne!(
-                name, "System.Runtime",
-                "Obfuscator-injected AssemblyRef 'System.Runtime' should be cascade-removed"
+            let foreign: Vec<String> = assembly_ref_names(&reloaded)
+                .difference(&original_refs)
+                .cloned()
+                .collect();
+            assert!(
+                foreign.is_empty(),
+                "{sample}: obfuscator-injected AssemblyRefs {foreign:?} survive deobfuscation"
             );
-        }
-    }
 
-    if let Some(typeref_table) = tables.table::<TypeRefRaw>() {
-        for tr in typeref_table {
-            let tr = tr.expect("row parses");
-            let name = strings.get(tr.type_name as usize).unwrap_or("???");
-            // System.ValueType may survive legitimately: __StaticArrayInitTypeSize=N
-            // nested value types extend it for RuntimeHelpers.InitializeArray support.
-
-            assert_ne!(
-                tr.resolution_scope.tag,
-                dotscope::metadata::tables::TableId::Module,
-                "TypeRef RID {} ({}) has Module resolution scope — likely an obfuscator artifact",
-                tr.rid,
-                name
-            );
+            let tables = reloaded.tables().unwrap();
+            let strings = reloaded.strings().unwrap();
+            if let Some(typeref_table) = tables.table::<TypeRefRaw>() {
+                for tr in typeref_table {
+                    let tr = tr.expect("row parses");
+                    let name = strings.get(tr.type_name as usize).unwrap_or("???");
+                    assert_ne!(
+                        tr.resolution_scope.tag,
+                        dotscope::metadata::tables::TableId::Module,
+                        "{}: TypeRef RID {} ({}) has Module resolution scope - likely an obfuscator artifact",
+                        sample,
+                        tr.rid,
+                        name
+                    );
+                }
+            }
         }
     }
 }

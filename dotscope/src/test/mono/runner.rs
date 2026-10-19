@@ -80,12 +80,10 @@ impl TestRunner {
         for arch in &self.capabilities.supported_architectures {
             let arch_dir = match self.arch_dir(arch) {
                 Ok(dir) => dir,
-                Err(e) => {
+                Err(_) => {
                     results.push(ArchTestResult {
-                        architecture: arch.clone(),
                         success: false,
                         result: None,
-                        error: Some(format!("Failed to create arch directory: {}", e)),
                     });
                     continue;
                 }
@@ -94,18 +92,14 @@ impl TestRunner {
             match test_fn(arch, &arch_dir, &self.capabilities) {
                 Ok(result) => {
                     results.push(ArchTestResult {
-                        architecture: arch.clone(),
                         success: true,
                         result: Some(result),
-                        error: None,
                     });
                 }
-                Err(e) => {
+                Err(_) => {
                     results.push(ArchTestResult {
-                        architecture: arch.clone(),
                         success: false,
                         result: None,
-                        error: Some(e.to_string()),
                     });
                 }
             }
@@ -118,29 +112,13 @@ impl TestRunner {
     pub fn all_passed<T>(results: &[ArchTestResult<T>]) -> bool {
         results.iter().all(|r| r.success)
     }
-
-    /// Get failed results with their error messages
-    pub fn failed_results<T>(results: &[ArchTestResult<T>]) -> Vec<(&Architecture, &str)> {
-        results
-            .iter()
-            .filter(|r| !r.success)
-            .map(|r| {
-                (
-                    &r.architecture,
-                    r.error.as_deref().unwrap_or("Unknown error"),
-                )
-            })
-            .collect()
-    }
 }
 
 /// Result of running a test for a specific architecture
 #[derive(Debug)]
 pub struct ArchTestResult<T> {
-    pub architecture: Architecture,
     pub success: bool,
     pub result: Option<T>,
-    pub error: Option<String>,
 }
 
 impl<T> ArchTestResult<T> {
@@ -152,11 +130,6 @@ impl<T> ArchTestResult<T> {
     /// Get the result value if successful
     pub fn value(&self) -> Option<&T> {
         self.result.as_ref()
-    }
-
-    /// Get the error message if failed
-    pub fn error_message(&self) -> Option<&str> {
-        self.error.as_deref()
     }
 }
 

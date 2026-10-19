@@ -6,17 +6,14 @@
 
 use std::sync::{atomic::AtomicU32, Arc};
 
-use crate::{
-    metadata::{
-        dependencies::{
-            AssemblyDependency, DependencyResolutionState, DependencySource, DependencyType,
-            VersionRequirement,
-        },
-        identity::{AssemblyIdentity, AssemblyVersion},
-        tables::{AssemblyFlags, AssemblyRef, AssemblyRefHash, File, FileAttributes, ModuleRef},
-        token::Token,
+use crate::metadata::{
+    dependencies::{
+        AssemblyDependency, DependencyResolutionState, DependencySource, DependencyType,
+        VersionRequirement,
     },
-    utils::LazyList,
+    identity::{AssemblyIdentity, AssemblyVersion},
+    tables::{AssemblyFlags, AssemblyRef, AssemblyRefHash, File, FileAttributes, ModuleRef},
+    token::Token,
 };
 
 /// Create a test assembly identity with basic version information.
@@ -67,7 +64,7 @@ pub fn create_test_assembly_ref_with_culture(
         offset: 0,
         rid: 1,
         token: Token::new(0x23000001), // AssemblyRef table token (0x23 = table, 1 = row)
-        custom_attributes: LazyList::new(),
+        custom_attributes: Default::default(),
         hash: None,
         os_platform_id: AtomicU32::new(0),
         os_major_version: AtomicU32::new(0),
@@ -83,7 +80,7 @@ pub fn create_test_module_ref(name: &str) -> Arc<ModuleRef> {
         offset: 0,
         rid: 1,
         token: Token::new(0x1A000001), // ModuleRef table token (0x1A = table, 1 = row)
-        custom_attributes: LazyList::new(),
+        custom_attributes: Default::default(),
     })
 }
 
@@ -96,7 +93,7 @@ pub fn create_test_file(name: &str) -> Arc<File> {
         offset: 0,
         rid: 1,
         token: Token::new(0x26000001), // File table token (0x26 = table, 1 = row)
-        custom_attributes: LazyList::new(),
+        custom_attributes: Default::default(),
     })
 }
 
@@ -121,58 +118,6 @@ pub fn create_test_dependency_with_version(
     AssemblyDependency {
         source: DependencySource::AssemblyRef(assembly_ref),
         target_identity: create_test_identity(target_name, major, minor),
-        dependency_type,
-        version_requirement: VersionRequirement::Compatible,
-        is_optional: false,
-        resolution_state: DependencyResolutionState::Unresolved,
-    }
-}
-
-/// Create a test assembly dependency with custom resolution state.
-pub fn create_test_dependency_with_state(
-    target_name: &str,
-    dependency_type: DependencyType,
-    resolution_state: DependencyResolutionState,
-) -> AssemblyDependency {
-    let assembly_ref = create_test_assembly_ref(target_name);
-
-    AssemblyDependency {
-        source: DependencySource::AssemblyRef(assembly_ref),
-        target_identity: create_test_identity(target_name, 1, 0),
-        dependency_type,
-        version_requirement: VersionRequirement::Compatible,
-        is_optional: false,
-        resolution_state,
-    }
-}
-
-/// Create a test assembly dependency from a ModuleRef source.
-pub fn create_test_module_dependency(
-    target_name: &str,
-    dependency_type: DependencyType,
-) -> AssemblyDependency {
-    let module_ref = create_test_module_ref(target_name);
-
-    AssemblyDependency {
-        source: DependencySource::ModuleRef(module_ref),
-        target_identity: create_test_identity(target_name, 1, 0),
-        dependency_type,
-        version_requirement: VersionRequirement::Compatible,
-        is_optional: false,
-        resolution_state: DependencyResolutionState::Unresolved,
-    }
-}
-
-/// Create a test assembly dependency from a File source.
-pub fn create_test_file_dependency(
-    target_name: &str,
-    dependency_type: DependencyType,
-) -> AssemblyDependency {
-    let file_ref = create_test_file(target_name);
-
-    AssemblyDependency {
-        source: DependencySource::File(file_ref),
-        target_identity: create_test_identity(target_name, 1, 0),
         dependency_type,
         version_requirement: VersionRequirement::Compatible,
         is_optional: false,

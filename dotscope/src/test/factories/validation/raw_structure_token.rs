@@ -5,9 +5,9 @@
 
 use crate::{
     metadata::tables::{
-        CodedIndex, CodedIndexType, CustomAttributeBuilder, FieldAttributes, FieldBuilder,
-        GenericParamAttributes, GenericParamBuilder, InterfaceImplBuilder, MemberRefBuilder,
-        MethodSpecBuilder, NestedClassBuilder, TableId, TypeAttributes, TypeDefBuilder,
+        CodedIndex, CodedIndexType, GenericParamAttributes, GenericParamBuilder,
+        InterfaceImplBuilder, MemberRefBuilder, MethodSpecBuilder, NestedClassBuilder, TableId,
+        TypeAttributes, TypeDefBuilder,
     },
     test::{
         create_passing_test_assembly, create_test_assembly_with_error, get_testfile_wb,
@@ -62,65 +62,6 @@ pub fn create_assembly_with_invalid_typedef_extends() -> Result<TestAssembly> {
     })
 }
 
-/// Creates a modified assembly with a table that would exceed RID bounds.
-///
-/// Originally from: `src/metadata/validation/validators/raw/structure/token.rs`
-pub fn create_assembly_with_oversized_table() -> Result<TestAssembly> {
-    create_test_assembly_with_error(get_testfile_wb, "InvalidRid", |assembly| {
-        for i in 0..1000 {
-            TypeDefBuilder::new()
-                .name(format!("TestType{i}"))
-                .namespace("Overflow")
-                .flags(TypeAttributes::BEFORE_FIELD_INIT | TypeAttributes::PUBLIC)
-                .build(assembly)?;
-        }
-
-        Ok(())
-    })
-}
-
-/// Creates a modified assembly with invalid coded index to test coded index validation.
-///
-/// Originally from: `src/metadata/validation/validators/raw/structure/token.rs`
-pub fn create_assembly_with_invalid_coded_index() -> Result<TestAssembly> {
-    create_test_assembly_with_error(get_testfile_wb, "InvalidRid", |assembly| {
-        let invalid_extends =
-            CodedIndex::new(TableId::TypeRef, 999999, CodedIndexType::TypeDefOrRef);
-
-        TypeDefBuilder::new()
-            .name("InvalidCodedIndexType")
-            .namespace("Test")
-            .flags(TypeAttributes::BEFORE_FIELD_INIT)
-            .extends(invalid_extends) // This should point to non-existent TypeRef
-            .build(assembly)?;
-
-        Ok(())
-    })
-}
-
-/// Creates a modified assembly with missing cross-table references.
-///
-/// Originally from: `src/metadata/validation/validators/raw/structure/token.rs`
-pub fn create_assembly_with_missing_reference() -> Result<TestAssembly> {
-    create_test_assembly_with_error(get_testfile_wb, "InvalidRid", |assembly| {
-        let field_signature = vec![0x06, 0x08];
-
-        FieldBuilder::new()
-            .name("InvalidField")
-            .flags(FieldAttributes::PRIVATE)
-            .signature(&field_signature)
-            .build(assembly)?;
-
-        TypeDefBuilder::new()
-            .name("InvalidFieldList")
-            .namespace("Test")
-            .flags(TypeAttributes::BEFORE_FIELD_INIT)
-            .build(assembly)?;
-
-        Ok(())
-    })
-}
-
 /// Creates a modified assembly with invalid MemberRef token reference for validate_token_references testing.
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/token.rs`
@@ -134,55 +75,6 @@ pub fn create_assembly_with_invalid_memberref() -> Result<TestAssembly> {
             .name("InvalidMember")
             .class(invalid_class)
             .signature(&signature)
-            .build(assembly)?;
-
-        Ok(())
-    })
-}
-
-/// Creates a modified assembly with table exceeding RID bounds for validate_rid_bounds testing.
-///
-/// Originally from: `src/metadata/validation/validators/raw/structure/token.rs`
-pub fn create_assembly_with_rid_bounds_violation() -> Result<TestAssembly> {
-    create_test_assembly_with_error(get_testfile_wb, "InvalidRid", |assembly| {
-        for i in 0..100 {
-            TypeDefBuilder::new()
-                .name(format!("TestType{i}"))
-                .namespace("RidBoundsTest")
-                .flags(TypeAttributes::BEFORE_FIELD_INIT | TypeAttributes::PUBLIC)
-                .build(assembly)?;
-        }
-
-        Ok(())
-    })
-}
-
-/// Creates a modified assembly with invalid CustomAttribute for coded index testing.
-///
-/// Originally from: `src/metadata/validation/validators/raw/structure/token.rs`
-pub fn create_assembly_with_invalid_customattribute() -> Result<TestAssembly> {
-    create_test_assembly_with_error(get_testfile_wb, "InvalidRid", |assembly| {
-        let typedef_token = TypeDefBuilder::new()
-            .name("TestType")
-            .namespace("Test")
-            .flags(TypeAttributes::BEFORE_FIELD_INIT)
-            .build(assembly)?;
-
-        let invalid_constructor = CodedIndex::new(
-            TableId::MemberRef,
-            999999,
-            CodedIndexType::CustomAttributeType,
-        );
-        let parent = CodedIndex::new(
-            TableId::TypeDef,
-            typedef_token.placeholder(),
-            CodedIndexType::HasCustomAttribute,
-        );
-
-        CustomAttributeBuilder::new()
-            .parent(parent)
-            .constructor(invalid_constructor)
-            .value(&[])
             .build(assembly)?;
 
         Ok(())

@@ -24,19 +24,16 @@ pub struct CompilationResult {
     pub error: Option<String>,
     /// Compiler warnings
     pub warnings: Vec<String>,
-    /// Which compiler was used
-    pub compiler: Option<Compiler>,
 }
 
 impl CompilationResult {
     /// Create a successful result
-    pub fn success(path: PathBuf, compiler: Compiler) -> Self {
+    pub fn success(path: PathBuf) -> Self {
         Self {
             success: true,
             output_path: Some(path),
             error: None,
             warnings: Vec::new(),
-            compiler: Some(compiler),
         }
     }
 
@@ -47,7 +44,6 @@ impl CompilationResult {
             output_path: None,
             error: Some(error),
             warnings: Vec::new(),
-            compiler: None,
         }
     }
 
@@ -167,7 +163,7 @@ fn compile_with_csc(
         .map_err(|e| Error::Other(format!("Failed to execute csc: {}", e)))?;
 
     if output.status.success() {
-        let mut result = CompilationResult::success(output_path, Compiler::Csc);
+        let mut result = CompilationResult::success(output_path);
         result.warnings = extract_warnings(&output.stdout, &output.stderr);
         Ok(result)
     } else {
@@ -213,7 +209,7 @@ fn compile_with_mcs(
         .map_err(|e| Error::Other(format!("Failed to execute mcs: {}", e)))?;
 
     if output.status.success() {
-        let mut result = CompilationResult::success(output_path, Compiler::Mcs);
+        let mut result = CompilationResult::success(output_path);
         result.warnings = extract_warnings(&output.stdout, &output.stderr);
         Ok(result)
     } else {
@@ -315,7 +311,7 @@ fn compile_with_dotnet(
     // Clean up project directory
     std::fs::remove_dir_all(&project_dir).ok();
 
-    let mut result = CompilationResult::success(output_dll, Compiler::DotNet);
+    let mut result = CompilationResult::success(output_dll);
     result.warnings = extract_warnings(&build_output.stdout, &build_output.stderr);
     Ok(result)
 }
@@ -354,10 +350,7 @@ fn format_compiler_error(stdout: &[u8], stderr: &[u8]) -> String {
 /// parent environment does not carry them). Retries once on transient failures
 /// — the NuGet migration runner can race when concurrent test threads all invoke
 /// `dotnet build` and try to `mkdir` the same shared-memory path.
-fn run_dotnet_build(
-    project_dir: &Path,
-    configuration: &str,
-) -> std::result::Result<std::process::Output, Error> {
+fn run_dotnet_build(project_dir: &Path, configuration: &str) -> Result<std::process::Output> {
     let mut attempts = 0;
     loop {
         let output = Command::new("dotnet")
@@ -436,7 +429,7 @@ mod tests {
 
     #[test]
     fn test_compilation_result() {
-        let success = CompilationResult::success(PathBuf::from("/test/path.exe"), Compiler::Csc);
+        let success = CompilationResult::success(PathBuf::from("/test/path.exe"));
         assert!(success.is_success());
         assert_eq!(
             success.try_assembly_path().unwrap(),

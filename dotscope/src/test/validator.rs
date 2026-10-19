@@ -72,44 +72,6 @@ impl TestAssembly {
         }
     }
 
-    /// Creates a test assembly that should fail with a specific error pattern.
-    pub fn failing_with_error<P: Into<PathBuf>>(path: P, error_pattern: &str) -> Self {
-        Self {
-            source: TestAssemblySource::File {
-                path: path.into(),
-                _temp_file: None,
-            },
-            should_pass: false,
-            expected_error_pattern: Some(error_pattern.to_string()),
-        }
-    }
-
-    /// Creates a test assembly from a temporary file with automatic cleanup.
-    pub fn from_temp_file(temp_file: NamedTempFile, should_pass: bool) -> Self {
-        let path = temp_file.path().to_path_buf();
-        Self {
-            source: TestAssemblySource::File {
-                path,
-                _temp_file: Some(temp_file),
-            },
-            should_pass,
-            expected_error_pattern: None,
-        }
-    }
-
-    /// Creates a failing test assembly from a temporary file with specific error pattern.
-    pub fn from_temp_file_with_error(temp_file: NamedTempFile, error_pattern: &str) -> Self {
-        let path = temp_file.path().to_path_buf();
-        Self {
-            source: TestAssemblySource::File {
-                path,
-                _temp_file: Some(temp_file),
-            },
-            should_pass: false,
-            expected_error_pattern: Some(error_pattern.to_string()),
-        }
-    }
-
     /// Creates a test assembly from in-memory bytes.
     ///
     /// This is the preferred method for test assembly creation as it avoids
@@ -129,27 +91,6 @@ impl TestAssembly {
             should_pass: false,
             expected_error_pattern: Some(error_pattern.to_string()),
         }
-    }
-
-    /// Returns the path if this is a file-backed assembly.
-    pub fn path(&self) -> Option<&Path> {
-        match &self.source {
-            TestAssemblySource::File { path, .. } => Some(path),
-            TestAssemblySource::Memory(_) => None,
-        }
-    }
-
-    /// Returns the bytes if this is a memory-backed assembly.
-    pub fn bytes(&self) -> Option<&[u8]> {
-        match &self.source {
-            TestAssemblySource::File { .. } => None,
-            TestAssemblySource::Memory(data) => Some(data),
-        }
-    }
-
-    /// Returns true if this is a memory-backed assembly.
-    pub fn is_memory_backed(&self) -> bool {
-        matches!(self.source, TestAssemblySource::Memory(_))
     }
 
     /// Returns a description of this assembly for error messages.

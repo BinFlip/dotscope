@@ -19,18 +19,15 @@ pub struct DisassemblyResult {
     pub il_output: String,
     /// Error message (if failed)
     pub error: Option<String>,
-    /// Which disassembler was used
-    pub disassembler: Option<Disassembler>,
 }
 
 impl DisassemblyResult {
     /// Create a successful result
-    pub fn success(il_output: String, disassembler: Disassembler) -> Self {
+    pub fn success(il_output: String) -> Self {
         Self {
             success: true,
             il_output,
             error: None,
-            disassembler: Some(disassembler),
         }
     }
 
@@ -40,30 +37,12 @@ impl DisassemblyResult {
             success: false,
             il_output: String::new(),
             error: Some(error),
-            disassembler: None,
         }
     }
 
     /// Check if disassembly was successful
     pub fn is_success(&self) -> bool {
         self.success
-    }
-
-    /// Check if the failure is due to a missing/broken .NET framework
-    ///
-    /// This detects cases where a tool like dotnet-ildasm is installed but requires
-    /// a .NET framework version that isn't available on the system.
-    pub fn is_framework_error(&self) -> bool {
-        if let Some(ref error) = self.error {
-            // Common patterns for .NET framework version errors
-            error.contains("You must install or update .NET to run this application")
-                || error.contains("Framework:")
-                    && error.contains("version")
-                    && error.contains("was not found")
-                || error.contains("The framework 'Microsoft.NETCore.App'")
-        } else {
-            false
-        }
     }
 
     /// Check if the IL output contains a specific method
@@ -77,30 +56,6 @@ impl DisassemblyResult {
     /// Check if the IL output contains a specific class
     pub fn contains_class(&self, class_name: &str) -> bool {
         self.il_output.contains(".class") && self.il_output.contains(class_name)
-    }
-
-    /// Check if the IL output contains a specific instruction
-    pub fn contains_instruction(&self, instruction: &str) -> bool {
-        self.il_output.lines().any(|line| {
-            let trimmed = line.trim();
-            trimmed.starts_with(instruction) || trimmed.contains(&format!(" {} ", instruction))
-        })
-    }
-
-    /// Get all method names found in the disassembly
-    pub fn method_names(&self) -> Vec<String> {
-        self.il_output
-            .lines()
-            .filter(|line| line.contains(".method"))
-            .filter_map(|line| {
-                // Extract method name from lines like:
-                // .method public static void Main() cil managed
-                // Find the last word before the parenthesis
-                line.split_once('(')
-                    .and_then(|(before_paren, _)| before_paren.split_whitespace().last())
-                    .map(ToString::to_string)
-            })
-            .collect()
     }
 }
 
@@ -125,14 +80,6 @@ pub fn disassemble(
     )
 }
 
-/// Disassemble with a specific disassembler
-pub fn disassemble_with(
-    disassembler: Disassembler,
-    assembly_path: &Path,
-) -> Result<DisassemblyResult> {
-    disassemble_with_caps(disassembler, assembly_path, None)
-}
-
 /// Disassemble with a specific disassembler, using capabilities for path resolution
 fn disassemble_with_caps(
     disassembler: Disassembler,
@@ -149,7 +96,7 @@ fn disassemble_with_caps(
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
     if output.status.success() {
-        Ok(DisassemblyResult::success(stdout, disassembler))
+        Ok(DisassemblyResult::success(stdout))
     } else {
         let error = if !stderr.is_empty() {
             stderr
@@ -195,78 +142,6 @@ fn disassemble_with_dotnet_ildasm(assembly_path: &Path) -> Result<std::process::
         .map_err(|e| Error::Other(format!("Failed to execute dotnet-ildasm: {}", e)))
 }
 
-/// Verification result for checking specific elements in an assembly
-#[derive(Debug)]
-pub struct VerificationResult {
-    /// Whether all checks passed
-    pub success: bool,
-    /// Individual check results
-    pub checks: Vec<(String, bool)>,
-    /// The disassembly result
-    pub disassembly: DisassemblyResult,
-}
-
-impl VerificationResult {
-    /// Check if all verifications passed
-    pub fn is_success(&self) -> bool {
-        self.success
-    }
-
-    /// Get failed checks
-    pub fn failed_checks(&self) -> Vec<&str> {
-        self.checks
-            .iter()
-            .filter(|(_, passed)| !passed)
-            .map(|(name, _)| name.as_str())
-            .collect()
-    }
-}
-
-/// Verify that an assembly contains expected elements
-pub fn verify(
-    capabilities: &TestCapabilities,
-    assembly_path: &Path,
-    expected_methods: &[&str],
-    expected_classes: &[&str],
-) -> Result<VerificationResult> {
-    let disassembly = disassemble(capabilities, assembly_path)?;
-
-    if !disassembly.is_success() {
-        return Ok(VerificationResult {
-            success: false,
-            checks: vec![("disassembly".to_string(), false)],
-            disassembly,
-        });
-    }
-
-    let mut checks = Vec::new();
-    let mut all_passed = true;
-
-    // Check for expected methods
-    for method in expected_methods {
-        let found = disassembly.contains_method(method);
-        checks.push((format!("method:{}", method), found));
-        if !found {
-            all_passed = false;
-        }
-    }
-
-    // Check for expected classes
-    for class in expected_classes {
-        let found = disassembly.contains_class(class);
-        checks.push((format!("class:{}", class), found));
-        if !found {
-            all_passed = false;
-        }
-    }
-
-    Ok(VerificationResult {
-        success: all_passed,
-        checks,
-        disassembly,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use tempfile::TempDir;
@@ -276,10 +151,7 @@ mod tests {
 
     #[test]
     fn test_disassembly_result() {
-        let success = DisassemblyResult::success(
-            ".method public static void Main()".to_string(),
-            Disassembler::Monodis,
-        );
+        let success = DisassemblyResult::success(".method public static void Main()".to_string());
         assert!(success.is_success());
         assert!(success.contains_method("Main"));
 

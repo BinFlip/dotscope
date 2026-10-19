@@ -212,3 +212,48 @@ pub fn test_assembly_arc() -> Arc<CilObject> {
 
     Arc::clone(&TEST_ASSEMBLY)
 }
+
+/// Returns mono's `mscorlib.dll`, loaded once and shared by every test that
+/// asks for it.
+///
+/// # Panics
+///
+/// Panics if the sample cannot be loaded.
+pub fn mono_mscorlib() -> Arc<CilObject> {
+    use std::sync::LazyLock;
+
+    static MSCORLIB: LazyLock<Arc<CilObject>> = LazyLock::new(|| {
+        Arc::new(
+            CilObject::from_path(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/samples/mono_4.8/mscorlib.dll"),
+            )
+            .expect("mscorlib loads"),
+        )
+    });
+
+    Arc::clone(&MSCORLIB)
+}
+
+/// Returns the `MethodDef` token of the method `declaring::name` taking
+/// `params` parameters.
+///
+/// # Panics
+///
+/// Panics when `assembly` defines no such method.
+pub fn method_token(assembly: &CilObject, declaring: &str, name: &str, params: u32) -> Token {
+    assembly
+        .methods()
+        .iter()
+        .find(|entry| {
+            let method = entry.value();
+            method.name == name
+                && method.signature.param_count == params
+                && assembly
+                    .resolve_method_declaring_type(*entry.key())
+                    .as_deref()
+                    == Some(declaring)
+        })
+        .map(|entry| *entry.key())
+        .unwrap_or_else(|| panic!("{declaring}::{name} with {params} parameters"))
+}

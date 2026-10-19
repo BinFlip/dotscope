@@ -30,7 +30,11 @@ use common::{
     },
     verification::{StructuralConfig, VerificationLevel},
 };
-use dotscope::deobfuscation::EngineConfig;
+use dotscope::{
+    deobfuscation::{DeobfuscationEngine, EngineConfig},
+    metadata::tables::ManifestResourceRaw,
+    CilObject,
+};
 
 const SAMPLES_DIR: &str = "tests/samples/packers/confuserex/1.6.0";
 
@@ -53,6 +57,10 @@ struct ExpectedProtections {
     has_resources: bool,
     /// Expect ReferenceProxy methods (call forwarding proxies).
     has_reference_proxy: bool,
+    /// Expect anti-dump (the module initializer erasing its own PE headers).
+    has_anti_dump: bool,
+    /// Expect invalid metadata (repeated stream headers, bogus table rows).
+    has_invalid_metadata: bool,
 }
 
 /// All ConfuserEx samples with their expected characteristics.
@@ -158,6 +166,8 @@ fn all_samples() -> Vec<SampleSpec<ExpectedProtections>> {
                 has_control_flow: true,
                 has_resources: false,
                 has_reference_proxy: true,
+                has_anti_dump: true,
+                has_invalid_metadata: false,
             },
             is_original: false,
             check_semantic_preservation: true,
@@ -328,6 +338,130 @@ fn all_samples() -> Vec<SampleSpec<ExpectedProtections>> {
             check_structural_match: true,
             structural_config: StructuralConfig::default(),
         },
+        SampleSpec {
+            filename: "mkaring_antidebug.exe",
+            description: "Anti-debug only",
+            expected_protections: ExpectedProtections {
+                has_marker_attributes: true,
+                has_anti_debug: true,
+                ..Default::default()
+            },
+            is_original: false,
+            check_semantic_preservation: true,
+            verification_level: VerificationLevel::Normal,
+            check_structural_match: true,
+            structural_config: StructuralConfig::default(),
+        },
+        SampleSpec {
+            filename: "mkaring_antidump.exe",
+            description: "Anti-dump only",
+            expected_protections: ExpectedProtections {
+                has_marker_attributes: true,
+                has_anti_dump: true,
+                ..Default::default()
+            },
+            is_original: false,
+            check_semantic_preservation: true,
+            verification_level: VerificationLevel::Normal,
+            check_structural_match: true,
+            structural_config: StructuralConfig::default(),
+        },
+        SampleSpec {
+            filename: "mkaring_antiildasm.exe",
+            description: "Anti-ILDasm only",
+            expected_protections: ExpectedProtections {
+                has_marker_attributes: true,
+                has_suppress_ildasm: true,
+                ..Default::default()
+            },
+            is_original: false,
+            check_semantic_preservation: true,
+            verification_level: VerificationLevel::Normal,
+            check_structural_match: true,
+            structural_config: StructuralConfig::default(),
+        },
+        SampleSpec {
+            filename: "mkaring_harden.exe",
+            description: "Harden only",
+            expected_protections: ExpectedProtections {
+                has_marker_attributes: true,
+                ..Default::default()
+            },
+            is_original: false,
+            check_semantic_preservation: true,
+            verification_level: VerificationLevel::Normal,
+            check_structural_match: true,
+            structural_config: StructuralConfig::default(),
+        },
+        SampleSpec {
+            filename: "mkaring_invalidmetadata.exe",
+            description: "Invalid metadata only (issues #289, #290)",
+            expected_protections: ExpectedProtections {
+                has_marker_attributes: true,
+                has_invalid_metadata: true,
+                ..Default::default()
+            },
+            is_original: false,
+            check_semantic_preservation: true,
+            verification_level: VerificationLevel::Normal,
+            check_structural_match: true,
+            structural_config: StructuralConfig::default(),
+        },
+        SampleSpec {
+            filename: "mkaring_invalidmetadata_antitamper.exe",
+            description: "Invalid metadata + anti-tamper",
+            expected_protections: ExpectedProtections {
+                has_marker_attributes: true,
+                has_invalid_metadata: true,
+                has_anti_tamper: true,
+                ..Default::default()
+            },
+            is_original: false,
+            check_semantic_preservation: true,
+            verification_level: VerificationLevel::Normal,
+            check_structural_match: true,
+            structural_config: StructuralConfig::default(),
+        },
+        SampleSpec {
+            filename: "mkaring_refproxy.exe",
+            description: "Reference proxy only",
+            expected_protections: ExpectedProtections {
+                has_marker_attributes: true,
+                has_reference_proxy: true,
+                ..Default::default()
+            },
+            is_original: false,
+            check_semantic_preservation: true,
+            verification_level: VerificationLevel::Normal,
+            check_structural_match: true,
+            structural_config: StructuralConfig::default(),
+        },
+        SampleSpec {
+            filename: "mkaring_rename.exe",
+            description: "Renaming only",
+            expected_protections: ExpectedProtections {
+                has_marker_attributes: true,
+                ..Default::default()
+            },
+            is_original: false,
+            check_semantic_preservation: true,
+            verification_level: VerificationLevel::Normal,
+            check_structural_match: true,
+            structural_config: StructuralConfig::default(),
+        },
+        SampleSpec {
+            filename: "mkaring_typescramble.exe",
+            description: "Type scrambler only",
+            expected_protections: ExpectedProtections {
+                has_marker_attributes: true,
+                ..Default::default()
+            },
+            is_original: false,
+            check_semantic_preservation: true,
+            verification_level: VerificationLevel::Normal,
+            check_structural_match: true,
+            structural_config: StructuralConfig::default(),
+        },
     ]
 }
 
@@ -338,7 +472,8 @@ fn test_all_confuserex_samples() {
     let samples = all_samples();
 
     // Load original.exe for semantic comparison
-    let original_asm = load_sample(SAMPLES_DIR, "original.exe").ok();
+    let original_asm =
+        Some(load_sample(SAMPLES_DIR, "original.exe").expect("the unprotected original loads"));
     let mut results = Vec::new();
     let mut skipped = 0;
 
@@ -436,6 +571,20 @@ fn test_all_confuserex_samples() {
                 filename
             );
         }
+        if expected.has_anti_dump {
+            assert!(
+                result.detection.has_technique("confuserex.dump"),
+                "{}: anti-dump not detected",
+                filename
+            );
+        }
+        if expected.has_invalid_metadata {
+            assert!(
+                result.detection.has_technique("confuserex.metadata"),
+                "{}: invalid metadata not detected",
+                filename
+            );
+        }
 
         // Removal assertions (output should be clean)
         if expected.has_marker_attributes {
@@ -449,6 +598,20 @@ fn test_all_confuserex_samples() {
             assert!(
                 !result.post_detection.has_technique("generic.ildasm"),
                 "{}: suppress_ildasm should be removed",
+                filename
+            );
+        }
+        if expected.has_anti_dump {
+            assert!(
+                !result.post_detection.has_technique("confuserex.dump"),
+                "{}: anti-dump should be removed",
+                filename
+            );
+        }
+        if expected.has_invalid_metadata {
+            assert!(
+                !result.post_detection.has_technique("confuserex.metadata"),
+                "{}: invalid metadata should be repaired",
                 filename
             );
         }
@@ -581,4 +744,38 @@ fn print_confuserex_summary(results: &[TestResult<ExpectedProtections>]) {
     eprintln!("  Branches simplified: {}", total_branches);
     eprintln!("  Artifacts removed: {}", total_artifacts);
     eprintln!("--------------------------------------------------------------------------------\n");
+}
+
+/// The names of an assembly's manifest resource rows, in table order - the
+/// order `Assembly.GetManifestResourceNames` returns them in.
+fn manifest_resource_order(assembly: &CilObject) -> Vec<String> {
+    let (Some(tables), Some(strings)) = (assembly.tables(), assembly.strings()) else {
+        return Vec::new();
+    };
+    let Some(table) = tables.table::<ManifestResourceRaw>() else {
+        return Vec::new();
+    };
+    table
+        .iter()
+        .filter_map(Result::ok)
+        .filter_map(|row| strings.get(row.name as usize).ok().map(str::to_string))
+        .collect()
+}
+
+/// ConfuserEx's resource protection moves the application's resources into a
+/// hidden assembly, leaving rows in the application's order that name them.
+/// Restored, they take those rows' places in that order, not the hidden
+/// assembly's: the program lists its resources and sees the difference.
+#[test]
+fn restored_resources_keep_the_applications_order() {
+    let engine = DeobfuscationEngine::new(EngineConfig::default());
+    let (output, _) = engine
+        .process_file("tests/samples/packers/confuserex/1.6.0/mkaring_normal.exe")
+        .unwrap();
+    let original =
+        CilObject::from_path("tests/samples/packers/confuserex/1.6.0/original.exe").unwrap();
+
+    let restored = manifest_resource_order(&output);
+    assert!(!restored.is_empty(), "the resources are restored");
+    assert_eq!(restored, manifest_resource_order(&original));
 }

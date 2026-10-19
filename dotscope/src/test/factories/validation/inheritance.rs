@@ -4,9 +4,7 @@
 //! for creating test assemblies with various inheritance validation scenarios.
 
 use crate::{
-    metadata::tables::{
-        CodedIndex, CodedIndexType, MethodDefBuilder, TableId, TypeAttributes, TypeDefBuilder,
-    },
+    metadata::tables::{CodedIndex, CodedIndexType, TableId, TypeAttributes, TypeDefBuilder},
     test::{create_test_assembly_with_error, get_testfile_mscorlib, TestAssembly},
     Error, Result,
 };
@@ -65,48 +63,6 @@ pub fn owned_inheritance_validator_file_factory() -> Result<Vec<TestAssembly>> {
     // assemblies.push(create_assembly_with_circular_inheritance()?);
 
     Ok(assemblies)
-}
-
-/// Creates an assembly with circular inheritance dependency.
-///
-/// This creates a raw assembly containing types that inherit from each other in a cycle,
-/// which violates ECMA-335 inheritance constraints. When loaded by CilObject, this should
-/// trigger circular dependency detection in the owned validator.
-///
-/// Originally from: `src/metadata/validation/validators/owned/types/inheritance.rs`
-pub fn create_assembly_with_circular_inheritance() -> Result<TestAssembly> {
-    create_test_assembly_with_error(
-        get_testfile_mscorlib,
-        "inheritance chain depth exceeds",
-        |assembly| {
-            let mut previous_token = None;
-
-            for i in 0..50 {
-                let mut builder = TypeDefBuilder::new()
-                    .name(format!("DeepInheritanceType{i}"))
-                    .namespace("Test.DeepInheritance")
-                    .flags(TypeAttributes::CLASS | TypeAttributes::PUBLIC);
-
-                if let Some(parent_token) = previous_token {
-                    builder = builder.extends(CodedIndex::new(
-                        TableId::TypeDef,
-                        parent_token,
-                        CodedIndexType::TypeDefOrRef,
-                    ));
-                }
-
-                let current_token = builder.build(assembly)?;
-                previous_token = Some(
-                    current_token
-                        .token()
-                        .expect("TypeDef token should be resolved")
-                        .row(),
-                );
-            }
-
-            Ok(())
-        },
-    )
 }
 
 /// Creates an assembly with sealed type inheritance violation.
@@ -231,34 +187,6 @@ pub fn create_assembly_with_abstract_concrete_violation() -> Result<TestAssembly
             .name("IConcreteInterface")
             .namespace("Test.Abstract")
             .flags(TypeAttributes::INTERFACE | TypeAttributes::PUBLIC) // Missing ABSTRACT flag
-            .build(assembly)?;
-
-        Ok(())
-    })
-}
-
-/// Creates an assembly with method inheritance violation.
-///
-/// This creates a raw assembly containing a concrete type with abstract methods,
-/// which violates ECMA-335 inheritance rules.
-///
-/// Originally from: `src/metadata/validation/validators/owned/types/inheritance.rs`
-pub fn create_assembly_with_method_inheritance_violation() -> Result<TestAssembly> {
-    create_test_assembly_with_error(get_testfile_mscorlib, "Concrete type", |assembly| {
-        let _concrete_type_token = TypeDefBuilder::new()
-            .name("ConcreteClassWithAbstractMethods")
-            .namespace("Test.Methods")
-            .flags(TypeAttributes::CLASS | TypeAttributes::PUBLIC) // Concrete class, no ABSTRACT flag
-            .build(assembly)?;
-
-        let void_signature = vec![0x00, 0x00, 0x01];
-
-        MethodDefBuilder::new()
-            .name("AbstractMethodInConcreteClass")
-            .flags(0x0446)
-            .impl_flags(0x0000)
-            .signature(&void_signature)
-            .rva(0)
             .build(assembly)?;
 
         Ok(())

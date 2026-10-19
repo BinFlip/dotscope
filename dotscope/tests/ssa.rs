@@ -19,21 +19,22 @@
 
 mod common;
 
-use std::collections::HashMap;
+use std::collections::BTreeSet;
 
-use common::{build_cfg, build_ssa, TestTypeProvider};
+use common::{build_cfg, build_ssa, build_ssa_with_handlers};
 use dotscope::{
     analysis::{
-        BlockRange, ConstValue, ControlFlowGraph, SsaConverter, SsaExceptionHandler,
-        SsaExceptionHandlerCilExt, SsaFunction, SsaOp, SsaVarId, SymbolicEvaluator, SymbolicExpr,
+        ConstValue, SsaExceptionHandlerCilExt, SsaFunction, SsaOp, SsaVarId, SymbolicEvaluator,
+        SymbolicExpr,
     },
-    assembly::{decode_blocks, InstructionAssembler},
+    assembly::{Immediate, InstructionAssembler, Operand},
     metadata::{
         method::ExceptionHandlerFlags, token::Token, typesystem::PointerSize,
         validation::ValidationConfig,
     },
     CilObject, Result,
 };
+use rustc_hash::FxHashMap;
 
 /// Build SSA directly from an assembler for convenience.
 fn ssa_from_asm(
@@ -953,7 +954,7 @@ fn test_symbolic_eval_division() -> Result<()> {
     assert!(has_div_expr, "Expected expression with both 'a' and 'b'");
 
     // Evaluate with concrete values: 20 / 4 = 5
-    let bindings: HashMap<&str, ConstValue> =
+    let bindings: FxHashMap<&str, ConstValue> =
         [("a", ConstValue::I32(20)), ("b", ConstValue::I32(4))]
             .into_iter()
             .collect();
@@ -1001,7 +1002,7 @@ fn test_symbolic_eval_comparison() -> Result<()> {
     let expr = ceq_expr.unwrap();
 
     // Test: x=5, y=5 -> should return 1 (equal)
-    let equal_bindings: HashMap<&str, ConstValue> =
+    let equal_bindings: FxHashMap<&str, ConstValue> =
         [("x", ConstValue::I32(5)), ("y", ConstValue::I32(5))]
             .into_iter()
             .collect();
@@ -1013,7 +1014,7 @@ fn test_symbolic_eval_comparison() -> Result<()> {
     );
 
     // Test: x=5, y=10 -> should return 0 (not equal)
-    let unequal_bindings: HashMap<&str, ConstValue> =
+    let unequal_bindings: FxHashMap<&str, ConstValue> =
         [("x", ConstValue::I32(5)), ("y", ConstValue::I32(10))]
             .into_iter()
             .collect();
@@ -1063,7 +1064,7 @@ fn test_symbolic_eval_xor_pattern() -> Result<()> {
     // The XOR simplification should produce an expression that equals the input.
     // Check that at least one expression evaluates to the input value (proving
     // the cancellation worked).
-    let bindings: HashMap<&str, ConstValue> =
+    let bindings: FxHashMap<&str, ConstValue> =
         [("input", ConstValue::I32(42))].into_iter().collect();
 
     let any_correct = exprs_with_input.iter().any(|expr| {
@@ -1074,7 +1075,7 @@ fn test_symbolic_eval_xor_pattern() -> Result<()> {
     assert!(any_correct, "x ^ k ^ k should simplify to x (expected 42)");
 
     // Verify with different values
-    let bindings2: HashMap<&str, ConstValue> = [("input", ConstValue::I32(0x7FFFFFFF))]
+    let bindings2: FxHashMap<&str, ConstValue> = [("input", ConstValue::I32(0x7FFFFFFF))]
         .into_iter()
         .collect();
     let any_correct2 = exprs_with_input.iter().any(|expr| {
@@ -1085,7 +1086,7 @@ fn test_symbolic_eval_xor_pattern() -> Result<()> {
     assert!(any_correct2, "XOR self-inverse property should hold");
 
     // Test with negative value
-    let bindings3: HashMap<&str, ConstValue> =
+    let bindings3: FxHashMap<&str, ConstValue> =
         [("input", ConstValue::I32(-1))].into_iter().collect();
     let any_correct3 = exprs_with_input.iter().any(|expr| {
         expr.evaluate_named(&bindings3, PointerSize::Bit64)
@@ -1120,7 +1121,7 @@ fn test_symbolic_eval_copy_operation() -> Result<()> {
     let expr = add_expr.unwrap();
 
     // Test: x + x should equal 2*x
-    let bindings: HashMap<&str, ConstValue> = [("x", ConstValue::I32(7))].into_iter().collect();
+    let bindings: FxHashMap<&str, ConstValue> = [("x", ConstValue::I32(7))].into_iter().collect();
     assert_eq!(
         expr.evaluate_named(&bindings, PointerSize::Bit64)
             .and_then(|v| v.as_i32()),
@@ -1128,7 +1129,7 @@ fn test_symbolic_eval_copy_operation() -> Result<()> {
         "7 + 7 = 14"
     );
 
-    let bindings2: HashMap<&str, ConstValue> = [("x", ConstValue::I32(-5))].into_iter().collect();
+    let bindings2: FxHashMap<&str, ConstValue> = [("x", ConstValue::I32(-5))].into_iter().collect();
     assert_eq!(
         expr.evaluate_named(&bindings2, PointerSize::Bit64)
             .and_then(|v| v.as_i32()),
@@ -1168,7 +1169,7 @@ fn test_symbolic_eval_shift_operations() -> Result<()> {
     let expr = shift_expr.unwrap();
 
     // Test: (10 << 2) >> 1 = 40 >> 1 = 20
-    let bindings: HashMap<&str, ConstValue> = [("x", ConstValue::I32(10))].into_iter().collect();
+    let bindings: FxHashMap<&str, ConstValue> = [("x", ConstValue::I32(10))].into_iter().collect();
     assert_eq!(
         expr.evaluate_named(&bindings, PointerSize::Bit64)
             .and_then(|v| v.as_i32()),
@@ -1177,7 +1178,7 @@ fn test_symbolic_eval_shift_operations() -> Result<()> {
     );
 
     // Test: (3 << 2) >> 1 = 12 >> 1 = 6
-    let bindings2: HashMap<&str, ConstValue> = [("x", ConstValue::I32(3))].into_iter().collect();
+    let bindings2: FxHashMap<&str, ConstValue> = [("x", ConstValue::I32(3))].into_iter().collect();
     assert_eq!(
         expr.evaluate_named(&bindings2, PointerSize::Bit64)
             .and_then(|v| v.as_i32()),
@@ -1217,7 +1218,7 @@ fn test_symbolic_eval_bitwise_and_or() -> Result<()> {
     let expr = bitwise_expr.unwrap();
 
     // Test: (0x1234 & 0xFF) | 0x100 = 0x34 | 0x100 = 0x134
-    let bindings: HashMap<&str, ConstValue> =
+    let bindings: FxHashMap<&str, ConstValue> =
         [("x", ConstValue::I32(0x1234))].into_iter().collect();
     assert_eq!(
         expr.evaluate_named(&bindings, PointerSize::Bit64)
@@ -1227,7 +1228,8 @@ fn test_symbolic_eval_bitwise_and_or() -> Result<()> {
     );
 
     // Test: (0xAB & 0xFF) | 0x100 = 0xAB | 0x100 = 0x1AB
-    let bindings2: HashMap<&str, ConstValue> = [("x", ConstValue::I32(0xAB))].into_iter().collect();
+    let bindings2: FxHashMap<&str, ConstValue> =
+        [("x", ConstValue::I32(0xAB))].into_iter().collect();
     assert_eq!(
         expr.evaluate_named(&bindings2, PointerSize::Bit64)
             .and_then(|v| v.as_i32()),
@@ -1261,7 +1263,7 @@ fn test_symbolic_eval_remainder() -> Result<()> {
     let expr = rem_expr.unwrap();
 
     // Test: 23 % 7 = 2
-    let bindings: HashMap<&str, ConstValue> = [("n", ConstValue::I32(23))].into_iter().collect();
+    let bindings: FxHashMap<&str, ConstValue> = [("n", ConstValue::I32(23))].into_iter().collect();
     assert_eq!(
         expr.evaluate_named(&bindings, PointerSize::Bit64)
             .and_then(|v| v.as_i32()),
@@ -1270,7 +1272,7 @@ fn test_symbolic_eval_remainder() -> Result<()> {
     );
 
     // Test: 14 % 7 = 0
-    let bindings2: HashMap<&str, ConstValue> = [("n", ConstValue::I32(14))].into_iter().collect();
+    let bindings2: FxHashMap<&str, ConstValue> = [("n", ConstValue::I32(14))].into_iter().collect();
     assert_eq!(
         expr.evaluate_named(&bindings2, PointerSize::Bit64)
             .and_then(|v| v.as_i32()),
@@ -1279,7 +1281,8 @@ fn test_symbolic_eval_remainder() -> Result<()> {
     );
 
     // Test: -10 % 7 = -3 (C-style signed remainder)
-    let bindings3: HashMap<&str, ConstValue> = [("n", ConstValue::I32(-10))].into_iter().collect();
+    let bindings3: FxHashMap<&str, ConstValue> =
+        [("n", ConstValue::I32(-10))].into_iter().collect();
     assert_eq!(
         expr.evaluate_named(&bindings3, PointerSize::Bit64)
             .and_then(|v| v.as_i32()),
@@ -1319,7 +1322,7 @@ fn test_symbolic_eval_conversion() -> Result<()> {
     assert!(conversion_result.is_some());
 
     // Evaluate: should pass through the value
-    let bindings: HashMap<&str, ConstValue> = [("x", ConstValue::I32(42))].into_iter().collect();
+    let bindings: FxHashMap<&str, ConstValue> = [("x", ConstValue::I32(42))].into_iter().collect();
     let result = conversion_result
         .unwrap()
         .evaluate_named(&bindings, PointerSize::Bit64)
@@ -1903,7 +1906,7 @@ fn test_symbolic_expr_complex_computation() -> Result<()> {
     let expr = complex_expr.unwrap();
 
     // Test: x=5, y=9 -> ((5 + 1) * 2) - (9 / 3) = (6 * 2) - 3 = 12 - 3 = 9
-    let bindings: HashMap<&str, ConstValue> =
+    let bindings: FxHashMap<&str, ConstValue> =
         [("x", ConstValue::I32(5)), ("y", ConstValue::I32(9))]
             .into_iter()
             .collect();
@@ -1915,7 +1918,7 @@ fn test_symbolic_expr_complex_computation() -> Result<()> {
     );
 
     // Test: x=0, y=0 -> ((0 + 1) * 2) - (0 / 3) = 2 - 0 = 2
-    let bindings2: HashMap<&str, ConstValue> =
+    let bindings2: FxHashMap<&str, ConstValue> =
         [("x", ConstValue::I32(0)), ("y", ConstValue::I32(0))]
             .into_iter()
             .collect();
@@ -1927,7 +1930,7 @@ fn test_symbolic_expr_complex_computation() -> Result<()> {
     );
 
     // Test: x=10, y=30 -> ((10 + 1) * 2) - (30 / 3) = 22 - 10 = 12
-    let bindings3: HashMap<&str, ConstValue> =
+    let bindings3: FxHashMap<&str, ConstValue> =
         [("x", ConstValue::I32(10)), ("y", ConstValue::I32(30))]
             .into_iter()
             .collect();
@@ -1965,7 +1968,7 @@ fn test_symbolic_eval_cgt_unsigned() -> Result<()> {
     let expr = cmp_expr.unwrap();
 
     // Test: 10 >u 5 -> 1
-    let bindings1: HashMap<&str, ConstValue> =
+    let bindings1: FxHashMap<&str, ConstValue> =
         [("a", ConstValue::I32(10)), ("b", ConstValue::I32(5))]
             .into_iter()
             .collect();
@@ -1977,7 +1980,7 @@ fn test_symbolic_eval_cgt_unsigned() -> Result<()> {
     );
 
     // Test: 5 >u 10 -> 0
-    let bindings2: HashMap<&str, ConstValue> =
+    let bindings2: FxHashMap<&str, ConstValue> =
         [("a", ConstValue::I32(5)), ("b", ConstValue::I32(10))]
             .into_iter()
             .collect();
@@ -1989,7 +1992,7 @@ fn test_symbolic_eval_cgt_unsigned() -> Result<()> {
     );
 
     // Test: -1 (0xFFFFFFFF as unsigned) >u 1 -> 1 (unsigned comparison)
-    let bindings3: HashMap<&str, ConstValue> =
+    let bindings3: FxHashMap<&str, ConstValue> =
         [("a", ConstValue::I32(-1)), ("b", ConstValue::I32(1))]
             .into_iter()
             .collect();
@@ -2027,7 +2030,7 @@ fn test_symbolic_eval_clt_unsigned() -> Result<()> {
     let expr = cmp_expr.unwrap();
 
     // Test: 5 <u 10 -> 1
-    let bindings1: HashMap<&str, ConstValue> =
+    let bindings1: FxHashMap<&str, ConstValue> =
         [("a", ConstValue::I32(5)), ("b", ConstValue::I32(10))]
             .into_iter()
             .collect();
@@ -2039,7 +2042,7 @@ fn test_symbolic_eval_clt_unsigned() -> Result<()> {
     );
 
     // Test: 10 <u 5 -> 0
-    let bindings2: HashMap<&str, ConstValue> =
+    let bindings2: FxHashMap<&str, ConstValue> =
         [("a", ConstValue::I32(10)), ("b", ConstValue::I32(5))]
             .into_iter()
             .collect();
@@ -2051,7 +2054,7 @@ fn test_symbolic_eval_clt_unsigned() -> Result<()> {
     );
 
     // Test: 1 <u -1 (0xFFFFFFFF) -> 1 (unsigned comparison)
-    let bindings3: HashMap<&str, ConstValue> =
+    let bindings3: FxHashMap<&str, ConstValue> =
         [("a", ConstValue::I32(1)), ("b", ConstValue::I32(-1))]
             .into_iter()
             .collect();
@@ -2095,27 +2098,7 @@ fn test_ssa_exception_handler_preservation() -> Result<()> {
         .ret()?;
 
     let (bytecode, _max_stack, handlers) = asm.finish()?;
-    let blocks = decode_blocks(&bytecode, 0, 0x1000, Some(bytecode.len()))?;
-    let cfg = ControlFlowGraph::from_basic_blocks(blocks)?;
-    let mut ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0))?;
-
-    // Convert the generated ExceptionHandlers to SsaExceptionHandlers
-    // In a real scenario, this would be done during SSA construction
-    for handler in &handlers {
-        // Note: filter_offset field is used for class_token in EXCEPTION handlers
-        let ssa_handler = SsaExceptionHandler {
-            flags: handler.flags,
-            try_offset: handler.try_offset,
-            try_length: handler.try_length,
-            handler_offset: handler.handler_offset,
-            handler_length: handler.handler_length,
-            class_token_or_filter: handler.filter_offset,
-            protected_range: BlockRange::new(0, 1),
-            handler_range: BlockRange::new(1, 2),
-            filter_range: None,
-        };
-        ssa.set_exception_handlers(vec![ssa_handler]);
-    }
+    let ssa = build_ssa_with_handlers(&bytecode, &handlers, 1, 0)?;
 
     // Verify exception handlers are preserved
     assert!(
@@ -2171,25 +2154,7 @@ fn test_ssa_finally_handler() -> Result<()> {
         .ret()?;
 
     let (bytecode, _max_stack, handlers) = asm.finish()?;
-    let blocks = decode_blocks(&bytecode, 0, 0x1000, Some(bytecode.len()))?;
-    let cfg = ControlFlowGraph::from_basic_blocks(blocks)?;
-    let mut ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0))?;
-
-    // Convert the generated ExceptionHandlers to SsaExceptionHandlers
-    for handler in &handlers {
-        let ssa_handler = SsaExceptionHandler {
-            flags: handler.flags,
-            try_offset: handler.try_offset,
-            try_length: handler.try_length,
-            handler_offset: handler.handler_offset,
-            handler_length: handler.handler_length,
-            class_token_or_filter: handler.filter_offset,
-            protected_range: BlockRange::new(0, 1),
-            handler_range: BlockRange::new(1, 2),
-            filter_range: None,
-        };
-        ssa.set_exception_handlers(vec![ssa_handler]);
-    }
+    let ssa = build_ssa_with_handlers(&bytecode, &handlers, 1, 0)?;
 
     assert!(ssa.has_exception_handlers());
     let eh = &ssa.exception_handlers()[0];
@@ -2244,27 +2209,7 @@ fn test_ssa_nested_exception_handlers() -> Result<()> {
         .ret()?;
 
     let (bytecode, _max_stack, handlers) = asm.finish()?;
-    let blocks = decode_blocks(&bytecode, 0, 0x1000, Some(bytecode.len()))?;
-    let cfg = ControlFlowGraph::from_basic_blocks(blocks)?;
-    let mut ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0))?;
-
-    // Convert the generated ExceptionHandlers to SsaExceptionHandlers
-    let mut ssa_handlers = Vec::new();
-    for (i, handler) in handlers.iter().enumerate() {
-        let ssa_handler = SsaExceptionHandler {
-            flags: handler.flags,
-            try_offset: handler.try_offset,
-            try_length: handler.try_length,
-            handler_offset: handler.handler_offset,
-            handler_length: handler.handler_length,
-            class_token_or_filter: handler.filter_offset,
-            protected_range: BlockRange::new(i, i + 1),
-            handler_range: BlockRange::new(i + 1, i + 2),
-            filter_range: None,
-        };
-        ssa_handlers.push(ssa_handler);
-    }
-    ssa.set_exception_handlers(ssa_handlers);
+    let ssa = build_ssa_with_handlers(&bytecode, &handlers, 1, 0)?;
 
     assert_eq!(ssa.exception_handlers().len(), 2);
 
@@ -2569,4 +2514,132 @@ fn test_try_region_block_decoding() {
         }
     }
     panic!("Main method not found");
+}
+
+/// A local whose address is taken keeps its loads.
+///
+/// `ldloca` hands out a pointer, and a write through that pointer is invisible
+/// to the value graph: no `stloc` records it and no definition of the slot
+/// appears. Construction resolves a slot's read to the definition that reaches
+/// it, and for this slot the only one is the zero `.locals init` wrote - so a
+/// load collapsed to that reaching definition reads zero, and the five stored
+/// through the pointer is lost.
+///
+/// The load has to survive as a load, which is what marking the slot
+/// address-taken buys: it is a read of memory, not a value construction can
+/// trace. This is the `ldloca` miscompile, and it is silent - the method still
+/// builds and still verifies, it just returns the wrong number.
+#[test]
+fn address_taken_local_keeps_its_load() -> Result<()> {
+    const LDLOCA_S: u16 = 0x12;
+    const STIND_I4: u16 = 0x54;
+
+    // ldloca.s 0; ldc.i4.5; stind.i4; ldloc.0; ret
+    let mut asm = InstructionAssembler::new();
+    asm.emit_opcode(LDLOCA_S, Some(Operand::Immediate(Immediate::UInt8(0))))?
+        .ldc_i4_5()?
+        .emit_opcode(STIND_I4, None)?
+        .ldloc_0()?
+        .ret()?;
+
+    let ssa = ssa_from_asm(asm, 0, 1)?;
+
+    let has_load = ssa
+        .iter_instructions()
+        .any(|(_, _, instr)| matches!(instr.op(), SsaOp::LoadLocal { local_index: 0, .. }));
+    assert!(
+        has_load,
+        "the load of an address-taken local was collapsed to a reaching definition, \
+         so the value written through the pointer is lost:\n{ssa}"
+    );
+
+    Ok(())
+}
+
+/// A finally reads the local its try region wrote.
+///
+/// A throw leaves a protected block from wherever it happened, so the value a
+/// handler finds in a slot is the join over every point in the region the throw
+/// could have come from - the value on entry to the try, and every version the
+/// try wrote before the throw. That is what an exceptional phi operand states.
+///
+/// Modelled with ordinary predecessors instead, the handler is a block whose
+/// only edges are the ones a terminator names, which for a handler is none: its
+/// phis have no operands to fill, and the read falls back to the value the slot
+/// held on entry to the method. The cleanup then runs on the wrong value, and
+/// nothing about the IR looks wrong while it does.
+#[test]
+fn finally_reads_the_local_its_try_wrote() -> Result<()> {
+    // try { ldc.i4.7; stloc.0; leave END }
+    // finally { ldloc.0; pop; endfinally }
+    // END: ldloc.0; ret
+    let mut asm = InstructionAssembler::new();
+    asm.try_start("t")?
+        .ldc_i4(7)?
+        .stloc_0()?
+        .leave_s("end")?
+        .try_end("t")?
+        .finally_start("t")?
+        .ldloc_0()?
+        .pop()?
+        .endfinally()?
+        .finally_end("t")?
+        .label("end")?
+        .ldloc_0()?
+        .ret()?;
+
+    let (bytecode, _max_stack, handlers) = asm.finish()?;
+    let ssa = build_ssa_with_handlers(&bytecode, &handlers, 0, 1)?;
+
+    // The handler's phi for the local, and what a throw may bring to it.
+    let exceptional: Vec<SsaVarId> = ssa
+        .block(1)
+        .expect("handler block")
+        .phi_nodes()
+        .iter()
+        .flat_map(|phi| phi.exceptional_operands().map(|op| op.value()))
+        .collect();
+
+    assert!(
+        !exceptional.is_empty(),
+        "the handler's phi names no value a throw could bring, so the \
+         cleanup reads whatever reached the block by normal flow:\n{ssa}"
+    );
+
+    // More than one distinct value is the property under test. One would mean
+    // only the value on entry to the try survived; the second is the version
+    // the try wrote before the throw, which is what the handler has to see.
+    let distinct: BTreeSet<SsaVarId> = exceptional.iter().copied().collect();
+    assert!(
+        distinct.len() >= 2,
+        "the handler joins only {} value(s) from the protected region, so the \
+         write inside the try is not among them:\n{ssa}",
+        distinct.len()
+    );
+
+    // And one of them is that write: the constant the try stored.
+    let wrote_seven = distinct.iter().any(|&operand| {
+        let mut current = Some(operand);
+        for _ in 0..4 {
+            let Some(var) = current else { break };
+            let Some((_, _, instr)) = ssa
+                .iter_instructions()
+                .find(|(_, _, instr)| instr.op().dest() == Some(var))
+            else {
+                break;
+            };
+            match instr.op() {
+                SsaOp::Const { value, .. } => return *value == ConstValue::I32(7),
+                SsaOp::Copy { src, .. } => current = Some(*src),
+                _ => break,
+            }
+        }
+        false
+    });
+    assert!(
+        wrote_seven,
+        "none of the values the handler joins is the one the try stored:\n{ssa}"
+    );
+
+    Ok(())
 }

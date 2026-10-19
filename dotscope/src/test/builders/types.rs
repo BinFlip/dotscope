@@ -78,22 +78,6 @@ impl CilTypeBuilder {
             .with_flavor(CilFlavor::Interface)
     }
 
-    /// Create a value type/struct
-    pub fn value_type(namespace: &str, name: &str) -> Self {
-        Self::new()
-            .with_namespace(namespace)
-            .with_name(name)
-            .with_flavor(CilFlavor::ValueType)
-    }
-
-    /// Create an enum type
-    pub fn enum_type(namespace: &str, name: &str) -> Self {
-        Self::new()
-            .with_namespace(namespace)
-            .with_name(name)
-            .with_flavor(CilFlavor::ValueType) // Enums are value types in .NET
-    }
-
     pub fn build(self) -> CilTypeRc {
         Arc::new(CilType::new(
             self.token,
@@ -136,6 +120,6 @@ pub fn create_exportedtype(dummy_type: CilTypeRc) -> ExportedTypeRc {
         name: "ExportedType".to_string(),
         namespace: Some("Test.Namespace".to_string()),
         implementation: implementation_lock,
-        custom_attributes: LazyList::new(),
+        custom_attributes: Default::default(),
     })
 }

@@ -36,11 +36,6 @@ impl ConstantBuilder {
         }
     }
 
-    pub fn with_offset(mut self, offset: usize) -> Self {
-        self.offset = offset;
-        self
-    }
-
     /// Create a constant for a field with int32 value
     pub fn field_i4_constant(rid: u32, field: FieldRc, value: i32) -> Self {
         Self::new(
@@ -126,11 +121,6 @@ impl ConstantRawBuilder {
         }
     }
 
-    pub fn with_offset(mut self, offset: usize) -> Self {
-        self.offset = offset;
-        self
-    }
-
     /// Create a ConstantRaw for a field with int32 value at blob offset
     pub fn field_i4_raw(rid: u32, field_rid: u32, blob_offset: u32) -> Self {
         Self::new(
@@ -140,51 +130,6 @@ impl ConstantRawBuilder {
                 tag: TableId::Field,
                 row: field_rid,
                 token: Token::new(0x04000000 + field_rid),
-                ci_type: CodedIndexType::HasConstant,
-            },
-            blob_offset,
-        )
-    }
-
-    /// Create a ConstantRaw for a parameter with int32 value at blob offset
-    pub fn param_i4_raw(rid: u32, param_rid: u32, blob_offset: u32) -> Self {
-        Self::new(
-            rid,
-            ELEMENT_TYPE::I4,
-            CodedIndex {
-                tag: TableId::Param,
-                row: param_rid,
-                token: Token::new(0x08000000 + param_rid),
-                ci_type: CodedIndexType::HasConstant,
-            },
-            blob_offset,
-        )
-    }
-
-    /// Create a ConstantRaw for a property with int32 value at blob offset
-    pub fn property_i4_raw(rid: u32, property_rid: u32, blob_offset: u32) -> Self {
-        Self::new(
-            rid,
-            ELEMENT_TYPE::I4,
-            CodedIndex {
-                tag: TableId::Property,
-                row: property_rid,
-                token: Token::new(0x17000000 + property_rid),
-                ci_type: CodedIndexType::HasConstant,
-            },
-            blob_offset,
-        )
-    }
-
-    /// Create a ConstantRaw with invalid parent table (for error testing)
-    pub fn invalid_parent_raw(rid: u32, blob_offset: u32) -> Self {
-        Self::new(
-            rid,
-            ELEMENT_TYPE::I4,
-            CodedIndex {
-                tag: TableId::TypeDef, // Invalid for constants
-                row: 1,
-                token: Token::new(0x02000001),
                 ci_type: CodedIndexType::HasConstant,
             },
             blob_offset,
