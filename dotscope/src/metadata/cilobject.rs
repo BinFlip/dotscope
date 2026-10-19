@@ -192,7 +192,7 @@ use crate::{
             MethodSpecMap, MethodSpecRc, ModuleRc, ModuleRefMap,
         },
         token::Token,
-        typesystem::TypeRegistry,
+        typesystem::{CilTypeReference, TypeRegistry},
         validation::{ValidationConfig, ValidationEngine},
     },
     project::ProjectContext,
@@ -1488,7 +1488,7 @@ impl CilObject {
 
     /// Returns the method definition for the given token.
     ///
-    /// Convenience accessor over [`methods()`](Self::methods) — looks up a
+    /// Convenience accessor over [`methods()`](Self::methods) - looks up a
     /// method by its metadata token and returns a cloned reference-counted
     /// pointer to the [`Method`](crate::metadata::method::Method) object,
     /// eliminating the boilerplate of unwrapping the `Entry` guard manually.
@@ -1553,7 +1553,7 @@ impl CilObject {
     /// - `Some(`[`MemberRef`](crate::metadata::tables::MemberRef)`)` reference-counted
     ///   if `token` resolves to a row in the `MemberRef` table.
     /// - `None` only when `token` is not present in the `MemberRef` table.
-    ///   This is a lookup miss, not a malformed-input signal — the assembly
+    ///   This is a lookup miss, not a malformed-input signal - the assembly
     ///   may simply not reference the requested member.
     ///
     /// # Examples
@@ -1648,7 +1648,7 @@ impl CilObject {
     ///   - `token` belongs to one of the three supported tables but the row
     ///     is missing (lookup miss).
     ///   - `token`'s table is not one of the three supported types (caller
-    ///     bug — the helper is intended for call-site operands only).
+    ///     bug - the helper is intended for call-site operands only).
     ///
     /// If you need to distinguish those cases, dispatch on
     /// [`Token::table`](crate::metadata::token::Token::table) yourself and
@@ -1685,6 +1685,50 @@ impl CilObject {
         }
     }
 
+    /// Resolves a method token to the full name of the type that declares the
+    /// method.
+    ///
+    /// The counterpart of [`Self::resolve_method_name`], over the same three
+    /// tables: a `MethodDef`'s declaring type, a `MemberRef`'s parent, and the
+    /// method a `MethodSpec` instantiates. Matching a call target needs both:
+    /// `Concat` alone names a user's `StringHelper.Concat` as readily as
+    /// `System.String.Concat`.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - A metadata token from a call-like instruction operand.
+    ///
+    /// # Returns
+    ///
+    /// The declaring type's full name (`System.String`), or `None` when the
+    /// token is not a method token, its row is missing, or its declaring type
+    /// cannot be resolved.
+    pub fn resolve_method_declaring_type(&self, token: Token) -> Option<String> {
+        let method_def = |method: Option<MethodRc>| {
+            method
+                .and_then(|method| method.declaring_type_rc())
+                .map(|ty| ty.fullname().to_string())
+        };
+        let parent = |member: &MemberRefRc| member.declaredby.fullname();
+        match token.table() {
+            0x06 => method_def(self.data.methods.get(&token).map(|e| e.value().clone())),
+            0x0A => self
+                .data
+                .refs_member
+                .get(&token)
+                .and_then(|e| parent(e.value())),
+            0x2B => {
+                let spec = self.data.method_specs.get(&token)?;
+                match &spec.value().method {
+                    CilTypeReference::MethodDef(method) => method_def(method.upgrade()),
+                    CilTypeReference::MemberRef(member) => parent(member),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// Returns the resources container with all embedded and linked resources.
     ///
     /// The resources container provides access to all resources associated with
@@ -1704,8 +1748,8 @@ impl CilObject {
     /// let resources = assembly.resources();
     ///
     /// for entry in resources.iter() {
-    ///     let (name, resource) = (entry.key(), entry.value());
-    ///     println!("Resource: {} (Size: {}, Offset: 0x{:X})", name, resource.data_offset, resource.data_size);
+    ///     let resource = entry.value();
+    ///     println!("Resource: {} (Size: {}, Offset: 0x{:X})", resource.name, resource.data_size, resource.data_offset);
     /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
@@ -1810,7 +1854,7 @@ impl CilObject {
     /// resolves type *signatures* from blob heaps into [`CilType`](crate::metadata::typesystem::CilType)
     /// instances).
     ///
-    /// The resolver is a zero-cost borrowing wrapper — it holds only a reference
+    /// The resolver is a zero-cost borrowing wrapper - it holds only a reference
     /// to this `CilObject` and performs no allocations or caching.
     ///
     /// # Examples

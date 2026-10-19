@@ -27,7 +27,6 @@ use crate::{
         token::Token,
         typesystem::{CilTypeReference, TypeRegistry},
     },
-    utils::LazyList,
     Result,
 };
 
@@ -139,7 +138,7 @@ impl MemberRefRaw {
             modifiers: Arc::new(boxcar::Vec::new()),
             base: OnceLock::new(),
             is_by_ref: AtomicBool::new(method_sig.return_type.by_ref),
-            custom_attributes: LazyList::new(),
+            custom_attributes: Default::default(),
         });
         params.push(return_param);
 
@@ -158,7 +157,7 @@ impl MemberRefRaw {
                 modifiers: Arc::new(boxcar::Vec::new()),
                 base: OnceLock::new(),
                 is_by_ref: AtomicBool::new(param_sig.by_ref),
-                custom_attributes: LazyList::new(),
+                custom_attributes: Default::default(),
             });
             params.push(param);
         }
@@ -321,7 +320,7 @@ impl MemberRefRaw {
             name: strings.get(self.name as usize)?.to_string(),
             signature,
             params,
-            custom_attributes: LazyList::new(),
+            custom_attributes: Default::default(),
         });
 
         Ok(member_ref)

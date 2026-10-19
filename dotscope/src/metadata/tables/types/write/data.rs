@@ -524,6 +524,29 @@ impl RowWritable for TableDataOwned {
             Self::GenericParamConstraint(row) => row.row_write(data, offset, rid, sizes),
         }
     }
+
+    fn sort_key(&self, sizes: &TableInfoRef) -> Result<Option<(u32, u32)>> {
+        match self {
+            Self::ClassLayout(row) => row.sort_key(sizes),
+            Self::Constant(row) => row.sort_key(sizes),
+            Self::CustomAttribute(row) => row.sort_key(sizes),
+            Self::DeclSecurity(row) => row.sort_key(sizes),
+            Self::FieldLayout(row) => row.sort_key(sizes),
+            Self::FieldMarshal(row) => row.sort_key(sizes),
+            Self::FieldRVA(row) => row.sort_key(sizes),
+            Self::GenericParam(row) => row.sort_key(sizes),
+            Self::GenericParamConstraint(row) => row.sort_key(sizes),
+            Self::ImplMap(row) => row.sort_key(sizes),
+            Self::InterfaceImpl(row) => row.sort_key(sizes),
+            Self::MethodImpl(row) => row.sort_key(sizes),
+            Self::MethodSemantics(row) => row.sort_key(sizes),
+            Self::NestedClass(row) => row.sort_key(sizes),
+            Self::LocalScope(row) => row.sort_key(sizes),
+            Self::StateMachineMethod(row) => row.sort_key(sizes),
+            Self::CustomDebugInformation(row) => row.sort_key(sizes),
+            _ => Ok(None),
+        }
+    }
 }
 
 // Implement TableRow for size calculation

@@ -206,7 +206,7 @@ impl<'a, T: RowReadable> MetadataTable<'a, T> {
     ///
     /// `Ok(Some(row))` when the row exists and parses, `Ok(None)` when the index is outside
     /// the table, and `Err` when the row exists but does not parse. Those are three different
-    /// facts and callers act on them differently — a row that will not parse is a defect in
+    /// facts and callers act on them differently - a row that will not parse is a defect in
     /// the input, not an absent row.
     ///
     /// # Errors

@@ -12,7 +12,6 @@ use crate::{
         tables::{Property, PropertyAttributes, PropertyRc, TableInfoRef, TableRow},
         token::Token,
     },
-    utils::LazyList,
     Result,
 };
 
@@ -125,7 +124,7 @@ impl PropertyRaw {
             fn_setter: OnceLock::new(),
             fn_getter: OnceLock::new(),
             fn_other: OnceLock::new(),
-            custom_attributes: LazyList::new(),
+            custom_attributes: Default::default(),
         }))
     }
 

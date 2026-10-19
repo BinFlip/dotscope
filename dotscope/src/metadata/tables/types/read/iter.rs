@@ -41,7 +41,7 @@ use crate::{
 
 /// Discards a row that could not be parsed, after logging it.
 ///
-/// For consumers that genuinely cannot propagate — an adapter chain inside a function
+/// For consumers that genuinely cannot propagate - an adapter chain inside a function
 /// returning `Option`, or a scan that has no error channel. Written as a named function
 /// rather than `.flatten()` or `.filter_map(Result::ok)` so that dropping a row is greppable
 /// and leaves a trace: a silently short table is how a malformed row turns into missing
@@ -102,7 +102,7 @@ pub fn skip_unreadable<T>(row: Result<T>) -> Option<T> {
 /// ## Why the item type is a `Result`
 ///
 /// Yielding `None` on a parse error would end the iteration, silently dropping every
-/// remaining row — a row-hiding primitive on a hostile file, and one that reaches further
+/// remaining row - a row-hiding primitive on a hostile file, and one that reaches further
 /// than it looks: the writer rebuilds tables by iterating them, so a table truncated this way
 /// is re-emitted without the rows that were skipped. Every row is therefore reported, and the
 /// iterator always yields exactly `row_count` items.
@@ -125,7 +125,7 @@ impl<T: RowReadable> Iterator for TableIterator<'_, T> {
         self.current_row = rid;
 
         // `get` derives each row's offset from its index, so a failure here costs this row
-        // and no other — which is what makes continuing after one sound.
+        // and no other - which is what makes continuing after one sound.
         self.table.get(rid).transpose()
     }
 
@@ -300,7 +300,7 @@ impl<T: RowReadable + Send + Sync> Iterator for TableProducerIterator<'_, T> {
         // +1 because row indices start at 1
         //
         // A failing row is yielded as `Err`, so this chunk still produces exactly
-        // `range.len()` items — which is what `ExactSizeIterator` below promises rayon, and
+        // `range.len()` items - which is what `ExactSizeIterator` below promises rayon, and
         // what `IndexedParallelIterator::len` reports.
         self.table.get(row_index.saturating_add(1)).transpose()
     }

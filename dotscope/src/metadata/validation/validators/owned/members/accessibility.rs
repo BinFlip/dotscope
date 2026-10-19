@@ -172,7 +172,7 @@ impl OwnedAccessibilityValidator {
             }
 
             // Validate that types which ARE nested have proper nested visibility.
-            // Only check TypeDef entries (0x02) — TypeRef entries lack flags metadata.
+            // Only check TypeDef entries (0x02) - TypeRef entries lack flags metadata.
             if type_entry.token.table() == 0x02 && type_entry.enclosing_type.get().is_some() {
                 // This is a nested type - it must use nested visibility flags (0x02-0x07)
                 // It cannot use top-level visibility (NOT_PUBLIC=0x00, PUBLIC=0x01)

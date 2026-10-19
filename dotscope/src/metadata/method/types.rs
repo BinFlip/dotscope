@@ -628,7 +628,7 @@ impl MethodAccessFlags {
     /// This is the ergonomic counterpart to matching against the
     /// `COMPILER_CONTROLLED`/`PRIVATE`/…/`PUBLIC` constants. Downstream code that
     /// only needs to distinguish access levels (without preserving the raw bit
-    /// pattern) should prefer this accessor — pattern matching on the returned
+    /// pattern) should prefer this accessor - pattern matching on the returned
     /// [`MethodAccessLevel`] is exhaustive and cannot silently miss a variant.
     ///
     /// Unrecognized bit patterns (which should not appear in valid metadata)
@@ -657,7 +657,7 @@ impl MethodAccessFlags {
             0x0004 => MethodAccessLevel::Family,
             0x0005 => MethodAccessLevel::FamilyOrAssembly,
             0x0006 => MethodAccessLevel::Public,
-            // 0x0000 and any unrecognized value — keep the most restrictive interpretation.
+            // 0x0000 and any unrecognized value - keep the most restrictive interpretation.
             _ => MethodAccessLevel::CompilerControlled,
         }
     }
@@ -666,7 +666,7 @@ impl MethodAccessFlags {
 /// Discrete method accessibility level per ECMA-335 §II.23.1.10.
 ///
 /// Returned by [`MethodAccessFlags::access_level`]. The seven variants are
-/// fixed by the standard and are mutually exclusive — exactly one applies to
+/// fixed by the standard and are mutually exclusive - exactly one applies to
 /// any given method.
 ///
 /// The hierarchy from most restrictive to least restrictive is:
@@ -690,17 +690,17 @@ pub enum MethodAccessLevel {
     CompilerControlled,
     /// Accessible only by the parent type (ECMA-335 value `0x0001`).
     Private,
-    /// Accessible by sub-types only within this assembly — C# `private protected`
+    /// Accessible by sub-types only within this assembly - C# `private protected`
     /// (ECMA-335 value `0x0002`).
     FamilyAndAssembly,
-    /// Accessible by anyone in the assembly — C# `internal` (ECMA-335 value `0x0003`).
+    /// Accessible by anyone in the assembly - C# `internal` (ECMA-335 value `0x0003`).
     Assembly,
-    /// Accessible by type and sub-types — C# `protected` (ECMA-335 value `0x0004`).
+    /// Accessible by type and sub-types - C# `protected` (ECMA-335 value `0x0004`).
     Family,
-    /// Accessible by sub-types anywhere, plus anyone in the assembly — C# `protected internal`
+    /// Accessible by sub-types anywhere, plus anyone in the assembly - C# `protected internal`
     /// (ECMA-335 value `0x0005`).
     FamilyOrAssembly,
-    /// Accessible by anyone with visibility to the declaring scope — C# `public`
+    /// Accessible by anyone with visibility to the declaring scope - C# `public`
     /// (ECMA-335 value `0x0006`).
     Public,
 }
@@ -865,7 +865,7 @@ mod tests {
         );
         assert_eq!(MethodAccessLevel::Public.as_str(), "public");
 
-        // Display delegates to as_str — verify by formatting one variant.
+        // Display delegates to as_str - verify by formatting one variant.
         assert_eq!(format!("{}", MethodAccessLevel::Public), "public");
 
         // Strings must match MethodAccessFlags's Display so visus and other

@@ -53,7 +53,6 @@ use crate::{
         token::Token,
         typesystem::CilTypeReference,
     },
-    utils::LazyList,
     Result,
 };
 
@@ -200,7 +199,7 @@ impl ExportedTypeRaw {
                 Some(string.get(self.namespace as usize)?.to_string())
             },
             implementation: implementation_lock,
-            custom_attributes: LazyList::new(),
+            custom_attributes: Default::default(),
         }))
     }
 

@@ -129,7 +129,7 @@ use crate::{
     metadata::security::{
         ArgumentType, ArgumentValue, NamedArgument, Permission, PermissionSetFormat,
     },
-    utils::{to_u32, write_compressed_int, write_compressed_uint},
+    utils::{to_u32, write_compressed_uint},
     Result,
 };
 
@@ -445,7 +445,7 @@ impl PermissionSetEncoder {
                         self.buffer.extend_from_slice(&value.to_le_bytes());
                     }
                     ArgumentValue::Int32(value) => {
-                        write_compressed_int(*value, &mut self.buffer);
+                        self.buffer.extend_from_slice(&value.to_le_bytes());
                     }
                     ArgumentValue::UInt32(value) => {
                         self.buffer.extend_from_slice(&value.to_le_bytes());

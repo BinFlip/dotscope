@@ -53,7 +53,6 @@ use crate::{
         },
         token::Token,
     },
-    utils::LazyList,
     Result,
 };
 
@@ -202,7 +201,7 @@ impl AssemblyRefRaw {
             os_major_version: AtomicU32::new(0),
             os_minor_version: AtomicU32::new(0),
             processor: AtomicU32::new(0),
-            custom_attributes: LazyList::new(),
+            custom_attributes: Default::default(),
         }))
     }
 

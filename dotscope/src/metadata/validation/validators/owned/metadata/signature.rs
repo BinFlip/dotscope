@@ -243,8 +243,10 @@ impl OwnedSignatureValidator {
                     });
                 }
 
-                // Validate generic parameter flags are reasonable
-                if generic_param.flags.bits() > 0x001F {
+                // Validate generic parameter flags are reasonable: variance
+                // (0x0003) and the special constraints (0x003C), which since
+                // .NET 9 include AllowByRefLike (0x0020, `allows ref struct`).
+                if generic_param.flags.bits() > 0x003F {
                     return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(

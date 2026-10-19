@@ -223,9 +223,9 @@ impl<'a> UserStrings<'a> {
         // Decode the code points from byte pairs rather than reinterpreting the bytes as
         // `&[u16]`.
         //
-        // A cast would be wrong twice over. `data_start` is attacker-influenced — the compressed
+        // A cast would be wrong twice over. `data_start` is attacker-influenced - the compressed
         // length prefix is 1, 2 or 4 bytes depending on its first byte, so an odd offset is
-        // reachable without touching the stream offset at all — and building a *reference* from a
+        // reachable without touching the stream offset at all - and building a *reference* from a
         // pointer that is not aligned to its referent is undefined behaviour in Rust however the
         // hardware behaves. It also reads native-endian, while ECMA-335 §II.24.2.4 specifies
         // little-endian, so the same input would decode differently on a big-endian target.
@@ -538,8 +538,8 @@ mod tests {
     /// This is the case that makes a zero-copy `&[u16]` unsound: building one from
     /// `utf16_data.as_ptr()` creates a reference from a pointer that is not aligned to its
     /// referent, which is UB in Rust no matter how tolerant the hardware is. Nothing upstream
-    /// constrains the parity — a two-byte compressed length prefix at index 1 puts the payload
-    /// at index 3 without touching the stream offset at all — so the decoder copies.
+    /// constrains the parity - a two-byte compressed length prefix at index 1 puts the payload
+    /// at index 3 without touching the stream offset at all - so the decoder copies.
     ///
     /// A 0x81-byte entry forces that two-byte prefix: values >= 0x80 cannot use the one-byte form.
     #[test]

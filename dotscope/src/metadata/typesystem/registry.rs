@@ -127,8 +127,8 @@ use crate::{
         },
         token::Token,
         typesystem::{
-            CilFlavor, CilPrimitive, CilPrimitiveKind, CilType, CilTypeRc, CilTypeRef,
-            CilTypeReference, PointerSize, TypeSignatureHash,
+            wellknown::names, CilFlavor, CilPrimitive, CilPrimitiveKind, CilType, CilTypeRc,
+            CilTypeRef, CilTypeReference, PointerSize, TypeSignatureHash,
         },
     },
     utils::LazyList,
@@ -442,8 +442,8 @@ impl SourceRegistry {
             }
             CilTypeReference::Assembly(assembly) => {
                 // Reached once per type that names the defining assembly as its source.
-                // `from_assembly` is worse than a clone — it re-clones the name and culture
-                // and rebuilds the public-key blob — and the result is identical for every
+                // `from_assembly` is worse than a clone - it re-clones the name and culture
+                // and rebuilds the public-key blob - and the result is identical for every
                 // one of them, so it is derived once and reused.
                 if let Some(cached) = self.assembly_sources.get(&assembly.token) {
                     return cached.value().clone();
@@ -585,8 +585,8 @@ pub struct TypeRegistry {
     /// The four indices below hold `BTreeSet`s rather than `Vec`s because the TypeRef
     /// redirect sweep removes a token from each of them per resolved TypeRef, and a linear
     /// `retain` over lists that keep growing makes that sweep quadratic in TypeRef count.
-    /// Ordered rather than hashed so that iteration — which decides *which* type a
-    /// duplicated name resolves to — stays deterministic across runs.
+    /// Ordered rather than hashed so that iteration - which decides *which* type a
+    /// duplicated name resolves to - stays deterministic across runs.
     types_by_source: DashMap<TypeSource, BTreeSet<Token>>,
     /// Secondary index: types indexed by full name (namespace.name)
     types_by_fullname: DashMap<Arc<str>, BTreeSet<Token>>,
@@ -607,7 +607,7 @@ pub struct TypeRegistry {
     /// Secondary index: MethodDef token to the token of its declaring type.
     ///
     /// Without this, `TypeResolver::declaring_type` answers the MethodDef case by scanning
-    /// every type and, inside that, every method — upgrading a `Weak` per candidate. That
+    /// every type and, inside that, every method - upgrading a `Weak` per candidate. That
     /// lookup sits on the emulator's hottest paths (`call`/`callvirt`/`newobj`), so an O(1)
     /// answer here is what keeps dispatch from degrading to O(total methods in assembly).
     method_to_type: DashMap<Token, Token>,
@@ -1231,7 +1231,7 @@ impl TypeRegistry {
             // `types_by_nested_suffix` narrows this to the types whose fullname ends in the
             // same *component*; the `ends_with` below then confirms the full requested
             // suffix, so a multi-component request still matches exactly as before. Only
-            // matches that cut a component in half — `Bar` against `A/FooBar` — are no
+            // matches that cut a component in half - `Bar` against `A/FooBar` - are no
             // longer accepted, and those were never nested-type resolutions.
             let requested_suffix = fullname.rsplit('/').next().unwrap_or(fullname);
             if let Some(tokens) = self.types_by_nested_suffix.get(requested_suffix) {
@@ -1270,7 +1270,7 @@ impl TypeRegistry {
     /// For **TypeRef** tokens (table 0x01), performs a fullname-based lookup to find
     /// the corresponding **TypeDef** (or **TypeSpec**) within this assembly. This is
     /// essential because TypeRef entries are lightweight cross-module references that
-    /// lack populated method and field lists — resolving to a TypeDef ensures callers
+    /// lack populated method and field lists - resolving to a TypeDef ensures callers
     /// can inspect the type's full structure.
     ///
     /// For all other token types (TypeDef, TypeSpec, primitives), behaves identically
@@ -1335,6 +1335,53 @@ impl TypeRegistry {
         }
 
         typedef_matches
+    }
+
+    /// Returns the TypeRef through which this module imports `fullname` from its core
+    /// library.
+    ///
+    /// The core library is the assembly defining `System.Object`, so the scope of the
+    /// module's own `System.Object` reference names it (its `System.ValueType`
+    /// reference in a module declaring only value types). A module can import one type
+    /// from several scopes - an obfuscator built against another runtime adds references
+    /// to that runtime's core library - and only the reference into the module's core
+    /// library resolves wherever the module runs. Among several `System.Object`
+    /// references the lowest row decides, as the compiler emits its rows before anything
+    /// appended to the image later.
+    ///
+    /// Falls back to the lowest TypeRef of that name when the core library does not
+    /// provide the type, and returns `None` when the module does not import it.
+    #[must_use]
+    pub fn get_corelib_typeref(&self, fullname: &str) -> Option<CilTypeRc> {
+        let scope_of = |ty: &CilTypeRc| ty.external().and_then(CilTypeReference::token);
+
+        let root = self
+            .typerefs_named(names::OBJECT)
+            .into_iter()
+            .next()
+            .or_else(|| self.typerefs_named(names::VALUE_TYPE).into_iter().next());
+        let corelib = root.as_ref().and_then(scope_of);
+        let candidates = self.typerefs_named(fullname);
+        candidates
+            .iter()
+            .find(|ty| corelib.is_some() && scope_of(ty) == corelib)
+            .or(candidates.first())
+            .cloned()
+    }
+
+    /// Returns the TypeRefs named `fullname`, lowest row first.
+    fn typerefs_named(&self, fullname: &str) -> Vec<CilTypeRc> {
+        self.types_by_fullname
+            .get(fullname)
+            .map(|tokens| {
+                tokens
+                    .value()
+                    .iter()
+                    .filter(|token| token.is_table(TableId::TypeRef))
+                    .filter_map(|token| self.types.get(token).map(|entry| entry.value().clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Gets the byte size of a field for FieldRVA initialization.
@@ -1618,7 +1665,7 @@ impl TypeRegistry {
                     instantiation: SignatureMethodSpec {
                         generic_args: vec![],
                     },
-                    custom_attributes: LazyList::new(),
+                    custom_attributes: Default::default(),
                     generic_args: {
                         let type_ref_list = Arc::new(boxcar::Vec::with_capacity(1));
                         type_ref_list.push(arg_type.clone().into());
@@ -1661,8 +1708,8 @@ impl TypeRegistry {
     /// Returns the token of the type declaring `method_token`, or `None` if no type claims it.
     ///
     /// The first lookup for a given token scans the registry; the answer is then memoised, so
-    /// repeated dispatch to the same method — the emulator's actual access pattern, since a hot
-    /// loop calls the same handful of methods — is O(1) thereafter.
+    /// repeated dispatch to the same method - the emulator's actual access pattern, since a hot
+    /// loop calls the same handful of methods - is O(1) thereafter.
     ///
     /// Memoisation is on demand rather than built once at load because a type's method list is
     /// populated *after* the type itself is registered; an eagerly built index could be
@@ -1977,8 +2024,11 @@ mod tests {
     use uguid::guid;
 
     use super::*;
-    use crate::metadata::tables::{
-        AssemblyFlags, AssemblyRef, AssemblyRefHash, File, FileAttributes, Module, ModuleRef,
+    use crate::{
+        metadata::tables::{
+            AssemblyFlags, AssemblyRef, AssemblyRefHash, File, FileAttributes, Module, ModuleRef,
+        },
+        CilObject,
     };
 
     /// Builds a type whose *name* already contains the nested path, which is the shape
@@ -2277,7 +2327,7 @@ mod tests {
             generation: 0,
             encbaseid: None,
             imports: Vec::new(),
-            custom_attributes: LazyList::new(),
+            custom_attributes: Default::default(),
         });
 
         let module_ref = Arc::new(ModuleRef {
@@ -2285,7 +2335,7 @@ mod tests {
             name: "ReferenceModule".to_string(),
             rid: 0,
             offset: 0,
-            custom_attributes: LazyList::new(),
+            custom_attributes: Default::default(),
         });
 
         let assembly_ref = Arc::new(AssemblyRef {
@@ -2305,7 +2355,7 @@ mod tests {
             os_major_version: AtomicU32::new(0),
             os_minor_version: AtomicU32::new(0),
             processor: AtomicU32::new(0),
-            custom_attributes: LazyList::new(),
+            custom_attributes: Default::default(),
         });
 
         let file = Arc::new(File {
@@ -2315,7 +2365,7 @@ mod tests {
             rid: 0,
             offset: 0,
             hash_value: AssemblyRefHash::new(&[0xCC, 0xCC]).unwrap(),
-            custom_attributes: LazyList::new(),
+            custom_attributes: Default::default(),
         });
 
         let module_source = registry.register_source(&CilTypeReference::Module(module.clone()));
@@ -2898,5 +2948,24 @@ mod tests {
             "CRITICAL: Class and GenericInstance are generating hash collisions! \
              This proves the original hash collision issue still exists."
         );
+    }
+
+    #[test]
+    fn a_type_imported_from_two_core_libraries_resolves_to_the_modules_own() {
+        // BitMono, running on .NET 10, imports `RuntimeTypeHandle` from that
+        // runtime's System.Private.CoreLib (0x0100000D) beside the protected
+        // program's mscorlib import (0x01000017).
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/samples/packers/bitmono/0.39.0/bitmono_calltocalli.exe");
+        let assembly = CilObject::from_path(&path).unwrap();
+        let types = assembly.types();
+
+        let handle = types
+            .get_corelib_typeref("System.RuntimeTypeHandle")
+            .unwrap();
+        assert_eq!(handle.token, Token::new(0x0100_0017));
+        // A type the core library does not provide still resolves.
+        assert!(types.get_corelib_typeref("System.Console").is_some());
+        assert!(types.get_corelib_typeref("No.Such.Type").is_none());
     }
 }

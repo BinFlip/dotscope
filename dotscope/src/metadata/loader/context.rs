@@ -165,7 +165,7 @@ use crate::{
 /// # }
 /// ```
 pub(crate) struct LoaderContext<'a> {
-    // === Core Assembly Data ===
+    // Core Assembly Data
     /// Input file reference for the assembly being loaded.
     pub input: Arc<File>,
     /// Raw binary data of the assembly file.
@@ -181,7 +181,7 @@ pub(crate) struct LoaderContext<'a> {
     /// When true, errors are logged to diagnostics and loading continues.
     pub lenient: bool,
 
-    // === Metadata Streams ===
+    // Metadata Streams
     /// Tables stream containing all metadata table definitions.
     pub meta: Option<&'a TablesHeader<'a>>,
     /// String heap containing UTF-8 encoded names and identifiers.
@@ -193,7 +193,7 @@ pub(crate) struct LoaderContext<'a> {
     /// Blob heap containing binary data (signatures, custom attributes, etc.).
     pub blobs: Option<&'a Blob<'a>>,
 
-    // === Assembly and Module Tables ===
+    // Assembly and Module Tables
     /// Assembly definition (single entry per assembly).
     pub assembly: &'a OnceLock<AssemblyRc>,
     /// Assembly operating system information.
@@ -211,11 +211,11 @@ pub(crate) struct LoaderContext<'a> {
     /// Module references to external modules.
     pub module_ref: &'a ModuleRefMap,
 
-    // === Type System Tables ===
+    // Type System Tables
     /// Type specifications for instantiated generic types.
     pub type_spec: TypeSpecMap,
 
-    // === Method and Field Tables ===
+    // Method and Field Tables
     /// Method definitions in the assembly.
     pub method_def: &'a MethodMap,
     /// Method implementations for interface/virtual methods.
@@ -237,13 +237,13 @@ pub(crate) struct LoaderContext<'a> {
     /// Field relative virtual addresses for initialized data.
     pub field_rva: FieldRVAMap,
 
-    // === Edit-and-Continue Tables ===
+    // Edit-and-Continue Tables
     /// Edit-and-Continue log entries tracking debugging modifications.
     pub enc_log: EncLogMap,
     /// Edit-and-Continue token mapping for debugging scenarios.
     pub enc_map: EncMapMap,
 
-    // === Portable PDB Debug Tables ===
+    // Portable PDB Debug Tables
     /// Document information for source file mapping in Portable PDB format.
     pub document: DocumentMap,
     /// Method debugging information including sequence points.
@@ -261,7 +261,7 @@ pub(crate) struct LoaderContext<'a> {
     /// Custom debug information for extensible debugging metadata.
     pub custom_debug_information: CustomDebugInformationMap,
 
-    // === Parameter and Generic Tables ===
+    // Parameter and Generic Tables
     /// Parameter definitions for methods.
     pub param: ParamMap,
     /// Parameter pointer indirection table.
@@ -271,7 +271,7 @@ pub(crate) struct LoaderContext<'a> {
     /// Constraints on generic parameters.
     pub generic_param_constraint: GenericParamConstraintMap,
 
-    // === Property and Event Tables ===
+    // Property and Event Tables
     /// Property definitions in types.
     pub property: PropertyMap,
     /// Property pointer indirection table.
@@ -285,7 +285,7 @@ pub(crate) struct LoaderContext<'a> {
     /// Event map linking types to their events.
     pub event_map: EventMapEntryMap,
 
-    // === Reference and Relationship Tables ===
+    // Reference and Relationship Tables
     /// Member references to external methods and fields.
     pub member_ref: &'a MemberRefMap,
     /// Class layout information for explicit layout types.
@@ -295,7 +295,7 @@ pub(crate) struct LoaderContext<'a> {
     /// Interface implementation relationships.
     pub interface_impl: InterfaceImplMap,
 
-    // === Metadata and Security Tables ===
+    // Metadata and Security Tables
     /// Constant values for fields, parameters, and properties.
     pub constant: ConstantMap,
     /// Custom attribute definitions.
@@ -309,7 +309,7 @@ pub(crate) struct LoaderContext<'a> {
     /// Standalone signature definitions.
     pub standalone_sig: StandAloneSigMap,
 
-    // === High-Level Registries ===
+    // High-Level Registries
     /// Import tracking for external dependencies.
     pub imports: &'a Imports,
     /// Resource management for embedded resources.
@@ -599,7 +599,7 @@ impl LoaderContext<'_> {
     ///
     /// The counterpart to [`handle_result`](Self::handle_result) for the one failure that
     /// happens before there is anything to build a message from. Every loader routes the
-    /// failures it can describe — `to_owned`, reference resolution — through `handle_result`
+    /// failures it can describe - `to_owned`, reference resolution - through `handle_result`
     /// with a message keyed on `row.token`. A row that failed to *parse* has no token, so it
     /// cannot use that path, and the natural `let row = row?;` propagates straight out of
     /// `load()` and aborts the whole [`CilObject`](crate::CilObject) load. That defeats
@@ -615,7 +615,7 @@ impl LoaderContext<'_> {
     /// * `row` - The row-parse result, as yielded by the table iterators
     /// * `index` - The row's 0-based position in the iteration. The table iterators are
     ///   range-based and read each row at an offset derived from its own RID, so nothing is
-    ///   dropped on a parse failure and `index + 1` is the true RID — unlike a filtered
+    ///   dropped on a parse failure and `index + 1` is the true RID - unlike a filtered
     ///   sequence, where position stops tracking RID.
     ///
     /// The table is taken from [`RowReadable::TABLE_ID`], so it cannot drift from the row

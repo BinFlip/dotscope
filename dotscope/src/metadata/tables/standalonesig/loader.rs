@@ -34,11 +34,10 @@
 //! - [`crate::metadata::tables::StandAloneSigRaw`] - Raw table entry structure
 //! - [`crate::metadata::tables::StandAloneSig`] - Owned table entry type
 
-use std::sync::Arc;
-
 use rayon::iter::{ParallelBridge, ParallelIterator};
 
 use crate::{
+    assembly::DecodedBodies,
     metadata::{
         diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
@@ -46,7 +45,6 @@ use crate::{
         tables::StandAloneSigRaw,
     },
     prelude::TableId,
-    utils::VisitedMap,
     Result,
 };
 
@@ -89,7 +87,7 @@ impl MetadataLoader for StandAloneSigLoader {
             return Ok(());
         };
 
-        let shared_visited = Arc::new(VisitedMap::new(context.input.data().len()));
+        let bodies = DecodedBodies::new();
         let standalonesig_table = context
             .meta
             .and_then(TablesHeader::table::<StandAloneSigRaw>);
@@ -104,7 +102,7 @@ impl MetadataLoader for StandAloneSigLoader {
                     blobs,
                     standalonesig_table,
                     context.types,
-                    shared_visited.clone(),
+                    &bodies,
                 ),
                 DiagnosticCategory::Method,
                 token_msg,

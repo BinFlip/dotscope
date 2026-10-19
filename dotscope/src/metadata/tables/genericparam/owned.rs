@@ -33,8 +33,9 @@ use crate::{
         customattributes::CustomAttributeValueList,
         tables::GenericParamAttributes,
         token::Token,
-        typesystem::{CilTypeRefList, CilTypeReference},
+        typesystem::{CilTypeRef, CilTypeReference},
     },
+    utils::RowList,
     Result,
 };
 
@@ -144,7 +145,7 @@ pub struct GenericParam {
     /// that type arguments must satisfy.
     ///
     /// [`CilTypeReference`]: crate::metadata::typesystem::CilTypeReference
-    pub constraints: CilTypeRefList,
+    pub constraints: RowList<CilTypeRef>,
 
     /// The name of the generic parameter.
     ///
@@ -205,7 +206,7 @@ impl GenericParam {
                         }
 
                         if !already_exists {
-                            generic_params.push(self.clone());
+                            generic_params.push_row(self.token, self.clone());
                         }
                     }
 
@@ -224,7 +225,7 @@ impl GenericParam {
                         }
 
                         if !already_exists {
-                            method.generic_params.push(self.clone());
+                            method.generic_params.push_row(self.token, self.clone());
                         }
                     }
 

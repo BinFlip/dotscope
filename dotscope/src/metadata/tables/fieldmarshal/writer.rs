@@ -28,6 +28,13 @@ use crate::{
 };
 
 impl RowWritable for FieldMarshalRaw {
+    fn sort_key(&self, sizes: &TableInfoRef) -> Result<Option<(u32, u32)>> {
+        Ok(Some((
+            sizes.encode_coded_index(self.parent.tag, self.parent.row, self.parent.ci_type)?,
+            0,
+        )))
+    }
+
     ///
     /// Serialize a FieldMarshal table row to binary format
     ///

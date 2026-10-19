@@ -56,7 +56,7 @@ use crate::{
     metadata::{
         diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
-        tables::{TableId, TypeDefRaw},
+        tables::{TableId, TypeDefRaw, TypeRefRaw},
         typesystem::CilTypeReference,
     },
     Result,
@@ -156,6 +156,35 @@ impl MetadataLoader for TypeDefLoader {
             else {
                 return Ok(());
             };
+
+            // A value type derives directly from `System.ValueType` or
+            // `System.Enum` (ECMA-335 II.13). The base is linked later, by the
+            // inheritance resolver, and a flavor computed before then would be
+            // a class for good; the `extends` row's name settles it now.
+            let names = |namespace: u32, name: u32| {
+                (
+                    strings.get(namespace as usize).ok(),
+                    strings.get(name as usize).ok(),
+                )
+            };
+            let base_name = match row.extends.tag {
+                TableId::TypeRef => header
+                    .table::<TypeRefRaw>()
+                    .and_then(|refs| refs.get(row.extends.row).ok().flatten())
+                    .map(|base| names(base.type_namespace, base.type_name)),
+                TableId::TypeDef => table
+                    .get(row.extends.row)
+                    .ok()
+                    .flatten()
+                    .map(|base| names(base.type_namespace, base.type_name)),
+                _ => None,
+            };
+            if matches!(
+                base_name,
+                Some((Some("System"), Some("ValueType" | "Enum")))
+            ) {
+                type_def.mark_value_type();
+            }
 
             context.types.insert(&type_def);
             Ok(())

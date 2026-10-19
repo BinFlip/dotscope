@@ -79,9 +79,10 @@
 use crate::{
     metadata::{
         method::{
-            MethodAccessFlags, MethodImplCodeType, MethodImplOptions, MethodModifiers,
+            Method, MethodAccessFlags, MethodImplCodeType, MethodImplOptions, MethodModifiers,
             MethodVtableFlags,
         },
+        typesystem::CilTypeReference,
         validation::{
             context::{OwnedValidationContext, ValidationContext},
             traits::OwnedValidator,
@@ -89,6 +90,10 @@ use crate::{
     },
     Error, Result,
 };
+
+/// The attribute marking a method the runtime implements as an accessor of
+/// another type's member (.NET 8): `static extern`, with no body.
+const UNSAFE_ACCESSOR_ATTRIBUTE: &str = "System.Runtime.CompilerServices.UnsafeAccessorAttribute";
 
 /// Foundation validator for method definitions, signatures, and implementation requirements.
 ///
@@ -108,6 +113,21 @@ use crate::{
 pub struct OwnedMethodValidator;
 
 impl OwnedMethodValidator {
+    /// Whether `method` carries `UnsafeAccessorAttribute`: a body the runtime
+    /// supplies, so the method has none in the image.
+    fn is_unsafe_accessor(method: &Method) -> bool {
+        method.custom_attributes.iter().any(|(_, attribute)| {
+            let declaring = match &attribute.constructor {
+                CilTypeReference::MethodDef(constructor) => constructor
+                    .upgrade()
+                    .and_then(|constructor| constructor.declaring_type_fullname()),
+                CilTypeReference::MemberRef(constructor) => constructor.declaredby.fullname(),
+                _ => None,
+            };
+            declaring.as_deref() == Some(UNSAFE_ACCESSOR_ATTRIBUTE)
+        })
+    }
+
     /// Creates a new method validator instance.
     ///
     /// Initializes a validator instance that can be used to validate method definitions
@@ -267,7 +287,13 @@ impl OwnedMethodValidator {
                 });
             }
 
-            if method.is_static() {
+            // An interface may declare static virtual and static abstract
+            // members (since .NET 7); everywhere else a static method has no
+            // slot.
+            let in_interface = method
+                .declaring_type_rc()
+                .is_some_and(|declaring| declaring.flags.is_interface());
+            if method.is_static() && !in_interface {
                 if method.is_virtual() {
                     return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
@@ -545,6 +571,7 @@ impl OwnedMethodValidator {
                                 .impl_options
                                 .contains(MethodImplOptions::INTERNAL_CALL)
                             && method.rva.is_none()
+                            && !Self::is_unsafe_accessor(method)
                         {
                             return Err(Error::ValidationOwnedFailed {
                                 validator: self.name().to_string(),

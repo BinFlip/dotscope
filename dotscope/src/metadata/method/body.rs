@@ -483,7 +483,7 @@ impl MethodBody {
                 // A value above 3 is non-conformant but not ambiguous, and it is what real
                 // runtimes accept: CoreCLR and dnlib both locate the IL at
                 // `4 * (flags >> 12)` rather than assuming 12. Rejecting those outright would
-                // make dotscope refuse assemblies the CLR happily executes — the wrong trade
+                // make dotscope refuse assemblies the CLR happily executes - the wrong trade
                 // for a malware-analysis tool, whose input is by definition not
                 // spec-conformant. The declared size is honoured and the deviation is reported.
                 let header_dwords = first_duo >> 12;
@@ -500,8 +500,8 @@ impl MethodBody {
                     );
                 }
 
-                // Every downstream offset — the IL start, the `size_code` bounds check and the
-                // EH cursor — is derived from this, so it must be the declared size rather
+                // Every downstream offset - the IL start, the `size_code` bounds check and the
+                // EH cursor - is derived from this, so it must be the declared size rather
                 // than a hard-coded 12.
                 let size_header: u16 = header_dwords.saturating_mul(4);
                 let size_code = read_le::<u32>(data.get(4..).ok_or(out_of_bounds_error!())?)?;
@@ -589,7 +589,7 @@ impl MethodBody {
                                     ));
                                 }
                                 // In Filter/Raw mode, truncate to u16 and let push_handler
-                                // validate via bounds checking — garbage flags typically
+                                // validate via bounds checking - garbage flags typically
                                 // accompany garbage offsets that will be rejected there.
                                 #[allow(clippy::cast_possible_truncation)]
                                 let flags = ExceptionHandlerFlags::new(flags_u32 as u16);

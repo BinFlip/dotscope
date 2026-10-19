@@ -203,3 +203,38 @@ impl MetadataLoader for CustomAttributeLoader {
         ]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use crate::{
+        metadata::tables::{skip_unreadable, CustomAttributeRaw, TableId},
+        CilObject,
+    };
+
+    #[test]
+    fn an_owner_lists_its_attributes_in_table_order() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        let assembly = CilObject::from_path(&path).expect("WindowsBase loads");
+        let owner = assembly.assembly().expect("an assembly row");
+
+        let tables = assembly.tables().expect("tables");
+        let expected: Vec<usize> = tables
+            .table::<CustomAttributeRaw>()
+            .expect("CustomAttribute table")
+            .iter()
+            .filter_map(skip_unreadable)
+            .filter(|row| row.parent.token.is_table(TableId::Assembly))
+            .map(|row| row.value as usize)
+            .collect();
+        let listed: Vec<usize> = owner
+            .custom_attributes
+            .iter()
+            .map(|(_, attribute)| attribute.blob_index)
+            .collect();
+
+        assert!(expected.len() > 8, "enough attributes for an order to show");
+        assert_eq!(listed, expected);
+    }
+}

@@ -29,7 +29,6 @@ use crate::{
         token::Token,
         typesystem::TypeRegistry,
     },
-    utils::LazyList,
     Result,
 };
 
@@ -129,7 +128,7 @@ impl EventRaw {
             fn_on_other: OnceLock::new(),
             fn_on_raise: OnceLock::new(),
             fn_on_remove: OnceLock::new(),
-            custom_attributes: LazyList::new(),
+            custom_attributes: Default::default(),
         }))
     }
 

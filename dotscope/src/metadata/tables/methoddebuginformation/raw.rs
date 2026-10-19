@@ -188,11 +188,12 @@ impl MethodDebugInformationRaw {
     /// Returns an error if the blob heap index for sequence points is invalid or cannot be resolved.
     pub fn to_owned(&self, blobs: &Blob) -> Result<MethodDebugInformationRc> {
         let sequence_points = if self.sequence_points == 0 {
+            None
+        } else {
             Some(parse_sequence_points(
                 blobs.get(self.sequence_points as usize)?,
+                self.document,
             )?)
-        } else {
-            None
         };
 
         // ToDo: Resolve document index to actual Document entry if needed

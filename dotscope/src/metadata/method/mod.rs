@@ -112,7 +112,7 @@ use crate::{
     analysis::{
         BlockRange, ControlFlowGraph, SsaConverter, SsaExceptionHandler, SsaFunction, TypeContext,
     },
-    assembly::{self, BasicBlock, InstructionEncoder},
+    assembly::{self, BasicBlock, DecodedBodies, InstructionEncoder},
     file::File,
     metadata::{
         customattributes::CustomAttributeValueList,
@@ -127,7 +127,7 @@ use crate::{
             CilModifier, CilTypeRc, CilTypeRef, CilTypeReference, TypeRegistry, TypeResolver,
         },
     },
-    utils::{LazyList, VisitedMap},
+    utils::{LazyList, RowList},
     CilObject,
     Error::SsaError,
     Result,
@@ -451,7 +451,7 @@ impl From<MethodRc> for MethodRef {
 /// Returned by [`Method::rva_kind`]. Lets callers distinguish between a method
 /// with a real IL body (`Resolved(addr)`), one of the legitimate "no IL"
 /// cases (`Abstract`, `PInvoke`, `Runtime`), and a malformed-input case
-/// (`UnresolvedZero` — RVA is `None` with no flag explaining why).
+/// (`UnresolvedZero` - RVA is `None` with no flag explaining why).
 ///
 /// `Method.rva` carried `Option<u32>` does not surface this distinction;
 /// `rva_kind()` is the recommended accessor for downstream code that needs
@@ -468,13 +468,13 @@ impl From<MethodRc> for MethodRef {
 pub enum MethodRvaKind {
     /// IL code lives at the given RVA. Equivalent to `Method.rva == Some(addr)`.
     Resolved(u32),
-    /// Method is declared abstract — body is supplied by an overriding type
+    /// Method is declared abstract - body is supplied by an overriding type
     /// in this or another assembly.
     Abstract,
-    /// Method is implemented via Platform Invoke — body lives in an external
+    /// Method is implemented via Platform Invoke - body lives in an external
     /// native module referenced by `MethodModifiers::PINVOKE_IMPL`.
     PInvoke,
-    /// Method is runtime-managed — implemented by the CLR rather than by IL
+    /// Method is runtime-managed - implemented by the CLR rather than by IL
     /// in this assembly. Identified by `MethodImplCodeType::RUNTIME`.
     Runtime,
     /// `Method.rva` is `None` but no flag explains why. Indicates malformed
@@ -582,10 +582,10 @@ pub struct Method {
     /// Overridden method declarations for `.override` directive emission
     /// (from `MethodImpl` table where `MethodBody` points to this method).
     /// A method can implement multiple interface methods via separate MethodImpl rows.
-    pub overrides: Arc<boxcar::Vec<CilTypeReference>>,
+    pub overrides: RowList<CilTypeReference>,
     /// Implemented interface methods
     /// (from `MethodImpl` table entries for this type)
-    pub interface_impls: MethodRefList,
+    pub interface_impls: RowList<MethodRef>,
     /// The .NET CIL Security Information (if present)
     pub security: OnceLock<Security>,
     /// The basic blocks of this method, lazily initialized
@@ -1084,7 +1084,7 @@ impl Method {
     ///
     /// `Method.rva` is `Some(addr)` for methods with IL bodies and `None`
     /// for methods that legitimately have no IL (abstract, P/Invoke,
-    /// runtime-managed) — but the bare `Option` cannot tell consumers *why*
+    /// runtime-managed) - but the bare `Option` cannot tell consumers *why*
     /// a method has no body. This accessor classifies by examining the
     /// method's `MethodModifiers` and `MethodImplCodeType` flags so callers
     /// can log a meaningful reason instead of treating "RVA = 0" as
@@ -1093,8 +1093,8 @@ impl Method {
     /// The classification follows ECMA-335 §II.23.1.10: `ABSTRACT` and
     /// `PINVOKE_IMPL` are method-attribute bits (`MethodModifiers`), and the
     /// `RUNTIME` impl-code-type bits live in `MethodImplCodeType`. Variants
-    /// are tested in priority order — `Abstract` first, then `PInvoke`, then
-    /// `Runtime` — so a method tagged with multiple flags reports the most
+    /// are tested in priority order - `Abstract` first, then `PInvoke`, then
+    /// `Runtime` - so a method tagged with multiple flags reports the most
     /// informative reason.
     ///
     /// # Examples
@@ -1113,13 +1113,13 @@ impl Method {
     ///             println!("IL at 0x{addr:08X}");
     ///         }
     ///         MethodRvaKind::Abstract => {
-    ///             println!("abstract — no body in this assembly");
+    ///             println!("abstract - no body in this assembly");
     ///         }
     ///         MethodRvaKind::PInvoke => {
-    ///             println!("P/Invoke — body lives in a native module");
+    ///             println!("P/Invoke - body lives in a native module");
     ///         }
     ///         MethodRvaKind::Runtime => {
-    ///             println!("runtime-managed — implemented by the CLR");
+    ///             println!("runtime-managed - implemented by the CLR");
     ///         }
     ///         MethodRvaKind::UnresolvedZero => {
     ///             println!("RVA = 0 with no flag explanation; suspicious metadata");
@@ -1240,6 +1240,7 @@ impl Method {
     /// * `blobs`   - The processed Blobs
     /// * `sigs`    - The table of signatures
     /// * `types`   - The type registry
+    /// * `bodies`  - The bodies decoded so far in this load, shared by the methods naming them
     ///
     /// # Errors
     /// Returns an error if parsing fails or if referenced types/signatures cannot be resolved.
@@ -1249,7 +1250,7 @@ impl Method {
         blobs: &Blob,
         sigs: Option<&MetadataTable<StandAloneSigRaw>>,
         types: &Arc<TypeRegistry>,
-        shared_visited: Arc<VisitedMap>,
+        bodies: &DecodedBodies,
     ) -> Result<()> {
         // Native and runtime methods don't have CIL method bodies - their RVA
         // points to x86/x64 machine code or runtime-provided implementations,
@@ -1266,7 +1267,7 @@ impl Method {
         self.parse_varargs(types)?;
 
         if has_il_body {
-            assembly::decode_method(self, file, shared_visited)?;
+            assembly::decode_method(self, file, bodies)?;
         }
         Ok(())
     }
@@ -1599,7 +1600,7 @@ impl Method {
 
         // If no locals are declared (e.g., Tiny Format method body), infer from IL usage.
         // Some obfuscators (JIEJIE.NET) emit Tiny Format methods that use stloc/ldloc
-        // without a LocalVarSig — technically invalid per ECMA-335 §II.25.4.1, but the
+        // without a LocalVarSig - technically invalid per ECMA-335 §II.25.4.1, but the
         // CLR tolerates it by implicitly allocating locals.
         let num_locals = if declared_locals == 0 {
             Self::infer_local_count_from_blocks(blocks)
@@ -1610,19 +1611,84 @@ impl Method {
         // Create type context for type lookup during SSA construction
         let type_context = TypeContext::new(self, assembly);
 
-        // Build SSA from CFG with type context (also sets original local types)
-        let mut ssa = SsaConverter::build(&cfg, num_args, num_locals, &type_context)?;
+        // The exception table first, because construction reads it: where
+        // control can enter decides where the dominator walk is rooted, which
+        // blocks are reachable, and what a phi at a handler entry merges.
+        let ssa_handlers = self.ssa_exception_handlers(blocks)?;
 
-        // Populate exception handlers from method body
-        if let Some(body) = self.body.get() {
-            if !body.exception_handlers.is_empty() {
+        // Build SSA from CFG with type context (also sets original local types)
+        let ssa = SsaConverter::build(&cfg, num_args, num_locals, &type_context, ssa_handlers)?;
+
+        Ok(ssa)
+    }
+
+    /// Maps the method body's exception clauses onto block ranges.
+    ///
+    /// The IL table addresses its regions by byte offset and everything above
+    /// addresses blocks by index, so this is where the two meet. A clause whose
+    /// parts cannot both be resolved to a block range contributes nothing
+    /// rather than a half-stated region: a start without an end describes
+    /// nothing an IL table could be regenerated from.
+    ///
+    /// # Arguments
+    ///
+    /// * `blocks` - The method's basic blocks, in layout order.
+    ///
+    /// # Returns
+    ///
+    /// One [`SsaExceptionHandler`] per clause, empty when the body has none.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a clause's offsets overflow.
+    fn ssa_exception_handlers(&self, blocks: &[BasicBlock]) -> Result<Vec<SsaExceptionHandler>> {
+        match self.body.get() {
+            Some(body) => Self::ssa_handlers_for_clauses(&body.exception_handlers, blocks),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// Maps exception clauses onto the block ranges SSA construction reads.
+    ///
+    /// The clause table addresses its regions by byte offset and SSA addresses
+    /// blocks by index, so this is where the two meet. A clause whose parts
+    /// cannot both be resolved to a block range contributes nothing rather than
+    /// a half-stated region: a start without an end describes nothing an IL
+    /// table could be regenerated from.
+    ///
+    /// For code decoded outside a method - by
+    /// [`decode_blocks_with_handlers`](crate::assembly::decode_blocks_with_handlers),
+    /// say - this is the step between decoding and
+    /// [`SsaConverter::build`](crate::analysis::SsaConverter::build).
+    ///
+    /// # Arguments
+    ///
+    /// * `clauses` - The exception clauses, offsets relative to the first block.
+    /// * `blocks` - The blocks they cover, in layout order, decoded with the
+    ///   clauses so that each handler entry is a block.
+    ///
+    /// # Returns
+    ///
+    /// One [`SsaExceptionHandler`] per clause.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a clause's offsets overflow.
+    pub fn ssa_handlers_for_clauses(
+        clauses: &[ExceptionHandler],
+        blocks: &[BasicBlock],
+    ) -> Result<Vec<SsaExceptionHandler>> {
+        if clauses.is_empty() {
+            return Ok(Vec::new());
+        }
+        {
+            {
                 // Exception handler offsets are relative to method body start.
                 // Block offsets are absolute file offsets. Get base offset from first block.
                 let base_offset = blocks.first().map_or(0, |b| b.offset);
 
-                let mut ssa_handlers: Vec<SsaExceptionHandler> =
-                    Vec::with_capacity(body.exception_handlers.len());
-                for (handler_idx, eh) in body.exception_handlers.iter().enumerate() {
+                let mut ssa_handlers: Vec<SsaExceptionHandler> = Vec::with_capacity(clauses.len());
+                for (handler_idx, eh) in clauses.iter().enumerate() {
                     let try_offset_abs = base_offset
                         .checked_add(eh.try_offset as usize)
                         .ok_or_else(|| malformed_error!("Exception handler try_offset overflow"))?;
@@ -1646,7 +1712,7 @@ impl Method {
 
                     // Map offsets to block indices (add base_offset to convert relative to absolute)
                     let try_start_block = Self::find_block_at_offset(blocks, try_offset_abs);
-                    let try_end_block = Self::find_region_end_block(blocks, try_end_abs);
+                    let try_end_block = Some(Self::find_region_end_block(blocks, try_end_abs));
 
                     // The filter expression is resolved first because the handler's own
                     // start depends on it: the decoder marks the filter's entry block with
@@ -1668,13 +1734,19 @@ impl Method {
                     let handler_start_block =
                         Self::find_handler_entry_block(blocks, handler_idx, filter_start_block)
                             .or_else(|| Self::find_block_at_offset(blocks, handler_offset_abs));
-                    let handler_end_block = Self::find_region_end_block(blocks, handler_end_abs);
+                    let handler_end_block =
+                        Some(Self::find_region_end_block(blocks, handler_end_abs));
 
                     // Get the class token for catch handlers
                     let class_token_or_filter = match eh.flags.kind() {
-                        ExceptionHandlerKind::Catch => {
-                            eh.handler.as_ref().map_or(0, |t| t.token.value())
-                        }
+                        // The resolved type's token, or the raw clause field
+                        // when the type was not resolved: a catch clause stores
+                        // its class token in the same slot a filter stores its
+                        // offset.
+                        ExceptionHandlerKind::Catch => eh
+                            .handler
+                            .as_ref()
+                            .map_or(eh.filter_offset, |t| t.token.value()),
                         ExceptionHandlerKind::Filter => eh.filter_offset,
                         ExceptionHandlerKind::Finally | ExceptionHandlerKind::Fault => 0,
                     };
@@ -1699,17 +1771,15 @@ impl Method {
                         // so its exclusive end is wherever the handler begins. Taking the
                         // handler's resolved start rather than re-deriving one from
                         // `handler_offset_abs` keeps the two parts from claiming the same
-                        // block when the decoder's marker and the IL offset disagree — an
+                        // block when the decoder's marker and the IL offset disagree - an
                         // overlap analyssa reports as a malformed clause.
                         filter_range: range(filter_start_block, handler_start_block),
                     });
                 }
 
-                ssa.set_exception_handlers(ssa_handlers);
+                Ok(ssa_handlers)
             }
         }
-
-        Ok(ssa)
     }
 
     /// Infers the number of local variables from IL usage in the basic blocks.
@@ -1718,7 +1788,7 @@ impl Method {
     /// `max_index + 1`. Returns 0 if no local variable instructions are found.
     ///
     /// This handles Tiny Format method bodies that use locals without declaring
-    /// a LocalVarSig token — technically invalid per ECMA-335 §II.25.4.1, but
+    /// a LocalVarSig token - technically invalid per ECMA-335 §II.25.4.1, but
     /// tolerated by the CLR.
     fn infer_local_count_from_blocks(blocks: &[BasicBlock]) -> usize {
         let mut max_index: Option<usize> = None;
@@ -1780,24 +1850,28 @@ impl Method {
 
     /// Finds the exclusive end block of a region ending at `offset`.
     ///
-    /// `offset` is one past the region's last IL byte, so the answer is the block
-    /// that begins there. A region running to the end of the method body has no
-    /// such block; its exclusive end is one past the last block, which is what
-    /// distinguishes "the region ends with the method" from "the region's end
-    /// could not be mapped at all".
-    fn find_region_end_block(blocks: &[BasicBlock], offset: usize) -> Option<usize> {
-        if let Some(idx) = Self::find_block_at_offset(blocks, offset) {
-            return Some(idx);
-        }
-
-        let body_end = blocks.last().map_or(0, |b| b.offset.saturating_add(b.size));
-        (offset >= body_end).then_some(blocks.len())
+    /// `offset` is one past the region's last IL byte, so the answer is the first
+    /// block at or after it. Usually one begins exactly there. When none does, the
+    /// bytes after the region are ones nothing reaches - an obfuscator's junk
+    /// after an `endfinally`, which decoding by control flow never turns into a
+    /// block - and the region still ends where the next decoded block begins. A
+    /// region running to the end of the method body ends one past the last block.
+    ///
+    /// Blocks are in layout order. A block that straddles `offset` is taken as
+    /// the end, as a region boundary never falls inside a decoded block.
+    fn find_region_end_block(blocks: &[BasicBlock], offset: usize) -> usize {
+        Self::find_block_at_offset(blocks, offset).unwrap_or_else(|| {
+            blocks
+                .iter()
+                .position(|b| b.offset >= offset)
+                .unwrap_or(blocks.len())
+        })
     }
 
     /// Finds the block that is marked as an entry point for the given handler index.
     ///
-    /// A filter clause marks two blocks with the same handler index — the filter
-    /// expression's entry and the handler body's — and the filter is laid out
+    /// A filter clause marks two blocks with the same handler index - the filter
+    /// expression's entry and the handler body's - and the filter is laid out
     /// first, so `filter_block` names the one to skip. Without it the handler
     /// body of every filter clause would resolve to its filter expression.
     fn find_handler_entry_block(
@@ -2028,6 +2102,46 @@ mod tests {
 
         assert_eq!(instruction_count, 0);
         assert_eq!(method.instruction_count(), 0);
+    }
+
+    /// A block of `size` bytes at `offset`, for clause-mapping tests.
+    fn block_at(id: usize, offset: usize, size: usize) -> BasicBlock {
+        let mut block = BasicBlock::new(id, 0x1000 + offset as u64, offset);
+        block.size = size;
+        block
+    }
+
+    #[test]
+    fn a_handler_ending_before_undecoded_bytes_keeps_its_range() {
+        // try [0x00, 0x10), finally [0x10, 0x16), then junk nothing reaches up
+        // to the leave target at 0x20. No block begins where the handler ends,
+        // and the handler still ends there.
+        let blocks = vec![
+            block_at(0, 0x00, 0x10),
+            block_at(1, 0x10, 0x06),
+            block_at(2, 0x20, 0x05),
+        ];
+        let clause = ExceptionHandler {
+            flags: ExceptionHandlerFlags::FINALLY,
+            try_offset: 0x00,
+            try_length: 0x10,
+            handler_offset: 0x10,
+            handler_length: 0x06,
+            handler: None,
+            filter_offset: 0,
+        };
+
+        let handlers = Method::ssa_handlers_for_clauses(&[clause], &blocks).unwrap();
+        let handler = &handlers[0];
+        assert_eq!(
+            handler.protected_range.map(|r| (r.start(), r.end())),
+            Some((0, 1))
+        );
+        assert_eq!(
+            handler.handler_range.map(|r| (r.start(), r.end())),
+            Some((1, 2)),
+            "a handler whose end falls in a gap must not lose its range"
+        );
     }
 
     #[test]
@@ -2346,7 +2460,7 @@ mod tests {
             .build();
         assert_eq!(runtime.rva_kind(), MethodRvaKind::Runtime);
 
-        // UnresolvedZero: no rva, no flag explanation — malformed metadata.
+        // UnresolvedZero: no rva, no flag explanation - malformed metadata.
         let unresolved = MethodBuilder::new().without_rva().build();
         assert_eq!(unresolved.rva_kind(), MethodRvaKind::UnresolvedZero);
 

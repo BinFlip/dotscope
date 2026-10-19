@@ -1650,7 +1650,13 @@ mod tests {
 
         // Verify it was added as a nested type
         assert_eq!(type_ref.nested_types.count(), 1);
-        assert_eq!(type_ref.nested_types[0].token().unwrap(), nested_token);
+        assert_eq!(
+            type_ref
+                .nested_types
+                .get(0)
+                .and_then(|nested| nested.token()),
+            Some(nested_token)
+        );
     }
 
     #[test]

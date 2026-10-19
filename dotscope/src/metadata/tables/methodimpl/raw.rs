@@ -174,7 +174,9 @@ impl MethodImplRaw {
 
         match types.get(&Token::new(self.class | 0x0200_0000)) {
             Some(cil_type) => {
-                cil_type.overwrites.push(interface_implementation.clone());
+                cil_type
+                    .overwrites
+                    .push_row(self.token, interface_implementation.clone());
 
                 // Resolve the declaration reference for .override emission and interface_impls tracking
                 let decl_ref = match self.method_declaration.tag {
@@ -183,7 +185,10 @@ impl MethodImplRaw {
                             if let CilTypeReference::MethodDef(method_ref) =
                                 &interface_implementation
                             {
-                                parent.value().interface_impls.push(method_ref.clone());
+                                parent
+                                    .value()
+                                    .interface_impls
+                                    .push_row(self.token, method_ref.clone());
                             }
                             Some(CilTypeReference::MethodDef(parent.value().clone().into()))
                         }
@@ -215,7 +220,7 @@ impl MethodImplRaw {
                 if let Some(decl) = decl_ref {
                     if let CilTypeReference::MethodDef(body_ref) = &interface_implementation {
                         if let Some(body_method) = body_ref.upgrade() {
-                            body_method.overrides.push(decl);
+                            body_method.overrides.push_row(self.token, decl);
                         }
                     }
                 }

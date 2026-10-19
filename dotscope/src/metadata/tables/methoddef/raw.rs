@@ -280,7 +280,7 @@ impl MethodDefRaw {
                         // Built from the TableId enum rather than a hand-written prefix so the
                         // table id cannot drift from the value `ParamPtrReader` keys rows under.
                         // It had: this was `0x0A00_0000`, which is MemberRef, while ParamPtr is
-                        // `0x07` — so the lookup below never hit and every assembly carrying a
+                        // `0x07` - so the lookup below never hit and every assembly carrying a
                         // ParamPtr table failed to load.
                         let param_ptr_token = Token::from_parts(TableId::ParamPtr, param_rid);
 
@@ -325,17 +325,17 @@ impl MethodDefRaw {
             flags_pinvoke: AtomicU32::new(0),
             params: type_params,
             varargs: Arc::new(boxcar::Vec::new()),
-            generic_params: LazyList::new(),
+            generic_params: Default::default(),
             generic_args: LazyList::new(),
             signature,
             rva: if self.rva == 0 { None } else { Some(self.rva) },
             body: OnceLock::new(),
             local_vars: Arc::new(boxcar::Vec::new()),
-            overrides: Arc::new(boxcar::Vec::new()),
-            interface_impls: LazyList::new(),
+            overrides: Default::default(),
+            interface_impls: Default::default(),
             security: OnceLock::new(),
             blocks: OnceLock::new(),
-            custom_attributes: LazyList::new(),
+            custom_attributes: Default::default(),
             declaring_type: OnceLock::new(),
         }))
     }

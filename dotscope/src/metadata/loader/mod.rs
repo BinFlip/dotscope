@@ -377,6 +377,14 @@ pub(crate) trait MetadataLoader: Send + Sync {
     /// }
     /// ```
     fn dependencies(&self) -> &'static [TableId];
+
+    /// The loader's type name, which identifies it.
+    ///
+    /// Loaders are unit structs, and Rust does not guarantee distinct addresses for
+    /// distinct zero-sized values, so a loader's address does not identify it.
+    fn name(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
 }
 
 /// Build a dependency graph from a collection of loaders.
@@ -393,7 +401,7 @@ pub(crate) trait MetadataLoader: Send + Sync {
 ///    - Query each loader for its dependencies via [`MetadataLoader::dependencies`]
 ///    - Validate that all dependencies have corresponding registered loaders
 ///    - Construct bidirectional dependency mappings for efficient traversal
-/// 4. **Cycle Detection**: In debug builds, performs comprehensive cycle detection
+/// 4. **Cycle Detection**: Checks the table dependencies for cycles
 /// 5. **Validation**: Ensures the graph can produce a valid topological ordering
 ///
 /// # Arguments
@@ -410,7 +418,7 @@ pub(crate) trait MetadataLoader: Send + Sync {
 ///
 /// This function returns errors in the following cases:
 /// - **Missing Dependency**: A loader declares a dependency on a table with no registered loader
-/// - **Circular Dependency**: The dependency relationships form cycles (detected in debug builds)
+/// - **Circular Dependency**: The dependency relationships form cycles
 /// - **Invalid State**: Internal graph construction fails due to inconsistent loader data
 ///
 ///
@@ -588,4 +596,101 @@ pub(crate) fn execute_loaders_in_parallel(
 
     debug!("Metadata loaded in {}ms", start.elapsed().as_millis());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The schedule the loads run on puts every loader exactly once, and each one after
+    /// the loader of every table it depends on.
+    ///
+    /// The order is checked here from each loader's own `dependencies()`, not from the
+    /// graph's bookkeeping, so a graph that drops a loader (two loaders for one table
+    /// share a key) or schedules one too early fails even when its own checks pass.
+    #[test]
+    fn execution_levels_run_every_loader_once_after_its_dependencies() {
+        let levels = &*EXECUTION_LEVELS;
+        let scheduled: usize = levels.iter().map(Vec::len).sum();
+        assert_eq!(
+            scheduled,
+            LOADERS.len(),
+            "every registered loader is scheduled exactly once"
+        );
+
+        let level_of = |loader: &dyn MetadataLoader| {
+            let matches: Vec<usize> = levels
+                .iter()
+                .enumerate()
+                .flat_map(|(index, level)| {
+                    level
+                        .iter()
+                        .filter(|l| l.name() == loader.name())
+                        .map(move |_| index)
+                })
+                .collect();
+            assert_eq!(
+                matches.len(),
+                1,
+                "{} appears in exactly one level",
+                loader.name()
+            );
+            matches[0]
+        };
+
+        for loader in LOADERS {
+            let level = level_of(loader);
+            for dependency in loader.dependencies() {
+                let providers: Vec<&dyn MetadataLoader> = LOADERS
+                    .iter()
+                    .copied()
+                    .filter(|l| l.table_id() == Some(*dependency))
+                    .collect();
+                assert_eq!(
+                    providers.len(),
+                    1,
+                    "table {dependency:?} has exactly one loader"
+                );
+                assert!(
+                    level_of(providers[0]) < level,
+                    "{} runs after the loader of {dependency:?}",
+                    loader.name()
+                );
+            }
+        }
+    }
+
+    /// A cycle between table loaders is refused when the graph is built, naming a table
+    /// on it, rather than surfacing later as a schedule that cannot make progress.
+    #[test]
+    fn a_dependency_cycle_is_refused_when_the_graph_is_built() {
+        struct Cyclic(TableId, &'static [TableId]);
+
+        impl MetadataLoader for Cyclic {
+            fn load(&self, _context: &LoaderContext) -> Result<()> {
+                Ok(())
+            }
+
+            fn table_id(&self) -> Option<TableId> {
+                Some(self.0)
+            }
+
+            fn dependencies(&self) -> &'static [TableId] {
+                self.1
+            }
+        }
+
+        static TYPE_DEF: Cyclic = Cyclic(TableId::TypeDef, &[TableId::Field]);
+        static FIELD: Cyclic = Cyclic(TableId::Field, &[TableId::TypeDef]);
+
+        let Err(error) = build_dependency_graph(&[&TYPE_DEF, &FIELD]) else {
+            panic!("a cyclic loader graph builds");
+        };
+        let message = error.to_string();
+        assert!(
+            message.contains("Circular dependency")
+                && (message.contains("TypeDef") || message.contains("Field")),
+            "unexpected error: {message}"
+        );
+    }
 }

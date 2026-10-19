@@ -74,7 +74,7 @@ pub struct ProjectResult {
     /// Total number of failed loading attempts
     pub failed_count: usize,
 
-    // --- Internal state used during loading (cleared before return) ---
+    // Internal state used during loading (cleared before return)
     /// Discovered assembly views pending full load
     pub(crate) pending_views: HashMap<AssemblyIdentity, CilAssemblyView>,
     /// Identity of the primary assembly
@@ -119,7 +119,7 @@ impl ProjectResult {
         }
     }
 
-    // --- Discovery phase helpers (used by ProjectLoader) ---
+    // Discovery phase helpers (used by ProjectLoader)
 
     /// Check if an assembly identity is already discovered.
     pub(crate) fn has_compatible_version(&self, required: &AssemblyIdentity) -> bool {

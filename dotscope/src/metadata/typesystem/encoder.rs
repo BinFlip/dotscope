@@ -290,10 +290,8 @@ impl TypeSignatureEncoder {
                     })?,
                     buffer,
                 );
-                #[allow(clippy::cast_possible_wrap)]
-                // Cast to i32 is correct per ECMA-335 - array lower bounds are signed
                 for lower_bound in lower_bounds {
-                    write_compressed_int(lower_bound as i32, buffer);
+                    write_compressed_int(lower_bound, buffer)?;
                 }
             }
 
@@ -685,6 +683,30 @@ mod tests {
         });
         let encoded = TypeSignatureEncoder::encode(&array_sig).unwrap();
         assert_eq!(encoded, vec![0x14, 0x08, 0x02, 0x00, 0x00]); // ELEMENT_TYPE_ARRAY + I4 + rank=2 + no sizes/bounds
+    }
+
+    #[test]
+    fn test_encode_array_with_signed_lower_bounds() {
+        // int32[-3..., 64...]: lower bounds are compressed signed integers.
+        let array_sig = TypeSignature::Array(SignatureArray {
+            base: Box::new(TypeSignature::I4),
+            rank: 2,
+            dimensions: vec![
+                ArrayDimensions {
+                    size: None,
+                    lower_bound: Some(-3),
+                },
+                ArrayDimensions {
+                    size: None,
+                    lower_bound: Some(64),
+                },
+            ],
+        });
+        let encoded = TypeSignatureEncoder::encode(&array_sig).unwrap();
+        assert_eq!(
+            encoded,
+            vec![0x14, 0x08, 0x02, 0x00, 0x02, 0x7B, 0x80, 0x80]
+        );
     }
 
     #[test]

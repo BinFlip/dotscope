@@ -2333,9 +2333,11 @@ mod tests {
         // So we need 15 more bytes to complete the 16-byte blob
         data.extend(std::iter::repeat_n(0x00, 15));
 
-        // This should now fail with proper bounds checking instead of requiring extra padding
-        let result = PermissionSet::new(&data);
-        assert!(result.is_err());
+        // The blob ends exactly where the data does, which is in bounds: the
+        // parser skips the unread rest of the blob to its end and stops there.
+        let permission_set = PermissionSet::new(&data).unwrap();
+        assert_eq!(permission_set.permissions.len(), 1);
+        assert!(permission_set.permissions[0].named_arguments.is_empty());
     }
 
     #[test]

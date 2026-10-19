@@ -1100,8 +1100,8 @@ impl<'a> TablesHeader<'a> {
         }
 
         // Checked again after the loop, not only at the top of each iteration: the check above
-        // catches an overshoot on the *next* variant, which leaves the last one — presently
-        // `CustomDebugInformation` — with nothing behind it to notice.
+        // catches an overshoot on the *next* variant, which leaves the last one - presently
+        // `CustomDebugInformation` - with nothing behind it to notice.
         if current_offset > data.len() {
             return Err(ParseFailure::OutOfBounds {
                 stage: ParseStage::TildeStream,

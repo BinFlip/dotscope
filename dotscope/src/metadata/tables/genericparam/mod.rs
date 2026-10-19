@@ -68,7 +68,7 @@ use std::sync::Arc;
 
 use crossbeam_skiplist::SkipMap;
 
-use crate::{metadata::token::Token, utils::LazyList};
+use crate::{metadata::token::Token, utils::RowList};
 
 mod builder;
 mod loader;
@@ -94,7 +94,7 @@ pub type GenericParamMap = SkipMap<Token, GenericParamRc>;
 /// This collection provides ordered access to generic parameter entries, useful for
 /// sequential processing and bulk operations during generic type analysis and
 /// parameter enumeration.
-pub type GenericParamList = LazyList<GenericParamRc>;
+pub type GenericParamList = RowList<GenericParamRc>;
 
 /// Reference-counted generic parameter entry.
 ///
@@ -198,7 +198,7 @@ impl GenericParamAttributes {
         match self.0 & Self::VARIANCE_MASK.0 {
             0x0001 => GenericParamVariance::Covariant,
             0x0002 => GenericParamVariance::Contravariant,
-            // 0x0000 (invariant) and 0x0003 (reserved/undefined) — both default to Invariant.
+            // 0x0000 (invariant) and 0x0003 (reserved/undefined) - both default to Invariant.
             _ => GenericParamVariance::Invariant,
         }
     }
@@ -255,7 +255,7 @@ impl GenericParamAttributes {
 /// Variance classification of a generic parameter (ECMA-335 §II.22.20).
 ///
 /// Returned by [`GenericParamAttributes::variance`]. The three variants are
-/// fixed by the standard and mutually exclusive — exactly one applies to any
+/// fixed by the standard and mutually exclusive - exactly one applies to any
 /// given generic parameter.
 ///
 /// # Stability
@@ -267,17 +267,17 @@ impl GenericParamAttributes {
 /// [`Display`]: std::fmt::Display
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GenericParamVariance {
-    /// No variance — exact type match required.
+    /// No variance - exact type match required.
     ///
     /// Corresponds to ECMA-335 variance bits `0x00` (and the reserved/undefined
     /// pattern `0x03`).
     Invariant,
-    /// Covariant — type argument may be a more derived type.
+    /// Covariant - type argument may be a more derived type.
     ///
     /// Corresponds to ECMA-335 variance bit `0x01` and the C# `out` keyword
     /// (e.g. `IEnumerable<out T>`).
     Covariant,
-    /// Contravariant — type argument may be a less derived type.
+    /// Contravariant - type argument may be a less derived type.
     ///
     /// Corresponds to ECMA-335 variance bit `0x02` and the C# `in` keyword
     /// (e.g. `Action<in T>`).
@@ -323,7 +323,7 @@ mod tests {
             GenericParamAttributes::CONTRAVARIANT.variance(),
             GenericParamVariance::Contravariant
         );
-        // Reserved/undefined bit pattern 0x03 — defensively maps to Invariant.
+        // Reserved/undefined bit pattern 0x03 - defensively maps to Invariant.
         assert_eq!(
             GenericParamAttributes::new(0x0003).variance(),
             GenericParamVariance::Invariant

@@ -100,6 +100,7 @@ use crate::{
         typesystem::{CilPrimitive, CilPrimitiveKind, CilType, CilTypeRc},
     },
     prelude::{GenericParamList, Token},
+    utils::RowList,
 };
 
 /// A vector that holds [`CilTypeRef`] instances (weak references).
@@ -359,7 +360,7 @@ impl CilTypeRef {
     ///
     /// See the [Convenience Accessors](#convenience-accessors) section above for performance notes.
     #[must_use]
-    pub fn nested_types(&self) -> Option<CilTypeRefList> {
+    pub fn nested_types(&self) -> Option<RowList<CilTypeRef>> {
         self.upgrade().map(|t| t.nested_types.clone())
     }
 
@@ -568,8 +569,9 @@ pub struct ArrayDimensions {
     /// The lower bound of this dimension (lowest index that can be used to access an element).
     ///
     /// Most .NET arrays use 0-based indexing, but the runtime supports arbitrary lower bounds.
-    /// `None` typically means the lower bound is 0.
-    pub lower_bound: Option<u32>,
+    /// `None` typically means the lower bound is 0. Signed: a bound may be
+    /// negative (ECMA-335 II.23.2.13).
+    pub lower_bound: Option<i32>,
 }
 
 /// Represents a unified reference to various metadata table entries in the .NET runtime.
@@ -1104,7 +1106,7 @@ pub enum CilFlavor {
         ///
         /// Boxed deliberately, matching [`TypeSignature::FnPtr`]. An inline `SignatureMethod`
         /// is ~144 bytes and, as the widest variant, sets the size of `CilFlavor` and
-        /// everything built on it — `SymbolicValue`, and through it every `EmValue` moved on
+        /// everything built on it - `SymbolicValue`, and through it every `EmValue` moved on
         /// the interpreter's evaluation stack, local slot, argument slot and array element.
         /// Function pointers are rare in real assemblies, so the indirection is off the hot
         /// path while the size saving applies to every value. See the `EmValue` size
@@ -1600,7 +1602,7 @@ impl CilFlavor {
             | CilFlavor::Pointer
             | CilFlavor::ByRef
             | CilFlavor::GenericInstance => Some(ptr_size.bytes()),
-            // ValueType, FnPtr, GenericParameter, Pinned, Unknown — context-dependent
+            // ValueType, FnPtr, GenericParameter, Pinned, Unknown - context-dependent
             _ => None,
         }
     }

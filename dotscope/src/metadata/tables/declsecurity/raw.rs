@@ -44,7 +44,6 @@ use crate::{
         token::Token,
         typesystem::CilTypeReference,
     },
-    utils::LazyList,
     Result,
 };
 
@@ -224,7 +223,7 @@ impl DeclSecurityRaw {
             action,
             parent,
             permission_set,
-            custom_attributes: LazyList::new(),
+            custom_attributes: Default::default(),
         }))
     }
 }

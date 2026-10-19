@@ -28,7 +28,6 @@ use crate::{
         tables::{Assembly, AssemblyFlags, AssemblyRc, HashAlgorithmId, TableInfoRef, TableRow},
         token::Token,
     },
-    utils::LazyList,
     Result,
 };
 
@@ -161,7 +160,7 @@ impl AssemblyRaw {
                 Some(strings.get(self.culture as usize)?.to_string())
             },
             security: OnceLock::new(),
-            custom_attributes: LazyList::new(),
+            custom_attributes: Default::default(),
         }))
     }
 

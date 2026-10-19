@@ -65,7 +65,7 @@ mod tokens;
 
 pub use references::ReferenceValidator;
 pub use schema::SchemaValidator;
-pub use tokens::TokenValidator;
+pub use tokens::{TokenValidationResult, TokenValidator};
 
 /// Returns the canonical [`crate::Error::Parse`] error used by raw validators
 /// when the assembly view does not contain the expected `#~` metadata-tables

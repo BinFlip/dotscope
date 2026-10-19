@@ -778,7 +778,7 @@ impl CilAssemblyView {
     pub fn into_file(self) -> Result<File> {
         // into_heads() is ouroboros-generated and accessible within this module.
         // It drops the borrowing CilAssemblyViewData (which holds one Arc clone)
-        // before returning the owned `file: Arc<File>` — leaving count = 1.
+        // before returning the owned `file: Arc<File>` - leaving count = 1.
         let heads = self.into_heads();
         Arc::try_unwrap(heads.file).map_err(|_| {
             Error::Other(

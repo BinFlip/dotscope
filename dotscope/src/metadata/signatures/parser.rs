@@ -191,7 +191,7 @@ pub mod CALLING_CONVENTION {
 /// 1000 levels accommodates even the most complex real-world .NET assemblies with deep generic
 /// hierarchies while still preventing resource exhaustion.
 ///
-/// This bound is **per invocation** of `parse_type_inner`, which is not sufficient on its own —
+/// This bound is **per invocation** of `parse_type_inner`, which is not sufficient on its own -
 /// see [`MAX_SIGNATURE_NODES`].
 const MAX_NESTING_DEPTH: usize = 1000;
 
@@ -199,7 +199,7 @@ const MAX_NESTING_DEPTH: usize = 1000;
 /// nested invocation.
 ///
 /// [`MAX_NESTING_DEPTH`] bounds one invocation's heap work stack, and
-/// [`MAX_NATIVE_RECURSION_DEPTH`] bounds native re-entry — but the two **multiply** rather than
+/// [`MAX_NATIVE_RECURSION_DEPTH`] bounds native re-entry - but the two **multiply** rather than
 /// compose. `work_stack` and `result_stack` are allocated fresh per `parse_type_inner` call
 /// while `self.depth` advances by only 1 per native re-entry, so at native depth *d* an
 /// invocation may still build `MAX_NESTING_DEPTH - d` levels. Summing over the permitted native
@@ -209,7 +209,7 @@ const MAX_NESTING_DEPTH: usize = 1000;
 /// Construction survives that; the consumers do not. Drop glue, `Display` and the reference
 /// scanners all recurse over the finished structure, and signature blobs are parsed on rayon
 /// workers with the default 2 MiB stack. The result is a SIGSEGV while merely opening an
-/// assembly — not a catchable panic, since `deny(panic)` does not apply to drop glue.
+/// assembly - not a catchable panic, since `deny(panic)` does not apply to drop glue.
 ///
 /// This counter is never reset for the lifetime of a parser, so it bounds the total structure
 /// regardless of how native recursion and heap work stacks interleave. It is deliberately
@@ -257,7 +257,7 @@ const MAX_GENERIC_ARGS: u32 = 256;
 ///
 /// It is **not** the effective limit on a local-variable signature.
 /// [`MAX_SIGNATURE_NODES`] bounds the total type nodes a parser constructs and is an order of
-/// magnitude smaller, so it fires first for any signature declaring more than ~10 000 locals —
+/// magnitude smaller, so it fires first for any signature declaring more than ~10 000 locals -
 /// each local contributes at least one node. That is deliberate: the node budget is the bound
 /// that actually protects against the recursive-drop stack overflow, and it counts breadth as
 /// well as depth precisely so a wide signature cannot evade it. A signature declaring 65 536
@@ -400,7 +400,7 @@ pub struct SignatureParser<'a> {
     ///
     /// Lives on the parser rather than as a per-call argument so the bound
     /// survives the wrappers. [`parse_type`] is iterative and bounds itself with
-    /// a heap work stack, but it allocates a *fresh* one per invocation — so a
+    /// a heap work stack, but it allocates a *fresh* one per invocation - so a
     /// signature that re-enters it through `FNPTR` (`parse_type` →
     /// `parse_method_signature` → `parse_param` → `parse_type`) re-armed the cap
     /// on every hop and was effectively unbounded. `parse_type_simple`, the
@@ -412,7 +412,7 @@ pub struct SignatureParser<'a> {
 
     /// Total type nodes constructed by this parser, across every nested invocation.
     ///
-    /// Never reset — see [`MAX_SIGNATURE_NODES`] for why a per-invocation bound cannot catch
+    /// Never reset - see [`MAX_SIGNATURE_NODES`] for why a per-invocation bound cannot catch
     /// the case this exists for. Parsers are single-use by contract, so this is a per-signature
     /// total.
     nodes: usize,
@@ -698,18 +698,23 @@ impl<'a> SignatureParser<'a> {
                                 });
                             }
 
+                            // Lower bounds are signed (ECMA-335 II.23.2.13).
                             for i in 0..num_lo_bounds {
                                 if let Some(dimension) = dimensions.get_mut(i as usize) {
                                     dimension.lower_bound =
-                                        Some(self.parser.read_compressed_uint()?);
+                                        Some(self.parser.read_compressed_int()?);
                                 }
                             }
+                            let shape_end = self.parser.pos();
 
                             // Reset position to parse element type properly
                             self.parser.seek(elem_pos)?;
 
-                            // Schedule: build array after parsing element type
+                            // Schedule: parse the element type, then continue
+                            // after the shape, which the element ends in front of,
+                            // then build the array.
                             work_stack.push(WorkItem::BuildArray { rank, dimensions });
+                            work_stack.push(WorkItem::Seek(shape_end));
                             work_stack.push(WorkItem::ParseType);
                         }
                         ELEMENT_TYPE::GENERICINST => {
@@ -871,7 +876,7 @@ impl<'a> SignatureParser<'a> {
     /// Enters one level of native recursion, refusing to go past
     /// [`MAX_NATIVE_RECURSION_DEPTH`].
     ///
-    /// Paired with [`exit`](Self::exit) — every early return between the two
+    /// Paired with [`exit`](Self::exit) - every early return between the two
     /// would leak a level, so callers use it around a single recursive call.
     fn enter(&mut self) -> Result<()> {
         self.depth = self.depth.saturating_add(1);
@@ -948,7 +953,7 @@ impl<'a> SignatureParser<'a> {
                 }
                 let num_lo_bounds = self.parser.read_compressed_uint()?;
                 for _ in 0..num_lo_bounds {
-                    self.parser.read_compressed_uint()?;
+                    self.parser.read_compressed_int()?;
                 }
                 Ok(())
             }
@@ -2397,6 +2402,60 @@ mod tests {
     }
 
     #[test]
+    fn an_array_shape_is_read_once_and_parsing_continues_after_it() {
+        // `ReadOnlyCollection<T>[0..., 0...]` followed by `ReadOnlyCollection<T>`
+        // and three `int32`, as System.Data.Entity declares them: the shape
+        // bytes after the element type belong to the array, not to the next
+        // locals.
+        let blob = [
+            0x07, 0x05, // LOCAL_SIG, 5 locals
+            0x14, // ARRAY
+            0x15, 0x12, 0x6D, 0x01, 0x12, 0x88, 0x4C, // GENERICINST class 1 arg
+            0x02, // rank 2
+            0x00, // no sizes
+            0x02, 0x00, 0x00, // two lower bounds, both 0
+            0x15, 0x12, 0x6D, 0x01, 0x12, 0x88, 0x4C, // GENERICINST class 1 arg
+            0x08, 0x08, 0x08, // three I4
+        ];
+        let locals = SignatureParser::new(&blob)
+            .parse_local_var_signature()
+            .unwrap()
+            .locals;
+        assert_eq!(locals.len(), 5);
+        let TypeSignature::Array(array) = &locals[0].base else {
+            panic!("local 0 is {:?}", locals[0].base);
+        };
+        assert!(matches!(*array.base, TypeSignature::GenericInst(_, _)));
+        assert_eq!(array.rank, 2);
+        assert_eq!(
+            array
+                .dimensions
+                .iter()
+                .map(|dimension| dimension.lower_bound)
+                .collect::<Vec<_>>(),
+            [Some(0), Some(0)]
+        );
+        assert!(matches!(locals[1].base, TypeSignature::GenericInst(_, _)));
+        for local in &locals[2..] {
+            assert_eq!(local.base, TypeSignature::I4);
+        }
+    }
+
+    #[test]
+    fn array_lower_bounds_are_signed() {
+        // int32[-3..., 64...]: the bounds are compressed signed integers
+        // (ECMA-335 II.23.2.13), -3 as 0x7B and 64 as 0x80 0x80.
+        let mut parser =
+            SignatureParser::new(&[0x14, 0x08, 0x02, 0x00, 0x02, 0x7B, 0x80, 0x80, 0x08]);
+        let TypeSignature::Array(ref array) = parser.parse_type().unwrap() else {
+            panic!("not an array");
+        };
+        assert_eq!(array.dimensions[0].lower_bound, Some(-3));
+        assert_eq!(array.dimensions[1].lower_bound, Some(64));
+        assert_eq!(parser.parse_type().unwrap(), TypeSignature::I4);
+    }
+
+    #[test]
     fn deeply_nested_signature_is_refused_not_built() {
         // A long run of ELEMENT_TYPE_PTR (0x0F) terminated by I4. Each byte is one nesting
         // level and consumes no other input, which is what makes this cheap to weaponise: a
@@ -2412,7 +2471,7 @@ mod tests {
         );
     }
 
-    /// Signatures of ordinary depth must still parse — the budget must not be so tight that it
+    /// Signatures of ordinary depth must still parse - the budget must not be so tight that it
     /// rejects real assemblies.
     #[test]
     fn moderately_nested_signature_still_parses() {
@@ -2619,7 +2678,7 @@ mod tests {
         blob.push(0x08);
 
         let mut parser = SignatureParser::new(&blob);
-        // Reaching a verdict at all is the assertion — this used to abort the
+        // Reaching a verdict at all is the assertion - this used to abort the
         // process rather than return.
         assert!(
             parser.parse_field_signature().is_err(),
@@ -2630,7 +2689,7 @@ mod tests {
     /// The nesting cap survives re-entry through `FNPTR`.
     ///
     /// `parse_type` bounds itself with a heap work stack, but allocated a fresh
-    /// one per invocation — so `parse_type` → `parse_method_signature` →
+    /// one per invocation - so `parse_type` → `parse_method_signature` →
     /// `parse_param` → `parse_type` re-armed the cap on every hop. Before the
     /// fix, 1000 nested FNPTRs parsed successfully and the cap never fired.
     #[test]

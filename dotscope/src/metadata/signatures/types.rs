@@ -2367,6 +2367,51 @@ pub struct SignatureMethod {
     pub varargs: Vec<SignatureParameter>,
 }
 
+impl SignatureMethod {
+    /// Returns `true` when `other` takes the same parameters as this signature.
+    ///
+    /// The same number of generic parameters and of fixed parameters, and each
+    /// fixed parameter the same type passed the same way: a `ref int` is a
+    /// different parameter from an `int`, which is what lets the two be
+    /// overloads of one name. Custom modifiers and the return type are not
+    /// compared, so this is the test an override or a call site matches a
+    /// declaration by; [`has_same_shape`](Self::has_same_shape) adds the return
+    /// type for overloads that differ only there.
+    ///
+    /// Types are compared as spelled. The same type reached through a `TypeRef`
+    /// in one signature and a `TypeDef` in the other does not match.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - The signature to compare against.
+    #[must_use]
+    pub fn has_same_parameters(&self, other: &SignatureMethod) -> bool {
+        self.param_count_generic == other.param_count_generic
+            && self.params.len() == other.params.len()
+            && self
+                .params
+                .iter()
+                .zip(&other.params)
+                .all(|(a, b)| a.by_ref == b.by_ref && a.base == b.base)
+    }
+
+    /// Returns `true` when `other` takes the same parameters and returns the
+    /// same type as this signature.
+    ///
+    /// Conversion operators (`op_Implicit`, `op_Explicit`) are overloaded on
+    /// their return type alone, so resolving a reference to one needs this.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - The signature to compare against.
+    #[must_use]
+    pub fn has_same_shape(&self, other: &SignatureMethod) -> bool {
+        self.has_same_parameters(other)
+            && self.return_type.by_ref == other.return_type.by_ref
+            && self.return_type.base == other.return_type.base
+    }
+}
+
 /// Field signature with type information and custom modifiers.
 ///
 /// Represents field signatures according to ECMA-335 Section II.23.2.4.
@@ -3357,7 +3402,7 @@ impl Drop for TypeSignature {
     /// deep (long runs of `ELEMENT_TYPE_PTR`). Compiler-generated drop glue walks that chain
     /// with one stack frame per level, and signature blobs are parsed on rayon workers with the
     /// default 2 MiB stack, so a deep enough signature exhausts the stack while the value is
-    /// merely going out of scope. That is a SIGSEGV, not a panic — `deny(panic)` and
+    /// merely going out of scope. That is a SIGSEGV, not a panic - `deny(panic)` and
     /// `Result`-returning parsers offer no protection against drop glue.
     ///
     /// This moves each node's children onto a heap worklist before the node is dropped, so
@@ -3371,7 +3416,7 @@ impl Drop for TypeSignature {
         while let Some(mut node) = worklist.pop() {
             take_children(&mut node, &mut worklist);
             // `node` is dropped here with its children already moved out, so its own drop
-            // glue — and the recursive call to this impl — bottoms out immediately.
+            // glue - and the recursive call to this impl - bottoms out immediately.
         }
     }
 }
@@ -3658,6 +3703,35 @@ impl TypeSignature {
                 // Modifiers contain type tokens
                 !mods.is_empty()
             }
+        }
+    }
+
+    /// Calls `f` with every token this signature names as a `valuetype`,
+    /// however deeply it is nested (array elements, generic arguments,
+    /// pointer and byref targets, function pointer parameters).
+    ///
+    /// The element type is the one place metadata states the kind of a type
+    /// imported from another assembly, whose definition is not at hand.
+    pub fn for_each_value_type(&self, f: &mut impl FnMut(Token)) {
+        match self {
+            Self::ValueType(token) => f(*token),
+            Self::ByRef(inner) | Self::Pinned(inner) => inner.for_each_value_type(f),
+            Self::Ptr(ptr) => ptr.base.for_each_value_type(f),
+            Self::SzArray(arr) => arr.base.for_each_value_type(f),
+            Self::Array(arr) => arr.base.for_each_value_type(f),
+            Self::GenericInst(base, args) => {
+                base.for_each_value_type(f);
+                for arg in args {
+                    arg.for_each_value_type(f);
+                }
+            }
+            Self::FnPtr(sig) => {
+                sig.return_type.base.for_each_value_type(f);
+                for param in sig.params.iter().chain(&sig.varargs) {
+                    param.base.for_each_value_type(f);
+                }
+            }
+            _ => {}
         }
     }
 }

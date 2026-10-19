@@ -30,6 +30,17 @@ use crate::{
 };
 
 impl RowWritable for ImplMapRaw {
+    fn sort_key(&self, sizes: &TableInfoRef) -> Result<Option<(u32, u32)>> {
+        Ok(Some((
+            sizes.encode_coded_index(
+                self.member_forwarded.tag,
+                self.member_forwarded.row,
+                self.member_forwarded.ci_type,
+            )?,
+            0,
+        )))
+    }
+
     /// Serialize an ImplMap table row to binary format
     ///
     /// Writes the row data according to ECMA-335 §II.22.22 specification:

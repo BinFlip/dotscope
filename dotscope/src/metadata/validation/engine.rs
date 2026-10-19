@@ -74,7 +74,7 @@ use crate::{
                 OwnedTypeDependencyValidator, OwnedTypeOwnershipValidator,
                 RawChangeIntegrityValidator, RawGenericConstraintValidator, RawHeapValidator,
                 RawLayoutConstraintValidator, RawOperationValidator, RawSignatureValidator,
-                RawTableValidator, RawTokenValidator,
+                RawSortOrderValidator, RawTableValidator, RawTokenValidator,
             },
         },
     },
@@ -99,6 +99,7 @@ fn init_raw_validators() -> Vec<Box<dyn RawValidator>> {
         // Structure validators (priority 175-200)
         Box::new(RawTokenValidator::new()),     // priority 200
         Box::new(RawTableValidator::new()),     // priority 190
+        Box::new(RawSortOrderValidator::new()), // priority 185
         Box::new(RawHeapValidator::new()),      // priority 180
         Box::new(RawSignatureValidator::new()), // priority 175
         // Constraint validators (priority 120-130)
@@ -594,32 +595,12 @@ mod tests {
     use crate::{
         cilassembly::AssemblyChanges,
         metadata::{
-            cilassemblyview::CilAssemblyView,
-            cilobject::CilObject,
-            validation::{
-                config::ValidationConfig, context::RawValidationContext, traits::RawValidator,
-            },
+            cilassemblyview::CilAssemblyView, cilobject::CilObject,
+            validation::config::ValidationConfig,
         },
     };
 
     // Test validator for validation
-    struct TestRawValidator {
-        should_fail: bool,
-    }
-
-    impl RawValidator for TestRawValidator {
-        fn validate_raw(&self, _context: &RawValidationContext) -> Result<()> {
-            if self.should_fail {
-                Err(Error::NotSupported)
-            } else {
-                Ok(())
-            }
-        }
-
-        fn name(&self) -> &'static str {
-            "TestRawValidator"
-        }
-    }
 
     #[test]
     fn test_validation_engine_creation() {

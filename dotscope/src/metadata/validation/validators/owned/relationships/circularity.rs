@@ -127,7 +127,7 @@ impl OwnedCircularityValidator {
     /// recording it, so that no consumer can ever observe the trivial inheritance cycle. An
     /// edge that was never recorded is structurally invisible to
     /// [`validate_inheritance_cycles`](Self::validate_inheritance_cycles), which walks the
-    /// resolved graph — so without this check the most easily forged inheritance cycle in the
+    /// resolved graph - so without this check the most easily forged inheritance cycle in the
     /// format would load silently and be reported by nothing.
     ///
     /// Longer cycles (`A -> B -> A`) are *not* elided and are caught by the graph walk. Only
@@ -556,7 +556,7 @@ mod tests {
     /// The self-edge really is absent from the resolved graph.
     ///
     /// This is the half of the contract that `test_owned_circularity_validator` cannot see.
-    /// That test only asserts the validator *rejects* the assembly — which it would also do if
+    /// That test only asserts the validator *rejects* the assembly - which it would also do if
     /// the edge were present and the ordinary graph walk caught it. Pinning `base() == None`
     /// here is what makes the raw-column check in
     /// [`validate_self_referential_bases`](OwnedCircularityValidator::validate_self_referential_bases)
@@ -596,7 +596,7 @@ mod tests {
             self_ref.base().map(|b| b.token)
         );
 
-        // Claim 3: and because it is elided, walking the graph finds nothing — which is
+        // Claim 3: and because it is elided, walking the graph finds nothing - which is
         // exactly why the raw-column check has to exist.
         let validator = OwnedCircularityValidator::new();
         let mut visited = FxHashSet::default();

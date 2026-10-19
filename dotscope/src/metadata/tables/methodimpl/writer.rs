@@ -29,6 +29,10 @@ use crate::{
 };
 
 impl RowWritable for MethodImplRaw {
+    fn sort_key(&self, _sizes: &TableInfoRef) -> Result<Option<(u32, u32)>> {
+        Ok(Some((self.class, 0)))
+    }
+
     /// Serialize a MethodImpl table row to binary format
     ///
     /// Writes the row data according to ECMA-335 §II.22.27 specification:

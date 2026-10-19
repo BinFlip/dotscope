@@ -28,6 +28,17 @@ use crate::{
 };
 
 impl RowWritable for MethodSemanticsRaw {
+    fn sort_key(&self, sizes: &TableInfoRef) -> Result<Option<(u32, u32)>> {
+        Ok(Some((
+            sizes.encode_coded_index(
+                self.association.tag,
+                self.association.row,
+                self.association.ci_type,
+            )?,
+            0,
+        )))
+    }
+
     /// Serialize a MethodSemantics table row to binary format
     ///
     /// Writes the row data according to ECMA-335 §II.22.28 specification:

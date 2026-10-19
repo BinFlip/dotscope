@@ -32,7 +32,6 @@ use crate::{
         tables::{AssemblyRefHash, File, FileAttributes, FileRc, TableInfoRef, TableRow},
         token::Token,
     },
-    utils::LazyList,
     Result,
 };
 
@@ -145,7 +144,7 @@ impl FileRaw {
             flags: FileAttributes::new(self.flags),
             name: strings.get(self.name as usize)?.to_string(),
             hash_value: AssemblyRefHash::new(blob.get(self.hash_value as usize)?)?,
-            custom_attributes: LazyList::new(),
+            custom_attributes: Default::default(),
         }))
     }
 

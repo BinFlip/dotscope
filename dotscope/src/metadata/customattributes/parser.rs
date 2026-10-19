@@ -179,6 +179,28 @@ const MAX_NAMED_ARGS: u16 = 1024;
 ///   as an array length type in .NET metadata
 const MAX_ATTRIBUTE_ARRAY_LENGTH: i32 = 65536;
 
+/// A step of [`CustomAttributeParser::parse_tagged_argument`]'s iterative walk.
+enum TaggedWork {
+    /// Parse a value its serialization tag describes, and push it.
+    ParseTag(u8),
+    /// Parse a value of the named enum, and push it.
+    ParseEnum(String),
+    /// Read an array's length and schedule its elements.
+    ParseArray(ArrayElement),
+    /// Build an array from the last N results.
+    BuildArray(i32),
+    /// A tagged object's value, which its inner tag already pushed.
+    TaggedObject,
+}
+
+/// What a serialized array's elements are.
+enum ArrayElement {
+    /// Values of one serialization tag.
+    Tag(u8),
+    /// Values of the named enum.
+    Enum(String),
+}
+
 /// Parse custom attribute blob data from the blob heap using constructor parameter information.
 ///
 /// This function retrieves custom attribute data from the specified blob heap index and
@@ -609,6 +631,34 @@ impl<'a> CustomAttributeParser<'a> {
         Ok(fixed_args)
     }
 
+    /// Reads a serialized array's element type: a tag, and for an enum the
+    /// enum's type name after it.
+    fn read_array_element(&mut self) -> Result<ArrayElement> {
+        let tag = self.parser.read_le::<u8>()?;
+        if tag == SERIALIZATION_TYPE::ENUM {
+            Ok(ArrayElement::Enum(self.parse_string()?))
+        } else {
+            Ok(ArrayElement::Tag(tag))
+        }
+    }
+
+    /// The size of the named enum's underlying type: the registry's answer when
+    /// it can resolve the enum, otherwise `int`'s, the usual underlying type of
+    /// an enum defined in an assembly that is not loaded.
+    fn enum_underlying_size(&self, type_name: &str) -> usize {
+        if let Some(registry) = &self.type_registry {
+            if let Some(resolved) = registry.resolve_type_global(type_name) {
+                if EnumUtils::is_enum_type(&resolved, Some(registry)) {
+                    return EnumUtils::get_enum_underlying_type_size(&resolved);
+                }
+            }
+            if EnumUtils::is_enum_type_by_name(type_name, registry) {
+                return EnumUtils::get_enum_underlying_type_size_by_name(type_name, registry);
+            }
+        }
+        4
+    }
+
     /// Parse an enum value based on its underlying type size.
     ///
     /// This method handles all enum parsing logic in one place, reading the appropriate
@@ -834,7 +884,7 @@ impl<'a> CustomAttributeParser<'a> {
                 } else if &*type_name == "System.Object" {
                     // System.Object is stored as a tagged object - read type tag first
                     let type_tag = self.parser.read_le::<u8>()?;
-                    let value = self.parse_argument_by_type_tag(type_tag)?;
+                    let value = self.parse_tagged_argument(TaggedWork::ParseTag(type_tag))?;
                     Ok(Some(value))
                 } else {
                     // Class types that are actually enums (external enum references)
@@ -891,9 +941,13 @@ impl<'a> CustomAttributeParser<'a> {
                 //   - Infer underlying type size from available metadata
                 //   - Used when the type definition isn't directly available
                 //
-                // Stage 3: Error (no resolution possible)
-                //   - If neither stage succeeds, the type cannot be parsed
-                //   - Indicates missing assembly dependencies
+                // Stage 3: Imported type (fallback)
+                //   - A TypeRef whose assembly is not loaded is read as an
+                //     int32 enum, the only kind of value type a blob can hold
+                //
+                // Stage 4: Error (no resolution possible)
+                //   - A type defined here that none of the above resolves
+                //   - Indicates malformed metadata
                 let type_name = type_ref.fullname();
 
                 // Stage 1: Try direct type resolution via TypeRegistry
@@ -922,8 +976,16 @@ impl<'a> CustomAttributeParser<'a> {
                     };
 
                     self.parse_enum(type_name.to_string(), underlying_type_size)
+                } else if type_ref.token.table() == 0x01 {
+                    // Stage 3: an imported type whose defining assembly is not
+                    // loaded, so its underlying type cannot be read. The only
+                    // value types a custom attribute blob may hold beyond the
+                    // primitives are enums (ECMA-335 II.23.3), and int32 is
+                    // the usual underlying type: the assumption the `Class`
+                    // branch makes for the same unresolvable references.
+                    self.parse_enum(type_name.to_string(), 4)
                 } else {
-                    // Stage 3: No resolution possible - missing dependencies
+                    // Stage 4: a type defined here that is not an enum
                     Err(malformed_error!(
                             "Cannot resolve ValueType '{}' - type not found in TypeRegistry. This indicates the assembly containing this type is not loaded yet.",
                             type_name
@@ -976,7 +1038,7 @@ impl<'a> CustomAttributeParser<'a> {
             CilFlavor::Object => {
                 // System.Object in CustomAttribute is stored as a tagged object - read type tag first
                 let type_tag = self.parser.read_le::<u8>()?;
-                let value = self.parse_argument_by_type_tag(type_tag)?;
+                let value = self.parse_tagged_argument(TaggedWork::ParseTag(type_tag))?;
                 Ok(Some(value))
             }
             _ => Err(malformed_error!(
@@ -1047,12 +1109,20 @@ impl<'a> CustomAttributeParser<'a> {
             SERIALIZATION_TYPE::TYPE => "Type".to_string(),
             SERIALIZATION_TYPE::TAGGED_OBJECT => "TaggedObject".to_string(),
             SERIALIZATION_TYPE::ENUM => "Enum".to_string(),
+            SERIALIZATION_TYPE::SZARRAY => "SZArray".to_string(),
             _ => {
                 return Err(malformed_error!(
                     "Unsupported named argument type: 0x{:02X}",
                     type_info
                 ))
             }
+        };
+        // The type is complete before the name (ECMA-335 II.23.3): an enum's
+        // type name and an array's element type follow its tag.
+        let start = match type_info {
+            SERIALIZATION_TYPE::ENUM => TaggedWork::ParseEnum(self.parse_string()?),
+            SERIALIZATION_TYPE::SZARRAY => TaggedWork::ParseArray(self.read_array_element()?),
+            tag => TaggedWork::ParseTag(tag),
         };
 
         // Read field/property name.
@@ -1077,7 +1147,7 @@ impl<'a> CustomAttributeParser<'a> {
         }
 
         // Parse value based on type tag
-        let value = self.parse_argument_by_type_tag(type_info)?;
+        let value = self.parse_tagged_argument(start)?;
 
         Ok(Some(CustomAttributeNamedArgument {
             is_field,
@@ -1105,7 +1175,8 @@ impl<'a> CustomAttributeParser<'a> {
     /// exhaustion from maliciously crafted or deeply nested custom attribute data.
     ///
     /// # Arguments
-    /// * `type_tag` - [`crate::metadata::customattributes::types::SERIALIZATION_TYPE`] enumeration value
+    /// * `start` - What to parse: a value of a serialization tag, of a named
+    ///   enum, or an array whose element type has been read
     ///
     /// # Returns
     /// Parsed argument value according to the type tag specification
@@ -1113,21 +1184,11 @@ impl<'a> CustomAttributeParser<'a> {
     /// # Errors
     /// - [`crate::Error::DepthLimitExceeded`]: Maximum nesting depth exceeded
     /// - [`crate::Error::Parse`] carrying [`crate::ParseFailure::Other`]: Invalid type tags or malformed data format
-    fn parse_argument_by_type_tag(&mut self, type_tag: u8) -> Result<CustomAttributeArgument> {
-        /// Work item for iterative parsing stack
-        enum WorkItem {
-            /// Parse a type tag and push result
-            ParseTag(u8),
-            /// Build array from N elements on stack
-            BuildArray(i32),
-            /// Take inner tagged object result
-            TaggedObject,
-        }
-
-        let mut work_stack: Vec<WorkItem> = Vec::new();
+    fn parse_tagged_argument(&mut self, start: TaggedWork) -> Result<CustomAttributeArgument> {
+        let mut work_stack: Vec<TaggedWork> = Vec::new();
         let mut result_stack: Vec<CustomAttributeArgument> = Vec::new();
 
-        work_stack.push(WorkItem::ParseTag(type_tag));
+        work_stack.push(start);
 
         while let Some(work) = work_stack.pop() {
             if work_stack.len().saturating_add(result_stack.len()) > MAX_NESTING_DEPTH {
@@ -1135,7 +1196,7 @@ impl<'a> CustomAttributeParser<'a> {
             }
 
             match work {
-                WorkItem::ParseTag(tag) => {
+                TaggedWork::ParseTag(tag) => {
                     match tag {
                         SERIALIZATION_TYPE::BOOLEAN => {
                             let val = self.parser.read_le::<u8>()?;
@@ -1207,61 +1268,17 @@ impl<'a> CustomAttributeParser<'a> {
                         SERIALIZATION_TYPE::TAGGED_OBJECT => {
                             // Read inner type tag and schedule work
                             let inner_type_tag = self.parser.read_le::<u8>()?;
-                            work_stack.push(WorkItem::TaggedObject);
-                            work_stack.push(WorkItem::ParseTag(inner_type_tag));
+                            work_stack.push(TaggedWork::TaggedObject);
+                            work_stack.push(TaggedWork::ParseTag(inner_type_tag));
                         }
                         SERIALIZATION_TYPE::ENUM => {
-                            // Read enum type name, then value
+                            // The enum's type name, then a value of its
+                            // underlying type, which is not always `int`.
                             let type_name = self.parse_string()?;
-                            let val = self.parser.read_le::<i32>()?; // Most enums are I4-based
-                            result_stack.push(CustomAttributeArgument::Enum(
-                                type_name,
-                                Box::new(CustomAttributeArgument::I4(val)),
-                            ));
+                            work_stack.push(TaggedWork::ParseEnum(type_name));
                         }
                         SERIALIZATION_TYPE::SZARRAY => {
-                            // Read array element type tag and length
-                            let element_type_tag = self.parser.read_le::<u8>()?;
-                            let array_length = self.parser.read_le::<i32>()?;
-
-                            if array_length == -1 {
-                                result_stack.push(CustomAttributeArgument::Array(vec![]));
-                            // null array
-                            } else if array_length < 0 {
-                                return Err(malformed_error!(
-                                    "Invalid array length: {}",
-                                    array_length
-                                ));
-                            } else if array_length > MAX_ATTRIBUTE_ARRAY_LENGTH {
-                                // Same cap the type-driven path applies. Without it this arm is
-                                // an allocation bomb: the push loop below consumes no further
-                                // input, so the blob's own length does not bound the work and
-                                // ~12 bytes can demand gigabytes of `work_stack`.
-                                return Err(malformed_error!(
-                                    "Custom attribute array too large: {} (max: {})",
-                                    array_length,
-                                    MAX_ATTRIBUTE_ARRAY_LENGTH
-                                ));
-                            } else if work_stack
-                                .len()
-                                .saturating_add(usize::try_from(array_length).unwrap_or(usize::MAX))
-                                > MAX_NESTING_DEPTH
-                            {
-                                // Bound the burst *before* it happens. The depth check at the top
-                                // of this loop is only evaluated on the next pop, i.e. after the
-                                // vector has already grown. Behaviour-preserving: any length past
-                                // the depth limit would error on that next pop regardless.
-                                return Err(DepthLimitExceeded(MAX_NESTING_DEPTH));
-                            } else {
-                                // Schedule work to build array after parsing elements
-                                work_stack.push(WorkItem::BuildArray(array_length));
-
-                                // Schedule parsing of array elements in reverse order
-                                // (so they are processed in correct order from stack)
-                                for _ in 0..array_length {
-                                    work_stack.push(WorkItem::ParseTag(element_type_tag));
-                                }
-                            }
+                            work_stack.push(TaggedWork::ParseArray(self.read_array_element()?));
                         }
                         _ => {
                             return Err(malformed_error!(
@@ -1271,7 +1288,55 @@ impl<'a> CustomAttributeParser<'a> {
                         }
                     }
                 }
-                WorkItem::BuildArray(count) => {
+                TaggedWork::ParseEnum(type_name) => {
+                    let size = self.enum_underlying_size(&type_name);
+                    if let Some(value) = self.parse_enum(type_name, size)? {
+                        result_stack.push(value);
+                    }
+                }
+                TaggedWork::ParseArray(element) => {
+                    let array_length = self.parser.read_le::<i32>()?;
+
+                    if array_length == -1 {
+                        result_stack.push(CustomAttributeArgument::Array(vec![]));
+                    // null array
+                    } else if array_length < 0 {
+                        return Err(malformed_error!("Invalid array length: {}", array_length));
+                    } else if array_length > MAX_ATTRIBUTE_ARRAY_LENGTH {
+                        // Same cap the type-driven path applies. Without it this arm is
+                        // an allocation bomb: the push loop below consumes no further
+                        // input, so the blob's own length does not bound the work and
+                        // ~12 bytes can demand gigabytes of `work_stack`.
+                        return Err(malformed_error!(
+                            "Custom attribute array too large: {} (max: {})",
+                            array_length,
+                            MAX_ATTRIBUTE_ARRAY_LENGTH
+                        ));
+                    } else if work_stack
+                        .len()
+                        .saturating_add(usize::try_from(array_length).unwrap_or(usize::MAX))
+                        > MAX_NESTING_DEPTH
+                    {
+                        // Bound the burst *before* it happens. The depth check at the top
+                        // of this loop is only evaluated on the next pop, i.e. after the
+                        // vector has already grown. Behaviour-preserving: any length past
+                        // the depth limit would error on that next pop regardless.
+                        return Err(DepthLimitExceeded(MAX_NESTING_DEPTH));
+                    } else {
+                        // Schedule work to build array after parsing elements
+                        work_stack.push(TaggedWork::BuildArray(array_length));
+
+                        // Schedule parsing of array elements in reverse order
+                        // (so they are processed in correct order from stack)
+                        for _ in 0..array_length {
+                            work_stack.push(match &element {
+                                ArrayElement::Tag(tag) => TaggedWork::ParseTag(*tag),
+                                ArrayElement::Enum(name) => TaggedWork::ParseEnum(name.clone()),
+                            });
+                        }
+                    }
+                }
+                TaggedWork::BuildArray(count) => {
                     // Pop N elements from result stack and build array
                     // Safe: count was validated as non-negative when BuildArray was pushed
                     #[allow(clippy::cast_sign_loss)]
@@ -1289,7 +1354,7 @@ impl<'a> CustomAttributeParser<'a> {
                     let elements = result_stack.drain(start_idx..).collect();
                     result_stack.push(CustomAttributeArgument::Array(elements));
                 }
-                WorkItem::TaggedObject => {
+                TaggedWork::TaggedObject => {
                     // Result is already on stack from inner ParseTag, nothing to do
                     // Tagged object is transparent - we just return the inner value
                 }
@@ -1473,7 +1538,6 @@ mod tests {
             create_constructor_with_params, create_constructor_with_params_and_registry,
             create_empty_constructor, get_test_type_registry,
         },
-        utils::LazyList,
     };
 
     #[test]
@@ -1848,7 +1912,7 @@ mod tests {
             modifiers: Arc::new(boxcar::Vec::new()),
             base: OnceLock::new(),
             is_by_ref: std::sync::atomic::AtomicBool::new(false),
-            custom_attributes: LazyList::new(),
+            custom_attributes: Default::default(),
         });
         param.base.set(CilTypeRef::from(array_type)).ok();
         method.params.push(param);
@@ -2148,6 +2212,85 @@ mod tests {
         match &result.fixed_args[0] {
             CustomAttributeArgument::String(val) => assert_eq!(val, ""),
             _ => panic!("Expected String argument"),
+        }
+    }
+
+    #[test]
+    fn test_parse_named_enum_argument_reads_the_enum_type_before_the_name() {
+        // ECMA-335 II.23.3: PROPERTY, ENUM, the enum's type name, then the
+        // property's name, then the value.
+        let method = create_empty_constructor();
+        let mut blob = vec![0x01, 0x00, 0x01, 0x00, 0x54, 0x55];
+        blob.push(4);
+        blob.extend_from_slice(b"E.Ty");
+        blob.push(4);
+        blob.extend_from_slice(b"Mode");
+        blob.extend_from_slice(&7i32.to_le_bytes());
+
+        let result = parse_custom_attribute_data(&blob, &method.params).unwrap();
+        let named = &result.named_args[0];
+        assert_eq!(named.name, "Mode");
+        match &named.value {
+            CustomAttributeArgument::Enum(type_name, value) => {
+                assert_eq!(type_name, "E.Ty");
+                assert!(matches!(**value, CustomAttributeArgument::I4(7)));
+            }
+            other => panic!("expected an enum, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_named_array_argument() {
+        // FIELD, SZARRAY of I4, the name, then a length and the elements.
+        let method = create_empty_constructor();
+        let mut blob = vec![0x01, 0x00, 0x01, 0x00, 0x53, 0x1D, 0x08];
+        blob.push(6);
+        blob.extend_from_slice(b"Values");
+        blob.extend_from_slice(&2i32.to_le_bytes());
+        blob.extend_from_slice(&10i32.to_le_bytes());
+        blob.extend_from_slice(&20i32.to_le_bytes());
+
+        let result = parse_custom_attribute_data(&blob, &method.params).unwrap();
+        let named = &result.named_args[0];
+        assert_eq!(named.name, "Values");
+        match &named.value {
+            CustomAttributeArgument::Array(values) => {
+                assert!(matches!(
+                    values[..],
+                    [
+                        CustomAttributeArgument::I4(10),
+                        CustomAttributeArgument::I4(20)
+                    ]
+                ));
+            }
+            other => panic!("expected an array, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_boxed_enum_array_reads_the_enum_type_before_the_length() {
+        // A boxed object holding an enum array: OBJECT, SZARRAY, ENUM, the
+        // enum's type name, then the length and the values.
+        let method = create_empty_constructor();
+        let mut blob = vec![0x01, 0x00, 0x01, 0x00, 0x54, 0x51];
+        blob.push(1);
+        blob.extend_from_slice(b"P");
+        blob.extend_from_slice(&[0x1D, 0x55]);
+        blob.push(4);
+        blob.extend_from_slice(b"E.Ty");
+        blob.extend_from_slice(&1i32.to_le_bytes());
+        blob.extend_from_slice(&3i32.to_le_bytes());
+
+        let result = parse_custom_attribute_data(&blob, &method.params).unwrap();
+        match &result.named_args[0].value {
+            CustomAttributeArgument::Array(values) => match &values[..] {
+                [CustomAttributeArgument::Enum(type_name, value)] => {
+                    assert_eq!(type_name, "E.Ty");
+                    assert!(matches!(**value, CustomAttributeArgument::I4(3)));
+                }
+                other => panic!("expected one enum, got {other:?}"),
+            },
+            other => panic!("expected an array, got {other:?}"),
         }
     }
 

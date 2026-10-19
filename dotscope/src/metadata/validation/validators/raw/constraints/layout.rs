@@ -332,7 +332,7 @@ impl RawLayoutConstraintValidator {
                     }
 
                     // A TypeDef owns fields `[self.field_list, next_row.field_list)`, where
-                    // "next row" means the next *RID* — so both ends are fetched by RID rather
+                    // "next row" means the next *RID* - so both ends are fetched by RID rather
                     // than read off a filtered `Vec`. `skip_unreadable` drops unparseable rows,
                     // and in a collected vector that silently makes one type's field range
                     // swallow the following type's fields, mis-attributing the parent.

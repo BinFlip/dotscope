@@ -28,6 +28,13 @@ use crate::{
 };
 
 impl RowWritable for InterfaceImplRaw {
+    // By class alone: within a class the rows stay in declaration order,
+    // which is the order the type lists its interfaces in. Compilers do not
+    // sort by the interface, and the format does not ask them to.
+    fn sort_key(&self, _sizes: &TableInfoRef) -> Result<Option<(u32, u32)>> {
+        Ok(Some((self.class, 0)))
+    }
+
     /// Write an InterfaceImpl table row to binary data
     ///
     /// Serializes one InterfaceImpl table entry to the metadata tables stream format, handling

@@ -177,7 +177,7 @@ pub struct TableInfo {
     ///
     /// [`Self::row_count`] cannot answer this: it returns 0 both for a table that is present
     /// and empty and for one this `TableInfo` says nothing about. Those are different facts,
-    /// and code that bounds a row against `row_count` needs the second one — a `TableInfo`
+    /// and code that bounds a row against `row_count` needs the second one - a `TableInfo`
     /// reconstructed for a writer round-trip or a unit test describes only the tables it was
     /// given, so treating "not described" as "has no rows" rejects valid data.
     declared: u64,
@@ -247,7 +247,7 @@ impl TableInfo {
         // `TableId` covers 0x00-0x2C and 0x30-0x37; the gaps at 0x2D-0x2F and 0x38-0x3F have no
         // variant. The loop below consumes a `u32` only for bits that map to a known `TableId`,
         // but `TablesHeader::from` computes where table data starts as
-        // `24 + valid_bitvec.count_ones() * 4` — which counts them. A single gap bit therefore
+        // `24 + valid_bitvec.count_ones() * 4` - which counts them. A single gap bit therefore
         // makes the two disagree about how many row-count words the header holds, shifting
         // every subsequent row count onto the wrong table and mis-locating the table data.
         // Rejecting the mask keeps them in agreement by construction, rather than requiring
@@ -815,7 +815,7 @@ impl TableInfo {
     ///
     /// **A 0 here is ambiguous**: it means either "this table is present and empty" or "this
     /// `TableInfo` does not describe this table". Do not bound a row index against this value
-    /// without first asking [`Self::is_declared`] — a `TableInfo` built for a writer
+    /// without first asking [`Self::is_declared`] - a `TableInfo` built for a writer
     /// round-trip or a test describes only some tables, and rejecting rows that reference the
     /// others would reject valid metadata.
     #[must_use]
@@ -889,7 +889,7 @@ impl TableInfo {
     /// ECMA-335 II.24.2.6 selects a 4-byte heap index once a heap exceeds 0xFFFF bytes. The
     /// widths on `self` come from the *input* file's `HeapSizes` byte and are copied verbatim by
     /// [`with_modified_row_counts`](Self::with_modified_row_counts), so a writer that appends
-    /// past the threshold — new type and method names, decrypted literals, rebuilt signatures —
+    /// past the threshold - new type and method names, decrypted literals, rebuilt signatures -
     /// keeps emitting 2-byte indices while resolving offsets that no longer fit them.
     ///
     /// Call this with the byte counts actually written for `#Strings`, `#GUID` and `#Blob`,
@@ -935,7 +935,7 @@ mod heap_size_tests {
     ///
     /// Without this the emitted `HeapSizes` byte keeps the *input* file's widths, every
     /// heap-reference field is written 2 bytes wide, and any offset at or above 0x10000 is
-    /// masked — producing a file that parses cleanly while its names and signatures point at
+    /// masked - producing a file that parses cleanly while its names and signatures point at
     /// arbitrary earlier heap positions.
     #[test]
     fn heap_index_widens_past_the_threshold() {

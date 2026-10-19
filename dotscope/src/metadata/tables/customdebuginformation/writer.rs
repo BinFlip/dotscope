@@ -46,6 +46,13 @@ use crate::{
 };
 
 impl RowWritable for CustomDebugInformationRaw {
+    fn sort_key(&self, sizes: &TableInfoRef) -> Result<Option<(u32, u32)>> {
+        Ok(Some((
+            sizes.encode_coded_index(self.parent.tag, self.parent.row, self.parent.ci_type)?,
+            0,
+        )))
+    }
+
     /// Write a `CustomDebugInformation` table row to binary data
     ///
     /// Serializes one `CustomDebugInformation` table entry to the metadata tables stream format, handling

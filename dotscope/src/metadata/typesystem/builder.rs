@@ -116,7 +116,7 @@ use crate::{
             CompleteTypeSpec, TypeRegistry, TypeSource,
         },
     },
-    utils::{truncate_chars, LazyList},
+    utils::truncate_chars,
     Error::TypeError,
     Result,
 };
@@ -922,7 +922,7 @@ impl TypeBuilder {
                         instantiation: SignatureMethodSpec {
                             generic_args: vec![],
                         },
-                        custom_attributes: LazyList::new(),
+                        custom_attributes: Default::default(),
                         generic_args: {
                             let type_ref_list = Arc::new(boxcar::Vec::with_capacity(1));
                             type_ref_list.push(arg.clone().into());
@@ -1213,10 +1213,10 @@ mod tests {
             flags: GenericParamAttributes::ZERO,
             owner: OnceLock::new(),
             name: "T".to_string(),
-            constraints: Arc::new(boxcar::Vec::new()),
+            constraints: Default::default(),
             rid: 0,
             offset: 0,
-            custom_attributes: LazyList::new(),
+            custom_attributes: Default::default(),
         });
 
         list_type.generic_params.push(generic_param);
@@ -1527,10 +1527,10 @@ mod tests {
             flags: GenericParamAttributes::ZERO,
             owner: OnceLock::new(),
             name: "TKey".to_string(),
-            constraints: Arc::new(boxcar::Vec::new()),
+            constraints: Default::default(),
             rid: 0,
             offset: 0,
-            custom_attributes: LazyList::new(),
+            custom_attributes: Default::default(),
         });
 
         let value_param = Arc::new(GenericParam {
@@ -1539,10 +1539,10 @@ mod tests {
             flags: GenericParamAttributes::ZERO,
             owner: OnceLock::new(),
             name: "TValue".to_string(),
-            constraints: Arc::new(boxcar::Vec::new()),
+            constraints: Default::default(),
             rid: 1,
             offset: 1,
-            custom_attributes: LazyList::new(),
+            custom_attributes: Default::default(),
         });
 
         dict_type.generic_params.push(key_param);

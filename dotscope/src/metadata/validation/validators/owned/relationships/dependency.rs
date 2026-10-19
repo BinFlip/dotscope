@@ -322,7 +322,7 @@ impl OwnedDependencyValidator {
             // Validate inheritance ordering
             if let Some(base_type) = type_entry.base() {
                 // Backstop for a self-referential base reached through some path other than
-                // the TypeDef `extends` column — a synthetic type built by
+                // the TypeDef `extends` column - a synthetic type built by
                 // `typesystem::resolver`, say.
                 //
                 // It does *not* catch the metadata condition. `InheritanceResolver` elides a

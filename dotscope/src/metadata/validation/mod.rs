@@ -179,6 +179,6 @@ pub use context::{
 pub use engine::{factory, EngineStatistics, ValidationEngine};
 pub use result::{TwoStageValidationResult, ValidationOutcome, ValidationResult};
 pub use scanner::{ReferenceScanner, ScannerStatistics};
-pub use shared::{ReferenceValidator, SchemaValidator, TokenValidator};
+pub use shared::{ReferenceValidator, SchemaValidator, TokenValidationResult, TokenValidator};
 pub use traits::{OwnedValidator, RawValidator, ValidatorCollection};
 pub use validators::*;

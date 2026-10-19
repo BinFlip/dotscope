@@ -75,7 +75,7 @@ use crate::{
         },
         token::Token,
     },
-    utils::LazyList,
+    utils::{LazyList, RowList},
     Error, Result,
 };
 
@@ -93,7 +93,7 @@ pub type CilTypeRc = Arc<CilType>;
 
 /// Maximum number of ancestors [`CilType::base_chain`] will yield before stopping.
 ///
-/// Real inheritance chains are shallow — the deepest in the .NET base class library is well
+/// Real inheritance chains are shallow - the deepest in the .NET base class library is well
 /// under 20. This bound exists solely to terminate walks over malformed metadata, and is set
 /// high enough that no legitimate assembly can reach it. It matches the limit already applied
 /// to the virtual-dispatch walks in the emulation engine.
@@ -180,9 +180,9 @@ pub struct CilType {
     /// All interfaces this type implements (from `InterfaceImpl` table)
     pub interfaces: InterfaceEntryList,
     /// All method overwrites this type implements (explicit interface implementations)
-    pub overwrites: Arc<boxcar::Vec<CilTypeReference>>,
+    pub overwrites: RowList<CilTypeReference>,
     /// Nested types contained within this type (inner classes, delegates, etc.)
-    pub nested_types: CilTypeRefList,
+    pub nested_types: RowList<CilTypeRef>,
     /// Generic parameters for this type definition (e.g., T, U in Class<T, U>)
     pub generic_params: GenericParamList,
     /// Generic arguments for instantiated generic types (actual types substituted for parameters)
@@ -297,12 +297,12 @@ impl CilType {
             methods,
             properties: Arc::new(boxcar::Vec::new()),
             events: Arc::new(boxcar::Vec::new()),
-            interfaces: Arc::new(boxcar::Vec::new()),
-            overwrites: Arc::new(boxcar::Vec::new()),
-            nested_types: Arc::new(boxcar::Vec::new()),
-            generic_params: LazyList::new(),
+            interfaces: Default::default(),
+            overwrites: Default::default(),
+            nested_types: Default::default(),
+            generic_params: Default::default(),
             generic_args: LazyList::new(),
-            custom_attributes: LazyList::new(),
+            custom_attributes: Default::default(),
             packing_size: OnceLock::new(),
             class_size: OnceLock::new(),
             spec: OnceLock::new(),
@@ -438,7 +438,7 @@ impl CilType {
 
     /// Iterates the type's inheritance chain, from the immediate base type towards the root.
     ///
-    /// The starting type itself is **not** yielded — the first item is `self.base()`.
+    /// The starting type itself is **not** yielded - the first item is `self.base()`.
     ///
     /// # Why this exists
     ///
@@ -448,7 +448,7 @@ impl CilType {
     /// [`ValidationConfig::analysis`](crate::metadata::validation::ValidationConfig::analysis)
     /// because that preset reports circular inheritance as a diagnostic rather than refusing the
     /// file. A hand-written `while let Some(t) = t.base()` loop over such a graph never
-    /// terminates, and the recursive equivalent exhausts the native stack — an abort that no
+    /// terminates, and the recursive equivalent exhausts the native stack - an abort that no
     /// caller can catch and that no emulation budget can interrupt.
     ///
     /// This iterator is the only sanctioned way to walk a base chain. It is bounded twice over:
@@ -659,6 +659,29 @@ impl CilType {
     /// ```
     pub fn flavor(&self) -> &CilFlavor {
         self.flavor.get_or_init(|| self.compute_flavor())
+    }
+
+    /// Records that this type is a value type, from a fact its own flavor
+    /// computation cannot see yet.
+    ///
+    /// A type referenced from another assembly has no definition here to
+    /// compute its kind from, and the heuristics then take it for a class:
+    /// `System.DateTime`, `System.RuntimeTypeHandle` and every other imported
+    /// struct would read as reference types. The signatures that use the type
+    /// are required to say which it is. A type defined here derives from
+    /// `System.ValueType` or `System.Enum` directly, as ECMA-335 requires, but
+    /// its base is linked only after loaders that may already ask for its
+    /// flavor have run, and a flavor computed then is a class forever. A
+    /// primitive keeps its own flavor. Has no effect once the flavor has been
+    /// computed.
+    pub(crate) fn mark_value_type(&self) {
+        let computed = self.compute_flavor();
+        let flavor = if computed.is_value_type() {
+            computed
+        } else {
+            CilFlavor::ValueType
+        };
+        let _ = self.flavor.set(flavor);
     }
 
     /// Compute the type flavor based on flags, inheritance chain, and intelligent heuristics.
@@ -1530,18 +1553,14 @@ impl CilType {
     /// Two types have equivalent generic parameters if they have the same number
     /// of parameters and each corresponding parameter has the same name and number.
     fn generic_params_equivalent(&self, other: &CilType) -> bool {
-        let count = self.generic_params.count();
-        if count != other.generic_params.count() {
+        if self.generic_params.count() != other.generic_params.count() {
             return false;
         }
 
-        (0..count).all(
-            |i| match (self.generic_params.get(i), other.generic_params.get(i)) {
-                (Some(p1), Some(p2)) => p1.name == p2.name && p1.number == p2.number,
-                (None, None) => true,
-                _ => false,
-            },
-        )
+        self.generic_params
+            .iter()
+            .zip(other.generic_params.iter())
+            .all(|((_, p1), (_, p2))| p1.name == p2.name && p1.number == p2.number)
     }
 
     /// Compare base types for equivalence

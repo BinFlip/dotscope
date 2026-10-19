@@ -899,12 +899,6 @@ mod tests {
     use super::*;
     use crate::test::helpers::dependencies::{create_test_file, create_test_module_ref};
 
-    /// Helper function to create a test analyzer with default settings
-    fn create_test_analyzer() -> DependencyAnalyzer {
-        let graph = Arc::new(AssemblyDependencyGraph::new());
-        DependencyAnalyzer::new(graph)
-    }
-
     #[test]
     fn test_dependency_analyzer_creation() {
         let graph = Arc::new(AssemblyDependencyGraph::new());

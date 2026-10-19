@@ -161,7 +161,11 @@
 //! [`ExceptionHandler`] instances are immutable and safe to share across threads.
 //! Exception type references use reference-counted smart pointers for efficient sharing.
 
-use crate::{metadata::typesystem::CilTypeRc, Result};
+use crate::{
+    assembly::{FlowType, Instruction},
+    metadata::typesystem::CilTypeRc,
+    Error, Result,
+};
 
 metadata_flags! {
     /// Exception handler type flags defining the kind of exception handling clause.
@@ -349,15 +353,15 @@ impl ExceptionHandlerFlags {
 /// [`Display`]: std::fmt::Display
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ExceptionHandlerKind {
-    /// Typed exception clause — the protected region's exceptions are matched
+    /// Typed exception clause - the protected region's exceptions are matched
     /// against the type referenced by the handler's class token.
     Catch,
-    /// Filtered exception clause — IL at `filter_offset` decides whether the
+    /// Filtered exception clause - IL at `filter_offset` decides whether the
     /// handler runs.
     Filter,
-    /// Finally clause — runs unconditionally on protected-region exit.
+    /// Finally clause - runs unconditionally on protected-region exit.
     Finally,
-    /// Fault clause — runs only when the protected region exits via exception.
+    /// Fault clause - runs only when the protected region exits via exception.
     Fault,
 }
 
@@ -931,9 +935,197 @@ pub fn encode_exception_handlers(handlers: &[ExceptionHandler]) -> Result<Vec<u8
     Ok(section)
 }
 
+/// One byte range an exception clause names, and what kind of range it is.
+#[derive(Debug, Clone, Copy)]
+struct ProtectedPart {
+    /// First byte of the range.
+    start: u32,
+    /// One past its last byte.
+    end: u32,
+    /// Whether control may only arrive by an exception: a handler or a filter.
+    entered_by_exception: bool,
+}
+
+impl ProtectedPart {
+    fn contains(self, offset: u32) -> bool {
+        offset >= self.start && offset < self.end
+    }
+}
+
+/// Checks that control enters and leaves every protected range the way
+/// ECMA-335 allows (Partition I, 12.4.2.8).
+///
+/// - A handler or filter is entered only by an exception: no branch and no
+///   fall-through from outside lands in one.
+/// - A `try` region is entered only at its first instruction.
+/// - A region is left only by `leave`, `throw`, `rethrow`, `endfinally` or
+///   `endfilter`: no branch or fall-through crosses its end, and no `ret` is
+///   inside one.
+///
+/// Clause ranges that are merely in bounds can still break all three - a
+/// region that covers code the method falls into from outside is in bounds and
+/// invalid - and the runtime rejects such a body when it is first called.
+///
+/// # Arguments
+///
+/// * `instructions` - The method body, decoded, with offsets from its start.
+/// * `handlers` - Its exception clauses.
+///
+/// # Errors
+///
+/// Returns an error naming the first transfer that breaks a rule.
+pub fn validate_protected_region_flow(
+    instructions: &[Instruction],
+    handlers: &[ExceptionHandler],
+) -> Result<()> {
+    let mut parts: Vec<ProtectedPart> = Vec::new();
+    for handler in handlers {
+        parts.push(ProtectedPart {
+            start: handler.try_offset,
+            end: handler.try_offset.saturating_add(handler.try_length),
+            entered_by_exception: false,
+        });
+        parts.push(ProtectedPart {
+            start: handler.handler_offset,
+            end: handler
+                .handler_offset
+                .saturating_add(handler.handler_length),
+            entered_by_exception: true,
+        });
+        if handler.flags.contains(ExceptionHandlerFlags::FILTER) {
+            parts.push(ProtectedPart {
+                start: handler.filter_offset,
+                end: handler.handler_offset,
+                entered_by_exception: true,
+            });
+        }
+    }
+    if parts.is_empty() {
+        return Ok(());
+    }
+
+    let code_end = instructions
+        .last()
+        .map_or(0, |last| last.offset.saturating_add(last.size));
+    let violation = |message: String| Err(Error::CodegenFailed(message));
+
+    for instr in instructions {
+        let (Ok(from), Ok(next)) = (
+            u32::try_from(instr.offset),
+            u32::try_from(instr.offset.saturating_add(instr.size)),
+        ) else {
+            return violation(format!(
+                "instruction at {:#x} is out of range",
+                instr.offset
+            ));
+        };
+
+        if instr.flow_type == FlowType::Return {
+            if let Some(part) = parts.iter().find(|part| part.contains(from)) {
+                return violation(format!(
+                    "`ret` at {from:#x} inside protected range {:#x}..{:#x}",
+                    part.start, part.end
+                ));
+            }
+            continue;
+        }
+
+        let leaves = instr.flow_type == FlowType::Leave;
+        let falls_through = matches!(
+            instr.flow_type,
+            FlowType::Sequential | FlowType::Call | FlowType::ConditionalBranch | FlowType::Switch
+        );
+        let mut successors: Vec<u32> = instr
+            .branch_targets
+            .iter()
+            .filter_map(|&target| u32::try_from(target).ok())
+            .collect();
+        if falls_through && instr.offset.saturating_add(instr.size) < code_end {
+            successors.push(next);
+        }
+
+        for target in successors {
+            for part in &parts {
+                let (inside_from, inside_to) = (part.contains(from), part.contains(target));
+                if !inside_from && inside_to {
+                    if part.entered_by_exception {
+                        return violation(format!(
+                            "{} at {from:#x} enters handler range {:#x}..{:#x} at {target:#x}",
+                            instr.mnemonic, part.start, part.end
+                        ));
+                    }
+                    if target != part.start {
+                        return violation(format!(
+                            "{} at {from:#x} enters try range {:#x}..{:#x} at {target:#x}, not its start",
+                            instr.mnemonic, part.start, part.end
+                        ));
+                    }
+                }
+                if inside_from && !inside_to && !leaves {
+                    return violation(format!(
+                        "{} at {from:#x} leaves range {:#x}..{:#x} for {target:#x} without `leave`",
+                        instr.mnemonic, part.start, part.end
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        assembly::{decode_stream, InstructionAssembler},
+        Parser,
+    };
+
+    /// `try { nop; leave end } finally { endfinally } end: nop; ret`, decoded,
+    /// with its clause.
+    fn try_finally_body() -> (Vec<Instruction>, Vec<ExceptionHandler>) {
+        let mut asm = InstructionAssembler::new();
+        asm.try_start("t")
+            .unwrap()
+            .nop()
+            .unwrap()
+            .leave_s("end")
+            .unwrap()
+            .try_end("t")
+            .unwrap()
+            .finally_start("t")
+            .unwrap()
+            .endfinally()
+            .unwrap()
+            .finally_end("t")
+            .unwrap()
+            .label("end")
+            .unwrap()
+            .nop()
+            .unwrap()
+            .ret()
+            .unwrap();
+        let (bytecode, _, handlers) = asm.finish().unwrap();
+        let instructions = decode_stream(&mut Parser::new(&bytecode), 0).unwrap();
+        (instructions, handlers)
+    }
+
+    #[test]
+    fn a_well_formed_try_finally_passes_the_flow_check() {
+        let (instructions, handlers) = try_finally_body();
+        assert!(validate_protected_region_flow(&instructions, &handlers).is_ok());
+    }
+
+    #[test]
+    fn a_handler_range_covering_code_reached_by_normal_flow_is_rejected() {
+        // Stretch the finally over the `nop` after it: that `nop` is where the
+        // leave lands, so normal flow would enter the handler.
+        let (instructions, mut handlers) = try_finally_body();
+        handlers[0].handler_length += 1;
+        let err = validate_protected_region_flow(&instructions, &handlers)
+            .expect_err("a leave into a handler range is invalid");
+        assert!(format!("{err}").contains("enters handler range"), "{err}");
+    }
 
     #[test]
     fn test_encode_exception_handlers_empty() {
