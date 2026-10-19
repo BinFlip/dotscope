@@ -213,6 +213,10 @@ pub struct InstructionEncoder {
     /// When a branch is emitted, the current stack depth is recorded for the target label.
     /// When the label is defined, we verify all paths have the same depth.
     label_stack_depths: HashMap<String, i16>,
+    /// Number of instructions emitted so far. Finalization never adds or removes
+    /// an instruction before the end, so this count is also the index of the
+    /// next instruction in the finished body.
+    instruction_count: usize,
     /// Whether we're in unreachable code (after an unconditional branch, return, throw, etc.).
     /// When unreachable, the current_stack_depth is meaningless since there's no execution path.
     /// Defining a label resets this to false (the label makes code reachable again).
@@ -266,6 +270,7 @@ impl InstructionEncoder {
             max_stack_depth: 0,
             label_stack_depths: HashMap::new(),
             unreachable: false,
+            instruction_count: 0,
         }
     }
 
@@ -316,12 +321,13 @@ impl InstructionEncoder {
 
         // Emit primary opcode
         self.bytecode.push(*opcode);
+        self.instruction_count = self.instruction_count.saturating_add(1);
 
         // Emit operand based on expected type
         self.emit_operand(operand, metadata.op_type)?;
 
         // Update stack tracking
-        self.update_stack_depth(metadata.stack_pops, metadata.stack_pushes)
+        self.update_stack_depth(u16::from(metadata.stack_pops), metadata.stack_pushes)
             .map_err(|e| malformed_error!("Stack error at instruction '{}': {}", mnemonic, e))?;
 
         // Mark code as unreachable after terminating instructions.
@@ -433,6 +439,7 @@ impl InstructionEncoder {
 
         // Emit primary opcode
         self.bytecode.push(*opcode);
+        self.instruction_count = self.instruction_count.saturating_add(1);
 
         // Determine offset size and create fixup
         let offset_size = match metadata.op_type {
@@ -468,7 +475,7 @@ impl InstructionEncoder {
         }
 
         // Update stack tracking for branch instructions
-        self.update_stack_depth(metadata.stack_pops, metadata.stack_pushes)
+        self.update_stack_depth(u16::from(metadata.stack_pops), metadata.stack_pushes)
             .map_err(|e| {
                 malformed_error!("Stack error at branch '{}' to '{}': {}", mnemonic, label, e)
             })?;
@@ -541,6 +548,7 @@ impl InstructionEncoder {
 
         // Emit the switch opcode (0x45)
         self.bytecode.push(0x45);
+        self.instruction_count = self.instruction_count.saturating_add(1);
 
         // Emit the number of targets
         let num_targets =
@@ -616,7 +624,7 @@ impl InstructionEncoder {
         &mut self,
         mnemonic: &str,
         operand: Option<Operand>,
-        num_args: u8,
+        num_args: u16,
         has_result: bool,
     ) -> Result<()> {
         let (opcode, prefix, metadata) = get_mnemonic_lookup()
@@ -630,6 +638,7 @@ impl InstructionEncoder {
 
         // Emit primary opcode
         self.bytecode.push(*opcode);
+        self.instruction_count = self.instruction_count.saturating_add(1);
 
         // Emit operand based on expected type
         self.emit_operand(operand, metadata.op_type)?;
@@ -978,6 +987,17 @@ impl InstructionEncoder {
         #[allow(clippy::cast_possible_truncation)]
         let position = self.bytecode.len() as u32;
         position
+    }
+
+    /// Returns the number of instructions emitted so far.
+    ///
+    /// Finalization only resizes branches and may append a terminator at the
+    /// end, so the count taken before an instruction is emitted is that
+    /// instruction's index in the decoded, finished body. A caller can use it
+    /// to attach its own information to instructions by index.
+    #[must_use]
+    pub fn instruction_count(&self) -> usize {
+        self.instruction_count
     }
 
     /// Ensures the method ends with a proper method-terminating instruction.
@@ -1604,13 +1624,13 @@ impl InstructionEncoder {
     /// # Errors
     ///
     /// Returns an error if stack underflow would occur (negative stack depth).
-    fn update_stack_depth(&mut self, pops: u8, pushes: u8) -> Result<()> {
-        // Apply stack effect; both pushes/pops are u8 so this fits in i16.
-        let net_effect = i16::from(pushes).wrapping_sub(i16::from(pops));
-        self.current_stack_depth = self
-            .current_stack_depth
-            .checked_add(net_effect)
-            .ok_or_else(|| malformed_error!("Stack depth overflow"))?;
+    fn update_stack_depth(&mut self, pops: u16, pushes: u8) -> Result<()> {
+        // A call pops up to u16::MAX arguments, so the arithmetic is in i32.
+        let depth = i32::from(self.current_stack_depth)
+            .saturating_add(i32::from(pushes))
+            .saturating_sub(i32::from(pops));
+        self.current_stack_depth = i16::try_from(depth.max(i32::from(i16::MIN)))
+            .map_err(|_| malformed_error!("Stack depth overflow"))?;
 
         // Check for stack underflow - but only in reachable code.
         // In unreachable code, the stack depth is meaningless, so we don't error.

@@ -53,8 +53,10 @@
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
+
+use dashmap::DashMap;
 
 use crate::{
     assembly::{
@@ -85,8 +87,9 @@ struct Decoder<'a> {
     blocks: Vec<BasicBlock>,
     /// Exception handlers that affect control flow (if any)
     exceptions: Option<&'a [ExceptionHandler]>,
-    /// Shared map tracking which addresses have been visited during disassembly
-    visited: Arc<VisitedMap>,
+    /// Which bytes of this method's code have been decoded, indexed from its
+    /// first byte
+    visited: VisitedMap,
     /// Parser for reading instruction bytes from the method body
     parser: &'a mut Parser<'a>,
     /// Current block identifier being processed
@@ -107,7 +110,7 @@ struct Decoder<'a> {
     block_starts: BTreeMap<u64, usize>,
     /// Exclusive upper bound on offsets this decoder may read.
     ///
-    /// The parser spans the whole file image so that offsets stay file-absolute — the
+    /// The parser spans the whole file image so that offsets stay file-absolute - the
     /// `VisitedMap` is shared across methods and keyed by those offsets, so a per-method
     /// window would make different methods collide at the same relative offset. Decoding is
     /// instead bounded here, at the end of *this* method's declared `size_code`.
@@ -119,6 +122,28 @@ struct Decoder<'a> {
 }
 
 impl<'a> Decoder<'a> {
+    /// Whether the byte at file offset `offset` was already decoded. The map
+    /// covers this method's code alone, indexed from its first byte.
+    fn is_visited(&self, offset: usize) -> bool {
+        offset
+            .checked_sub(self.offset_start)
+            .is_some_and(|index| self.visited.get(index))
+    }
+
+    /// Marks `len` bytes from file offset `offset` as decoded, as far as they
+    /// lie within this method's code; an instruction running past the end is
+    /// malformed, and its tail is nobody's to mark.
+    fn mark_visited(&self, offset: usize, len: usize) {
+        let Some(index) = offset.checked_sub(self.offset_start) else {
+            return;
+        };
+        let window = self.max_offset.saturating_sub(self.offset_start);
+        let len = len.min(window.saturating_sub(index));
+        if len > 0 {
+            self.visited.set_range(index, true, len);
+        }
+    }
+
     /// Create a new stateful decoder for CIL bytecode disassembly.
     ///
     /// Initializes a decoder instance for processing CIL bytecode into basic blocks.
@@ -131,7 +156,8 @@ impl<'a> Decoder<'a> {
     /// * `offset` - The offset at which the first instruction starts (must be in range of parser)
     /// * `rva` - The relative virtual address of the first instruction
     /// * `exceptions` - Optional information about exception handlers from method metadata
-    /// * `visited` - [`crate::utils::VisitedMap`] for tracking disassembly progress
+    /// * `visited` - [`crate::utils::VisitedMap`] covering the bytes from `offset` to
+    ///   `max_offset`, for tracking disassembly progress
     ///
     /// # Returns
     ///
@@ -150,7 +176,7 @@ impl<'a> Decoder<'a> {
         offset: usize,
         rva: usize,
         exceptions: Option<&'a [ExceptionHandler]>,
-        visited: Arc<VisitedMap>,
+        visited: VisitedMap,
         max_offset: usize,
     ) -> Result<Self> {
         if offset > parser.len() {
@@ -310,7 +336,7 @@ impl<'a> Decoder<'a> {
                     .offset_start
                     .checked_add(entry_offset_u32 as usize)
                     .ok_or(out_of_bounds_error!())?;
-                if entry_offset < self.max_offset && !self.visited.get(entry_offset) {
+                if entry_offset < self.max_offset && !self.is_visited(entry_offset) {
                     self.block_starts.insert(entry_rva, self.blocks.len());
                     self.blocks
                         .push(BasicBlock::new(self.blocks.len(), entry_rva, entry_offset));
@@ -378,11 +404,12 @@ impl<'a> Decoder<'a> {
             (block.offset, block.rva)
         };
 
-        if block_offset > self.max_offset {
+        // A branch can only land inside the method's own code.
+        if block_offset > self.max_offset || block_offset < self.offset_start {
             return Err(out_of_bounds_error!());
         }
 
-        if self.visited.get(block_offset) {
+        if self.is_visited(block_offset) {
             return Ok(());
         }
 
@@ -409,7 +436,7 @@ impl<'a> Decoder<'a> {
                 ))
             })?;
 
-            self.visited.set_range(current_offset, true, instr_size);
+            self.mark_visited(current_offset, instr_size);
 
             {
                 let block = self
@@ -550,7 +577,7 @@ impl<'a> Decoder<'a> {
     ///
     /// * `rva` - The relative virtual address to search for
     fn find_block_containing_rva(&self, rva: u64) -> Option<(usize, usize)> {
-        // Already a block boundary — nothing to split.
+        // Already a block boundary - nothing to split.
         if self.block_starts.contains_key(&rva) {
             return None;
         }
@@ -788,7 +815,7 @@ impl<'a> Decoder<'a> {
 
             // Same binary-searched range as `process_exception_handlers`. Duplicates are
             // removed in one pass afterwards rather than by a linear `contains` per push,
-            // which made this O(B·H²) — each push scanned successors already accumulated.
+            // which made this O(B·H²) - each push scanned successors already accumulated.
             let lo = self.blocks.partition_point(|b| b.rva < try_start);
             let hi = self.blocks.partition_point(|b| b.rva < try_end);
             if let Some(covered) = self.blocks.get_mut(lo..hi) {
@@ -798,7 +825,7 @@ impl<'a> Decoder<'a> {
             }
         }
 
-        // Deduplicate while preserving first-occurrence order, which encodes handler priority —
+        // Deduplicate while preserving first-occurrence order, which encodes handler priority -
         // sorting would reorder the handler search.
         let mut seen: HashSet<usize> = HashSet::new();
         for block in &mut self.blocks {
@@ -966,122 +993,116 @@ impl<'a> Decoder<'a> {
     }
 }
 
-/// Disassembles a method's body into basic blocks and integrates results into the Method struct.
+/// Method bodies decoded while loading one assembly, by RVA.
 ///
-/// This function performs complete method disassembly including parsing method headers,
-/// decoding all instructions, building basic blocks with control flow analysis, and
-/// associating exception handlers with their corresponding blocks. The results are
-/// efficiently integrated into the Method's thread-safe storage.
+/// What a body decodes to depends only on the body: its IL and the exception
+/// clauses stored with it. ECMA-335 lets several methods name the same body,
+/// so each body is decoded once, by whichever method reaches it first, and
+/// every other method naming it takes that result. Decoding it again per
+/// method would only repeat the work.
+#[derive(Default)]
+pub struct DecodedBodies {
+    by_rva: DashMap<u32, Arc<OnceLock<Result<Vec<BasicBlock>>>>>,
+}
+
+impl DecodedBodies {
+    /// An empty cache.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+/// Disassembles a method's body into basic blocks and stores them on the method.
+///
+/// The body is decoded once per RVA through `bodies`; a method sharing its
+/// body with another one gets a copy of the same blocks.
 ///
 /// # Arguments
 ///
-/// * `method` - The [`crate::metadata::method::Method`] instance to populate with disassembled basic blocks
-/// * `file` - The [`crate::file::File`] containing the raw method bytecode and metadata
-/// * `shared_visited` - Shared [`crate::utils::VisitedMap`] for coordinated disassembly across methods
+/// * `method` - The [`crate::metadata::method::Method`] to populate with basic blocks
+/// * `file` - The [`crate::file::File`] containing the method's bytecode
+/// * `bodies` - The bodies decoded so far during this load
 ///
-/// # Returns
+/// # Errors
 ///
-/// Returns `Ok(())` on successful disassembly, or an error if:
-/// - The method lacks a valid RVA (relative virtual address)
-/// - The method body cannot be parsed from the file
-/// - Instruction decoding encounters malformed bytecode
-/// - Control flow analysis finds invalid branch targets
-/// - Exception handler information is malformed
+/// Returns an error if the body cannot be decoded: an invalid offset, a
+/// header larger than the file, malformed bytecode, or a branch leaving the
+/// method. Every method sharing a body reports its failure.
 ///
 /// # Thread Safety
 ///
-/// This function is thread-safe and can be called concurrently for different methods.
-/// If multiple threads attempt to disassemble the same method simultaneously, only
-/// the first thread will perform the work while others will no-op safely.
-///
-/// # Integration
-///
-/// The decoded blocks are efficiently transferred to the Method using `OnceLock::set()`:
-/// ```rust,ignore
-/// decoder.decode_blocks()?;
-/// let _ = method.blocks.set(decoder.into_blocks());
-/// ```
-///
-/// This ensures thread-safe lazy initialization with zero-copy transfer of blocks.
-pub(crate) fn decode_method(
-    method: &Method,
-    file: &File,
-    shared_visited: Arc<VisitedMap>,
-) -> Result<()> {
-    let rva = match method.rva {
-        Some(rva) => rva as usize,
-        None => return Ok(()),
+/// Safe to call concurrently for different methods. Methods sharing a body wait
+/// for the one decoding it rather than decoding it again.
+pub(crate) fn decode_method(method: &Method, file: &File, bodies: &DecodedBodies) -> Result<()> {
+    let Some(rva) = method.rva else {
+        return Ok(());
     };
 
+    // The map's guard is released before waiting on the cell, so a thread
+    // waiting for one body never holds a shard another thread needs.
+    let cell = Arc::clone(bodies.by_rva.entry(rva).or_default().value());
+    let blocks = cell
+        .get_or_init(|| decode_body(method, file, rva as usize))
+        .clone()?;
+    let _ = method.blocks.set(blocks);
+    Ok(())
+}
+
+/// Decodes the body at `rva` into basic blocks.
+fn decode_body(method: &Method, file: &File, rva: usize) -> Result<Vec<BasicBlock>> {
     let method_offset = file.rva_to_offset(rva)?;
     if method_offset >= file.data().len() {
         return Err(malformed_error!("Invalid method offset: {}", method_offset));
     }
 
-    {
-        let Some(body) = method.body.get() else {
-            return Err(malformed_error!("Method does not have a valid body"));
-        };
+    let Some(body) = method.body.get() else {
+        return Err(malformed_error!("Method does not have a valid body"));
+    };
 
-        if body.size_header >= file.data().len() {
-            return Err(malformed_error!(
-                "MethodHeader size exceeds file size - {}",
-                body.size_header
-            ));
-        }
-
-        let Some(code_start) = method_offset.checked_add(body.size_header) else {
-            return Err(malformed_error!(
-                "Integer overflow size_header ({}) + method_offset ({})",
-                body.size_header,
-                method_offset
-            ));
-        };
-
-        // Skip decoding if method has no code (e.g., abstract method or empty method body).
-        // Without this check, the decoder would start reading bytes after the header,
-        // which might be the next method's header or garbage data, causing invalid opcode errors.
-        if body.size_code == 0 {
-            let _ = method.blocks.set(Vec::new());
-            return Ok(());
-        }
-
-        // Bound decoding to this method's declared code window.
-        //
-        // The parser deliberately still spans the whole file image: offsets must stay
-        // file-absolute because `shared_visited` is shared across every method and keyed by
-        // them. Slicing to a per-method window would restart every method's offsets at 0, so
-        // methods would collide in that map and all but the first would decode nothing.
-        let code_end = code_start
-            .checked_add(body.size_code)
-            .ok_or_else(|| malformed_error!("code_start + size_code overflow"))?;
-
-        let mut parser = Parser::new(file.data());
-        let rva_start = rva
-            .checked_add(body.size_header)
-            .ok_or_else(|| malformed_error!("rva + size_header overflow"))?;
-        let mut decoder = Decoder::new(
-            &mut parser,
-            code_start,
-            rva_start,
-            Some(&body.exception_handlers),
-            shared_visited,
-            code_end,
-        )?;
-
-        decoder.decode_blocks()?;
-
-        let _ = method.blocks.set(decoder.into_blocks());
+    if body.size_header >= file.data().len() {
+        return Err(malformed_error!(
+            "MethodHeader size exceeds file size - {}",
+            body.size_header
+        ));
     }
 
-    // Get size of Method by counting size of blocks (considering potential inlined data. Not natural, but who knows
-    // what obfuscators do... )
-    // body.size_code should be == method_size from blocks
+    let Some(code_start) = method_offset.checked_add(body.size_header) else {
+        return Err(malformed_error!(
+            "Integer overflow size_header ({}) + method_offset ({})",
+            body.size_header,
+            method_offset
+        ));
+    };
 
-    //*write_lock!(method.cfg) = Some(build_cfg(&blocks)?);
-    //*write_lock!(method.ssa) = Some(transform_to_ssa(&body.blocks, &body.cfg.as_ref().unwrap())?);
+    // Skip decoding if method has no code (e.g., abstract method or empty method body).
+    // Without this check, the decoder would start reading bytes after the header,
+    // which might be the next method's header or garbage data, causing invalid opcode errors.
+    if body.size_code == 0 {
+        return Ok(Vec::new());
+    }
 
-    Ok(())
+    // Bound decoding to this method's declared code window, and track what has
+    // been decoded within that window alone.
+    let code_end = code_start
+        .checked_add(body.size_code)
+        .ok_or_else(|| malformed_error!("code_start + size_code overflow"))?;
+
+    let mut parser = Parser::new(file.data());
+    let rva_start = rva
+        .checked_add(body.size_header)
+        .ok_or_else(|| malformed_error!("rva + size_header overflow"))?;
+    let mut decoder = Decoder::new(
+        &mut parser,
+        code_start,
+        rva_start,
+        Some(&body.exception_handlers),
+        VisitedMap::new(body.size_code),
+        code_end,
+    )?;
+
+    decoder.decode_blocks()?;
+    Ok(decoder.into_blocks())
 }
 
 /// Decodes bytecode into a collection of basic blocks with control flow analysis.
@@ -1138,6 +1159,41 @@ pub fn decode_blocks(
     rva: usize,
     max_size: Option<usize>,
 ) -> Result<Vec<BasicBlock>> {
+    decode_blocks_with_handlers(data, offset, rva, max_size, &[])
+}
+
+/// Decodes bytecode into basic blocks, entering it at its exception handlers
+/// as well as at its first instruction.
+///
+/// No instruction branches to a handler: the runtime enters it when something
+/// throws. Decoding that follows control flow from the first instruction alone
+/// therefore never reaches a `catch`, `filter`, `finally` or `fault` body, and
+/// the blocks it returns describe a method with its handlers missing. This
+/// seeds each clause's handler and filter start, the way method disassembly
+/// does from the method body's clause table.
+///
+/// # Arguments
+///
+/// * `data` - Raw bytecode buffer to disassemble
+/// * `offset` - Starting offset within the bytecode buffer (0-based)
+/// * `rva` - Relative Virtual Address of the first instruction for proper addressing
+/// * `max_size` - Maximum number of bytes to process (None for entire buffer from offset)
+/// * `handlers` - The exception clauses, with offsets relative to `offset`
+///
+/// # Returns
+///
+/// The basic blocks, handler bodies included.
+///
+/// # Errors
+///
+/// Returns [`crate::Error`] under the same conditions as [`decode_blocks`].
+pub fn decode_blocks_with_handlers(
+    data: &[u8],
+    offset: usize,
+    rva: usize,
+    max_size: Option<usize>,
+    handlers: &[ExceptionHandler],
+) -> Result<Vec<BasicBlock>> {
     if offset >= data.len() {
         return Err(malformed_error!(
             "Starting offset {} exceeds data length {}",
@@ -1154,11 +1210,12 @@ pub fn decode_blocks(
     };
 
     let mut parser = Parser::new(effective_data);
-    let visited = Arc::new(VisitedMap::new(effective_data.len()));
+    let visited = VisitedMap::new(effective_data.len());
     // This entry point already slices `data` to the requested window and builds a private
     // `VisitedMap` over it, so the whole buffer is in bounds.
     let max_offset = effective_data.len();
-    let mut decoder = Decoder::new(&mut parser, 0, rva, None, visited, max_offset)?;
+    let handlers = (!handlers.is_empty()).then_some(handlers);
+    let mut decoder = Decoder::new(&mut parser, 0, rva, handlers, visited, max_offset)?;
 
     decoder.decode_blocks()?;
 
@@ -1415,16 +1472,18 @@ pub fn decode_instruction(parser: &mut Parser, rva: u64) -> Result<Instruction> 
 
     match instruction.flow_type {
         FlowType::ConditionalBranch | FlowType::UnconditionalBranch | FlowType::Leave => {
-            // All branch-type instructions have their target computed from an immediate offset
-            // This includes leave/leave.s which exit protected regions to a specific target
+            // Every branch, `leave` included, encodes its target as a signed offset from the
+            // next instruction. The operand states the resolved target, as `Operand::Target`
+            // documents, so no consumer has to redo this arithmetic or know the encoding.
             if let Operand::Immediate(value) = instruction.operand {
                 let next_instruction_rva = rva
                     .checked_add(instruction.size)
                     .ok_or_else(|| malformed_error!("branch instruction RVA overflow"))?;
+                // Sign-extending: a signed immediate converts with its bit pattern widened.
                 let branch_offset = <Immediate as Into<u64>>::into(value);
-                instruction
-                    .branch_targets
-                    .push(next_instruction_rva.wrapping_add(branch_offset));
+                let target = next_instruction_rva.wrapping_add(branch_offset);
+                instruction.operand = Operand::Target(target);
+                instruction.branch_targets.push(target);
             }
         }
         FlowType::Switch => {
@@ -1454,8 +1513,63 @@ mod tests {
             decode_blocks, decode_instruction, decode_stream, FlowType, Immediate,
             InstructionCategory, Operand,
         },
+        metadata::{
+            tables::{MethodDefRaw, TableDataOwned, TableId},
+            token::Token,
+        },
+        test::helpers::load_sample,
         Parser,
     };
+
+    /// Two methods whose rows name the same body both decode it. ECMA-335
+    /// lets methods share a body; with a map of decoded bytes shared by every
+    /// method, the first to decode claimed them and the other came out empty.
+    #[test]
+    fn methods_sharing_a_body_each_decode_it() {
+        let assembly = load_sample("tests/samples/crafted_2.exe");
+        let mut with_code: Vec<(Token, u32)> = assembly
+            .methods()
+            .iter()
+            .filter_map(|entry| {
+                let method = entry.value();
+                let decoded = method.blocks.get().is_some_and(|blocks| !blocks.is_empty());
+                method
+                    .rva
+                    .filter(|_| decoded)
+                    .map(|rva| (method.token, rva))
+            })
+            .collect();
+        with_code.sort();
+        let [(first, first_rva), (second, _), ..] = with_code[..] else {
+            panic!("the sample has two methods with code");
+        };
+
+        let mut row: MethodDefRaw = assembly
+            .tables()
+            .and_then(|tables| tables.table::<MethodDefRaw>())
+            .and_then(|table| table.get(second.row()).ok().flatten())
+            .expect("the second method's row");
+        row.rva = first_rva;
+        let mut rewritten = assembly.into_assembly();
+        rewritten
+            .table_row_update(
+                TableId::MethodDef,
+                second.row(),
+                TableDataOwned::MethodDef(row),
+            )
+            .expect("the row updates");
+        let reloaded = rewritten.into_cilobject().expect("the result loads");
+
+        let rva_of = |token: Token| reloaded.method(&token).ok().and_then(|m| m.rva);
+        assert_eq!(rva_of(first), rva_of(second), "the rows share a body");
+        for token in [first, second] {
+            let method = reloaded.method(&token).expect("the method survives");
+            assert!(
+                method.blocks.get().is_some_and(|blocks| !blocks.is_empty()),
+                "{token:?} decoded nothing from the body it shares"
+            );
+        }
+    }
 
     #[test]
     fn decode_instruction_basic() {
@@ -1507,6 +1621,43 @@ mod tests {
         assert_eq!(result.flow_type, FlowType::UnconditionalBranch);
         assert_eq!(result.branch_targets.len(), 1);
         assert_eq!(result.branch_targets[0], 0x100C); // next_rva (0x1002) + offset (10)
+        assert!(
+            matches!(result.operand, Operand::Target(0x100C)),
+            "the operand states the resolved target, got {:?}",
+            result.operand
+        );
+    }
+
+    /// A backward branch resolves below the branch: the offset is signed.
+    #[test]
+    fn decode_instruction_backward_branch_targets_below_itself() {
+        // brtrue.s -4 (0x2D, 0xFC) at 0x1010: next is 0x1012, target 0x100E.
+        let mut parser = Parser::new(&[0x2D, 0xFC]);
+        let result = decode_instruction(&mut parser, 0x1010).unwrap();
+
+        assert_eq!(result.flow_type, FlowType::ConditionalBranch);
+        assert!(
+            matches!(result.operand, Operand::Target(0x100E)),
+            "{:?}",
+            result.operand
+        );
+        assert_eq!(result.branch_targets, vec![0x100E]);
+    }
+
+    /// `leave` exits a protected region to a target like any other branch.
+    #[test]
+    fn decode_instruction_leave_states_its_target() {
+        // leave 0x20 (0xDD, 0x20 0x00 0x00 0x00) at 0x2000: next 0x2005, target 0x2025.
+        let mut parser = Parser::new(&[0xDD, 0x20, 0x00, 0x00, 0x00]);
+        let result = decode_instruction(&mut parser, 0x2000).unwrap();
+
+        assert_eq!(result.flow_type, FlowType::Leave);
+        assert!(
+            matches!(result.operand, Operand::Target(0x2025)),
+            "{:?}",
+            result.operand
+        );
+        assert_eq!(result.branch_targets, vec![0x2025]);
     }
 
     #[test]

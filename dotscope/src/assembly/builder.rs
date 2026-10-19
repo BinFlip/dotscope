@@ -449,7 +449,7 @@ impl InstructionAssembler {
     ///
     /// Looks up the instruction mnemonic from the `INSTRUCTIONS` / `INSTRUCTIONS_FE`
     /// tables and delegates to the encoder's `emit_instruction`. This enables generic
-    /// opcode emission without needing per-opcode method calls — useful for bridging
+    /// opcode emission without needing per-opcode method calls - useful for bridging
     /// .NET `ILGenerator.Emit(OpCode, ...)` into the assembler.
     ///
     /// For branch instructions, use [`emit_branch_to_label`](Self::emit_branch_to_label) instead.

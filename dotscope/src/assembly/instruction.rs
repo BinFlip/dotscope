@@ -304,7 +304,9 @@ pub enum Operand {
     None,
     /// Immediate value (constant embedded in instruction)
     Immediate(Immediate),
-    /// Branch target address
+    /// Branch target: the RVA of the instruction a `br`, conditional branch or `leave`
+    /// transfers to, resolved from the encoded offset (the same value as
+    /// [`Instruction::branch_targets`]).
     Target(u64),
     /// Metadata token reference
     Token(Token),
@@ -440,7 +442,7 @@ impl FlowType {
     /// `"call"`, `"return"`, `"switch"`, `"throw"`, `"end_finally"`,
     /// `"leave"`.
     ///
-    /// Prefer this accessor over `format!("{:?}", flow_type)` — the `Debug`
+    /// Prefer this accessor over `format!("{:?}", flow_type)` - the `Debug`
     /// representation is **not** part of the stable API and can change.
     #[must_use]
     pub const fn as_str(&self) -> &'static str {
