@@ -28,14 +28,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use dotscope::metadata::cilobject::CilObject;
+use dotscope::{metadata::cilobject::CilObject, testkit::fixture};
 
 /// Loads every input in the committed crash corpus.
 ///
 /// Fails if the directory is missing or empty — see the module docs for why.
 #[test]
 fn fuzzer_crashes() {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/fuzz-regressions");
+    let path = fixture("fuzz-regressions");
     let loaded = load_every_file(&path).unwrap_or_else(|e| {
         panic!(
             "crash-regression corpus at {} is unusable: {e}.\n\

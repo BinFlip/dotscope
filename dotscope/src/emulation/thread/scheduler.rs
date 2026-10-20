@@ -882,7 +882,7 @@ mod tests {
             },
             EmValue, HeapRef, ThreadId,
         },
-        test::emulation::create_test_context,
+        testkit::emulation::create_test_context,
     };
 
     fn create_test_thread(id: u32) -> EmulationThread {

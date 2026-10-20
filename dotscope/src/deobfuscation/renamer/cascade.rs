@@ -1154,7 +1154,6 @@ fn generate_phase_label_from_context(
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
 
     use crate::{
         deobfuscation::{
@@ -1174,12 +1173,12 @@ mod tests {
             token::Token,
             validation::ValidationConfig,
         },
-        test::helpers::load_sample,
+        testkit::{fixture, helpers::load_sample},
         utils::truncate_chars,
         CilObject,
     };
 
-    const RENAMER_SAMPLE: &str = "tests/samples/packers/bitmono/0.39.0/bitmono_renamer.exe";
+    const RENAMER_SAMPLE: &str = "packers/bitmono/0.39.0/bitmono_renamer.exe";
 
     #[test]
     fn test_generate_phase_label_from_calls() {
@@ -1266,11 +1265,7 @@ mod tests {
     /// Integration test: cascade on a real sample with SimpleProvider.
     #[test]
     fn test_cascade_on_bitmono_sample() {
-        let path = "tests/samples/packers/bitmono/0.39.0/bitmono_renamer.exe";
-        if !Path::new(path).exists() {
-            eprintln!("Skipping: sample not found");
-            return;
-        }
+        let path = fixture("packers/bitmono/0.39.0/bitmono_renamer.exe");
 
         let assembly =
             CilObject::from_path_with_validation(path, ValidationConfig::analysis()).unwrap();
@@ -1294,11 +1289,7 @@ mod tests {
     /// for each identifier kind (sequential alphabetic for SimpleProvider).
     #[test]
     fn test_cascade_rename_patterns() {
-        let path = "tests/samples/packers/bitmono/0.39.0/bitmono_renamer.exe";
-        if !Path::new(path).exists() {
-            eprintln!("Skipping: sample not found");
-            return;
-        }
+        let path = fixture("packers/bitmono/0.39.0/bitmono_renamer.exe");
 
         let assembly =
             CilObject::from_path_with_validation(path, ValidationConfig::analysis()).unwrap();
@@ -1365,11 +1356,7 @@ mod tests {
     /// Verifies that well-known .NET names are NOT renamed by the cascade.
     #[test]
     fn test_cascade_preserves_known_names() {
-        let path = "tests/samples/packers/bitmono/0.39.0/original.exe";
-        if !Path::new(path).exists() {
-            eprintln!("Skipping: original sample not found");
-            return;
-        }
+        let path = fixture("packers/bitmono/0.39.0/original.exe");
 
         // Original.exe has NO obfuscated names — cascade should produce zero renames
         let assembly =
@@ -1392,11 +1379,7 @@ mod tests {
     /// on a known obfuscated sample.
     #[test]
     fn test_cascade_entry_counts() {
-        let path = "tests/samples/packers/bitmono/0.39.0/bitmono_renamer.exe";
-        if !Path::new(path).exists() {
-            eprintln!("Skipping: sample not found");
-            return;
-        }
+        let path = fixture("packers/bitmono/0.39.0/bitmono_renamer.exe");
 
         let assembly =
             CilObject::from_path_with_validation(path, ValidationConfig::analysis()).unwrap();
@@ -1444,11 +1427,7 @@ mod tests {
     /// Verifies that the cascade with custom config uses the configured thresholds.
     #[test]
     fn test_cascade_respects_config() {
-        let path = "tests/samples/packers/bitmono/0.39.0/bitmono_renamer.exe";
-        if !Path::new(path).exists() {
-            eprintln!("Skipping: sample not found");
-            return;
-        }
+        let path = fixture("packers/bitmono/0.39.0/bitmono_renamer.exe");
 
         let assembly =
             CilObject::from_path_with_validation(path, ValidationConfig::analysis()).unwrap();
@@ -1486,11 +1465,7 @@ mod tests {
     /// populates SSA by building contexts directly.
     #[test]
     fn test_cascade_ssa_context_populated() {
-        let path = "tests/samples/packers/confuserex/1.6.0/original.exe";
-        if !Path::new(path).exists() {
-            eprintln!("Skipping: sample not found");
-            return;
-        }
+        let path = fixture("packers/confuserex/1.6.0/original.exe");
 
         let assembly =
             CilObject::from_path_with_validation(path, ValidationConfig::analysis()).unwrap();
@@ -1536,11 +1511,7 @@ mod tests {
     /// loading the raw sample, some methods should have parseable IL.
     #[test]
     fn test_cascade_context_quality_on_obfuscated() {
-        let path = "tests/samples/packers/confuserex/1.6.0/mkaring_maximum.exe";
-        if !Path::new(path).exists() {
-            eprintln!("Skipping: sample not found");
-            return;
-        }
+        let path = fixture("packers/confuserex/1.6.0/mkaring_maximum.exe");
 
         let assembly =
             CilObject::from_path_with_validation(path, ValidationConfig::analysis()).unwrap();
@@ -1864,7 +1835,7 @@ mod tests {
     /// method should have a CallerInfo entry from Main with that string.
     #[test]
     fn test_caller_context_propagation() {
-        const ORIGINAL_SAMPLE: &str = "tests/samples/packers/bitmono/0.39.0/original.exe";
+        const ORIGINAL_SAMPLE: &str = "packers/bitmono/0.39.0/original.exe";
         let assembly = load_sample(ORIGINAL_SAMPLE);
 
         let provider = SimpleProvider::new();
@@ -1917,7 +1888,7 @@ mod tests {
     /// via `newobj`. This should now appear in `collect_call_targets()`.
     #[test]
     fn test_newobj_in_call_targets() {
-        const ORIGINAL_SAMPLE: &str = "tests/samples/packers/bitmono/0.39.0/original.exe";
+        const ORIGINAL_SAMPLE: &str = "packers/bitmono/0.39.0/original.exe";
         let assembly = load_sample(ORIGINAL_SAMPLE);
 
         let provider = SimpleProvider::new();
@@ -1954,7 +1925,7 @@ mod tests {
     /// the addition operator and a return with a value.
     #[test]
     fn test_skeleton_arithmetic_method() {
-        const ORIGINAL_SAMPLE: &str = "tests/samples/packers/bitmono/0.39.0/original.exe";
+        const ORIGINAL_SAMPLE: &str = "packers/bitmono/0.39.0/original.exe";
         let assembly = load_sample(ORIGINAL_SAMPLE);
 
         let provider = SimpleProvider::new();
@@ -1993,7 +1964,7 @@ mod tests {
     /// skeleton should render the string and a return.
     #[test]
     fn test_skeleton_string_constant() {
-        const ORIGINAL_SAMPLE: &str = "tests/samples/packers/bitmono/0.39.0/original.exe";
+        const ORIGINAL_SAMPLE: &str = "packers/bitmono/0.39.0/original.exe";
         let assembly = load_sample(ORIGINAL_SAMPLE);
 
         let provider = SimpleProvider::new();
@@ -2035,7 +2006,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_diagnostic_context_dump() {
-        const ORIGINAL_SAMPLE: &str = "tests/samples/packers/bitmono/0.39.0/original.exe";
+        const ORIGINAL_SAMPLE: &str = "packers/bitmono/0.39.0/original.exe";
 
         let assembly = load_sample(ORIGINAL_SAMPLE);
 

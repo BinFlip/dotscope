@@ -19,7 +19,7 @@ coverage:
     - "examples/**/*"
     - "benches/**/*"
     - "fuzz/**/*"
-    - "src/test/**/*"
+    - "src/testkit/**/*"
 
 comment:
   layout: "reach,diff,flags,files,footer"

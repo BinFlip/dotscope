@@ -572,7 +572,7 @@ impl std::fmt::Display for DependencyResolutionState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::helpers::dependencies::create_test_assembly_ref;
+    use crate::testkit::helpers::dependencies::create_test_assembly_ref;
 
     #[test]
     fn test_dependency_source_display_name() {

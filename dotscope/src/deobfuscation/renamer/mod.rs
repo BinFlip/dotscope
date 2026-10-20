@@ -412,12 +412,12 @@ mod tests {
             tables::{MethodDefRaw, TableId, TypeDefRaw},
             validation::ValidationConfig,
         },
-        test::helpers::load_sample,
+        testkit::helpers::load_sample,
         CilObject,
     };
 
-    const RENAMER_SAMPLE: &str = "tests/samples/packers/bitmono/0.39.0/bitmono_renamer.exe";
-    const ORIGINAL_SAMPLE: &str = "tests/samples/packers/bitmono/0.39.0/original.exe";
+    const RENAMER_SAMPLE: &str = "packers/bitmono/0.39.0/bitmono_renamer.exe";
+    const ORIGINAL_SAMPLE: &str = "packers/bitmono/0.39.0/original.exe";
 
     #[test]
     fn test_simple_provider_via_trait() {

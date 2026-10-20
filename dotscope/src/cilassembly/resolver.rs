@@ -283,7 +283,7 @@ impl ConflictResolver for LastWriteWinsResolver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{cilassembly::Operation, test::factories::table::cilassembly::create_test_row};
+    use crate::{cilassembly::Operation, testkit::factories::table::cilassembly::create_test_row};
 
     #[test]
     fn test_last_write_wins_resolver_multiple_operations() {

@@ -823,7 +823,7 @@ mod tests {
             CompilerContext, SsaPass,
         },
         metadata::token::Token,
-        test::helpers::test_assembly_arc,
+        testkit::helpers::test_assembly_arc,
         CilObject,
     };
 

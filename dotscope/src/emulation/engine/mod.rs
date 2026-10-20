@@ -90,7 +90,7 @@ pub use stats::LimitExceeded;
 
 #[cfg(test)]
 mod tests {
-    use std::{path::Path, sync::Arc};
+    use std::sync::Arc;
 
     use dashmap::DashMap;
 
@@ -106,7 +106,10 @@ mod tests {
         metadata::{token::Token, typesystem::CilFlavor},
         prelude::PointerSize,
         project::ProjectLoader,
-        test::emulation::{create_test_context, create_test_thread},
+        testkit::{
+            emulation::{create_test_context, create_test_thread},
+            fixture,
+        },
         Result,
     };
 
@@ -1150,48 +1153,23 @@ mod tests {
         assert_eq!(limits.max_call_depth, 10);
     }
 
-    /// Helper to load crafted_2.exe for testing using ProjectLoader with dependencies.
-    /// Returns None if the assembly cannot be loaded (e.g., missing dependencies).
-    fn load_crafted_2_assembly() -> Option<Arc<crate::CilObject>> {
-        let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        let assembly_path = Path::new(manifest_dir).join("tests/samples/crafted_2.exe");
-        let mono_deps_path = Path::new(manifest_dir).join("tests/samples/mono_4.8");
-
-        if !assembly_path.exists() {
-            eprintln!("Skipping test: crafted_2.exe not found");
-            return None;
-        }
-
-        if !mono_deps_path.exists() {
-            eprintln!("Skipping test: mono_4.8 dependencies not found");
-            return None;
-        }
-
-        // Use ProjectLoader to load the assembly with its dependencies
-        match ProjectLoader::new()
-            .primary_file(&assembly_path)
-            .and_then(|loader| loader.with_search_path(&mono_deps_path))
+    /// Loads crafted_2.exe with its mono_4.8 dependencies through ProjectLoader.
+    fn load_crafted_2_assembly() -> Arc<crate::CilObject> {
+        ProjectLoader::new()
+            .primary_file(fixture("crafted_2.exe"))
+            .and_then(|loader| loader.with_search_path(fixture("mono_4.8")))
             .map(|loader| loader.auto_discover(true))
             .and_then(|loader| loader.build())
-        {
-            Ok(result) => {
-                // Get the primary assembly from the loaded project
-                // get_primary() already returns Arc<CilObject>
-                result.project.get_primary()
-            }
-            Err(e) => {
-                eprintln!("Skipping test: Failed to load crafted_2.exe: {}", e);
-                None
-            }
-        }
+            .expect("crafted_2.exe loads with its dependencies")
+            .project
+            .get_primary()
+            .expect("the project has its primary assembly")
     }
 
     /// Tests loading a real assembly and using EmulationContext to find methods.
     #[test]
     fn test_real_assembly_method_lookup() {
-        let Some(assembly) = load_crafted_2_assembly() else {
-            return;
-        };
+        let assembly = load_crafted_2_assembly();
         let context = EmulationContext::new(assembly, Arc::new(DashMap::new()));
 
         // Test finding the Program.Main method
@@ -1229,9 +1207,7 @@ mod tests {
     /// Tests that we can retrieve method metadata from a real assembly.
     #[test]
     fn test_real_assembly_method_metadata() {
-        let Some(assembly) = load_crafted_2_assembly() else {
-            return;
-        };
+        let assembly = load_crafted_2_assembly();
         let context = EmulationContext::new(assembly, Arc::new(DashMap::new()));
 
         // Find a method with known characteristics
@@ -1259,9 +1235,7 @@ mod tests {
     /// Tests that we can get instructions from a real method.
     #[test]
     fn test_real_assembly_get_instructions() {
-        let Some(assembly) = load_crafted_2_assembly() else {
-            return;
-        };
+        let assembly = load_crafted_2_assembly();
         let context = EmulationContext::new(assembly, Arc::new(DashMap::new()));
 
         // Find the Main method
@@ -1293,9 +1267,7 @@ mod tests {
     /// Tests type resolution and compatibility checking with real types.
     #[test]
     fn test_real_assembly_type_compatibility() {
-        let Some(assembly) = load_crafted_2_assembly() else {
-            return;
-        };
+        let assembly = load_crafted_2_assembly();
         let context = EmulationContext::new(assembly, Arc::new(DashMap::new()));
 
         // Find types for compatibility testing
@@ -1322,9 +1294,7 @@ mod tests {
     /// Tests virtual method resolution with a real inheritance hierarchy.
     #[test]
     fn test_real_assembly_virtual_dispatch() {
-        let Some(assembly) = load_crafted_2_assembly() else {
-            return;
-        };
+        let assembly = load_crafted_2_assembly();
         let context = EmulationContext::new(assembly, Arc::new(DashMap::new()));
 
         // Get base class virtual method
@@ -1354,9 +1324,7 @@ mod tests {
     /// Tests creating an EmulationProcess and preparing to emulate a method.
     #[test]
     fn test_real_assembly_process_setup() {
-        let Some(assembly) = load_crafted_2_assembly() else {
-            return;
-        };
+        let assembly = load_crafted_2_assembly();
         let context = EmulationContext::new(assembly.clone(), Arc::new(DashMap::new()));
 
         // Create process using ProcessBuilder
@@ -1395,9 +1363,7 @@ mod tests {
     /// This validates the metadata lookup and instruction decoding works correctly.
     #[test]
     fn test_real_method_il_structure() {
-        let Some(assembly) = load_crafted_2_assembly() else {
-            return;
-        };
+        let assembly = load_crafted_2_assembly();
         let context = EmulationContext::new(assembly.clone(), Arc::new(DashMap::new()));
 
         // Test Extensions::GetReference IL structure
@@ -1431,9 +1397,7 @@ mod tests {
     /// Test that Person class methods can be found and have expected structure.
     #[test]
     fn test_person_method_structure() {
-        let Some(assembly) = load_crafted_2_assembly() else {
-            return;
-        };
+        let assembly = load_crafted_2_assembly();
         let context = EmulationContext::new(assembly.clone(), Arc::new(DashMap::new()));
 
         // Find Person::get_Age method

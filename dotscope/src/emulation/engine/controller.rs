@@ -2904,7 +2904,7 @@ mod tests {
     use super::*;
     use crate::{
         emulation::{engine::typeops, process::UnknownMethodBehavior},
-        test::emulation::create_test_thread,
+        testkit::{emulation::create_test_thread, fixture},
         CilObject,
     };
 
@@ -2935,8 +2935,7 @@ mod tests {
     ///
     /// Uses crafted_2.exe as a test assembly.
     fn create_test_context() -> EmulationContext {
-        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/samples/crafted_2.exe");
+        let path = fixture("crafted_2.exe");
         let assembly = CilObject::from_path(&path).expect("Failed to load test assembly");
         EmulationContext::new(Arc::new(assembly), Arc::new(DashMap::new()))
     }

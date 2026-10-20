@@ -827,27 +827,26 @@ mod tests {
             build_call_site_skeleton, decompose_method, extract_namespace,
         },
         metadata::validation::ValidationConfig,
+        testkit::fixture,
         CilObject,
     };
 
-    const ORIGINAL_EXE: &str = "tests/samples/packers/confuserex/1.6.0/original.exe";
+    const ORIGINAL_EXE: &str = "packers/confuserex/1.6.0/original.exe";
 
     /// Loads original.exe and builds SSA for a named method.
-    fn load_and_build_ssa(method_name: &str) -> Option<(crate::analysis::SsaFunction, CilObject)> {
-        let path = std::path::Path::new(ORIGINAL_EXE);
-        if !path.exists() {
-            return None;
-        }
+    fn load_and_build_ssa(method_name: &str) -> (crate::analysis::SsaFunction, CilObject) {
+        let path = fixture(ORIGINAL_EXE);
         let assembly =
             CilObject::from_path_with_validation(path, ValidationConfig::analysis()).unwrap();
         let method = assembly
             .methods()
             .iter()
-            .find(|e| e.value().name == method_name)?
+            .find(|e| e.value().name == method_name)
+            .unwrap_or_else(|| panic!("{ORIGINAL_EXE} has no method {method_name}"))
             .value()
             .clone();
-        let ssa = method.ssa(&assembly).ok()?;
-        Some((ssa, assembly))
+        let ssa = method.ssa(&assembly).expect("SSA builds");
+        (ssa, assembly)
     }
 
     #[test]
@@ -868,10 +867,7 @@ mod tests {
     /// With a generous small_threshold it should produce a single linear phase.
     #[test]
     fn test_decompose_sayhello_single_phase() {
-        let Some((ssa, assembly)) = load_and_build_ssa("SayHello") else {
-            eprintln!("Skipping: original.exe not found");
-            return;
-        };
+        let (ssa, assembly) = load_and_build_ssa("SayHello");
 
         // Use a large threshold so it falls into the small-method path
         let phases = decompose_method(&ssa, &assembly, 100);
@@ -899,10 +895,7 @@ mod tests {
     /// SayHello's call-site skeleton should show the Console.WriteLine call.
     #[test]
     fn test_skeleton_sayhello() {
-        let Some((ssa, assembly)) = load_and_build_ssa("SayHello") else {
-            eprintln!("Skipping: original.exe not found");
-            return;
-        };
+        let (ssa, assembly) = load_and_build_ssa("SayHello");
 
         let skeleton = build_call_site_skeleton(&ssa, &assembly);
         assert!(skeleton.is_some(), "SayHello should produce a skeleton");
@@ -922,10 +915,7 @@ mod tests {
     /// least one loop-structured phase.
     #[test]
     fn test_decompose_demoloop_has_loop_phase() {
-        let Some((ssa, assembly)) = load_and_build_ssa("DemoLoop") else {
-            eprintln!("Skipping: original.exe not found");
-            return;
-        };
+        let (ssa, assembly) = load_and_build_ssa("DemoLoop");
 
         // Use threshold=0 to force full decomposition
         let phases = decompose_method(&ssa, &assembly, 0);
@@ -948,10 +938,7 @@ mod tests {
     /// loop-structured phase when fully decomposed.
     #[test]
     fn test_decompose_fibonacci_has_loop_phase() {
-        let Some((ssa, assembly)) = load_and_build_ssa("Fibonacci") else {
-            eprintln!("Skipping: original.exe not found");
-            return;
-        };
+        let (ssa, assembly) = load_and_build_ssa("Fibonacci");
 
         let phases = decompose_method(&ssa, &assembly, 0);
         assert!(
@@ -973,10 +960,7 @@ mod tests {
     /// one phase should be classified as "conditional".
     #[test]
     fn test_decompose_demoifelse_has_conditional() {
-        let Some((ssa, assembly)) = load_and_build_ssa("DemoIfElse") else {
-            eprintln!("Skipping: original.exe not found");
-            return;
-        };
+        let (ssa, assembly) = load_and_build_ssa("DemoIfElse");
 
         let phases = decompose_method(&ssa, &assembly, 0);
         assert!(
@@ -997,10 +981,7 @@ mod tests {
     /// produce phases, and the opcode profile should show arithmetic operations.
     #[test]
     fn test_decompose_add_opcode_profile() {
-        let Some((ssa, assembly)) = load_and_build_ssa("Add") else {
-            eprintln!("Skipping: original.exe not found");
-            return;
-        };
+        let (ssa, assembly) = load_and_build_ssa("Add");
 
         // Even with threshold=0, a very small method gets decomposed
         let phases = decompose_method(&ssa, &assembly, 100);

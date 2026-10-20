@@ -653,7 +653,7 @@ mod tests {
             resources::parser::{parse_dotnet_resource, parse_dotnet_resource_ref},
             tables::{ManifestResource, ManifestResourceAttributes},
         },
-        test::helpers::test_assembly_arc,
+        testkit::helpers::test_assembly_arc,
     };
 
     #[test]

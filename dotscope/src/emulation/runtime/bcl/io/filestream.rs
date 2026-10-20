@@ -1069,7 +1069,7 @@ mod tests {
             SharedFakeObjects, ThreadContext, ThreadId,
         },
         metadata::{token::Token, typesystem::PointerSize},
-        test::emulation::create_test_thread,
+        testkit::emulation::create_test_thread,
     };
 
     /// Creates a test thread with a virtual filesystem containing "test.exe".

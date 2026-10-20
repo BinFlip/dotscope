@@ -285,28 +285,13 @@ fn collect_runtime_method_tokens(assembly: &CilObject, runtime_type: Option<Toke
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
 
     use super::*;
-    use crate::metadata::validation::ValidationConfig;
-
-    fn try_load_sample(name: &str) -> Option<CilObject> {
-        let path = format!("tests/samples/packers/netreactor/7.5.0/{name}");
-        if !Path::new(&path).exists() {
-            eprintln!("Skipping test: sample not found at {path}");
-            return None;
-        }
-        Some(
-            CilObject::from_path_with_validation(&path, ValidationConfig::analysis())
-                .unwrap_or_else(|e| panic!("Failed to load {name}: {e}")),
-        )
-    }
+    use crate::testkit::load_sample;
 
     #[test]
     fn test_detect_positive_antitamp() {
-        let Some(assembly) = try_load_sample("reactor_antitamp.exe") else {
-            return;
-        };
+        let assembly = load_sample("packers/netreactor/7.5.0/reactor_antitamp.exe");
         let detection = NetReactorAntiTamp.detect(&assembly);
         assert!(
             detection.is_detected(),
@@ -331,9 +316,7 @@ mod tests {
     /// on some runs and not others.
     #[test]
     fn every_runtime_initializer_is_protection() {
-        let Some(assembly) = try_load_sample("reactor_full.exe") else {
-            return;
-        };
+        let assembly = load_sample("packers/netreactor/7.5.0/reactor_full.exe");
         let initializers = [Token::new(0x0600_005C), Token::new(0x0600_0067)];
 
         let fan_in = helpers::find_cctor_fan_in_target(&assembly).expect("injected .cctors");
@@ -355,9 +338,7 @@ mod tests {
     /// named other types once cleanup renumbered the rows.
     #[test]
     fn padded_token_accessors_are_found() {
-        let Some(assembly) = try_load_sample("reactor_full.exe") else {
-            return;
-        };
+        let assembly = load_sample("packers/netreactor/7.5.0/reactor_full.exe");
         let resolver = helpers::find_nr_token_resolver(&assembly).expect("the token resolver");
         assert!(
             resolver
@@ -379,9 +360,7 @@ mod tests {
 
     #[test]
     fn test_detect_negative_baseline() {
-        let Some(assembly) = try_load_sample("original.exe") else {
-            return;
-        };
+        let assembly = load_sample("packers/netreactor/7.5.0/original.exe");
         let detection = NetReactorAntiTamp.detect(&assembly);
         assert!(
             !detection.is_detected(),
@@ -393,9 +372,7 @@ mod tests {
     fn test_detect_negative_no_antitamp_nr() {
         // reactor_obfuscation has only 3 .cctors — fan-in primary fails,
         // so anti-tamper detection must not fire.
-        let Some(assembly) = try_load_sample("reactor_obfuscation.exe") else {
-            return;
-        };
+        let assembly = load_sample("packers/netreactor/7.5.0/reactor_obfuscation.exe");
         let detection = NetReactorAntiTamp.detect(&assembly);
         assert!(
             !detection.is_detected(),

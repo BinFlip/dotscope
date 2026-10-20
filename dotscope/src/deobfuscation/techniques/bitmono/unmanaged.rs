@@ -271,7 +271,7 @@ fn extract_native_string(
 mod tests {
     use crate::{
         analysis::x86_native_body_size, deobfuscation::techniques::Technique,
-        test::helpers::load_sample,
+        testkit::helpers::load_sample,
     };
 
     #[test]
@@ -344,8 +344,7 @@ mod tests {
 
     #[test]
     fn test_detect_positive() {
-        let assembly =
-            load_sample("tests/samples/packers/bitmono/0.39.0/bitmono_unmanagedstring.exe");
+        let assembly = load_sample("packers/bitmono/0.39.0/bitmono_unmanagedstring.exe");
 
         let technique = super::BitMonoUnmanaged;
         let detection = technique.detect(&assembly);
@@ -362,7 +361,7 @@ mod tests {
 
     #[test]
     fn test_detect_negative() {
-        let assembly = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+        let assembly = load_sample("packers/confuserex/1.6.0/original.exe");
 
         let technique = super::BitMonoUnmanaged;
         let detection = technique.detect(&assembly);

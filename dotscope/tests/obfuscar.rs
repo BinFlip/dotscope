@@ -21,22 +21,21 @@
 
 #![cfg(feature = "deobfuscation")]
 
-mod common;
-
-use common::{
-    framework::{
-        assert_common_requirements, load_sample, print_summary, run_deobfuscation_test,
-        ProcessMode, SampleSpec, SEMANTIC_TEST_METHODS,
-    },
-    verification::{StructuralConfig, VerificationLevel},
-};
 use dotscope::{
     deobfuscation::{DeobfuscationEngine, EngineConfig},
     metadata::validation::ValidationConfig,
+    testkit::{
+        fixture,
+        framework::{
+            assert_common_requirements, load_sample, print_summary, run_deobfuscation_test,
+            ProcessMode, SampleSpec, SEMANTIC_TEST_METHODS,
+        },
+        verification::{StructuralConfig, VerificationLevel},
+    },
     CilObject,
 };
 
-const SAMPLES_DIR: &str = "tests/samples/packers/obfuscar/2.2.50";
+const SAMPLES_DIR: &str = "packers/obfuscar/2.2.50";
 
 /// Expected protections in an Obfuscar sample.
 #[derive(Debug, Clone, Default)]
@@ -154,16 +153,8 @@ fn test_all_obfuscar_samples() {
         Some(load_sample(SAMPLES_DIR, "original.exe").expect("the unprotected original loads"));
 
     let mut results = Vec::new();
-    let mut skipped = 0;
 
     for sample in &samples {
-        let path = format!("{}/{}", SAMPLES_DIR, sample.filename);
-        if !std::path::Path::new(&path).exists() {
-            eprintln!("Skipping test: sample not found at {}", path);
-            skipped += 1;
-            continue;
-        }
-
         results.push(run_deobfuscation_test(
             sample,
             SAMPLES_DIR,
@@ -172,14 +163,6 @@ fn test_all_obfuscar_samples() {
             EngineConfig::default(),
             ProcessMode::Assembly,
         ));
-    }
-
-    if results.is_empty() {
-        eprintln!(
-            "All {} Obfuscar samples skipped (not found in {}). Generate samples with: cd {}/generate && ./generate.sh",
-            skipped, SAMPLES_DIR, SAMPLES_DIR
-        );
-        return;
     }
 
     print_summary(&results, "OBFUSCAR", |result| {
@@ -232,11 +215,7 @@ fn test_all_obfuscar_samples() {
 /// Test that the Obfuscar detection doesn't false-positive on ConfuserEx samples.
 #[test]
 fn test_obfuscar_no_false_positives_on_confuserex() {
-    let confuserex_path = "tests/samples/packers/confuserex/1.6.0/original.exe";
-    if !std::path::Path::new(confuserex_path).exists() {
-        eprintln!("Skipping: ConfuserEx sample not found");
-        return;
-    }
+    let confuserex_path = fixture("packers/confuserex/1.6.0/original.exe");
 
     let assembly =
         CilObject::from_path_with_validation(confuserex_path, ValidationConfig::analysis())
@@ -265,11 +244,7 @@ fn test_obfuscar_detection_scoring() {
     ];
 
     for filename in &samples_with_strings {
-        let path = format!("{}/{}", SAMPLES_DIR, filename);
-        if !std::path::Path::new(&path).exists() {
-            eprintln!("Skipping: {} not found", filename);
-            continue;
-        }
+        let path = fixture(&format!("{}/{}", SAMPLES_DIR, filename));
 
         let assembly = CilObject::from_path_with_validation(&path, ValidationConfig::analysis())
             .unwrap_or_else(|e| panic!("Failed to load {}: {}", filename, e));
@@ -302,11 +277,7 @@ fn test_obfuscar_detection_scoring() {
 /// (no string hiding means no high-confidence signal).
 #[test]
 fn test_obfuscar_rename_only_below_threshold() {
-    let path = format!("{}/obfuscar_rename_only.exe", SAMPLES_DIR);
-    if !std::path::Path::new(&path).exists() {
-        eprintln!("Skipping: obfuscar_rename_only.exe not found");
-        return;
-    }
+    let path = fixture(&format!("{}/obfuscar_rename_only.exe", SAMPLES_DIR));
 
     let assembly = CilObject::from_path_with_validation(&path, ValidationConfig::analysis())
         .expect("Failed to load rename-only sample");

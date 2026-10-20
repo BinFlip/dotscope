@@ -86,7 +86,11 @@ mistralrs = { version = "0.8.1", optional = true, features = ["metal"] }
 mistralrs = { version = "0.8.1", optional = true }
 
 [dev-dependencies]
+# The integration tests reach the in-crate testkit; Cargo unifies this with the crate under
+# test, so `dotscope::testkit` and the tested types are one crate instance.
+dotscope = { path = ".", features = ["testkit"] }
 criterion = "0.8.2"
+toml = "0.9.12"
 env_logger = "0.11.11"
 clap = { version = "4.6.4", features = ["derive"] }
 ctrlc = "3.5.2"
@@ -129,6 +133,10 @@ deobfuscation = ["compiler", "x86", "emulation"]
 # Without this feature, the renamer falls back to simple sequential names (A, B, AA...).
 # GPU acceleration is automatic: Metal on macOS, CUDA-ready on Linux/Windows.
 smart-rename = ["deobfuscation", "dep:mistralrs", "dep:tokio"]
+
+# Test support (`dotscope::testkit`) for the crate's own integration tests: builders,
+# factories, fixtures and the sample harness. Unstable: not part of the semver surface.
+testkit = []
 
 # Skip expensive validation tests that use ProjectLoader with dependency resolution.
 # These tests are slow on CI runners with limited cores/IO. Use this feature on slow runners (e.g., macOS/Windows CI).

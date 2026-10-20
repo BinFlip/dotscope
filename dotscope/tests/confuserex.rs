@@ -21,22 +21,21 @@
 
 #![cfg(feature = "deobfuscation")]
 
-mod common;
-
-use common::{
-    framework::{
-        assert_common_requirements, load_sample, print_summary, run_deobfuscation_test,
-        ProcessMode, SampleSpec, TestResult, SEMANTIC_TEST_METHODS,
-    },
-    verification::{StructuralConfig, VerificationLevel},
-};
 use dotscope::{
     deobfuscation::{DeobfuscationEngine, EngineConfig},
-    metadata::tables::ManifestResourceRaw,
+    metadata::tables::{ManifestResourceRaw, TableId},
+    testkit::{
+        fixture,
+        framework::{
+            assert_common_requirements, load_sample, print_summary, run_deobfuscation_test,
+            ProcessMode, SampleSpec, TestResult, SEMANTIC_TEST_METHODS,
+        },
+        verification::{StructuralConfig, VerificationLevel},
+    },
     CilObject,
 };
 
-const SAMPLES_DIR: &str = "tests/samples/packers/confuserex/1.6.0";
+const SAMPLES_DIR: &str = "packers/confuserex/1.6.0";
 
 /// Expected protections in a sample.
 #[derive(Debug, Clone, Default)]
@@ -475,16 +474,8 @@ fn test_all_confuserex_samples() {
     let original_asm =
         Some(load_sample(SAMPLES_DIR, "original.exe").expect("the unprotected original loads"));
     let mut results = Vec::new();
-    let mut skipped = 0;
 
     for sample in &samples {
-        let path = format!("{}/{}", SAMPLES_DIR, sample.filename);
-        if !std::path::Path::new(&path).exists() {
-            eprintln!("Skipping test: sample not found at {}", path);
-            skipped += 1;
-            continue;
-        }
-
         results.push(run_deobfuscation_test(
             sample,
             SAMPLES_DIR,
@@ -493,14 +484,6 @@ fn test_all_confuserex_samples() {
             EngineConfig::default(),
             ProcessMode::Assembly,
         ));
-    }
-
-    if results.is_empty() {
-        eprintln!(
-            "All {} ConfuserEx samples skipped (not found in {})",
-            skipped, SAMPLES_DIR
-        );
-        return;
     }
 
     print_confuserex_summary(&results);
@@ -770,12 +753,52 @@ fn manifest_resource_order(assembly: &CilObject) -> Vec<String> {
 fn restored_resources_keep_the_applications_order() {
     let engine = DeobfuscationEngine::new(EngineConfig::default());
     let (output, _) = engine
-        .process_file("tests/samples/packers/confuserex/1.6.0/mkaring_normal.exe")
+        .process_file(fixture("packers/confuserex/1.6.0/mkaring_normal.exe"))
         .unwrap();
-    let original =
-        CilObject::from_path("tests/samples/packers/confuserex/1.6.0/original.exe").unwrap();
+    let original = CilObject::from_path(fixture("packers/confuserex/1.6.0/original.exe")).unwrap();
 
     let restored = manifest_resource_order(&output);
     assert!(!restored.is_empty(), "the resources are restored");
     assert_eq!(restored, manifest_resource_order(&original));
+}
+
+/// ConfuserEx's type scrambler makes `BuildMessage` generic and calls `BuildMessage<string>`
+/// through a MethodSpec. Cleanup keeps the generic method its callers still call, and each of
+/// their MethodSpecs still instantiates it.
+#[test]
+fn a_generic_method_called_through_a_method_spec_survives_cleanup() {
+    let path = fixture("packers/confuserex/1.6.0/mkaring_typescramble.exe");
+    let engine = DeobfuscationEngine::new(EngineConfig::default());
+    let (output, _) = engine.process_file(path).expect("deobfuscates");
+
+    let method_named = |name: &str| {
+        output
+            .methods()
+            .iter()
+            .find(|entry| entry.value().name == name)
+            .map(|entry| entry.value().token)
+    };
+    let build_message = method_named("BuildMessage").expect("BuildMessage survives");
+    let resolver = output.resolver();
+    for caller in ["SayHello", "SayGoodbye"] {
+        let caller = method_named(caller).expect("caller survives");
+        let instantiations: Vec<_> = output
+            .method(&caller)
+            .expect("caller")
+            .instructions()
+            .filter_map(|instr| instr.get_token_operand())
+            .filter(|token| token.is_table(TableId::MethodSpec))
+            .collect();
+        assert!(
+            !instantiations.is_empty(),
+            "{caller} calls through a MethodSpec"
+        );
+        for token in instantiations {
+            assert_eq!(
+                resolver.resolve_method(token),
+                Some(build_message),
+                "{token}"
+            );
+        }
+    }
 }

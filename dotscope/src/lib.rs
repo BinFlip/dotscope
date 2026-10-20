@@ -277,9 +277,12 @@ pub(crate) mod error;
 pub(crate) mod file;
 pub(crate) mod utils;
 
-/// Shared functionality which is used in unit- and integration-tests
-#[cfg(test)]
-pub(crate) mod test;
+/// Test support shared by the unit and integration tests: builders, factories, fixtures,
+/// the sample harness. Unstable and outside the semver surface; integration tests reach it
+/// through the `testkit` feature.
+#[cfg(any(test, feature = "testkit"))]
+#[doc(hidden)]
+pub mod testkit;
 
 /// ILDasm-compatible CIL disassembly formatter.
 ///

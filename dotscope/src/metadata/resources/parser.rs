@@ -1265,7 +1265,7 @@ impl Resource {
 
 #[cfg(test)]
 mod tests {
-    use crate::test::verify_wbdll_resource_buffer;
+    use crate::testkit::verify_wbdll_resource_buffer;
 
     #[test]
     fn wb_example() {

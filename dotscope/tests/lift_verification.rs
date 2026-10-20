@@ -36,6 +36,7 @@ use std::{
 
 use dotscope::{
     analysis::{SsaVerifier, VerifyLevel},
+    testkit::fixtures::samples_dir,
     CilObject,
 };
 
@@ -126,7 +127,7 @@ impl Findings {
 /// release like the rest of this crate's suite.
 #[test]
 fn every_lifted_method_is_well_formed() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/samples");
+    let root = samples_dir();
     let assemblies = sample_assemblies(&root);
     assert!(
         !assemblies.is_empty(),

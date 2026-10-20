@@ -247,7 +247,7 @@ fn imported_value_types(header: &TablesHeader, blobs: &Blob) -> HashSet<Token> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{metadata::typesystem::CilFlavor, test::helpers::test_assembly_arc};
+    use crate::{metadata::typesystem::CilFlavor, testkit::helpers::test_assembly_arc};
 
     #[test]
     fn an_imported_struct_is_a_value_type() {

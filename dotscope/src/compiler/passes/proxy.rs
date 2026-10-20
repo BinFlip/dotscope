@@ -831,7 +831,7 @@ mod tests {
             CompilerContext, SsaPass,
         },
         metadata::{tables::TableId, token::Token},
-        test::helpers::test_assembly_arc,
+        testkit::{fixture, helpers::test_assembly_arc},
         CilObject,
     };
 
@@ -1099,7 +1099,7 @@ mod tests {
     #[test]
     fn a_runtime_method_is_not_bound_to_a_namesake_in_the_module() {
         let assembly =
-            CilObject::from_path("tests/samples/packers/jiejie/source/jiejie_resources_only.exe")
+            CilObject::from_path(fixture("packers/jiejie/source/jiejie_resources_only.exe"))
                 .unwrap();
         for entry in assembly.refs_members().iter() {
             let member_ref = entry.value();

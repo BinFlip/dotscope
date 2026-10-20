@@ -42,18 +42,14 @@ mod tests {
         assembly::Operand,
         deobfuscation::{engine::DeobfuscationEngine, EngineConfig},
         metadata::validation::ValidationConfig,
+        testkit::fixture,
         CilObject,
     };
 
     fn load_nr_sample(name: &str) -> CilObject {
-        let path = format!("tests/samples/packers/netreactor/7.5.0/{name}");
+        let path = fixture(&format!("packers/netreactor/7.5.0/{name}"));
         CilObject::from_path_with_validation(&path, ValidationConfig::analysis())
             .unwrap_or_else(|e| panic!("Failed to load {name}: {e}"))
-    }
-
-    fn sample_exists(name: &str) -> bool {
-        let path = format!("tests/samples/packers/netreactor/7.5.0/{name}");
-        std::path::Path::new(&path).exists()
     }
 
     // Collects all ldstr string literals from an assembly by walking method IL.
@@ -85,11 +81,6 @@ mod tests {
     // Validates: detection fires, strings are decrypted, decrypted strings match original.
     #[test]
     fn test_nr_string_decryption() {
-        if !sample_exists("reactor_strings.exe") {
-            eprintln!("Skipping: reactor_strings.exe not found");
-            return;
-        }
-
         let _ = env_logger::builder()
             .filter_level(log::LevelFilter::Debug)
             .is_test(true)
@@ -185,11 +176,6 @@ mod tests {
     // Same test but for the combined necrobit + strings sample.
     #[test]
     fn test_nr_necrobit_strings_decryption() {
-        if !sample_exists("reactor_necrobit_strings.exe") {
-            eprintln!("Skipping: reactor_necrobit_strings.exe not found");
-            return;
-        }
-
         let _ = env_logger::builder()
             .filter_level(log::LevelFilter::Debug)
             .is_test(true)

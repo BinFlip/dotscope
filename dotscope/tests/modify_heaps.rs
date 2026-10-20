@@ -12,9 +12,9 @@
 //! Tests for modifying metadata heaps (strings, blobs, GUIDs, userstrings) and verifying
 //! that changes are correctly persisted through the write pipeline.
 
-use dotscope::prelude::*;
+use dotscope::{prelude::*, testkit::fixture};
 
-const TEST_ASSEMBLY_PATH: &str = "tests/samples/crafted_2.exe";
+const TEST_ASSEMBLY_PATH: &str = "crafted_2.exe";
 
 /// Helper function to perform a round-trip test with specific verification
 fn perform_round_trip_test<F, V>(modify_fn: F, verify_fn: V) -> Result<()>
@@ -23,7 +23,7 @@ where
     V: FnOnce(&CilAssemblyView) -> Result<()>,
 {
     // Load original assembly
-    let mut assembly = CilAssembly::from_path(TEST_ASSEMBLY_PATH)?;
+    let mut assembly = CilAssembly::from_path(fixture(TEST_ASSEMBLY_PATH))?;
 
     // Apply modifications
     modify_fn(&mut assembly)?;
@@ -308,7 +308,7 @@ fn test_blob_heap_replacement() -> Result<()> {
     // the blob heap. This test replaces the heap while preserving original content.
 
     // Load the assembly first to get the original blob heap
-    let assembly = CilAssembly::from_path(TEST_ASSEMBLY_PATH)?;
+    let assembly = CilAssembly::from_path(fixture(TEST_ASSEMBLY_PATH))?;
     let original_blob_data = assembly
         .view()
         .blobs()

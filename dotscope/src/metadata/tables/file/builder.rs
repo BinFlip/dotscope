@@ -324,7 +324,7 @@ mod tests {
     use super::*;
     use crate::{
         cilassembly::ChangeRefKind, metadata::tables::FileAttributes,
-        test::factories::table::assemblyref::get_test_assembly,
+        testkit::factories::table::assemblyref::get_test_assembly,
     };
 
     #[test]

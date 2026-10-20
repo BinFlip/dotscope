@@ -350,7 +350,7 @@ impl BasicBlock {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::factories::general::disassembler::create_sample_instruction;
+    use crate::testkit::factories::general::disassembler::create_sample_instruction;
 
     #[test]
     fn test_basic_block_new() {

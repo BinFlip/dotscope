@@ -21,22 +21,21 @@
 
 #![cfg(feature = "deobfuscation")]
 
-mod common;
-
-use common::{
-    framework::{
-        assert_common_requirements, load_sample, print_summary, run_deobfuscation_test,
-        ProcessMode, SampleSpec, SEMANTIC_TEST_METHODS,
-    },
-    verification::{AssemblyStats, StructuralConfig, VerificationLevel},
-};
 use dotscope::{
     deobfuscation::{DeobfuscationEngine, EngineConfig},
     metadata::validation::ValidationConfig,
+    testkit::{
+        fixture,
+        framework::{
+            assert_common_requirements, load_sample, print_summary, run_deobfuscation_test,
+            ProcessMode, SampleSpec, SEMANTIC_TEST_METHODS,
+        },
+        verification::{AssemblyStats, StructuralConfig, VerificationLevel},
+    },
     CilObject,
 };
 
-const SAMPLES_DIR: &str = "tests/samples/packers/jiejie/source";
+const SAMPLES_DIR: &str = "packers/jiejie/source";
 
 /// Expected protections in a JIEJIE.NET sample.
 #[derive(Debug, Clone, Default)]
@@ -248,26 +247,12 @@ fn test_all_jiejie_samples() {
     // Load original.exe for semantic and structural comparison
     let original_asm =
         Some(load_sample(SAMPLES_DIR, "original.exe").expect("the unprotected original loads"));
-    let original_path = format!("{}/original.exe", SAMPLES_DIR);
-    let original_stats = if std::path::Path::new(&original_path).exists() {
-        Some(AssemblyStats::from_file(std::path::Path::new(
-            &original_path,
-        )))
-    } else {
-        None
-    };
+    let original_path = fixture(&format!("{}/original.exe", SAMPLES_DIR));
+    let original_stats = Some(AssemblyStats::from_file(&original_path));
 
     let mut results = Vec::new();
-    let mut skipped = 0;
 
     for sample in &samples {
-        let path = format!("{}/{}", SAMPLES_DIR, sample.filename);
-        if !std::path::Path::new(&path).exists() {
-            eprintln!("Skipping test: sample not found at {}", path);
-            skipped += 1;
-            continue;
-        }
-
         results.push(run_deobfuscation_test(
             sample,
             SAMPLES_DIR,
@@ -276,15 +261,6 @@ fn test_all_jiejie_samples() {
             EngineConfig::default(),
             ProcessMode::Assembly,
         ));
-    }
-
-    if results.is_empty() {
-        eprintln!(
-            "All {} JIEJIE.NET samples skipped (not found in {}). \
-             Generate with: tests/samples/packers/jiejie/source/generate.ps1",
-            skipped, SAMPLES_DIR
-        );
-        return;
     }
 
     print_summary(&results, "JIEJIE.NET", |result| {
@@ -353,15 +329,8 @@ fn test_all_jiejie_samples() {
 fn test_jiejie_samples_loadable() {
     let samples = all_samples();
     let mut loaded = 0;
-    let mut skipped = 0;
 
     for sample in &samples {
-        let path = format!("{}/{}", SAMPLES_DIR, sample.filename);
-        if !std::path::Path::new(&path).exists() {
-            skipped += 1;
-            continue;
-        }
-
         let assembly = match load_sample(SAMPLES_DIR, sample.filename) {
             Ok(a) => a,
             Err(e) => panic!("{}: Failed to load sample: {}", sample.filename, e),
@@ -388,25 +357,13 @@ fn test_jiejie_samples_loadable() {
         loaded += 1;
     }
 
-    if loaded == 0 {
-        eprintln!(
-            "All {} JIEJIE.NET samples skipped (not found). \
-             Generate with: tests/samples/packers/jiejie/source/generate.ps1",
-            skipped
-        );
-    } else {
-        eprintln!("\nLoaded {}/{} JIEJIE.NET samples", loaded, samples.len());
-    }
+    eprintln!("\nLoaded {}/{} JIEJIE.NET samples", loaded, samples.len());
 }
 
 /// Test that the original sample is NOT detected as JIEJIE.NET.
 #[test]
 fn test_jiejie_no_false_positive_on_original() {
-    let path = format!("{}/original.exe", SAMPLES_DIR);
-    if !std::path::Path::new(&path).exists() {
-        eprintln!("Skipping: original.exe not found");
-        return;
-    }
+    let path = fixture(&format!("{}/original.exe", SAMPLES_DIR));
 
     let assembly = CilObject::from_path_with_validation(&path, ValidationConfig::analysis())
         .expect("Failed to load original");
@@ -433,11 +390,7 @@ fn test_jiejie_no_confuserex_false_positive() {
     ];
 
     for filename in &jiejie_samples {
-        let path = format!("{}/{}", SAMPLES_DIR, filename);
-        if !std::path::Path::new(&path).exists() {
-            eprintln!("Skipping: {} not found", filename);
-            continue;
-        }
+        let path = fixture(&format!("{}/{}", SAMPLES_DIR, filename));
 
         let assembly = CilObject::from_path_with_validation(&path, ValidationConfig::analysis())
             .unwrap_or_else(|e| panic!("Failed to load {}: {}", filename, e));

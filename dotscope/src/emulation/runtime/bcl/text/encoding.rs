@@ -1018,7 +1018,7 @@ mod tests {
             EmValue,
         },
         metadata::{token::Token, typesystem::PointerSize},
-        test::emulation::create_test_thread,
+        testkit::emulation::create_test_thread,
     };
 
     #[test]

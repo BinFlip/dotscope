@@ -361,52 +361,48 @@ impl Default for NativeExportsBuilder {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
 
     use super::*;
-    use crate::cilassembly::CilAssembly;
+    use crate::{cilassembly::CilAssembly, testkit::fixture};
 
     #[test]
     fn test_native_exports_builder_basic() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
-            let result = NativeExportsBuilder::new("TestLibrary.dll")
-                .add_function("MyFunction", 1, 0x1000)
-                .add_function("AnotherFunction", 2, 0x2000)
-                .build(&mut assembly);
+        let path = fixture("WindowsBase.dll");
+        let mut assembly = CilAssembly::from_path(&path).expect("the fixture loads");
+        let result = NativeExportsBuilder::new("TestLibrary.dll")
+            .add_function("MyFunction", 1, 0x1000)
+            .add_function("AnotherFunction", 2, 0x2000)
+            .build(&mut assembly);
 
-            // Should succeed with current placeholder implementation
-            assert!(result.is_ok());
-        }
+        // Should succeed with current placeholder implementation
+        assert!(result.is_ok());
     }
 
     #[test]
     fn test_native_exports_builder_with_ordinals() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
-            let result = NativeExportsBuilder::new("TestLibrary.dll")
-                .add_function_by_ordinal(100, 0x1000)
-                .add_function("NamedFunction", 101, 0x2000)
-                .build(&mut assembly);
+        let path = fixture("WindowsBase.dll");
+        let mut assembly = CilAssembly::from_path(&path).expect("the fixture loads");
+        let result = NativeExportsBuilder::new("TestLibrary.dll")
+            .add_function_by_ordinal(100, 0x1000)
+            .add_function("NamedFunction", 101, 0x2000)
+            .build(&mut assembly);
 
-            // Should succeed with current placeholder implementation
-            assert!(result.is_ok());
-        }
+        // Should succeed with current placeholder implementation
+        assert!(result.is_ok());
     }
 
     #[test]
     fn test_native_exports_builder_with_forwarders() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
-            let result = NativeExportsBuilder::new("TestLibrary.dll")
-                .add_function("RegularFunction", 1, 0x1000)
-                .add_forwarder("ForwardedFunc", 2, "kernel32.dll.GetCurrentProcessId")
-                .add_forwarder("OrdinalForward", 3, "user32.dll.#120")
-                .build(&mut assembly);
+        let path = fixture("WindowsBase.dll");
+        let mut assembly = CilAssembly::from_path(&path).expect("the fixture loads");
+        let result = NativeExportsBuilder::new("TestLibrary.dll")
+            .add_function("RegularFunction", 1, 0x1000)
+            .add_forwarder("ForwardedFunc", 2, "kernel32.dll.GetCurrentProcessId")
+            .add_forwarder("OrdinalForward", 3, "user32.dll.#120")
+            .build(&mut assembly);
 
-            // Should succeed with current placeholder implementation
-            assert!(result.is_ok());
-        }
+        // Should succeed with current placeholder implementation
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -461,13 +457,12 @@ mod tests {
 
     #[test]
     fn test_native_exports_builder_empty() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
-            let result = NativeExportsBuilder::new("EmptyLibrary.dll").build(&mut assembly);
+        let path = fixture("WindowsBase.dll");
+        let mut assembly = CilAssembly::from_path(&path).expect("the fixture loads");
+        let result = NativeExportsBuilder::new("EmptyLibrary.dll").build(&mut assembly);
 
-            // Should succeed even with no exports
-            assert!(result.is_ok());
-        }
+        // Should succeed even with no exports
+        assert!(result.is_ok());
     }
 
     #[test]

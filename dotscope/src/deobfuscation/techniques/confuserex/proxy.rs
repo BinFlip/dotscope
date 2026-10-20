@@ -268,12 +268,12 @@ mod tests {
             confuserex::proxy::{ConfuserExReferenceProxy, ProxyFindings},
             Technique,
         },
-        test::helpers::load_sample,
+        testkit::helpers::load_sample,
     };
 
     #[test]
     fn test_detect_positive() {
-        let assembly = load_sample("tests/samples/packers/confuserex/1.6.0/mkaring_normal.exe");
+        let assembly = load_sample("packers/confuserex/1.6.0/mkaring_normal.exe");
 
         let technique = ConfuserExReferenceProxy;
         let detection = technique.detect(&assembly);
@@ -299,7 +299,7 @@ mod tests {
 
     #[test]
     fn test_detect_negative() {
-        let assembly = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+        let assembly = load_sample("packers/confuserex/1.6.0/original.exe");
 
         let technique = ConfuserExReferenceProxy;
         let detection = technique.detect(&assembly);

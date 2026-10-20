@@ -359,7 +359,7 @@ impl TableOperation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::factories::table::cilassembly::create_test_row;
+    use crate::testkit::factories::table::cilassembly::create_test_row;
 
     #[test]
     fn test_operation_get_rid_for_all_variants() {

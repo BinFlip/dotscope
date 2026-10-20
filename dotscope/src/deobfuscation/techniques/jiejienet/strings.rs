@@ -387,12 +387,12 @@ mod tests {
     use crate::{
         deobfuscation::techniques::Technique,
         emulation::{EmValue, EmulationOutcome, ProcessBuilder},
-        test::helpers::load_sample,
+        testkit::helpers::load_sample,
     };
 
     #[test]
     fn test_detect_positive_strings_only() {
-        let asm = load_sample("tests/samples/packers/jiejie/source/jiejie_strings_only.exe");
+        let asm = load_sample("packers/jiejie/source/jiejie_strings_only.exe");
         let technique = JiejieNetStrings;
         let detection = technique.detect(&asm);
 
@@ -416,7 +416,7 @@ mod tests {
 
     #[test]
     fn test_detect_positive_highstrings() {
-        let asm = load_sample("tests/samples/packers/jiejie/source/jiejie_highstrings.exe");
+        let asm = load_sample("packers/jiejie/source/jiejie_highstrings.exe");
         let technique = JiejieNetStrings;
         let detection = technique.detect(&asm);
 
@@ -438,7 +438,7 @@ mod tests {
 
     #[test]
     fn test_detect_negative_controlflow_only() {
-        let asm = load_sample("tests/samples/packers/jiejie/source/jiejie_controlflow_only.exe");
+        let asm = load_sample("packers/jiejie/source/jiejie_controlflow_only.exe");
         let technique = JiejieNetStrings;
         let detection = technique.detect(&asm);
 
@@ -450,7 +450,7 @@ mod tests {
 
     #[test]
     fn test_detect_negative_original() {
-        let asm = load_sample("tests/samples/packers/jiejie/source/original.exe");
+        let asm = load_sample("packers/jiejie/source/original.exe");
         let technique = JiejieNetStrings;
         let detection = technique.detect(&asm);
 
@@ -463,7 +463,7 @@ mod tests {
     /// first (dependency), then the string class .cctor, and checks the results.
     #[test]
     fn test_emulate_string_cctor() {
-        let asm = load_sample("tests/samples/packers/jiejie/source/jiejie_strings_only.exe");
+        let asm = load_sample("packers/jiejie/source/jiejie_strings_only.exe");
         let technique = JiejieNetStrings;
         let detection = technique.detect(&asm);
         assert!(detection.is_detected());

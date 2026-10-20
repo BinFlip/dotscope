@@ -6,17 +6,17 @@
 
 extern crate dotscope;
 
-use std::{fs, hint::black_box, path::PathBuf};
+use std::{fs, hint::black_box};
 
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
-use dotscope::metadata::cor20header::Cor20Header;
+use dotscope::{metadata::cor20header::Cor20Header, testkit::fixture};
 
 /// Benchmark parsing the CLI header from a real assembly.
 ///
 /// The CLI header is exactly 72 bytes and is parsed frequently during
 /// assembly loading. This benchmark measures the parsing overhead.
 fn bench_cor20_header_parse(c: &mut Criterion) {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WB_COR20_HEADER.bin");
+    let path = fixture("WB_COR20_HEADER.bin");
 
     let Ok(data) = fs::read(&path) else {
         eprintln!(

@@ -87,11 +87,11 @@ impl Technique for NetReactorEmptyResource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::validation::ValidationConfig;
+    use crate::{metadata::validation::ValidationConfig, testkit::fixture};
 
     fn load(name: &str) -> CilObject {
         CilObject::from_path_with_validation(
-            format!("tests/samples/packers/netreactor/7.5.0/{name}"),
+            fixture(&format!("packers/netreactor/7.5.0/{name}")),
             ValidationConfig::analysis(),
         )
         .unwrap()

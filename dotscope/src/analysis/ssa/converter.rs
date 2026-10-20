@@ -2165,7 +2165,7 @@ mod tests {
     use crate::{
         analysis::{SsaVerifier, TypeRef, VerifyLevel},
         assembly::{decode_blocks, InstructionAssembler},
-        test::TestTypeProvider,
+        testkit::TestTypeProvider,
     };
 
     /// Helper to build a CFG from assembled bytecode.

@@ -136,7 +136,7 @@ mod tests {
     use crate::{
         emulation::{memory::DictionaryKey, EmValue},
         metadata::{token::Token, typesystem::CilFlavor},
-        test::emulation::create_test_thread,
+        testkit::emulation::create_test_thread,
     };
 
     /// List → add elements → verify via get, then verify count.

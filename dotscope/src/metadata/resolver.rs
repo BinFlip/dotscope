@@ -709,7 +709,10 @@ impl<'a> TokenResolver<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{metadata::signatures::SignatureParameter, test::builders::MethodBuilder};
+    use crate::{
+        metadata::signatures::SignatureParameter,
+        testkit::{builders::MethodBuilder, fixture},
+    };
 
     fn param(base: TypeSignature, by_ref: bool) -> SignatureParameter {
         SignatureParameter {
@@ -853,7 +856,7 @@ mod tests {
     /// to a method of that definition.
     #[test]
     fn a_member_of_a_generic_instantiation_resolves_to_the_definitions() {
-        let assembly = CilObject::from_path("tests/samples/WindowsBase.dll").unwrap();
+        let assembly = CilObject::from_path(fixture("WindowsBase.dll")).unwrap();
         let resolver = assembly.resolver();
         let mut instantiated = 0;
         for entry in assembly.refs_members().iter() {

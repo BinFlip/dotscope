@@ -12,14 +12,14 @@
 //! Tests for basic assembly writing functionality, including unmodified assemblies
 //! and simple modifications to verify the core write pipeline works correctly.
 
-use dotscope::prelude::*;
+use dotscope::{prelude::*, testkit::fixture, CleanupRequest};
 
-const TEST_ASSEMBLY_PATH: &str = "tests/samples/crafted_2.exe";
+const TEST_ASSEMBLY_PATH: &str = "crafted_2.exe";
 
 #[test]
 fn test_write_unmodified_assembly() -> Result<()> {
     // Load assembly without modifications
-    let mut assembly = CilAssembly::from_path(TEST_ASSEMBLY_PATH)?;
+    let mut assembly = CilAssembly::from_path(fixture(TEST_ASSEMBLY_PATH))?;
 
     // Write to memory
     let bytes = assembly.to_memory()?;
@@ -58,7 +58,7 @@ fn test_write_unmodified_assembly() -> Result<()> {
 #[test]
 fn test_write_with_minimal_modification() -> Result<()> {
     // Load assembly and make a minimal modification
-    let mut assembly = CilAssembly::from_path(TEST_ASSEMBLY_PATH)?;
+    let mut assembly = CilAssembly::from_path(fixture(TEST_ASSEMBLY_PATH))?;
 
     // Add a single string - minimal modification to trigger write pipeline
     let test_string = "MinimalTestString";
@@ -93,7 +93,7 @@ fn test_write_with_minimal_modification() -> Result<()> {
 #[test]
 fn test_write_preserves_existing_data() -> Result<()> {
     // Test that writing preserves existing assembly data
-    let mut assembly = CilAssembly::from_path(TEST_ASSEMBLY_PATH)?;
+    let mut assembly = CilAssembly::from_path(fixture(TEST_ASSEMBLY_PATH))?;
 
     // Capture some original data
     let original_strings_count = assembly
@@ -148,7 +148,7 @@ fn test_write_preserves_existing_data() -> Result<()> {
 #[test]
 fn test_multiple_write_operations() -> Result<()> {
     // Test that an assembly can be written multiple times
-    let mut assembly = CilAssembly::from_path(TEST_ASSEMBLY_PATH)?;
+    let mut assembly = CilAssembly::from_path(fixture(TEST_ASSEMBLY_PATH))?;
 
     // Write first time
     let bytes1 = assembly.to_memory()?;
@@ -171,5 +171,91 @@ fn test_multiple_write_operations() -> Result<()> {
         "Both written files should have the same module count"
     );
 
+    Ok(())
+}
+
+/// ConfuserEx's "invalid metadata" adds a DeclSecurity row whose parent's tag names no table
+/// (issue #290). The CLR reads that parent as null; dotscope reads it the same way, and an
+/// unmodified assembly holding it writes back, the parent as a null reference.
+#[test]
+fn an_unassigned_coded_index_writes_back_as_null() -> Result<()> {
+    let path = fixture("packers/confuserex/1.6.0/mkaring_invalidmetadata.exe");
+    let lenient = ValidationConfig {
+        lenient: true,
+        ..ValidationConfig::minimal()
+    };
+    let mut assembly = CilAssembly::from_bytes_with_validation(std::fs::read(path)?, lenient)?;
+    let bytes = assembly.to_memory()?;
+
+    let written = CilAssemblyView::from_mem_with_validation(bytes, ValidationConfig::disabled())?;
+    let rows: Vec<DeclSecurityRaw> = written
+        .tables()
+        .unwrap()
+        .table::<DeclSecurityRaw>()
+        .unwrap()
+        .into_iter()
+        .collect::<Result<_>>()?;
+    assert_eq!(rows.len(), 1, "the row is written back, not dropped");
+    assert_eq!(rows[0].parent.row, 0, "its parent is the null reference");
+    assert_eq!(rows[0].action, 0x7FFF);
+    Ok(())
+}
+
+/// Validation names an unassigned coded-index tag for what it is.
+#[test]
+fn validation_reports_an_unassigned_coded_index_tag() {
+    let path = fixture("packers/confuserex/1.6.0/mkaring_invalidmetadata.exe");
+    let error = CilAssemblyView::from_path_with_validation(path, ValidationConfig::production())
+        .err()
+        .expect("production validation refuses the image");
+    assert!(
+        error.to_string().contains("whose tag names no table"),
+        "unexpected error: {error}"
+    );
+}
+
+/// Deleting a method its caller still calls fails the write, naming both; the call is never
+/// retargeted to the method after it.
+#[test]
+fn deleting_a_called_method_without_its_caller_is_a_dangling_reference() -> Result<()> {
+    let path = fixture("packers/confuserex/1.6.0/original.exe");
+    let main = Token::new(0x0600_0003);
+    let say_hello = Token::new(0x0600_0006);
+
+    let mut request = CleanupRequest::new();
+    request.add_method(say_hello);
+
+    let mut assembly = CilAssembly::from_path(&path)?;
+    assembly.add_cleanup(&request);
+    let err = assembly.to_memory().unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::DanglingReference {
+                referrer: Referrer::Body(method),
+                target,
+            } if method == main && target == say_hello
+        ),
+        "{err}"
+    );
+
+    // Under the null policy the write goes through, with the call naming no method.
+    let mut assembly = CilAssembly::from_path(path)?;
+    assembly.add_cleanup(&request);
+    let bytes = assembly
+        .to_memory_with_config(GeneratorConfig::default().with_dangling(DanglingPolicy::Null))?;
+    let written = CilObject::from_mem_with_validation(bytes, ValidationConfig::disabled())?;
+    let calls: Vec<u32> = written
+        .method(&main)?
+        .instructions()
+        .filter(|i| i.mnemonic == "callvirt")
+        .filter_map(|i| i.get_token_operand())
+        .map(|t| t.value())
+        .collect();
+    assert_eq!(
+        calls.first(),
+        Some(&0x0600_0000),
+        "SayHello's call site holds the null MethodDef token, not SayGoodbye's: {calls:x?}"
+    );
     Ok(())
 }

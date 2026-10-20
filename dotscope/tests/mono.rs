@@ -5,15 +5,12 @@
 //! dependency resolution) and CilAssemblyView. This helps identify compatibility
 //! issues and the benefits of loading assemblies with their dependencies.
 
-mod common;
-
-use std::path::Path;
+use dotscope::testkit::fixture;
 
 #[test]
 #[ignore] // Large-scale compatibility test - run manually with: cargo test -- --ignored
 fn test_mono_assembly_compatibility() {
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-    let mono_path = Path::new(&manifest_dir).join("tests/samples/mono_4.8");
+    let mono_path = fixture("mono_4.8");
 
-    common::compatibility::run_assembly_compatibility_test(&mono_path, "MONO");
+    dotscope::testkit::compatibility::run_assembly_compatibility_test(&mono_path, "MONO");
 }

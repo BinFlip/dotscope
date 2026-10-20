@@ -479,7 +479,7 @@ mod tests {
     use super::*;
     use crate::{
         metadata::{identity::AssemblyIdentity, token::Token, typesystem::TypeRegistry},
-        test::{create_cil_type, create_exportedtype},
+        testkit::{create_cil_type, create_exportedtype},
     };
 
     #[test]

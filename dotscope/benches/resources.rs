@@ -2,18 +2,20 @@
 
 extern crate dotscope;
 
-use std::{fs, hint::black_box, path::PathBuf};
+use std::{fs, hint::black_box};
 
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
-use dotscope::metadata::resources::{parse_dotnet_resource, parse_dotnet_resource_ref};
+use dotscope::{
+    metadata::resources::{parse_dotnet_resource, parse_dotnet_resource_ref},
+    testkit::fixture,
+};
 
 /// Benchmark parsing from standalone .resources file (WindowsBase resources)
 ///
 /// This benchmark compares the performance of owned vs zero-copy resource parsing
 /// using a real .NET resources file extracted from WindowsBase.dll.
 fn bench_parse_resources_file(c: &mut Criterion) {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/samples/WB_FxResources.WindowsBase.SR.resources.bin");
+    let path = fixture("WB_FxResources.WindowsBase.SR.resources.bin");
 
     let Ok(data) = fs::read(&path) else {
         eprintln!(

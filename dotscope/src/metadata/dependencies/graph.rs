@@ -756,7 +756,7 @@ mod tests {
     use super::*;
     use crate::{
         metadata::dependencies::DependencyType,
-        test::helpers::dependencies::{create_test_dependency, create_test_identity},
+        testkit::helpers::dependencies::{create_test_dependency, create_test_identity},
     };
 
     #[test]

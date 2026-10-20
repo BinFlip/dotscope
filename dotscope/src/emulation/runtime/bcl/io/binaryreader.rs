@@ -1160,7 +1160,7 @@ mod tests {
             EmValue, HeapRef,
         },
         metadata::{token::Token, typesystem::PointerSize},
-        test::emulation::create_test_thread,
+        testkit::emulation::create_test_thread,
     };
 
     /// Helper to create a BinaryReader backed by a stream with the given data.

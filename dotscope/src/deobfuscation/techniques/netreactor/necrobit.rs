@@ -1019,28 +1019,24 @@ fn extract_bodies_from_image(
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
 
     use super::*;
     use crate::{
         deobfuscation::techniques::{Technique, WorkingAssembly},
         metadata::validation::ValidationConfig,
+        testkit::fixture,
         CilObject,
     };
 
     fn load_sample(name: &str) -> CilObject {
-        let path = format!("tests/samples/packers/netreactor/7.5.0/{name}");
+        let path = fixture(&format!("packers/netreactor/7.5.0/{name}"));
         CilObject::from_path_with_validation(&path, ValidationConfig::analysis())
             .unwrap_or_else(|e| panic!("Failed to load {name}: {e}"))
     }
 
     #[test]
     fn test_detect_positive() {
-        let path = "tests/samples/packers/netreactor/7.5.0/reactor_necrobit.exe";
-        if !Path::new(path).exists() {
-            eprintln!("Skipping test: sample not found at {path}");
-            return;
-        }
+        let _path = fixture("packers/netreactor/7.5.0/reactor_necrobit.exe");
 
         let assembly = load_sample("reactor_necrobit.exe");
         let technique = NetReactorNecroBit;
@@ -1115,11 +1111,6 @@ mod tests {
     /// Variant A: bodies live in a structured blob on the managed heap.
     #[test]
     fn restores_every_stub_in_a_necrobit_only_binary() {
-        if !Path::new("tests/samples/packers/netreactor/7.5.0/reactor_necrobit.exe").exists() {
-            eprintln!("Skipping test: sample not found");
-            return;
-        }
-
         let (restored, stubs) = restore_stub_bodies("reactor_necrobit.exe");
         assert!(stubs > 0, "the sample must actually have stubs");
         assert_eq!(
@@ -1135,11 +1126,6 @@ mod tests {
     /// the transform returned `Ok`.
     #[test]
     fn restores_every_stub_in_a_full_protection_binary() {
-        if !Path::new("tests/samples/packers/netreactor/7.5.0/reactor_full.exe").exists() {
-            eprintln!("Skipping test: sample not found");
-            return;
-        }
-
         let (restored, stubs) = restore_stub_bodies("reactor_full.exe");
         assert!(stubs > 0, "the sample must actually have stubs");
         assert_eq!(
@@ -1150,11 +1136,7 @@ mod tests {
 
     #[test]
     fn test_detect_negative() {
-        let path = "tests/samples/packers/netreactor/7.5.0/original.exe";
-        if !Path::new(path).exists() {
-            eprintln!("Skipping test: sample not found at {path}");
-            return;
-        }
+        let _path = fixture("packers/netreactor/7.5.0/original.exe");
 
         let assembly = load_sample("original.exe");
         let technique = NetReactorNecroBit;

@@ -83,6 +83,8 @@ jobs:
         RUSTFLAGS: "-Dwarnings"
 
     - name: Run tests
+      env:
+        DOTSCOPE_REQUIRE_TOOLS: "1"
       run: cargo test --release --lib --verbose
 
     - name: Run doc tests

@@ -3,12 +3,12 @@
 //! This module tests realistic scenarios where multiple builders are used together
 //! to create complete .NET types with properties, events, and methods.
 
-use std::path::PathBuf;
-
-use dotscope::{metadata::tables::TableId, prelude::*, ChangeRefKind, Result};
+use dotscope::{
+    metadata::tables::TableId, prelude::*, testkit::fixture, ChangeRefKind, Error, Result,
+};
 
 fn get_test_assembly() -> Result<CilAssembly> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+    let path = fixture("WindowsBase.dll");
     CilAssembly::from_path(&path)
 }
 
@@ -408,5 +408,73 @@ fn test_ultimate_integration_all_builders() -> Result<()> {
         ChangeRefKind::TableRow(TableId::TypeDef)
     );
 
+    Ok(())
+}
+
+/// A type and then a method appended without explicit lists: the type starts an empty method
+/// list at the next MethodDef row and an empty field list at the next Field row, so the
+/// method added after it is its own; the method starts an empty parameter list at the next
+/// Param row. Nothing that was in the file before changes owner.
+#[test]
+fn appended_rows_start_empty_lists_at_the_next_row() -> Result<()> {
+    let mut assembly = get_test_assembly()?;
+    let original = |table| assembly.original_table_row_count(table);
+    let (types, methods, fields, params) = (
+        original(TableId::TypeDef),
+        original(TableId::MethodDef),
+        original(TableId::Field),
+        original(TableId::Param),
+    );
+
+    TypeDefBuilder::new()
+        .name("AppendedType")
+        .namespace("Test")
+        .flags(TypeAttributes::PUBLIC | TypeAttributes::ABSTRACT)
+        .build(&mut assembly)?;
+    MethodDefBuilder::new()
+        .name("AppendedMethod")
+        .flags(0x0006 | 0x0040 | 0x0400) // Public, Virtual, Abstract
+        .impl_flags(0x0000) // IL
+        .signature(&[0x00, 0x00, 0x01])
+        .build(&mut assembly)?;
+
+    let view = CilAssemblyView::from_mem(assembly.to_memory()?)?;
+    let missing = |what: &str| Error::Other(format!("the written file has no {what}"));
+    let tables = view.tables().ok_or_else(|| missing("tables"))?;
+    let typedefs = tables
+        .table::<TypeDefRaw>()
+        .ok_or_else(|| missing("TypeDef table"))?;
+    let methoddefs = tables
+        .table::<MethodDefRaw>()
+        .ok_or_else(|| missing("MethodDef table"))?;
+    let last_type = typedefs
+        .get(types)?
+        .ok_or_else(|| missing("last original type"))?;
+    let appended_type = typedefs
+        .get(types + 1)?
+        .ok_or_else(|| missing("appended type"))?;
+    let appended_method = methoddefs
+        .get(methods + 1)?
+        .ok_or_else(|| missing("appended method"))?;
+
+    assert_eq!(
+        appended_type.method_list,
+        methods + 1,
+        "the appended method is the type's"
+    );
+    assert_eq!(
+        appended_type.field_list,
+        fields + 1,
+        "the type owns no field"
+    );
+    assert_eq!(
+        appended_method.param_list,
+        params + 1,
+        "the method owns no parameter"
+    );
+    assert!(
+        last_type.method_list <= methods + 1 && last_type.field_list <= fields + 1,
+        "the last original type keeps its members"
+    );
     Ok(())
 }

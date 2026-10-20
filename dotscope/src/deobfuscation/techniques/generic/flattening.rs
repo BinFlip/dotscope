@@ -162,7 +162,7 @@ impl Technique for GenericFlattening {
 
 #[cfg(test)]
 mod tests {
-    use crate::{deobfuscation::techniques::Technique, test::helpers::load_sample};
+    use crate::{deobfuscation::techniques::Technique, testkit::helpers::load_sample};
 
     /// Verify that IL-level detect() is a no-op (detection is SSA-based).
     ///
@@ -170,7 +170,7 @@ mod tests {
     /// tests and through `engine.detect()` which runs both IL + SSA phases.
     #[test]
     fn test_detect_is_noop() {
-        let asm = load_sample("tests/samples/packers/confuserex/1.6.0/mkaring_controlflow.exe");
+        let asm = load_sample("packers/confuserex/1.6.0/mkaring_controlflow.exe");
         let technique = super::GenericFlattening;
         let detection = technique.detect(&asm);
         assert!(
@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn test_detect_negative() {
-        let asm = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+        let asm = load_sample("packers/confuserex/1.6.0/original.exe");
         let technique = super::GenericFlattening;
         let detection = technique.detect(&asm);
         assert!(!detection.is_detected());

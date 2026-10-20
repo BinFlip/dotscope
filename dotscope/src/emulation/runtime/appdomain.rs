@@ -510,6 +510,7 @@ impl AppDomainState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testkit::fixture;
 
     #[test]
     fn test_app_domain_creation() {
@@ -519,8 +520,7 @@ mod tests {
 
     /// Loads the smallest sample available; only its identity as a parsed assembly matters.
     fn sample_assembly() -> Arc<CilObject> {
-        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/samples/WindowsBase.dll");
+        let path = fixture("WindowsBase.dll");
         Arc::new(CilObject::from_path(&path).expect("sample assembly must load"))
     }
 

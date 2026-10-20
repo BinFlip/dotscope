@@ -1469,7 +1469,7 @@ mod tests {
     use crate::{
         emulation::runtime::hook::HookManager,
         metadata::{token::Token, typesystem::PointerSize},
-        test::emulation::create_test_thread,
+        testkit::emulation::create_test_thread,
     };
 
     #[test]

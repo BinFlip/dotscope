@@ -2086,7 +2086,7 @@ mod tests {
         assembly::{
             BasicBlock, FlowType, Instruction, InstructionCategory, Operand, StackBehavior,
         },
-        test::builders::MethodBuilder,
+        testkit::builders::MethodBuilder,
     };
 
     #[test]

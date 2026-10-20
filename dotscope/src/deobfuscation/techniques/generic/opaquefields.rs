@@ -645,7 +645,7 @@ mod tests {
     use crate::{
         compiler::PassPhase,
         deobfuscation::techniques::{Technique, TechniqueCategory},
-        test::helpers::load_sample,
+        testkit::helpers::load_sample,
     };
 
     /// Pins the contract that the non-SSA `detect` entry point reports nothing.
@@ -660,7 +660,7 @@ mod tests {
     /// `AnalysisContext` with built SSA functions and belongs in the integration suite.
     #[test]
     fn detect_without_ssa_reports_nothing_by_contract() {
-        let asm = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+        let asm = load_sample("packers/confuserex/1.6.0/original.exe");
 
         let technique = GenericOpaquePredicates;
         let detection = technique.detect(&asm);
@@ -705,7 +705,7 @@ mod tests {
     /// assertion in this suite would notice. This pins the predicate that exclusion rests on.
     #[test]
     fn static_constructors_are_identified_for_the_store_scan() {
-        let asm = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+        let asm = load_sample("packers/confuserex/1.6.0/original.exe");
 
         let cctors: Vec<_> = asm
             .query_methods()

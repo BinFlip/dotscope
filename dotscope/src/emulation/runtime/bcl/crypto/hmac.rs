@@ -180,7 +180,7 @@ mod tests {
             EmValue,
         },
         metadata::{token::Token, typesystem::PointerSize},
-        test::emulation::create_test_thread,
+        testkit::emulation::create_test_thread,
         utils::{compute_hmac_sha256, compute_hmac_sha512},
     };
 

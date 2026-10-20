@@ -207,7 +207,8 @@ cd dotscope/fuzz && cargo +nightly fuzz run cilobject -- -max_total_time=1800  #
 
 ### Test Data
 
-- Use the sample files in `tests/samples/`
+- Use the sample files in `tests/samples/` through `dotscope::testkit::fixture`, and list new
+  ones in `tests/samples/MANIFEST.toml` (see `docs/testkit.md`)
 - Don't commit large binary files
 - Create minimal test cases for specific scenarios
 

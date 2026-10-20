@@ -733,7 +733,7 @@ mod tests {
             tables::{MemberRefRaw, MethodDefRaw, TableId, TypeDefRaw, TypeRefRaw},
             token::Token,
         },
-        test::helpers::{load_sample, method_token, mono_mscorlib},
+        testkit::helpers::{load_sample, method_token, mono_mscorlib},
     };
 
     /// A static load goes once nothing reads it, and stays while an
@@ -853,14 +853,14 @@ mod tests {
 
     #[test]
     fn test_build_call_site_counts_empty_targets() {
-        let asm = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+        let asm = load_sample("packers/confuserex/1.6.0/original.exe");
         let counts = build_call_site_counts(&asm, std::iter::empty());
         assert!(counts.is_empty());
     }
 
     #[test]
     fn test_build_call_site_counts_nonexistent_token() {
-        let asm = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+        let asm = load_sample("packers/confuserex/1.6.0/original.exe");
         let bogus = Token::new(0x06FFFFFF);
         let counts = build_call_site_counts(&asm, std::iter::once(bogus));
         assert_eq!(counts.get(&bogus), Some(&0));
@@ -868,7 +868,7 @@ mod tests {
 
     #[test]
     fn test_resolve_constructor_type_confuserex_marker() {
-        let asm = load_sample("tests/samples/packers/confuserex/1.6.0/mkaring_normal.exe");
+        let asm = load_sample("packers/confuserex/1.6.0/mkaring_normal.exe");
 
         let tables = asm.tables().expect("tables should be present");
         let strings = asm.strings().expect("strings should be present");
@@ -916,7 +916,7 @@ mod tests {
     #[test]
     fn test_resolve_constructor_type_unsupported_tag() {
         // Tag other than MethodDef/MemberRef should return None
-        let asm = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+        let asm = load_sample("packers/confuserex/1.6.0/original.exe");
 
         let tables = asm.tables().expect("tables should be present");
         let strings = asm.strings().expect("strings should be present");
@@ -935,7 +935,7 @@ mod tests {
 
     #[test]
     fn test_is_method_named_with_real_assembly() {
-        let asm = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+        let asm = load_sample("packers/confuserex/1.6.0/original.exe");
 
         // Token for a nonexistent method should return false
         assert!(!is_method_named(&asm, Token::new(0x06FFFFFF), "Main"));

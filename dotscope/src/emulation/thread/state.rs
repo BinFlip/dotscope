@@ -1535,7 +1535,7 @@ impl EmulationThread {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::emulation::{create_test_context, create_test_thread};
+    use crate::testkit::emulation::{create_test_context, create_test_thread};
 
     /// The index selects which loaded assembly's metadata a frame executes against, and
     /// emulated code grows that list. Narrowing it binds the frame to a different assembly

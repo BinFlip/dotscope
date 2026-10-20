@@ -279,7 +279,7 @@ mod tests {
     use crate::{
         cilassembly::ChangeRefKind,
         metadata::{sequencepoints::SequencePoint, tables::TableId},
-        test::factories::table::assemblyref::get_test_assembly,
+        testkit::factories::table::assemblyref::get_test_assembly,
     };
 
     #[test]

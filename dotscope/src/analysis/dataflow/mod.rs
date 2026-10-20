@@ -48,7 +48,7 @@ mod tests {
         analysis::{cfg::ControlFlowGraph, ssa::SsaConverter, SsaFunction},
         assembly::{decode_blocks, InstructionAssembler},
         metadata::typesystem::PointerSize,
-        test::TestTypeProvider,
+        testkit::TestTypeProvider,
     };
 
     /// Helper to build CFG from assembled bytecode.

@@ -1110,13 +1110,12 @@ mod tests {
         deobfuscation::techniques::confuserex::statemachine::{
             detect_cfgctx_semantics, find_constants_initializer,
         },
-        test::helpers::load_sample,
+        testkit::helpers::load_sample,
     };
 
     #[test]
     fn test_detect_cfgctx_on_cfg_sample() {
-        let assembly =
-            load_sample("tests/samples/packers/confuserex/1.6.0/mkaring_constants_cfg.exe");
+        let assembly = load_sample("packers/confuserex/1.6.0/mkaring_constants_cfg.exe");
 
         let semantics = detect_cfgctx_semantics(&assembly);
         assert!(
@@ -1139,7 +1138,7 @@ mod tests {
 
     #[test]
     fn test_detect_cfgctx_on_original() {
-        let assembly = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+        let assembly = load_sample("packers/confuserex/1.6.0/original.exe");
 
         let semantics = detect_cfgctx_semantics(&assembly);
         assert!(
@@ -1150,7 +1149,7 @@ mod tests {
 
     #[test]
     fn test_find_constants_initializer_on_constants_sample() {
-        let assembly = load_sample("tests/samples/packers/confuserex/1.6.0/mkaring_constants.exe");
+        let assembly = load_sample("packers/confuserex/1.6.0/mkaring_constants.exe");
 
         let init = find_constants_initializer(&assembly);
         assert!(
@@ -1161,7 +1160,7 @@ mod tests {
 
     #[test]
     fn test_find_constants_initializer_on_original() {
-        let assembly = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+        let assembly = load_sample("packers/confuserex/1.6.0/original.exe");
 
         let init = find_constants_initializer(&assembly);
         assert!(

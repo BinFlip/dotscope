@@ -16,13 +16,16 @@
 #![cfg(feature = "deobfuscation")]
 #![allow(clippy::unwrap_used, clippy::expect_used, missing_docs)]
 
-use std::{hint::black_box, path::PathBuf, time::Duration};
+use std::{hint::black_box, time::Duration};
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use dotscope::deobfuscation::{DeobfuscationEngine, EngineConfig};
+use dotscope::{
+    deobfuscation::{DeobfuscationEngine, EngineConfig},
+    testkit::fixture,
+};
 
-const CONFUSEREX_DIR: &str = "tests/samples/packers/confuserex/1.6.0";
-const NETREACTOR_DIR: &str = "tests/samples/packers/netreactor/7.5.0";
+const CONFUSEREX_DIR: &str = "packers/confuserex/1.6.0";
+const NETREACTOR_DIR: &str = "packers/netreactor/7.5.0";
 
 /// NetReactor samples, which lean much harder on the CIL emulation layer than
 /// ConfuserEx does — NecroBit method-body decryption and string decryption both
@@ -59,13 +62,6 @@ const CONFUSEREX_SAMPLES: &[(&str, &str)] = &[
     ("mkaring_maximum.exe", "maximum"),
 ];
 
-/// Resolves a sample path relative to the crate root.
-fn sample_path(dir: &str, filename: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join(dir)
-        .join(filename)
-}
-
 /// Benchmarks the full `process_file` pipeline across ConfuserEx samples.
 fn bench_confuserex(c: &mut Criterion) {
     let mut group = c.benchmark_group("confuserex_deobfuscation");
@@ -78,11 +74,7 @@ fn bench_confuserex(c: &mut Criterion) {
     group.warm_up_time(Duration::from_secs(3));
 
     for (filename, label) in CONFUSEREX_SAMPLES {
-        let path = sample_path(CONFUSEREX_DIR, filename);
-        if !path.exists() {
-            eprintln!("skipping missing sample: {}", path.display());
-            continue;
-        }
+        let path = fixture(&format!("{CONFUSEREX_DIR}/{filename}"));
 
         group.bench_with_input(BenchmarkId::from_parameter(label), &path, |b, path| {
             b.iter(|| {
@@ -107,11 +99,7 @@ fn bench_netreactor(c: &mut Criterion) {
     group.warm_up_time(Duration::from_secs(3));
 
     for (filename, label) in NETREACTOR_SAMPLES {
-        let path = sample_path(NETREACTOR_DIR, filename);
-        if !path.exists() {
-            eprintln!("skipping missing sample: {}", path.display());
-            continue;
-        }
+        let path = fixture(&format!("{NETREACTOR_DIR}/{filename}"));
 
         group.bench_with_input(BenchmarkId::from_parameter(label), &path, |b, path| {
             b.iter(|| {
@@ -136,10 +124,7 @@ fn bench_detection_only(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(20));
 
     for (filename, label) in CONFUSEREX_SAMPLES {
-        let path = sample_path(CONFUSEREX_DIR, filename);
-        if !path.exists() {
-            continue;
-        }
+        let path = fixture(&format!("{CONFUSEREX_DIR}/{filename}"));
 
         // Load once outside the measured closure — we are timing detection,
         // not PE parsing.

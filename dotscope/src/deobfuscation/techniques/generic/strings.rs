@@ -407,7 +407,7 @@ fn collect_decryptor_resources(assembly: &CilObject, decryptors: &HashSet<Token>
 
 #[cfg(test)]
 mod tests {
-    use crate::{deobfuscation::techniques::Technique, test::helpers::load_sample};
+    use crate::{deobfuscation::techniques::Technique, testkit::helpers::load_sample};
 
     /// Verify detection runs without error on a protected sample.
     ///
@@ -417,14 +417,14 @@ mod tests {
     /// simpler `string(int32)` / `string(string)` patterns from other packers.
     #[test]
     fn test_detect_no_panic_on_obfuscated() {
-        let asm = load_sample("tests/samples/packers/confuserex/1.6.0/mkaring_constants.exe");
+        let asm = load_sample("packers/confuserex/1.6.0/mkaring_constants.exe");
         let technique = super::GenericStrings;
         let _detection = technique.detect(&asm);
     }
 
     #[test]
     fn test_detect_negative() {
-        let asm = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+        let asm = load_sample("packers/confuserex/1.6.0/original.exe");
         let technique = super::GenericStrings;
         let detection = technique.detect(&asm);
         assert!(!detection.is_detected());

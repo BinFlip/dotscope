@@ -475,12 +475,11 @@ impl Default for OwnedTypeConstraintValidator {
 }
 
 #[cfg(test)]
-#[cfg_attr(feature = "skip-expensive-tests", allow(unused_imports))]
 mod tests {
     use super::*;
     use crate::{
         metadata::validation::ValidationConfig,
-        test::{
+        testkit::{
             factories::validation::constraints_types::owned_type_constraint_validator_file_factory,
             owned_validator_test,
         },
@@ -492,14 +491,12 @@ mod tests {
     /// and assemblies with constraint violations (when available) using the centralized
     /// owned validator test harness.
     #[test]
-    #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_owned_type_constraint_validator_comprehensive() -> Result<()> {
         let validator = OwnedTypeConstraintValidator::new();
 
         owned_validator_test(
             owned_type_constraint_validator_file_factory,
             "OwnedTypeConstraintValidator",
-            "", // Accept any error type since metadata resolution errors vary
             ValidationConfig {
                 enable_semantic_validation: true,
                 ..Default::default()

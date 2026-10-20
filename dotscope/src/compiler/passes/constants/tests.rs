@@ -10,7 +10,7 @@ use crate::{
         CompilerContext, EventLog, SsaPass,
     },
     metadata::{token::Token, typesystem::PointerSize},
-    test::helpers::{method_token, mono_mscorlib, test_assembly_arc},
+    testkit::helpers::{method_token, mono_mscorlib, test_assembly_arc},
 };
 
 /// Creates a test compiler context with the standard test assembly

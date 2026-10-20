@@ -1641,7 +1641,7 @@ mod tests {
             tables::{MemberRefSignature, TableAccess, TypeSpecRaw},
             token::Token,
         },
-        test::helpers::test_assembly_arc,
+        testkit::helpers::test_assembly_arc,
     };
 
     /// ECMA-335's binary numeric table: equal classes keep their class,

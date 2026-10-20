@@ -1517,8 +1517,8 @@ mod tests {
             tables::{MethodDefRaw, TableDataOwned, TableId},
             token::Token,
         },
-        test::helpers::load_sample,
-        Parser,
+        testkit::helpers::load_sample,
+        Error, Parser,
     };
 
     /// Two methods whose rows name the same body both decode it. ECMA-335
@@ -1526,7 +1526,7 @@ mod tests {
     /// method, the first to decode claimed them and the other came out empty.
     #[test]
     fn methods_sharing_a_body_each_decode_it() {
-        let assembly = load_sample("tests/samples/crafted_2.exe");
+        let assembly = load_sample("crafted_2.exe");
         let mut with_code: Vec<(Token, u32)> = assembly
             .methods()
             .iter()
@@ -1895,14 +1895,10 @@ mod tests {
 
     #[test]
     fn decode_empty_data() {
-        // Test decoding empty data
+        // No code holds no instruction to start from: the decoder refuses it.
         let code = [];
         let result = decode_blocks(&code, 0, 0x1000, None);
-        // This should either succeed with empty blocks or fail gracefully
-        if let Ok(blocks) = result {
-            assert!(blocks.is_empty());
-        }
-        // Error is also acceptable for empty data
+        assert!(matches!(result, Err(Error::Parse(_))), "{result:?}");
     }
 
     #[test]
@@ -2111,17 +2107,13 @@ mod tests {
     }
 
     #[test]
-    fn decode_blocks_invalid_method_body() {
-        // Test error paths in decode_blocks related to method validation
-        let data = [0x00]; // Single byte - not enough for a complete instruction
-
-        let result = decode_blocks(&data, 0, 0x1000, None);
-        // This might succeed with a truncated instruction or fail - both are valid outcomes
-        // The important thing is it doesn't crash
-        if let Ok(blocks) = result {
-            assert!(!blocks.is_empty());
-        }
-        // Error is also acceptable
+    fn decode_blocks_lone_nop_is_one_block() {
+        // A single `nop` (0x00) is a whole instruction: one block holding it.
+        let data = [0x00];
+        let blocks = decode_blocks(&data, 0, 0x1000, None).unwrap();
+        assert_eq!(blocks.len(), 1);
+        let mnemonics: Vec<&str> = blocks[0].instructions.iter().map(|i| i.mnemonic).collect();
+        assert_eq!(mnemonics, ["nop"]);
     }
 
     #[test]

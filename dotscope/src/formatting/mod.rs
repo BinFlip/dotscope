@@ -400,16 +400,16 @@ fn format_override_directive(
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
 
     use crate::{
         formatting::{FormatterOptions, IlFormatter},
         metadata::token::Token,
+        testkit::fixture,
         CilObject,
     };
 
     fn load_crafted_2() -> CilObject {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/crafted_2.exe");
+        let path = fixture("crafted_2.exe");
         CilObject::from_path(&path).expect("Failed to load crafted_2.exe")
     }
 
@@ -751,9 +751,7 @@ mod tests {
     }
 
     fn load_dotnet_10(name: &str) -> CilObject {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/samples/dotnet_10.0")
-            .join(name);
+        let path = fixture("dotnet_10.0").join(name);
         CilObject::from_path(&path).unwrap_or_else(|e| panic!("Failed to load {name}: {e}"))
     }
 

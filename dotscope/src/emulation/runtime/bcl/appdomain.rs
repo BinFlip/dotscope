@@ -645,7 +645,7 @@ mod tests {
     use super::*;
     use crate::{
         emulation::runtime::hook::HookManager, metadata::typesystem::PointerSize,
-        test::emulation::create_test_thread,
+        testkit::emulation::create_test_thread,
     };
 
     #[test]

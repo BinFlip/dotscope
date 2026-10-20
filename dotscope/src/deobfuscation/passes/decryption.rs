@@ -1156,7 +1156,7 @@ mod tests {
             context::AnalysisContext, passes::DecryptionPass, DeobfuscationEngine, EngineConfig,
         },
         metadata::{token::Token, typesystem::PointerSize},
-        test::helpers::test_assembly_arc,
+        testkit::{fixture, helpers::test_assembly_arc},
     };
 
     /// Helper to create a minimal analysis context for testing.
@@ -1491,11 +1491,11 @@ mod tests {
     /// which has ConfuserEx constants protection enabled.
     #[test]
     fn test_constants_decryption_integration() {
-        const CONSTANTS_PATH: &str = "tests/samples/packers/confuserex/1.6.0/mkaring_constants.exe";
+        const CONSTANTS_PATH: &str = "packers/confuserex/1.6.0/mkaring_constants.exe";
 
         // Run full deobfuscation pipeline (ConfuserEx is auto-registered)
         let engine = DeobfuscationEngine::new(EngineConfig::default());
-        let result = engine.process_file(CONSTANTS_PATH);
+        let result = engine.process_file(fixture(CONSTANTS_PATH));
 
         match result {
             Ok((_deobfuscated, result)) => {

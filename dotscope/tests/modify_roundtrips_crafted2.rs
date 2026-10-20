@@ -16,18 +16,13 @@
 //! All tests use only the public API exported in the prelude to ensure they represent
 //! actual user usage patterns.
 
-use std::path::Path;
+use dotscope::{prelude::*, testkit::fixture};
 
-use dotscope::prelude::*;
-
-const TEST_ASSEMBLY_PATH: &str = "tests/samples/mono_4.8/mscorlib.dll";
+const TEST_ASSEMBLY_PATH: &str = "mono_4.8/mscorlib.dll";
 
 /// Helper function to create a test assembly for integration testing
 fn create_test_assembly() -> Result<CilAssembly> {
-    let path = Path::new(TEST_ASSEMBLY_PATH);
-    if !path.exists() {
-        panic!("Test assembly not found at: {}", path.display());
-    }
+    let path = fixture(TEST_ASSEMBLY_PATH);
 
     CilAssembly::from_path(path)
 }

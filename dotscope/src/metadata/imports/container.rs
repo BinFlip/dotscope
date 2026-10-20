@@ -645,7 +645,7 @@ impl std::fmt::Debug for UnifiedImportContainer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::{create_method, create_module_ref};
+    use crate::testkit::{create_method, create_module_ref};
 
     #[test]
     fn test_unified_import_container_new() {

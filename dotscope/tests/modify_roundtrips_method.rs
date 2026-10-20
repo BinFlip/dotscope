@@ -15,8 +15,6 @@
 //! 3. Both original and injected methods can be disassembled
 //! 4. Method bodies are preserved correctly
 
-use std::path::Path;
-
 use dotscope::{
     metadata::{
         signatures::{encode_method_signature, SignatureMethod, SignatureParameter, TypeSignature},
@@ -24,17 +22,15 @@ use dotscope::{
         token::Token,
     },
     prelude::*,
+    testkit::fixture,
     ChangeRefKind, ChangeRefRc,
 };
 
-const TEST_ASSEMBLY_PATH: &str = "tests/samples/mono_4.8/mscorlib.dll";
+const TEST_ASSEMBLY_PATH: &str = "mono_4.8/mscorlib.dll";
 
 /// Helper function to create a test assembly for method injection testing
 fn create_test_assembly() -> Result<CilAssembly> {
-    let path = Path::new(TEST_ASSEMBLY_PATH);
-    if !path.exists() {
-        panic!("Test assembly not found at: {}", path.display());
-    }
+    let path = fixture(TEST_ASSEMBLY_PATH);
 
     CilAssembly::from_path(path)
 }

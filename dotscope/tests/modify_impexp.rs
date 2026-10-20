@@ -13,12 +13,12 @@
 //! native PE imports and exports to assemblies, writing them to disk,
 //! and ensuring they can be loaded back correctly with the modifications intact.
 
-use dotscope::{prelude::*, DataDirectoryType};
+use dotscope::{prelude::*, testkit::fixture, DataDirectoryType};
 
 #[test]
 fn test_native_imports_with_minimal_changes() -> Result<()> {
     // Test native imports with minimal metadata changes to trigger the write pipeline properly
-    let mut assembly = CilAssembly::from_path("tests/samples/crafted_2.exe")?;
+    let mut assembly = CilAssembly::from_path(fixture("crafted_2.exe"))?;
 
     // Add a minimal string to ensure we have some changes
     let _test_string_index = assembly.string_add("TestString")?;
@@ -53,7 +53,7 @@ fn test_native_imports_with_minimal_changes() -> Result<()> {
 #[test]
 fn add_native_imports_to_crafted_2() -> Result<()> {
     // Step 1: Load the original assembly
-    let mut assembly = CilAssembly::from_path("tests/samples/crafted_2.exe")?;
+    let mut assembly = CilAssembly::from_path(fixture("crafted_2.exe"))?;
 
     // Check if assembly already has native imports
     let _original_has_imports = assembly
@@ -169,7 +169,7 @@ fn add_native_imports_to_crafted_2() -> Result<()> {
 #[test]
 fn add_native_exports_to_crafted_2() -> Result<()> {
     // Step 1: Load the original assembly
-    let mut assembly = CilAssembly::from_path("tests/samples/crafted_2.exe")?;
+    let mut assembly = CilAssembly::from_path(fixture("crafted_2.exe"))?;
 
     // Check if assembly already has native exports
     let _original_has_exports = assembly
@@ -337,7 +337,7 @@ fn add_native_exports_to_crafted_2() -> Result<()> {
 #[test]
 fn add_both_imports_and_exports_to_crafted_2() -> Result<()> {
     // Step 1: Load the original assembly
-    let mut assembly = CilAssembly::from_path("tests/samples/crafted_2.exe")?;
+    let mut assembly = CilAssembly::from_path(fixture("crafted_2.exe"))?;
 
     // Add a minimal metadata change to ensure write pipeline works properly
     let _test_string_index = assembly.string_add("MixedNativeTest")?;
@@ -510,7 +510,7 @@ fn round_trip_preserve_existing_data() -> Result<()> {
     // This test verifies that adding native imports/exports doesn't corrupt existing assembly data
 
     // Step 1: Load the original assembly and capture baseline data
-    let mut assembly = CilAssembly::from_path("tests/samples/crafted_2.exe")?;
+    let mut assembly = CilAssembly::from_path(fixture("crafted_2.exe"))?;
 
     let original_string_count = assembly
         .view()
@@ -588,7 +588,7 @@ fn test_native_imports_parsing_from_existing_pe() -> Result<()> {
     // Test that existing native imports are correctly parsed when loading a CilAssemblyView
     // This test verifies the implementation of PE import/export parsing functionality
 
-    let view = CilAssemblyView::from_path("tests/samples/crafted_2.exe")?;
+    let view = CilAssemblyView::from_path(fixture("crafted_2.exe"))?;
 
     // Verify the file has imports to parse
     let original_imports = view.file().imports();
@@ -638,7 +638,7 @@ fn test_native_imports_parsing_from_existing_pe() -> Result<()> {
 fn test_import_table_format_validation() -> Result<()> {
     // Test that import tables are correctly formatted and parseable
 
-    let mut assembly = CilAssembly::from_path("tests/samples/crafted_2.exe")?;
+    let mut assembly = CilAssembly::from_path(fixture("crafted_2.exe"))?;
 
     // Add imports that should generate a valid import table
     let _test_string_index = assembly.string_add("ImportFormatTest")?;

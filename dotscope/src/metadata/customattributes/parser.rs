@@ -1534,7 +1534,7 @@ mod tests {
             token::Token,
             typesystem::{CilFlavor, CilPrimitiveKind, CilTypeRef, TypeBuilder, TypeRegistry},
         },
-        test::factories::metadata::customattributes::{
+        testkit::factories::metadata::customattributes::{
             create_constructor_with_params, create_constructor_with_params_and_registry,
             create_empty_constructor, get_test_type_registry,
         },

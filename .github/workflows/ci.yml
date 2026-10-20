@@ -94,6 +94,9 @@ jobs:
 
     - name: Run tests (Linux - full)
       if: runner.os == 'Linux'
+      # The job installs the .NET SDK and Mono: a test that needs them fails rather than skips.
+      env:
+        DOTSCOPE_REQUIRE_TOOLS: "1"
       run: cargo test --workspace --release --features z3 --lib --bins --tests --verbose
 
     - name: Run tests (macOS/Windows - skip expensive tests)
@@ -259,6 +262,8 @@ jobs:
       uses: taiki-e/install-action@cargo-llvm-cov
       
     - name: Generate code coverage
+      env:
+        DOTSCOPE_REQUIRE_TOOLS: "1"
       run: cargo llvm-cov --workspace --features z3,skip-expensive-tests --lcov --output-path lcov.info --exclude dotscope-cli
       
     - name: Upload to codecov.io

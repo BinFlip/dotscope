@@ -1010,7 +1010,7 @@ mod tests {
         )
         .with_args(&args);
 
-        let mut thread = crate::test::emulation::create_test_thread();
+        let mut thread = crate::testkit::emulation::create_test_thread();
         let result = runtime_helpers_get_hash_code_pre(&ctx, &mut thread);
 
         match result {
@@ -1033,7 +1033,7 @@ mod tests {
         )
         .with_args(&args);
 
-        let mut thread = crate::test::emulation::create_test_thread();
+        let mut thread = crate::testkit::emulation::create_test_thread();
         let result = runtime_helpers_equals_pre(&ctx, &mut thread);
 
         match result {
@@ -1056,7 +1056,7 @@ mod tests {
         )
         .with_args(&args);
 
-        let mut thread = crate::test::emulation::create_test_thread();
+        let mut thread = crate::testkit::emulation::create_test_thread();
         let result = runtime_helpers_equals_pre(&ctx, &mut thread);
 
         match result {
@@ -1077,7 +1077,7 @@ mod tests {
         )
         .with_args(&args);
 
-        let mut thread = crate::test::emulation::create_test_thread();
+        let mut thread = crate::testkit::emulation::create_test_thread();
         let result = runtime_helpers_get_object_value_pre(&ctx, &mut thread);
 
         match result {

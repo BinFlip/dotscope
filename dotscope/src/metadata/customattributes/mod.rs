@@ -134,7 +134,7 @@ mod tests {
             },
             typesystem::{CilFlavor, CilTypeReference},
         },
-        test::factories::metadata::customattributes::{
+        testkit::factories::metadata::customattributes::{
             create_constructor_with_params_and_registry, create_empty_method,
             create_method_with_params, get_test_type_registry,
         },

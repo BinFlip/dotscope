@@ -184,7 +184,7 @@ mod tests {
         analysis::{CallGraph, MethodRef, SsaFunctionBuilder, SsaType},
         compiler::SsaPass,
         deobfuscation::context::AnalysisContext,
-        test::helpers::test_assembly_arc,
+        testkit::helpers::test_assembly_arc,
     };
 
     fn make_ctx() -> AnalysisContext {

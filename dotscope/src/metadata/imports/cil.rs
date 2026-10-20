@@ -1383,7 +1383,7 @@ pub trait ImportContainer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::{
+    use crate::testkit::{
         create_assembly_ref, create_cil_type, create_file, create_method, create_module_ref,
     };
 

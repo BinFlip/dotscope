@@ -5,18 +5,17 @@
 
 extern crate dotscope;
 
-use std::{fs, hint::black_box, path::PathBuf};
+use std::{fs, hint::black_box};
 
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
-use dotscope::metadata::security::PermissionSet;
+use dotscope::{metadata::security::PermissionSet, testkit::fixture};
 
 /// Benchmark parsing a real declarative security blob from WindowsBase.dll.
 ///
 /// This tests parsing of the binary format used by modern .NET assemblies
 /// for encoding security permissions.
 fn bench_permission_set_parse(c: &mut Criterion) {
-    let path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WB_DeclSecurity_1.bin");
+    let path = fixture("WB_DeclSecurity_1.bin");
 
     let Ok(data) = fs::read(&path) else {
         eprintln!(
@@ -89,8 +88,7 @@ fn bench_permission_set_xml_with_permission(c: &mut Criterion) {
 
 /// Benchmark parsing repeated permission sets to measure consistency.
 fn bench_permission_set_repeated(c: &mut Criterion) {
-    let path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WB_DeclSecurity_1.bin");
+    let path = fixture("WB_DeclSecurity_1.bin");
 
     let Ok(data) = fs::read(&path) else {
         eprintln!(

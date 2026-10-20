@@ -18,21 +18,18 @@
 
 use std::path::PathBuf;
 
-use dotscope::prelude::*;
+use dotscope::{prelude::*, testkit::fixture};
 
-const TEST_ASSEMBLY_PATH: &str = "tests/samples/WindowsBase.dll";
+const TEST_ASSEMBLY_PATH: &str = "WindowsBase.dll";
 
 /// Helper function to get test assembly path
 fn get_test_assembly_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(TEST_ASSEMBLY_PATH)
+    fixture(TEST_ASSEMBLY_PATH)
 }
 
 /// Helper function to create a test assembly
 fn create_test_assembly() -> Result<CilAssembly> {
     let path = get_test_assembly_path();
-    if !path.exists() {
-        panic!("Test assembly not found at: {}", path.display());
-    }
 
     CilAssembly::from_path(&path)
 }

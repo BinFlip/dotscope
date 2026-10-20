@@ -39,6 +39,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Mutex,
     },
+    time::Duration,
 };
 
 use dotscope::{
@@ -50,6 +51,10 @@ use dotscope::{
         tables::{MethodDefRaw, TableDataOwned, TableId},
         token::Token,
         validation::ValidationConfig,
+    },
+    testkit::{
+        fixtures::samples_dir,
+        tools::{require_tool, run_with_timeout, ToolKind},
     },
     CilObject, MethodBodyBuilder,
 };
@@ -206,10 +211,7 @@ impl Findings {
 /// finding. `CODEGEN_SWEEP_ROOT` sweeps
 /// another directory of assemblies instead of the test samples.
 fn sweep(check: impl Fn(&str, &Path, CilObject, &mut Findings) + Sync) -> Findings {
-    let root = std::env::var_os("CODEGEN_SWEEP_ROOT").map_or_else(
-        || Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/samples"),
-        PathBuf::from,
-    );
+    let root = std::env::var_os("CODEGEN_SWEEP_ROOT").map_or_else(samples_dir, PathBuf::from);
     let mut assemblies = sample_assemblies(&root);
     assert!(
         !assemblies.is_empty(),
@@ -326,24 +328,26 @@ fn every_method_validates_against_its_own_lift() {
     );
 }
 
-/// What Mono's metadata verifier says about an assembly: `None` when the tool
-/// is not installed, otherwise its findings (empty when it found none).
+/// What Mono's metadata verifier says about an assembly: its findings, empty
+/// when it found none.
 ///
 /// Only the metadata check is used: it reads the file and runs nothing, while
 /// Mono's IL check needs the assembly's references loaded into a runtime and
 /// cannot open most samples.
 ///
 /// `references` is the directory the assembly's references are looked up in.
-fn mono_metadata_findings(path: &Path, references: &Path) -> Option<String> {
-    let output = Command::new("peverify")
-        .args(["--verify", "metadata,error"])
-        .arg(path)
-        .env("MONO_PATH", references)
-        .output()
-        .ok()?;
+fn mono_metadata_findings(path: &Path, references: &Path) -> String {
+    let output = run_with_timeout(
+        Command::new("peverify")
+            .args(["--verify", "metadata,error"])
+            .arg(path)
+            .env("MONO_PATH", references),
+        Duration::from_secs(300),
+    )
+    .unwrap_or_else(|e| panic!("peverify on {}: {e}", path.display()));
     let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
     text.push_str(&String::from_utf8_lossy(&output.stderr));
-    Some(text.trim().to_string())
+    text.trim().to_string()
 }
 
 /// The bytes of a method's code as they lie in the file it was loaded from.
@@ -441,6 +445,8 @@ fn body_difference(
 fn every_sample_recompiles_to_an_assembly_that_loads() {
     let scratch = Path::new(env!("CARGO_TARGET_TMPDIR")).join("codegen_roundtrip");
     std::fs::create_dir_all(&scratch).unwrap();
+    // Mono's metadata check is one check of several: without peverify the others still run.
+    let mono_check = require_tool(ToolKind::Verifier).is_some();
 
     let findings = sweep(|name, path, assembly, findings| {
         // Lift everything while the original is loaded; the generator then
@@ -608,12 +614,9 @@ fn every_sample_recompiles_to_an_assembly_that_loads() {
         }
 
         let references = path.parent().unwrap_or(Path::new("."));
-        if let Some(after) = mono_metadata_findings(&written, references) {
-            if after.is_empty() {
-                // Accepted: nothing to compare.
-            } else if mono_metadata_findings(path, references)
-                .is_some_and(|before| before.is_empty())
-            {
+        if mono_check {
+            let after = mono_metadata_findings(&written, references);
+            if !after.is_empty() && mono_metadata_findings(path, references).is_empty() {
                 findings.record("mono metadata check regressed", name, "", &after);
             }
         }

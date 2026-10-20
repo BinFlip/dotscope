@@ -588,7 +588,7 @@ fn resolve_type_name(assembly: &CilObject, token: Token) -> Option<String> {
 mod tests {
     use crate::{
         deobfuscation::techniques::{bitmono::BitMonoStrings, Technique},
-        test::helpers::load_sample,
+        testkit::helpers::load_sample,
     };
 
     /// Verify that IL-level detect() is a no-op (detection is SSA-based).
@@ -597,7 +597,7 @@ mod tests {
     /// `dotscope/tests/bitmono.rs::test_all_bitmono_samples`.
     #[test]
     fn test_detect_is_noop() {
-        let assembly = load_sample("tests/samples/packers/bitmono/0.39.0/bitmono_strings.exe");
+        let assembly = load_sample("packers/bitmono/0.39.0/bitmono_strings.exe");
         let technique = BitMonoStrings;
         let detection = technique.detect(&assembly);
         assert!(
@@ -608,7 +608,7 @@ mod tests {
 
     #[test]
     fn test_detect_negative() {
-        let assembly = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+        let assembly = load_sample("packers/confuserex/1.6.0/original.exe");
         let technique = BitMonoStrings;
         let detection = technique.detect(&assembly);
         assert!(

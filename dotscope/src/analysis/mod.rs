@@ -143,7 +143,7 @@ mod tests {
             VerifyLevel,
         },
         assembly::{decode_blocks, InstructionAssembler},
-        test::TestTypeProvider,
+        testkit::TestTypeProvider,
     };
 
     /// Helper to build bytecode and decode it into a CFG.

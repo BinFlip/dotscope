@@ -17,11 +17,8 @@
 //! 5. Verify SSA properties (phi nodes, variable versions, def-use chains)
 //! 6. Test symbolic evaluation on SSA
 
-mod common;
-
 use std::collections::BTreeSet;
 
-use common::{build_cfg, build_ssa, build_ssa_with_handlers};
 use dotscope::{
     analysis::{
         ConstValue, SsaExceptionHandlerCilExt, SsaFunction, SsaOp, SsaVarId, SymbolicEvaluator,
@@ -32,6 +29,7 @@ use dotscope::{
         method::ExceptionHandlerFlags, token::Token, typesystem::PointerSize,
         validation::ValidationConfig,
     },
+    testkit::{build_cfg, build_ssa, build_ssa_with_handlers, fixture},
     CilObject, Result,
 };
 use rustc_hash::FxHashMap;
@@ -2245,7 +2243,7 @@ fn test_ssa_nested_exception_handlers() -> Result<()> {
 #[test]
 fn test_ssa_pipeline_preserves_exception_handlers() {
     // Load the TestApp which has DecryptSecret method with try/catch
-    let assembly = CilObject::from_path("tests/samples/packers/confuserex/1.6.0/original.exe")
+    let assembly = CilObject::from_path(fixture("packers/confuserex/1.6.0/original.exe"))
         .expect("Should load TestApp.exe");
 
     // Find a method with exception handlers
@@ -2348,7 +2346,7 @@ fn test_ssa_pipeline_preserves_exception_handlers() {
 #[test]
 fn test_decrypt_secret_handler_content() {
     // Load the TestApp which has DecryptSecret method with try/catch
-    let assembly = CilObject::from_path("tests/samples/packers/confuserex/1.6.0/original.exe")
+    let assembly = CilObject::from_path(fixture("packers/confuserex/1.6.0/original.exe"))
         .expect("Should load TestApp.exe");
 
     for entry in assembly.methods().iter() {
@@ -2428,7 +2426,7 @@ fn test_decrypt_secret_handler_content() {
 #[test]
 fn test_try_region_block_decoding() {
     let assembly = CilObject::from_path_with_validation(
-        "tests/samples/packers/confuserex/1.6.0/mkaring_resources.exe",
+        fixture("packers/confuserex/1.6.0/mkaring_resources.exe"),
         ValidationConfig::analysis(),
     )
     .expect("Failed to open resources sample");

@@ -417,19 +417,17 @@ impl Default for OwnedAccessibilityValidator {
 }
 
 #[cfg(test)]
-#[cfg_attr(feature = "skip-expensive-tests", allow(unused_imports))]
 mod tests {
     use super::*;
     use crate::{
         metadata::validation::ValidationConfig,
-        test::{
+        testkit::{
             factories::validation::members_accessibility::owned_accessibility_validator_file_factory,
             owned_validator_test,
         },
     };
 
     #[test]
-    #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_owned_accessibility_validator() -> Result<()> {
         let validator = OwnedAccessibilityValidator::new();
         let config = ValidationConfig {
@@ -440,7 +438,6 @@ mod tests {
         owned_validator_test(
             owned_accessibility_validator_file_factory,
             "OwnedAccessibilityValidator",
-            "ValidationOwnedFailed",
             config,
             |context| validator.validate_owned(context),
         )

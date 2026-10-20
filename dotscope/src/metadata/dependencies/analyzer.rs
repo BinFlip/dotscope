@@ -897,7 +897,7 @@ enum FileRefType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::helpers::dependencies::{create_test_file, create_test_module_ref};
+    use crate::testkit::helpers::dependencies::{create_test_file, create_test_module_ref};
 
     #[test]
     fn test_dependency_analyzer_creation() {

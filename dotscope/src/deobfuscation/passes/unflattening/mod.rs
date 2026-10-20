@@ -477,7 +477,7 @@ mod tests {
             DeobfuscationEngine, EngineConfig,
         },
         metadata::token::Token,
-        test::TestTypeProvider,
+        testkit::{fixture, TestTypeProvider},
         CilObject,
     };
 
@@ -594,7 +594,7 @@ mod tests {
         // Use LazyLock to load the assembly only once across all tests
         static TEST_ASSEMBLY: LazyLock<Arc<CilObject>> = LazyLock::new(|| {
             Arc::new(
-                CilObject::from_path("tests/samples/crafted_2.exe")
+                CilObject::from_path(fixture("crafted_2.exe"))
                     .expect("Failed to load test assembly"),
             )
         });

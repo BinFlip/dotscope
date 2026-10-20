@@ -242,7 +242,7 @@ mod tests {
     use super::*;
     use crate::{
         cilassembly::ChangeRefKind, metadata::tables::TableId,
-        test::factories::table::assemblyref::get_test_assembly,
+        testkit::factories::table::assemblyref::get_test_assembly,
     };
 
     #[test]

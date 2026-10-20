@@ -12,12 +12,12 @@
 //! These tests verify the complete end-to-end functionality of writing
 //! modified assemblies to disk and ensuring they can be loaded back correctly.
 
-use dotscope::{prelude::*, ChangeRefKind};
+use dotscope::{prelude::*, testkit::fixture, ChangeRefKind};
 
 #[test]
 fn extend_crafted_2() -> Result<()> {
     // Step 1: Load the original assembly
-    let mut assembly = CilAssembly::from_path("tests/samples/crafted_2.exe")?;
+    let mut assembly = CilAssembly::from_path(fixture("crafted_2.exe"))?;
 
     let original_string_count = assembly
         .view()

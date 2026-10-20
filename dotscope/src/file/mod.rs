@@ -1476,14 +1476,18 @@ impl File {
 
 #[cfg(test)]
 mod tests {
-    use std::{env, fs, path::PathBuf};
+    use std::fs;
 
-    use crate::{file::pe::DataDirectoryType, test::factories::general::file::verify_file, File};
+    use crate::{
+        file::pe::DataDirectoryType,
+        testkit::{factories::general::file::verify_file, fixture},
+        File,
+    };
 
     /// Tests loading a PE file from disk.
     #[test]
     fn load_file() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        let path = fixture("WindowsBase.dll");
         let file = File::from_path(&path).unwrap();
 
         verify_file(&file);
@@ -1492,7 +1496,7 @@ mod tests {
     /// Tests loading a PE file from a memory buffer.
     #[test]
     fn load_buffer() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        let path = fixture("WindowsBase.dll");
         let data = fs::read(&path).unwrap();
         let file = File::from_mem(data).unwrap();
 
@@ -1511,7 +1515,7 @@ mod tests {
     /// Tests the unified get_data_directory method.
     #[test]
     fn test_get_data_directory() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        let path = fixture("WindowsBase.dll");
         let file = File::from_path(&path).unwrap();
 
         // Test CLR runtime header (should exist for .NET assemblies)
@@ -1551,7 +1555,7 @@ mod tests {
     /// Tests the pe_signature_offset method.
     #[test]
     fn test_pe_signature_offset() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/crafted_2.exe");
+        let path = fixture("crafted_2.exe");
         let file = File::from_path(&path).expect("Failed to load test assembly");
 
         let pe_offset = file
@@ -1564,7 +1568,7 @@ mod tests {
     /// Tests the pe_headers_size method.
     #[test]
     fn test_pe_headers_size() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/crafted_2.exe");
+        let path = fixture("crafted_2.exe");
         let file = File::from_path(&path).expect("Failed to load test assembly");
 
         let headers_size = file
@@ -1577,7 +1581,7 @@ mod tests {
     /// Tests the align_to_file_alignment method.
     #[test]
     fn test_align_to_file_alignment() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/crafted_2.exe");
+        let path = fixture("crafted_2.exe");
         let file = File::from_path(&path).expect("Failed to load test assembly");
 
         // Test alignment with actual file alignment from PE header

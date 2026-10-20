@@ -520,12 +520,11 @@ impl Default for OwnedCircularityValidator {
 }
 
 #[cfg(test)]
-#[cfg_attr(feature = "skip-expensive-tests", allow(unused_imports))]
 mod tests {
     use super::*;
     use crate::{
         metadata::validation::ValidationConfig,
-        test::{
+        testkit::{
             factories::validation::circularity::{
                 create_assembly_with_self_referential_type,
                 owned_circularity_validator_file_factory,
@@ -536,7 +535,6 @@ mod tests {
     };
 
     #[test]
-    #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_owned_circularity_validator() -> Result<()> {
         let validator = OwnedCircularityValidator::new();
         let config = ValidationConfig {
@@ -547,7 +545,6 @@ mod tests {
         owned_validator_test(
             owned_circularity_validator_file_factory,
             "OwnedCircularityValidator",
-            "ValidationOwnedFailed",
             config,
             |context| validator.validate_owned(context),
         )
@@ -567,7 +564,6 @@ mod tests {
     /// Without this, deleting the elision and deleting the raw check would cancel out and no
     /// test would notice.
     #[test]
-    #[cfg(not(feature = "skip-expensive-tests"))]
     fn self_referential_base_is_elided_from_the_resolved_graph() -> Result<()> {
         let assembly = create_assembly_with_self_referential_type()?;
         let TestAssemblySource::Memory(data) = &assembly.source else {

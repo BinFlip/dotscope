@@ -266,7 +266,7 @@ impl Technique for GenericConstants {
 
 #[cfg(test)]
 mod tests {
-    use crate::{deobfuscation::techniques::Technique, test::helpers::load_sample};
+    use crate::{deobfuscation::techniques::Technique, testkit::helpers::load_sample};
 
     /// Verify detection runs without error on a protected sample.
     ///
@@ -275,14 +275,14 @@ mod tests {
     /// simpler `int32(int32)` / `object(int32)` patterns from other packers.
     #[test]
     fn test_detect_no_panic_on_obfuscated() {
-        let asm = load_sample("tests/samples/packers/confuserex/1.6.0/mkaring_constants.exe");
+        let asm = load_sample("packers/confuserex/1.6.0/mkaring_constants.exe");
         let technique = super::GenericConstants;
         let _detection = technique.detect(&asm);
     }
 
     #[test]
     fn test_detect_negative() {
-        let asm = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+        let asm = load_sample("packers/confuserex/1.6.0/original.exe");
         let technique = super::GenericConstants;
         let detection = technique.detect(&asm);
         assert!(!detection.is_detected());

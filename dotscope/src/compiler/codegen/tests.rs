@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, path::PathBuf};
+use std::collections::BTreeSet;
 
 use analyssa::{
     events::NullListener,
@@ -26,7 +26,7 @@ use crate::{
         typesystem::PointerSize,
         validation::ValidationConfig,
     },
-    test::{factories::table::assemblyref::get_test_assembly, TestTypeProvider},
+    testkit::{factories::table::assemblyref::get_test_assembly, fixture, TestTypeProvider},
     CilAssemblyView, CilObject, Error, Parser,
 };
 
@@ -2125,12 +2125,9 @@ fn test_fibonacci_style_loop() {
 /// This is a regression test for the copy propagation bug that incorrectly merged loop variables.
 #[test]
 fn test_fibonacci_deobfuscation_preserves_semantics() {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/samples/packers/source/TestApp/TestApp.exe");
-    let assembly = match CilObject::from_path_with_validation(&path, ValidationConfig::analysis()) {
-        Ok(asm) => asm,
-        Err(_) => return, // Skip if test file not available
-    };
+    let path = fixture("packers/confuserex/1.6.0/original.exe");
+    let assembly = CilObject::from_path_with_validation(&path, ValidationConfig::analysis())
+        .expect("the fixture loads");
 
     // Run full deobfuscation
     let config = EngineConfig::default();
@@ -2212,8 +2209,7 @@ fn test_fibonacci_deobfuscation_preserves_semantics() {
 /// This catches regressions where specific pass orderings break loop semantics.
 #[test]
 fn test_fibonacci_pass_combinations() {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/samples/packers/source/TestApp/TestApp.exe");
+    let path = fixture("packers/confuserex/1.6.0/original.exe");
 
     // Test key pass combinations
     let configs: Vec<(&str, EngineConfig)> = vec![
@@ -2251,11 +2247,8 @@ fn test_fibonacci_pass_combinations() {
     ];
 
     for (name, config) in configs {
-        let assembly =
-            match CilObject::from_path_with_validation(&path, ValidationConfig::analysis()) {
-                Ok(asm) => asm,
-                Err(_) => return, // Skip if test file not available
-            };
+        let assembly = CilObject::from_path_with_validation(&path, ValidationConfig::analysis())
+            .expect("the fixture loads");
 
         let engine = DeobfuscationEngine::new(config);
         let (output, _) = engine.process_assembly(assembly).expect("deobfuscate");
@@ -3343,8 +3336,7 @@ fn a_decrypted_array_is_initialised_from_its_data() {
 /// the session along with the type references its signature names.
 #[test]
 fn initialize_array_is_referenced_when_the_module_has_no_reference() {
-    let path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/mono_4.0/Mono.Options.dll");
+    let path = fixture("mono_4.0/Mono.Options.dll");
     let mut assembly = CilAssembly::new(CilAssemblyView::from_path(&path).unwrap());
     let original = assembly
         .view()

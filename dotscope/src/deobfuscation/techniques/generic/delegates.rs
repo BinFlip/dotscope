@@ -478,12 +478,12 @@ mod tests {
             generic::delegates::{CallIndirectionFindings, GenericDelegateProxy},
             Technique, TechniqueCategory,
         },
-        test::helpers::{load_sample, method_token, mono_mscorlib},
+        testkit::helpers::{load_sample, method_token, mono_mscorlib},
     };
 
     #[test]
     fn test_detect_negative_confuserex_original() {
-        let asm = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+        let asm = load_sample("packers/confuserex/1.6.0/original.exe");
 
         let technique = GenericDelegateProxy;
         let detection = technique.detect(&asm);
@@ -504,7 +504,7 @@ mod tests {
 
     #[test]
     fn test_detect_negative_obfuscar_sample() {
-        let asm = load_sample("tests/samples/packers/obfuscar/2.2.50/obfuscar_strings_only.exe");
+        let asm = load_sample("packers/obfuscar/2.2.50/obfuscar_strings_only.exe");
 
         let technique = GenericDelegateProxy;
         let detection = technique.detect(&asm);

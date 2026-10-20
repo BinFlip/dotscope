@@ -423,7 +423,7 @@ mod tests {
     use super::*;
     use crate::{
         analysis::{CallGraph, SsaFunctionBuilder, SsaType},
-        test::helpers::test_assembly_arc,
+        testkit::helpers::test_assembly_arc,
     };
 
     /// Runs a pass whose only sentinel is the test assembly's first MemberRef.

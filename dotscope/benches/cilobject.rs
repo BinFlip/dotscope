@@ -2,15 +2,12 @@
 
 extern crate dotscope;
 
-use std::path::PathBuf;
-
 use criterion::{criterion_group, criterion_main, Criterion};
-use dotscope::{metadata::cilobject::CilObject, ValidationConfig};
+use dotscope::{metadata::cilobject::CilObject, testkit::fixture, ValidationConfig};
 
 /// Benchmark loading a `CilObject` with and without metadata validation.
 pub fn criterion_benchmark(c: &mut Criterion) {
-    let path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/mono_4.8/mscorlib.dll");
+    let path = fixture("mono_4.8/mscorlib.dll");
     c.bench_function("bench_cilobject", |b| {
         b.iter(|| {
             let _ = CilObject::from_path_with_validation(&path, ValidationConfig::disabled());

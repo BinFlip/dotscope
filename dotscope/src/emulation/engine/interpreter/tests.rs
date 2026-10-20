@@ -26,7 +26,7 @@ use crate::{
         token::Token,
         typesystem::{CilFlavor, PointerSize},
     },
-    test::emulation::{create_test_context, create_test_thread},
+    testkit::emulation::{create_test_context, create_test_thread},
 };
 
 fn create_test_interpreter() -> (Interpreter, Arc<AddressSpace>) {

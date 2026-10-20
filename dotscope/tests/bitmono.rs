@@ -21,25 +21,24 @@
 
 #![cfg(feature = "deobfuscation")]
 
-mod common;
-
 use std::{collections::HashSet, sync::Arc};
 
-use common::{
-    framework::{
-        assert_common_requirements, load_sample, print_summary, run_deobfuscation_test,
-        ProcessMode, SampleSpec, TestResult, SEMANTIC_TEST_METHODS,
-    },
-    verification::{
-        verify_semantic_preservation, SemanticVerificationResult, StructuralConfig,
-        VerificationLevel,
-    },
-};
 use dotscope::{
     deobfuscation::{DeobfuscationEngine, DeobfuscationResult, EngineConfig},
     metadata::{
         tables::{AssemblyRefRaw, TypeRefRaw},
         validation::ValidationConfig,
+    },
+    testkit::{
+        fixture,
+        framework::{
+            assert_common_requirements, load_sample, print_summary, run_deobfuscation_test,
+            ProcessMode, SampleSpec, TestResult, SEMANTIC_TEST_METHODS,
+        },
+        verification::{
+            verify_semantic_preservation, SemanticVerificationResult, StructuralConfig,
+            VerificationLevel,
+        },
     },
     CilObject,
 };
@@ -49,9 +48,9 @@ use dotscope::{
 /// release. Every test runs against each.
 const VERSIONS: &[&str] = &["0.39.0", "0.45.0"];
 
-/// The samples directory of a BitMono version.
+/// The fixture directory of a BitMono version.
 fn samples_dir(version: &str) -> String {
-    format!("tests/samples/packers/bitmono/{version}")
+    format!("packers/bitmono/{version}")
 }
 
 /// Expected protections in a BitMono sample.
@@ -372,13 +371,6 @@ fn test_all_bitmono_samples() {
         let mut results = Vec::new();
 
         for sample in &samples {
-            let path = format!("{}/{}", dir, sample.filename);
-            assert!(
-                std::path::Path::new(&path).exists(),
-                "sample not found: {}",
-                path
-            );
-
             results.push(run_deobfuscation_test(
                 sample,
                 dir,
@@ -578,19 +570,15 @@ fn print_bitmono_summary(results: &[TestResult<ExpectedProtections>]) {
 #[test]
 fn test_bitmono_no_false_positives_on_confuserex() {
     let confuserex_samples = [
-        "tests/samples/packers/confuserex/1.6.0/original.exe",
-        "tests/samples/packers/confuserex/1.6.0/mkaring_normal.exe",
-        "tests/samples/packers/confuserex/1.6.0/mkaring_maximum.exe",
+        "packers/confuserex/1.6.0/original.exe",
+        "packers/confuserex/1.6.0/mkaring_normal.exe",
+        "packers/confuserex/1.6.0/mkaring_maximum.exe",
     ];
 
     for path in &confuserex_samples {
-        if !std::path::Path::new(path).exists() {
-            eprintln!("Skipping: {} not found", path);
-            continue;
-        }
-
-        let assembly = CilObject::from_path_with_validation(path, ValidationConfig::analysis())
-            .unwrap_or_else(|_| panic!("Failed to load {}", path));
+        let assembly =
+            CilObject::from_path_with_validation(fixture(path), ValidationConfig::analysis())
+                .unwrap_or_else(|_| panic!("Failed to load {}", path));
 
         let engine = DeobfuscationEngine::default();
         let det = engine.detect(&assembly);
@@ -607,19 +595,15 @@ fn test_bitmono_no_false_positives_on_confuserex() {
 #[test]
 fn test_bitmono_no_false_positives_on_obfuscar() {
     let obfuscar_samples = [
-        "tests/samples/packers/obfuscar/2.2.50/original.exe",
-        "tests/samples/packers/obfuscar/2.2.50/obfuscar_default.exe",
-        "tests/samples/packers/obfuscar/2.2.50/obfuscar_maximum.exe",
+        "packers/obfuscar/2.2.50/original.exe",
+        "packers/obfuscar/2.2.50/obfuscar_default.exe",
+        "packers/obfuscar/2.2.50/obfuscar_maximum.exe",
     ];
 
     for path in &obfuscar_samples {
-        if !std::path::Path::new(path).exists() {
-            eprintln!("Skipping: {} not found", path);
-            continue;
-        }
-
-        let assembly = CilObject::from_path_with_validation(path, ValidationConfig::analysis())
-            .unwrap_or_else(|_| panic!("Failed to load {}", path));
+        let assembly =
+            CilObject::from_path_with_validation(fixture(path), ValidationConfig::analysis())
+                .unwrap_or_else(|_| panic!("Failed to load {}", path));
 
         let engine = DeobfuscationEngine::default();
         let det = engine.detect(&assembly);
@@ -661,12 +645,7 @@ fn test_bitmono_detection_scoring() {
         ];
 
         for (filename, description, expected_ids) in il_samples {
-            let path = format!("{}/{}", dir, filename);
-            assert!(
-                std::path::Path::new(&path).exists(),
-                "sample not found: {}",
-                path
-            );
+            let path = fixture(&format!("{dir}/{}", filename));
 
             let assembly =
                 CilObject::from_path_with_validation(&path, ValidationConfig::analysis())
@@ -714,12 +693,7 @@ fn run_pe_protection_test(
     DeobfuscationResult,
     Option<SemanticVerificationResult>,
 ) {
-    let path = format!("{}/{}", dir, filename);
-    assert!(
-        std::path::Path::new(&path).exists(),
-        "Sample not found: {}",
-        path
-    );
+    let path = fixture(&format!("{dir}/{}", filename));
 
     let config = EngineConfig::default();
     let engine = DeobfuscationEngine::new(config);
@@ -752,7 +726,7 @@ fn run_pe_protection_test(
     );
 
     let semantic_result = {
-        let original_path = format!("{}/original.exe", dir);
+        let original_path = fixture(&format!("{dir}/original.exe"));
         let original_asm =
             CilObject::from_path_with_validation(&original_path, ValidationConfig::analysis())
                 .unwrap_or_else(|e| panic!("Failed to load original.exe: {}", e));
@@ -788,12 +762,7 @@ fn run_pe_protection_test(
 
 /// Runs detection (IL + SSA) on a sample.
 fn run_detection_test(dir: &str, filename: &str) -> DeobfuscationResult {
-    let path = format!("{}/{}", dir, filename);
-    assert!(
-        std::path::Path::new(&path).exists(),
-        "Sample not found: {}",
-        path
-    );
+    let path = fixture(&format!("{dir}/{}", filename));
 
     let assembly = CilObject::from_path_with_validation(&path, ValidationConfig::analysis())
         .unwrap_or_else(|e| panic!("Failed to load {}: {}", filename, e));
@@ -1038,12 +1007,7 @@ fn test_protection_renamer_cleanup() {
         let dir = samples_dir(version);
         let dir = dir.as_str();
         eprintln!("=== BitMono {version} ===");
-        let path = format!("{}/bitmono_renamer.exe", dir);
-        assert!(
-            std::path::Path::new(&path).exists(),
-            "sample not found: {}",
-            path
-        );
+        let path = fixture(&format!("{dir}/bitmono_renamer.exe"));
 
         let config = EngineConfig::default();
         let engine = DeobfuscationEngine::new(config);
@@ -1097,12 +1061,6 @@ fn test_dotnethook_call_targets() {
         let dir = dir.as_str();
         eprintln!("=== BitMono {version} ===");
         for sample in &["bitmono_dotnethook.exe", "bitmono_maximum_il.exe"] {
-            let path = format!("{}/{}", dir, sample);
-            assert!(
-                std::path::Path::new(&path).exists(),
-                "sample not found: {}",
-                path
-            );
             eprintln!("\n=== Testing {} ===", sample);
             test_dotnethook_call_targets_for_sample(dir, sample);
         }
@@ -1110,9 +1068,9 @@ fn test_dotnethook_call_targets() {
 }
 
 fn test_dotnethook_call_targets_for_sample(dir: &str, sample: &str) {
-    let path = format!("{}/{}", dir, sample);
+    let path = fixture(&format!("{dir}/{}", sample));
 
-    let original_path = format!("{}/original.exe", dir);
+    let original_path = fixture(&format!("{dir}/original.exe"));
     let original =
         CilObject::from_path_with_validation(&original_path, ValidationConfig::analysis())
             .expect("Failed to load original.exe");
@@ -1327,64 +1285,6 @@ fn get_call_target_tokens(
     tokens
 }
 
-#[test]
-fn test_dotnethook_offset_diagnostic() {
-    for version in VERSIONS {
-        let dir = samples_dir(version);
-        let dir = dir.as_str();
-        eprintln!("=== BitMono {version} ===");
-        let path = format!("{}/bitmono_maximum_il.exe", dir);
-        assert!(
-            std::path::Path::new(&path).exists(),
-            "sample not found: {}",
-            path
-        );
-
-        let config = EngineConfig::default();
-        let engine = DeobfuscationEngine::new(config);
-        let (output, _) = engine.process_file(&path).expect("Deobfuscation failed");
-
-        eprintln!("\n[RESULT] Method call targets:");
-        for entry in output.methods().iter() {
-            let m = entry.value();
-            let dt = m
-                .declaring_type_rc()
-                .map(|t| t.name.clone())
-                .unwrap_or_default();
-            let calls: Vec<String> = m
-                .instructions()
-                .filter(|i| {
-                    i.mnemonic == "call" || i.mnemonic == "callvirt" || i.mnemonic == "newobj"
-                })
-                .filter_map(|i| {
-                    i.get_token_operand().map(|t| {
-                        let target_name = output
-                            .method(&t)
-                            .map(|tm| {
-                                let tdt = tm
-                                    .declaring_type_rc()
-                                    .map(|tt| tt.name.clone())
-                                    .unwrap_or_default();
-                                format!("{}.{}", tdt, tm.name)
-                            })
-                            .unwrap_or_else(|_| format!("ext:0x{:08X}", t.value()));
-                        format!("{} 0x{:08X}({})", i.mnemonic, t.value(), target_name)
-                    })
-                })
-                .collect();
-            if !calls.is_empty() && dt != "<Module>" && !dt.starts_with("<>") {
-                eprintln!(
-                    "  0x{:08X} {}.{} -> {}",
-                    m.token.value(),
-                    dt,
-                    m.name,
-                    calls.join(", ")
-                );
-            }
-        }
-    }
-}
-
 /// Names of the assemblies `assembly` references.
 fn assembly_ref_names(assembly: &CilObject) -> HashSet<String> {
     let strings = assembly.strings().unwrap();
@@ -1407,12 +1307,7 @@ fn test_no_obfuscator_metadata_survives() {
         let dir = samples_dir(version);
         let dir = dir.as_str();
         eprintln!("=== BitMono {version} ===");
-        let original_path = format!("{}/original.exe", dir);
-        assert!(
-            std::path::Path::new(&original_path).exists(),
-            "sample not found: {}",
-            original_path
-        );
+        let original_path = fixture(&format!("{dir}/original.exe"));
         let original = CilObject::from_path(&original_path).unwrap();
         let original_refs = assembly_ref_names(&original);
 
@@ -1425,7 +1320,7 @@ fn test_no_obfuscator_metadata_survives() {
             "bitmono_maximum.exe",
             "bitmono_maximum_il.exe",
         ] {
-            let path = format!("{}/{}", dir, sample);
+            let path = fixture(&format!("{dir}/{}", sample));
             let engine = DeobfuscationEngine::new(EngineConfig::default());
             let (output, _) = engine.process_file(&path).unwrap();
 
@@ -1461,4 +1356,62 @@ fn test_no_obfuscator_metadata_survives() {
             }
         }
     }
+}
+
+/// The `xor`, `mul`, `sub` and narrowing `conv` instructions of each method of `assembly`, by
+/// declaring type and name.
+fn arithmetic_by_method(assembly: &CilObject) -> std::collections::BTreeMap<String, usize> {
+    assembly
+        .methods()
+        .iter()
+        .map(|entry| {
+            let method = entry.value();
+            let declaring = method
+                .declaring_type_rc()
+                .map(|t| t.fullname().to_string())
+                .unwrap_or_default();
+            let count = method
+                .instructions()
+                .filter(|i| {
+                    matches!(
+                        i.mnemonic,
+                        "xor" | "mul" | "sub" | "conv.i1" | "conv.u1" | "conv.i2" | "conv.u2"
+                    )
+                })
+                .count();
+            (format!("{declaring}::{}", method.name), count)
+        })
+        .collect()
+}
+
+/// LocalVariableEncoding adds an encode to every store and a decode to every load of an
+/// integer local, an 8- or 16-bit one's narrowed. Once reversed, each method computes with
+/// exactly the `xor`, `mul`, `sub` and narrowing conversions the same pipeline leaves in its
+/// original: loop-carried locals included, whose encodings meet at phis.
+#[test]
+fn local_variable_encoding_leaves_the_original_arithmetic() {
+    let dir = samples_dir("0.45.0");
+    let engine = DeobfuscationEngine::new(EngineConfig::default());
+    let (original, _) = engine
+        .process_file(fixture(&format!("{dir}/original.exe")))
+        .unwrap();
+    let (output, _) = engine
+        .process_file(fixture(&format!("{dir}/bitmono_localvariableencoding.exe")))
+        .unwrap();
+
+    let expected = arithmetic_by_method(&original);
+    let restored = arithmetic_by_method(&output);
+    for (method, count) in &expected {
+        if let Some(found) = restored.get(method) {
+            assert_eq!(found, count, "{method}");
+        }
+    }
+    assert!(
+        restored
+            .keys()
+            .filter(|m| expected.contains_key(*m))
+            .count()
+            > 20,
+        "methods compared"
+    );
 }

@@ -33,23 +33,22 @@
 
 #![cfg(feature = "deobfuscation")]
 
-mod common;
-
-use common::{
-    framework::{
-        load_sample, print_summary, run_deobfuscation_test, ProcessMode, SampleSpec,
-        SEMANTIC_TEST_METHODS,
-    },
-    verification::{StructuralConfig, VerificationLevel},
-};
 use dotscope::{
     assembly::Operand,
     deobfuscation::{DeobfuscationEngine, EngineConfig},
     metadata::validation::ValidationConfig,
-    CilObject,
+    testkit::{
+        fixture,
+        framework::{
+            load_sample, print_summary, run_deobfuscation_test, ProcessMode, SampleSpec,
+            SEMANTIC_TEST_METHODS,
+        },
+        verification::{StructuralConfig, VerificationLevel},
+    },
+    CilObject, Error,
 };
 
-const SAMPLES_DIR: &str = "tests/samples/packers/netreactor/7.5.0";
+const SAMPLES_DIR: &str = "packers/netreactor/7.5.0";
 
 /// Expected protections in a .NET Reactor sample.
 #[derive(Debug, Clone, Default)]
@@ -350,18 +349,25 @@ fn all_samples() -> Vec<SampleSpec<ReactorExpectedProtections>> {
 fn test_netreactor_samples_loadable() {
     let samples = all_samples();
     let mut loaded = 0;
-    let mut skipped = 0;
 
     for sample in &samples {
-        let path = format!("{}/{}", SAMPLES_DIR, sample.filename);
-        if !std::path::Path::new(&path).exists() {
-            skipped += 1;
-            continue;
-        }
+        let path = fixture(&format!("{}/{}", SAMPLES_DIR, sample.filename));
 
         // Use analysis-level validation: .NET Reactor samples (especially NecroBit)
         // have encrypted method bodies that fail strict owned-type validation.
         let result = CilObject::from_path_with_validation(&path, ValidationConfig::analysis());
+        if sample.expected_protections.has_native_exe {
+            // A native EXE carries the assembly encrypted in its resources, behind an x86
+            // loader. Unwrapping it is not supported yet: the file is refused for what it is,
+            // never loaded as something else.
+            assert!(
+                matches!(result, Err(Error::NotSupported)),
+                "{}: a native EXE wrapper is refused as not supported, got {:?}",
+                sample.filename,
+                result.map(|asm| asm.methods().len())
+            );
+            continue;
+        }
         match result {
             Ok(asm) => {
                 loaded += 1;
@@ -380,16 +386,7 @@ fn test_netreactor_samples_loadable() {
         }
     }
 
-    if loaded == 0 {
-        eprintln!(
-            "All {} .NET Reactor samples skipped (not found in {}).",
-            skipped, SAMPLES_DIR
-        );
-        eprintln!("Generate samples with: ./regenerate.sh netreactor");
-        return;
-    }
-
-    eprintln!("\n.NET Reactor: {loaded} loaded, {skipped} skipped");
+    eprintln!("\n.NET Reactor: {loaded} loaded");
 }
 
 /// Main test that runs all .NET Reactor samples through the deobfuscation pipeline.
@@ -406,13 +403,19 @@ fn test_all_netreactor_samples() {
         Some(load_sample(SAMPLES_DIR, "original.exe").expect("the unprotected original loads"));
 
     let mut results = Vec::new();
-    let mut skipped = 0;
 
     for sample in &samples {
-        let path = format!("{}/{}", SAMPLES_DIR, sample.filename);
-        if !std::path::Path::new(&path).exists() {
-            eprintln!("Skipping test: sample not found at {}", path);
-            skipped += 1;
+        let path = fixture(&format!("{}/{}", SAMPLES_DIR, sample.filename));
+
+        if sample.expected_protections.has_native_exe {
+            // Not supported yet (see `test_netreactor_samples_loadable`): deobfuscation refuses
+            // it rather than writing anything.
+            let refused = DeobfuscationEngine::new(EngineConfig::default()).process_file(&path);
+            assert!(
+                matches!(refused, Err(Error::NotSupported)),
+                "{}: a native EXE wrapper is refused as not supported",
+                sample.filename
+            );
             continue;
         }
 
@@ -424,15 +427,6 @@ fn test_all_netreactor_samples() {
             EngineConfig::default(),
             ProcessMode::Assembly,
         ));
-    }
-
-    if results.is_empty() {
-        eprintln!(
-            "All {} .NET Reactor samples skipped (not found in {}).",
-            skipped, SAMPLES_DIR
-        );
-        eprintln!("Generate samples with: ./regenerate.sh netreactor");
-        return;
     }
 
     print_summary(&results, "NET REACTOR", |result| {
@@ -529,7 +523,7 @@ fn methods_loading(assembly: &CilObject, needle: &str) -> Vec<String> {
 /// code calling it is the reason the check has to go, not a reason to keep it.
 #[test]
 fn the_trial_check_is_removed_with_its_call_sites() {
-    let sample = format!("{SAMPLES_DIR}/reactor_strings.exe");
+    let sample = fixture(&format!("{SAMPLES_DIR}/reactor_strings.exe"));
     let engine = DeobfuscationEngine::new(EngineConfig::default());
     let (output, _) = engine.process_file(&sample).unwrap();
 
@@ -546,7 +540,7 @@ fn the_trial_check_is_removed_with_its_call_sites() {
 /// their own names and the encrypted containers go.
 #[test]
 fn fully_protected_resources_are_restored() {
-    let sample = format!("{SAMPLES_DIR}/reactor_full.exe");
+    let sample = fixture(&format!("{SAMPLES_DIR}/reactor_full.exe"));
     let engine = DeobfuscationEngine::new(EngineConfig::default());
     let (output, _) = engine.process_file(&sample).unwrap();
 

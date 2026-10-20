@@ -232,11 +232,11 @@ pub(super) fn resolve_pinvoke_tokens(assembly: &CilObject, target_name: &str) ->
 
 #[cfg(test)]
 mod tests {
-    use crate::test::helpers::load_sample;
+    use crate::testkit::helpers::load_sample;
 
     #[test]
     fn test_find_encrypted_methods_on_antitamper() {
-        let assembly = load_sample("tests/samples/packers/confuserex/1.6.0/mkaring_antitamper.exe");
+        let assembly = load_sample("packers/confuserex/1.6.0/mkaring_antitamper.exe");
 
         let encrypted = super::find_encrypted_methods(&assembly);
         assert!(
@@ -247,7 +247,7 @@ mod tests {
 
     #[test]
     fn test_find_encrypted_methods_on_original() {
-        let assembly = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+        let assembly = load_sample("packers/confuserex/1.6.0/original.exe");
 
         let encrypted = super::find_encrypted_methods(&assembly);
         assert!(
@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn test_find_all_methods_with_rva() {
-        let assembly = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+        let assembly = load_sample("packers/confuserex/1.6.0/original.exe");
 
         let methods = super::find_all_methods_with_rva(&assembly);
         assert!(
@@ -269,7 +269,7 @@ mod tests {
 
     #[test]
     fn test_resolve_pinvoke_tokens_on_maximum() {
-        let assembly = load_sample("tests/samples/packers/confuserex/1.6.0/mkaring_maximum.exe");
+        let assembly = load_sample("packers/confuserex/1.6.0/mkaring_maximum.exe");
 
         let vp_tokens = super::resolve_pinvoke_tokens(&assembly, "VirtualProtect");
         assert!(
@@ -280,7 +280,7 @@ mod tests {
 
     #[test]
     fn test_resolve_pinvoke_tokens_on_original() {
-        let assembly = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+        let assembly = load_sample("packers/confuserex/1.6.0/original.exe");
 
         let vp_tokens = super::resolve_pinvoke_tokens(&assembly, "VirtualProtect");
         assert!(

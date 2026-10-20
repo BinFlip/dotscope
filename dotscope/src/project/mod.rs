@@ -547,7 +547,51 @@ impl std::fmt::Debug for CilProject {
 #[cfg_attr(feature = "skip-expensive-tests", allow(unused_imports))]
 mod tests {
     use super::*;
-    use crate::test::{verify_crafted_2, verify_windowsbasedll};
+    use crate::{
+        metadata::{
+            typesystem::{CilTypeReference, TypeSource},
+            validation::ValidationConfig,
+        },
+        testkit::{fixture, verify_crafted_2, verify_windowsbasedll},
+    };
+
+    /// In a project, a registry also holds the types its TypeRefs resolve to in other
+    /// assemblies. The types it lists as its own assembly's are that assembly's alone: every
+    /// assembly's row token is `0x20000001`, and keying sources by it once listed System's
+    /// resolved mscorlib types (`ExtensionAttribute`, `CLSCompliantAttribute`, ...) as
+    /// System's.
+    #[test]
+    fn a_registry_lists_only_its_own_assembly_s_types_as_its_own() {
+        let result = ProjectLoader::new()
+            .primary_file(fixture("mono_4.8/System.dll"))
+            .and_then(|loader| loader.with_search_path(fixture("mono_4.8")))
+            .map(|loader| {
+                loader
+                    .auto_discover(true)
+                    .with_validation(ValidationConfig::disabled())
+            })
+            .and_then(ProjectLoader::build)
+            .expect("System.dll loads with mscorlib");
+        let system = result.project.get_primary().expect("the primary assembly");
+        let identity = system.identity().expect("System's identity");
+        let own = system
+            .types()
+            .types_from_source(&TypeSource::Assembly(identity.clone()));
+
+        let foreign: Vec<String> = own
+            .iter()
+            .filter_map(|ty| match ty.external() {
+                Some(CilTypeReference::Assembly(assembly)) if assembly.name != identity.name => {
+                    Some(format!("{} from {}", ty.fullname(), assembly.name))
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(foreign.is_empty(), "{} foreign: {foreign:?}", foreign.len());
+        assert!(own
+            .iter()
+            .any(|ty| &*ty.fullname() == "System.Text.RegularExpressions.GroupCollection"));
+    }
 
     #[test]
     fn test_cilproject_creation() {
@@ -569,51 +613,26 @@ mod tests {
     #[test]
     #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_get_primary_with_loader() {
-        // Use CARGO_MANIFEST_DIR to get absolute paths
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-        let crafted2_path = std::path::Path::new(&manifest_dir).join("tests/samples/crafted_2.exe");
-        let mono_deps_path = std::path::Path::new(&manifest_dir).join("tests/samples/mono_4.8");
-
-        // Only run test if the file exists
-        if !crafted2_path.exists() {
-            println!(
-                "Skipping test - crafted_2.exe not found at {:?}",
-                crafted2_path
-            );
-            return;
-        }
-
-        match ProjectLoader::new()
-            .primary_file(&crafted2_path)
-            .and_then(|loader| loader.with_search_path(&mono_deps_path))
+        let result = ProjectLoader::new()
+            .primary_file(fixture("crafted_2.exe"))
+            .and_then(|loader| loader.with_search_path(fixture("mono_4.8")))
             .and_then(|loader| loader.auto_discover(true).build())
-        {
-            Ok(result) => {
-                // Test that get_primary() returns the primary assembly
-                if let Some(primary) = result.project.get_primary() {
-                    // Verify it's an actual assembly
-                    assert!(
-                        !primary.types().is_empty(),
-                        "Primary assembly should have types"
-                    );
-                    println!("✅ Primary assembly has {} types", primary.types().len());
-                } else {
-                    panic!("Primary assembly should be set after successful loading");
-                }
-            }
-            Err(e) => {
-                println!("Skipping test due to loading error: {}", e);
-            }
-        }
+            .expect("crafted_2.exe loads with its dependencies");
+        let primary = result
+            .project
+            .get_primary()
+            .expect("the primary assembly is set after loading");
+        assert!(
+            !primary.types().is_empty(),
+            "the primary assembly has types"
+        );
     }
 
     #[test]
     #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_load_crafted2_exe() {
-        // Use CARGO_MANIFEST_DIR to get absolute paths
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-        let crafted2_path = std::path::Path::new(&manifest_dir).join("tests/samples/crafted_2.exe");
-        let mono_deps_path = std::path::Path::new(&manifest_dir).join("tests/samples/mono_4.8");
+        let crafted2_path = fixture("crafted_2.exe");
+        let mono_deps_path = fixture("mono_4.8");
 
         println!("Loading crafted_2.exe from {:?}", crafted2_path);
         println!("Using Mono dependencies from {:?}", mono_deps_path);
@@ -674,10 +693,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_load_windowsbase_dll() {
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-        let windowsbase_path =
-            std::path::Path::new(&manifest_dir).join("tests/samples/WindowsBase.dll");
-        let mono_deps_path = std::path::Path::new(&manifest_dir).join("tests/samples/mono_4.8");
+        let windowsbase_path = fixture("WindowsBase.dll");
+        let mono_deps_path = fixture("mono_4.8");
 
         println!("Loading WindowsBase.dll from {:?}", windowsbase_path);
         println!("Using Mono dependencies from {:?}", mono_deps_path);
