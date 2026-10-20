@@ -12,8 +12,8 @@ use crate::{
     metadata::{
         customattributes::CustomAttributeValueList,
         marshalling::MarshallingInfo,
-        signatures::SignatureParameter,
-        tables::ParamAttributes,
+        signatures::{SignatureMethod, SignatureParameter},
+        tables::{ParamAttributes, ParamRc},
         token::Token,
         typesystem::{CilPrimitive, CilTypeRef, CilTypeRefList, TypeRegistry, TypeResolver},
     },
@@ -205,5 +205,49 @@ impl Param {
             }
         }
         Ok(())
+    }
+
+    /// The parameters a method signature declares, typed by the signature: the return
+    /// parameter (sequence 0) and one per signature parameter (sequence 1 to N).
+    ///
+    /// Unlike a method's [`crate::metadata::method::Method::params`], which holds the Param
+    /// rows the method has, this covers every parameter: ECMA-335 §22.33 makes a Param row
+    /// optional, and a parameter without one (no name, no attributes) still takes an
+    /// argument. The parameters have no row, so their row, token and name are empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a parameter's type or modifiers cannot be resolved.
+    pub fn from_signature(
+        signature: &SignatureMethod,
+        types: &Arc<TypeRegistry>,
+    ) -> Result<Arc<boxcar::Vec<ParamRc>>> {
+        let params = Arc::new(boxcar::Vec::with_capacity(
+            signature.params.len().saturating_add(1),
+        ));
+        let param_count = Some(signature.params.len());
+        for (sequence, param_signature) in std::iter::once(&signature.return_type)
+            .chain(&signature.params)
+            .enumerate()
+        {
+            let param = Arc::new(Param {
+                rid: 0,
+                token: Token::new(0),
+                offset: 0,
+                flags: ParamAttributes::ZERO,
+                sequence: u32::try_from(sequence)
+                    .map_err(|_| malformed_error!("Too many parameters in a method signature"))?,
+                name: None,
+                default: OnceLock::new(),
+                marshal: OnceLock::new(),
+                modifiers: Arc::new(boxcar::Vec::new()),
+                base: OnceLock::new(),
+                is_by_ref: AtomicBool::new(param_signature.by_ref),
+                custom_attributes: Default::default(),
+            });
+            param.apply_signature(param_signature, types.clone(), param_count)?;
+            params.push(param);
+        }
+        Ok(params)
     }
 }

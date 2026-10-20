@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::{
-    cilassembly::cleanup::{references::collect_all_type_tokens, CleanupRequest},
+    cilassembly::cleanup::CleanupRequest,
     metadata::{
         signatures::{parse_type_spec_signature, TypeSignature},
         tables::{
@@ -179,7 +179,7 @@ impl TypeNames {
 
     /// Records that `owner` names every type `signature` names.
     pub fn add_signature(&mut self, owner: Option<Token>, signature: &TypeSignature) {
-        collect_all_type_tokens(signature, &mut self.scratch);
+        signature.type_tokens(&mut self.scratch);
         for named in self.scratch.drain() {
             self.names.push((owner, named));
         }
@@ -505,7 +505,7 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet, HashSet};
 
     use super::*;
-    use crate::{metadata::signatures::TypeSignature, test::helpers::test_assembly_arc};
+    use crate::{metadata::signatures::TypeSignature, testkit::helpers::test_assembly_arc};
 
     #[test]
     fn signatures_and_base_types_name_the_types_they_use() {
@@ -594,7 +594,7 @@ mod tests {
                     .get(row.signature as usize)
                     .and_then(parse_type_spec_signature)
                 {
-                    collect_all_type_tokens(&sig.base, &mut names);
+                    sig.type_tokens(&mut names);
                 }
             }
         }

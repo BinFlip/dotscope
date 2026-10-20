@@ -44,8 +44,7 @@ use crate::{
         method::MethodBody,
         signatures::{
             parse_field_signature, parse_local_var_signature, parse_method_signature,
-            parse_property_signature, parse_type_spec_signature, CustomModifier,
-            SignatureLocalVariable, SignatureParameter, TypeSignature,
+            parse_property_signature, parse_type_spec_signature,
         },
         streams::Blob,
         tables::{
@@ -342,59 +341,7 @@ fn collect_type_tokens_from_local_sig(blob_data: &[u8], referenced: &mut HashSet
         return;
     };
 
-    for local in &sig.locals {
-        collect_all_type_tokens(&local.base, referenced);
-    }
-}
-
-/// Recursively collects TypeDef, TypeRef, and TypeSpec tokens from a type
-/// signature.
-///
-/// `ELEMENT_TYPE_CLASS` and `ELEMENT_TYPE_VALUETYPE` are followed by a
-/// `TypeDefOrRefOrSpecEncoded` token (ECMA-335 §II.23.2.8), so the token's
-/// table can be `TypeDef` (0x02), `TypeRef` (0x01), **or** `TypeSpec`
-/// (0x1B). All three must flow into the live-set so that the cascade
-/// cleanup doesn't drop a TypeSpec that's referenced only via a local
-/// variable signature (no IL operand picks it up). Function pointer
-/// signatures and custom modifiers name types too, and are followed.
-pub(crate) fn collect_all_type_tokens(sig: &TypeSignature, out: &mut HashSet<Token>) {
-    match sig {
-        TypeSignature::Class(token) | TypeSignature::ValueType(token) => {
-            let table = token.table();
-            if table == 0x01 || table == 0x02 || table == 0x1B {
-                out.insert(*token);
-            }
-        }
-        TypeSignature::GenericInst(base, args) => {
-            collect_all_type_tokens(base, out);
-            for arg in args {
-                collect_all_type_tokens(arg, out);
-            }
-        }
-        TypeSignature::SzArray(arr) => collect_all_type_tokens(&arr.base, out),
-        TypeSignature::Array(arr) => collect_all_type_tokens(&arr.base, out),
-        TypeSignature::Ptr(ptr) => collect_all_type_tokens(&ptr.base, out),
-        TypeSignature::ByRef(inner) | TypeSignature::Pinned(inner) => {
-            collect_all_type_tokens(inner, out);
-        }
-        TypeSignature::FnPtr(method) => {
-            for param in std::iter::once(&method.return_type)
-                .chain(&method.params)
-                .chain(&method.varargs)
-            {
-                collect_all_type_tokens(&param.base, out);
-            }
-        }
-        TypeSignature::ModifiedRequired(modifiers) | TypeSignature::ModifiedOptional(modifiers) => {
-            for modifier in modifiers {
-                let table = modifier.modifier_type.table();
-                if table == 0x01 || table == 0x02 || table == 0x1B {
-                    out.insert(modifier.modifier_type);
-                }
-            }
-        }
-        _ => {}
-    }
+    sig.type_tokens(referenced);
 }
 
 /// Collects TypeDef tokens referenced by surviving field signatures.
@@ -431,7 +378,7 @@ pub(super) fn collect_typedefs_from_field_signatures(assembly: &CilAssembly) -> 
         }
         if let Ok(blob_data) = blob_heap.get(field.signature as usize) {
             if let Ok(sig) = parse_field_signature(blob_data) {
-                collect_all_type_tokens(&sig.base, &mut referenced);
+                sig.type_tokens(&mut referenced);
             }
         }
     }
@@ -484,7 +431,7 @@ pub(super) fn collect_typedefs_from_typespec_signatures(assembly: &CilAssembly) 
         }
         if let Ok(blob_data) = blob_heap.get(typespec.signature as usize) {
             if let Ok(sig) = parse_type_spec_signature(blob_data) {
-                collect_all_type_tokens(&sig.base, &mut referenced);
+                sig.type_tokens(&mut referenced);
             }
         }
     }
@@ -1003,116 +950,20 @@ pub(super) fn scan_typespec_metadata_refs(assembly: &CilAssembly) -> HashSet<u32
     referenced_rids
 }
 
-/// Extracts TypeRef RIDs from a TypeSignature recursively.
-///
-/// TypeRef tokens can appear in Class/ValueType type signatures and in
-/// custom modifiers. This function walks the type signature tree and
-/// collects all embedded TypeRef RIDs.
-fn collect_typerefs_from_type(sig: &TypeSignature, referenced: &mut HashSet<u32>) {
-    match sig {
-        // Direct type references
-        TypeSignature::Class(token) | TypeSignature::ValueType(token) => {
-            if token.is_table(TableId::TypeRef) {
-                referenced.insert(token.row());
-            }
-        }
+/// The TypeRef rows among the tokens extended into it: a signature's
+/// [`type_tokens`](crate::metadata::signatures::TypeSignature::type_tokens) collected as
+/// TypeRef rows.
+struct TypeRefRows<'a>(&'a mut HashSet<u32>);
 
-        // Recursive types
-        TypeSignature::SzArray(arr) => {
-            for modifier in &arr.modifiers {
-                collect_typerefs_from_modifier(modifier, referenced);
-            }
-            collect_typerefs_from_type(&arr.base, referenced);
-        }
-        TypeSignature::Array(arr) => {
-            collect_typerefs_from_type(&arr.base, referenced);
-        }
-        TypeSignature::Ptr(ptr) => {
-            for modifier in &ptr.modifiers {
-                collect_typerefs_from_modifier(modifier, referenced);
-            }
-            collect_typerefs_from_type(&ptr.base, referenced);
-        }
-        TypeSignature::ByRef(inner) | TypeSignature::Pinned(inner) => {
-            collect_typerefs_from_type(inner, referenced);
-        }
-
-        // Generic instantiation - base type + type arguments
-        TypeSignature::GenericInst(base, args) => {
-            collect_typerefs_from_type(base, referenced);
-            for arg in args {
-                collect_typerefs_from_type(arg, referenced);
-            }
-        }
-
-        // Custom modifiers
-        TypeSignature::ModifiedRequired(modifiers) | TypeSignature::ModifiedOptional(modifiers) => {
-            for modifier in modifiers {
-                collect_typerefs_from_modifier(modifier, referenced);
-            }
-        }
-
-        // Function pointer - method signature embedded
-        TypeSignature::FnPtr(method_sig) => {
-            collect_typerefs_from_parameter(&method_sig.return_type, referenced);
-            for param in &method_sig.params {
-                collect_typerefs_from_parameter(param, referenced);
-            }
-        }
-
-        // Primitive and simple types - no tokens
-        TypeSignature::Void
-        | TypeSignature::Boolean
-        | TypeSignature::Char
-        | TypeSignature::I1
-        | TypeSignature::U1
-        | TypeSignature::I2
-        | TypeSignature::U2
-        | TypeSignature::I4
-        | TypeSignature::U4
-        | TypeSignature::I8
-        | TypeSignature::U8
-        | TypeSignature::R4
-        | TypeSignature::R8
-        | TypeSignature::I
-        | TypeSignature::U
-        | TypeSignature::String
-        | TypeSignature::Object
-        | TypeSignature::TypedByRef
-        | TypeSignature::GenericParamType(_)
-        | TypeSignature::GenericParamMethod(_)
-        | TypeSignature::Sentinel
-        | TypeSignature::Internal
-        | TypeSignature::Unknown
-        | TypeSignature::Type
-        | TypeSignature::Boxed
-        | TypeSignature::Field
-        | TypeSignature::Modifier
-        | TypeSignature::Reserved => {}
+impl Extend<Token> for TypeRefRows<'_> {
+    fn extend<I: IntoIterator<Item = Token>>(&mut self, tokens: I) {
+        self.0.extend(
+            tokens
+                .into_iter()
+                .filter(|token| token.is_table(TableId::TypeRef))
+                .map(|token| token.row()),
+        );
     }
-}
-
-/// Extracts TypeRef RIDs from a custom modifier.
-fn collect_typerefs_from_modifier(modifier: &CustomModifier, referenced: &mut HashSet<u32>) {
-    if modifier.modifier_type.is_table(TableId::TypeRef) {
-        referenced.insert(modifier.modifier_type.row());
-    }
-}
-
-/// Extracts TypeRef RIDs from a parameter (method return type or parameter).
-fn collect_typerefs_from_parameter(param: &SignatureParameter, referenced: &mut HashSet<u32>) {
-    for modifier in &param.modifiers {
-        collect_typerefs_from_modifier(modifier, referenced);
-    }
-    collect_typerefs_from_type(&param.base, referenced);
-}
-
-/// Extracts TypeRef RIDs from a local variable.
-fn collect_typerefs_from_local(local: &SignatureLocalVariable, referenced: &mut HashSet<u32>) {
-    for modifier in &local.modifiers {
-        collect_typerefs_from_modifier(modifier, referenced);
-    }
-    collect_typerefs_from_type(&local.base, referenced);
 }
 
 /// Scans all signature blobs in metadata tables to collect TypeRef RIDs.
@@ -1277,10 +1128,7 @@ fn scan_method_signature_blob(
         return false;
     };
 
-    collect_typerefs_from_parameter(&sig.return_type, referenced);
-    for param in &sig.params {
-        collect_typerefs_from_parameter(param, referenced);
-    }
+    sig.type_tokens(&mut TypeRefRows(referenced));
 
     true
 }
@@ -1300,10 +1148,7 @@ fn scan_field_signature_blob(
         return false;
     };
 
-    for modifier in &sig.modifiers {
-        collect_typerefs_from_modifier(modifier, referenced);
-    }
-    collect_typerefs_from_type(&sig.base, referenced);
+    sig.type_tokens(&mut TypeRefRows(referenced));
 
     true
 }
@@ -1322,9 +1167,7 @@ fn scan_local_var_signature_blob(
         return;
     };
 
-    for local in &sig.locals {
-        collect_typerefs_from_local(local, referenced);
-    }
+    sig.type_tokens(&mut TypeRefRows(referenced));
 }
 
 /// Scans a TypeSpec signature blob for TypeRef references.
@@ -1341,7 +1184,7 @@ fn scan_typespec_signature_blob(
         return;
     };
 
-    collect_typerefs_from_type(&sig.base, referenced);
+    sig.type_tokens(&mut TypeRefRows(referenced));
 }
 
 /// Scans a property signature blob for TypeRef references.
@@ -1358,13 +1201,7 @@ fn scan_property_signature_blob(
         return;
     };
 
-    for modifier in &sig.modifiers {
-        collect_typerefs_from_modifier(modifier, referenced);
-    }
-    collect_typerefs_from_type(&sig.base, referenced);
-    for param in &sig.params {
-        collect_typerefs_from_parameter(param, referenced);
-    }
+    sig.type_tokens(&mut TypeRefRows(referenced));
 }
 
 /// Removes TypeRef entries that are cascade candidates and no longer referenced.

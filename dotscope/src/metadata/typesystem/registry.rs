@@ -123,7 +123,8 @@ use crate::{
         identity::AssemblyIdentity,
         signatures::{SignatureMethodSpec, TypeSignature},
         tables::{
-            AssemblyRefRc, FileRc, MethodSpec, ModuleRc, ModuleRefRc, TableId, TypeAttributes,
+            AssemblyRc, AssemblyRefRc, FileRc, MethodSpec, ModuleRc, ModuleRefRc, TableId,
+            TypeAttributes,
         },
         token::Token,
         typesystem::{
@@ -382,12 +383,15 @@ struct SourceRegistry {
     assembly_refs: DashMap<Token, AssemblyRefRc>,
     /// File references indexed by their metadata tokens
     files: DashMap<Token, FileRc>,
-    /// Memoised `TypeSource` per defining-assembly token.
+    /// Memoised `TypeSource` per defining assembly, keyed by its `Assembly` row object.
     ///
     /// Deriving an `AssemblyIdentity` from an `Assembly` row rebuilds its name, culture and
     /// public-key blob. Every locally-defined type resolves to the same one, so it is
-    /// derived once per assembly rather than once per type.
-    assembly_sources: DashMap<Token, TypeSource>,
+    /// derived once per assembly rather than once per type. The key is the row object, not
+    /// its token: every assembly's row is `0x20000001`, and a registry also holds types
+    /// resolved from other assemblies. The entry keeps the row alive, so its address is not
+    /// reused.
+    assembly_sources: DashMap<usize, (AssemblyRc, TypeSource)>,
 }
 
 impl SourceRegistry {
@@ -445,12 +449,14 @@ impl SourceRegistry {
                 // `from_assembly` is worse than a clone - it re-clones the name and culture
                 // and rebuilds the public-key blob - and the result is identical for every
                 // one of them, so it is derived once and reused.
-                if let Some(cached) = self.assembly_sources.get(&assembly.token) {
-                    return cached.value().clone();
+                let key = Arc::as_ptr(assembly) as usize;
+                if let Some(cached) = self.assembly_sources.get(&key) {
+                    return cached.value().1.clone();
                 }
 
                 let source = TypeSource::Assembly(AssemblyIdentity::from_assembly(assembly));
-                self.assembly_sources.insert(assembly.token, source.clone());
+                self.assembly_sources
+                    .insert(key, (assembly.clone(), source.clone()));
                 source
             }
             CilTypeReference::File(file) => {
@@ -2028,6 +2034,10 @@ mod tests {
         metadata::tables::{
             AssemblyFlags, AssemblyRef, AssemblyRefHash, File, FileAttributes, Module, ModuleRef,
         },
+        testkit::{
+            fixture,
+            helpers::{runtime_type_handle_rows, TWO_CORELIB_FIXTURES},
+        },
         CilObject,
     };
 
@@ -2952,20 +2962,34 @@ mod tests {
 
     #[test]
     fn a_type_imported_from_two_core_libraries_resolves_to_the_modules_own() {
-        // BitMono, running on .NET 10, imports `RuntimeTypeHandle` from that
-        // runtime's System.Private.CoreLib (0x0100000D) beside the protected
-        // program's mscorlib import (0x01000017).
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/samples/packers/bitmono/0.39.0/bitmono_calltocalli.exe");
-        let assembly = CilObject::from_path(&path).unwrap();
-        let types = assembly.types();
+        // A module importing `System.RuntimeTypeHandle` from System.Private.CoreLib as
+        // well as from its own core library resolves it to its own import, whichever of
+        // the two TypeRefs the table lists first.
+        for name in TWO_CORELIB_FIXTURES {
+            let path = fixture(&format!("metadata/layouts/{name}"));
+            let rows = runtime_type_handle_rows(&path);
+            let (own, foreign) = (rows["mscorlib"], rows["System.Private.CoreLib"]);
+            assert_eq!(
+                foreign < own,
+                name.contains("foreign_first"),
+                "{name} lists the foreign TypeRef where its name says"
+            );
 
-        let handle = types
-            .get_corelib_typeref("System.RuntimeTypeHandle")
-            .unwrap();
-        assert_eq!(handle.token, Token::new(0x0100_0017));
-        // A type the core library does not provide still resolves.
-        assert!(types.get_corelib_typeref("System.Console").is_some());
-        assert!(types.get_corelib_typeref("No.Such.Type").is_none());
+            let assembly = CilObject::from_path(&path).unwrap();
+            let types = assembly.types();
+            let handle = types
+                .get_corelib_typeref("System.RuntimeTypeHandle")
+                .unwrap();
+            assert_eq!(handle.token, Token::new(0x0100_0000 | own), "{name}");
+            // A type the core library does not provide still resolves.
+            assert!(
+                types.get_corelib_typeref("System.Console").is_some(),
+                "{name}"
+            );
+            assert!(
+                types.get_corelib_typeref("No.Such.Type").is_none(),
+                "{name}"
+            );
+        }
     }
 }

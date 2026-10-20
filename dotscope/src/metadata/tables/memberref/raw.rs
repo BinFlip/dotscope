@@ -12,17 +12,15 @@
 //!
 //! [`MemberRef`]: crate::metadata::tables::MemberRef
 
-use std::sync::{atomic::AtomicBool, Arc, OnceLock};
+use std::sync::Arc;
 
 use crate::{
     metadata::{
-        signatures::{
-            parse_field_signature, parse_method_signature, SignatureMethod, TypeSignature,
-        },
+        signatures::{parse_field_signature, parse_method_signature, TypeSignature},
         streams::{Blob, Strings},
         tables::{
             CodedIndex, CodedIndexType, MemberRef, MemberRefRc, MemberRefSignature, Param,
-            ParamAttributes, ParamRc, TableInfoRef, TableRow,
+            TableInfoRef, TableRow,
         },
         token::Token,
         typesystem::{CilTypeReference, TypeRegistry},
@@ -98,73 +96,6 @@ pub struct MemberRefRaw {
 }
 
 impl MemberRefRaw {
-    /// Creates parameter metadata structures from a parsed method signature.
-    ///
-    /// This method generates parameter objects similar to those created for `MethodDef`
-    /// entries, enabling unified parameter handling across both definition and reference
-    /// contexts. The created parameters include return type information and all method
-    /// parameters with proper sequence numbering.
-    ///
-    /// # Parameter Structure
-    /// The created parameter collection includes:
-    /// - **Return parameter**: Sequence 0, contains return type information
-    /// - **Method parameters**: Sequence 1-N, contain parameter type information
-    /// - **Placeholder metadata**: Names are None as `MemberRef` parameters lack names
-    ///
-    /// # Arguments
-    /// * `method_sig` - The parsed method signature containing parameter and return type information
-    /// * `_strings` - The strings heap (unused as `MemberRef` parameters don't have names)
-    ///
-    /// # Returns
-    /// Thread-safe collection of parameter metadata structures with type information applied.
-    fn create_params_from_signature(
-        method_sig: &SignatureMethod,
-        _strings: &Strings,
-    ) -> Arc<boxcar::Vec<ParamRc>> {
-        let params = Arc::new(boxcar::Vec::with_capacity(
-            method_sig.params.len().saturating_add(1),
-        ));
-
-        // Create return parameter (sequence 0)
-        let return_param = Arc::new(Param {
-            rid: 0,               // No actual row ID for MemberRef params
-            token: Token::new(0), // Placeholder token
-            offset: 0,
-            flags: ParamAttributes::ZERO,
-            sequence: 0, // Return parameter
-            name: None,  // MemberRef parameters don't have names from metadata
-            default: OnceLock::new(),
-            marshal: OnceLock::new(),
-            modifiers: Arc::new(boxcar::Vec::new()),
-            base: OnceLock::new(),
-            is_by_ref: AtomicBool::new(method_sig.return_type.by_ref),
-            custom_attributes: Default::default(),
-        });
-        params.push(return_param);
-
-        // Create parameters for each method parameter
-        for (index, param_sig) in method_sig.params.iter().enumerate() {
-            let param = Arc::new(Param {
-                rid: 0,               // No actual row ID for MemberRef params
-                token: Token::new(0), // Placeholder token
-                offset: 0,
-                flags: ParamAttributes::ZERO,
-                #[allow(clippy::cast_possible_truncation)]
-                sequence: index.saturating_add(1) as u32, // Parameter sequence starts at 1
-                name: None, // MemberRef parameters don't have names from metadata
-                default: OnceLock::new(),
-                marshal: OnceLock::new(),
-                modifiers: Arc::new(boxcar::Vec::new()),
-                base: OnceLock::new(),
-                is_by_ref: AtomicBool::new(param_sig.by_ref),
-                custom_attributes: Default::default(),
-            });
-            params.push(param);
-        }
-
-        params
-    }
-
     /// Applies a `MemberRefRaw` entry to update related metadata structures.
     ///
     /// `MemberRef` entries represent references to external members and don't require
@@ -234,30 +165,7 @@ impl MemberRefRaw {
             )
         } else {
             let method_sig = parse_method_signature(signature_data)?;
-            let params = Self::create_params_from_signature(&method_sig, strings);
-
-            let method_param_count = Some(method_sig.params.len());
-            for (_, param) in params.iter() {
-                if param.sequence == 0 {
-                    // Return parameter
-                    param.apply_signature(
-                        &method_sig.return_type,
-                        types.clone(),
-                        method_param_count,
-                    )?;
-                } else {
-                    // Regular parameter
-                    let index = param.sequence.saturating_sub(1) as usize;
-                    if let Some(param_signature) = method_sig.params.get(index) {
-                        param.apply_signature(
-                            param_signature,
-                            types.clone(),
-                            method_param_count,
-                        )?;
-                    }
-                }
-            }
-
+            let params = Param::from_signature(&method_sig, types)?;
             (MemberRefSignature::Method(method_sig), params)
         };
 

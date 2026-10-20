@@ -1954,6 +1954,15 @@ pub struct SignatureParameter {
     pub base: TypeSignature,
 }
 
+impl SignatureParameter {
+    /// Adds every type this parameter names to `out`: its custom modifiers' and its type's
+    /// (see [`TypeSignature::type_tokens`]).
+    pub fn type_tokens(&self, out: &mut impl Extend<Token>) {
+        modifier_tokens(&self.modifiers, out);
+        self.base.type_tokens(out);
+    }
+}
+
 /// Method signature with calling conventions, parameters, and return types.
 ///
 /// Represents complete method signatures according to ECMA-335 Section II.23.2.1.
@@ -2368,6 +2377,17 @@ pub struct SignatureMethod {
 }
 
 impl SignatureMethod {
+    /// Adds every type this method signature names to `out`: its return type's, its
+    /// parameters' and its varargs' (see [`SignatureParameter::type_tokens`]).
+    pub fn type_tokens(&self, out: &mut impl Extend<Token>) {
+        for param in std::iter::once(&self.return_type)
+            .chain(&self.params)
+            .chain(&self.varargs)
+        {
+            param.type_tokens(out);
+        }
+    }
+
     /// Returns `true` when `other` takes the same parameters as this signature.
     ///
     /// The same number of generic parameters and of fixed parameters, and each
@@ -2573,6 +2593,15 @@ pub struct SignatureField {
     /// - Generic type parameters must satisfy constraints
     /// - Pointer types require appropriate permissions
     pub base: TypeSignature,
+}
+
+impl SignatureField {
+    /// Adds every type this field signature names to `out`: its custom modifiers' and its
+    /// type's (see [`TypeSignature::type_tokens`]).
+    pub fn type_tokens(&self, out: &mut impl Extend<Token>) {
+        modifier_tokens(&self.modifiers, out);
+        self.base.type_tokens(out);
+    }
 }
 
 /// Property signature with indexer support and custom modifiers.
@@ -2788,6 +2817,18 @@ pub struct SignatureProperty {
     pub params: Vec<SignatureParameter>,
 }
 
+impl SignatureProperty {
+    /// Adds every type this property signature names to `out`: its custom modifiers', its
+    /// type's and its parameters' (see [`TypeSignature::type_tokens`]).
+    pub fn type_tokens(&self, out: &mut impl Extend<Token>) {
+        modifier_tokens(&self.modifiers, out);
+        self.base.type_tokens(out);
+        for param in &self.params {
+            param.type_tokens(out);
+        }
+    }
+}
+
 /// Local variable signature collection for method bodies.
 ///
 /// Represents the complete local variable signature according to ECMA-335 Section II.23.2.6.
@@ -2899,6 +2940,16 @@ pub struct SignatureLocalVariables {
     /// Methods without local variables have an empty vector.
     /// This is common for simple methods that only use parameters.
     pub locals: Vec<SignatureLocalVariable>,
+}
+
+impl SignatureLocalVariables {
+    /// Adds every type these local variables name to `out` (see
+    /// [`SignatureLocalVariable::type_tokens`]).
+    pub fn type_tokens(&self, out: &mut impl Extend<Token>) {
+        for local in &self.locals {
+            local.type_tokens(out);
+        }
+    }
 }
 
 /// Individual local variable declaration with type and attributes.
@@ -3101,6 +3152,15 @@ pub struct SignatureLocalVariable {
     pub base: TypeSignature,
 }
 
+impl SignatureLocalVariable {
+    /// Adds every type this local variable names to `out`: its custom modifiers' and its
+    /// type's (see [`TypeSignature::type_tokens`]).
+    pub fn type_tokens(&self, out: &mut impl Extend<Token>) {
+        modifier_tokens(&self.modifiers, out);
+        self.base.type_tokens(out);
+    }
+}
+
 /// Type specification signature for complex and generic types.
 ///
 /// Represents type specification signatures according to ECMA-335 Section II.23.2.14.
@@ -3232,6 +3292,15 @@ pub struct SignatureTypeSpec {
     /// The type signature is resolved by the runtime to create
     /// the actual type representation used during execution.
     pub base: TypeSignature,
+}
+
+impl SignatureTypeSpec {
+    /// Adds every type this type specification names to `out`: its custom modifiers' and its
+    /// type's (see [`TypeSignature::type_tokens`]).
+    pub fn type_tokens(&self, out: &mut impl Extend<Token>) {
+        modifier_tokens(&self.modifiers, out);
+        self.base.type_tokens(out);
+    }
 }
 
 /// Method specification signature for generic method instantiations.
@@ -3452,7 +3521,64 @@ fn take_children(node: &mut TypeSignature, out: &mut Vec<TypeSignature>) {
     }
 }
 
+/// Whether `token` names a type: a TypeDef, TypeRef or TypeSpec (ECMA-335 II.23.2.8).
+fn names_a_type(token: Token) -> bool {
+    matches!(token.table(), 0x01 | 0x02 | 0x1B)
+}
+
+/// Adds the types `modifiers` name to `out`.
+fn modifier_tokens(modifiers: &[CustomModifier], out: &mut impl Extend<Token>) {
+    out.extend(
+        modifiers
+            .iter()
+            .map(|modifier| modifier.modifier_type)
+            .filter(|token| names_a_type(*token)),
+    );
+}
+
 impl TypeSignature {
+    /// Adds every type this signature names to `out`: the TypeDef, TypeRef and TypeSpec
+    /// tokens of its classes and value types (ECMA-335 II.23.2.8), of generic instantiations
+    /// and their arguments, of element types and their custom modifiers, of function pointer
+    /// signatures (return type, parameters and varargs, modifiers included), and of custom
+    /// modifiers.
+    pub fn type_tokens(&self, out: &mut impl Extend<Token>) {
+        match self {
+            TypeSignature::Class(token) | TypeSignature::ValueType(token) => {
+                if names_a_type(*token) {
+                    out.extend([*token]);
+                }
+            }
+            TypeSignature::GenericInst(base, args) => {
+                base.type_tokens(out);
+                for arg in args {
+                    arg.type_tokens(out);
+                }
+            }
+            TypeSignature::SzArray(arr) => {
+                modifier_tokens(&arr.modifiers, out);
+                arr.base.type_tokens(out);
+            }
+            TypeSignature::Array(arr) => arr.base.type_tokens(out),
+            TypeSignature::Ptr(ptr) => {
+                modifier_tokens(&ptr.modifiers, out);
+                ptr.base.type_tokens(out);
+            }
+            TypeSignature::ByRef(inner) | TypeSignature::Pinned(inner) => inner.type_tokens(out),
+            TypeSignature::FnPtr(method) => {
+                for param in std::iter::once(&method.return_type)
+                    .chain(&method.params)
+                    .chain(&method.varargs)
+                {
+                    param.type_tokens(out);
+                }
+            }
+            TypeSignature::ModifiedRequired(modifiers)
+            | TypeSignature::ModifiedOptional(modifiers) => modifier_tokens(modifiers, out),
+            _ => {}
+        }
+    }
+
     /// Check if a constant primitive value is compatible with this type signature
     ///
     /// This implements .NET type compatibility rules for constants including:
@@ -3838,5 +3964,113 @@ impl std::fmt::Display for SignatureMethod {
             write!(f, "...")?;
         }
         write!(f, ")")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::*;
+
+    fn modifier(token: u32) -> CustomModifier {
+        CustomModifier {
+            is_required: true,
+            modifier_type: Token::new(token),
+        }
+    }
+
+    /// Every place a signature can name a type: a class, a value type, a generic
+    /// instantiation and its argument, an array's and a pointer's element and modifier, a
+    /// function pointer's return, parameter and vararg (with a parameter modifier), and a
+    /// modifier type. Primitives and generic parameters name none.
+    #[test]
+    fn type_tokens_finds_every_type_a_signature_names() {
+        let parameter = |base, modifiers| SignatureParameter {
+            modifiers,
+            base,
+            ..SignatureParameter::default()
+        };
+        let signature = TypeSignature::GenericInst(
+            Box::new(TypeSignature::Class(Token::new(0x0100_0001))),
+            vec![
+                TypeSignature::ValueType(Token::new(0x0200_0002)),
+                TypeSignature::SzArray(SignatureSzArray {
+                    modifiers: vec![modifier(0x0100_0003)],
+                    base: Box::new(TypeSignature::Class(Token::new(0x1B00_0004))),
+                }),
+                TypeSignature::Ptr(SignaturePointer {
+                    modifiers: vec![modifier(0x0200_0005)],
+                    base: Box::new(TypeSignature::ValueType(Token::new(0x0100_0006))),
+                }),
+                TypeSignature::FnPtr(Box::new(SignatureMethod {
+                    return_type: parameter(TypeSignature::Void, vec![modifier(0x0100_0007)]),
+                    params: vec![parameter(
+                        TypeSignature::Class(Token::new(0x0100_0008)),
+                        Vec::new(),
+                    )],
+                    varargs: vec![parameter(
+                        TypeSignature::Class(Token::new(0x0100_0009)),
+                        Vec::new(),
+                    )],
+                    ..SignatureMethod::default()
+                })),
+                TypeSignature::ModifiedOptional(vec![modifier(0x0100_000A)]),
+                TypeSignature::I4,
+                TypeSignature::GenericParamType(0),
+            ],
+        );
+
+        let mut tokens = BTreeSet::new();
+        signature.type_tokens(&mut tokens);
+        let expected: BTreeSet<Token> = [
+            0x0100_0001,
+            0x0200_0002,
+            0x0100_0003,
+            0x1B00_0004,
+            0x0200_0005,
+            0x0100_0006,
+            0x0100_0007,
+            0x0100_0008,
+            0x0100_0009,
+            0x0100_000A,
+        ]
+        .into_iter()
+        .map(Token::new)
+        .collect();
+        assert_eq!(tokens, expected);
+    }
+
+    /// A field, a property, a type specification and a local variable name the types of their
+    /// own custom modifiers as well as of their type.
+    #[test]
+    fn type_tokens_includes_the_signature_s_own_modifiers() {
+        let class = || TypeSignature::Class(Token::new(0x0100_0002));
+        let expected: BTreeSet<Token> = [Token::new(0x0100_0001), Token::new(0x0100_0002)].into();
+        let mut tokens = BTreeSet::new();
+
+        SignatureField {
+            modifiers: vec![modifier(0x0100_0001)],
+            base: class(),
+        }
+        .type_tokens(&mut tokens);
+        assert_eq!(tokens, expected, "field");
+
+        tokens.clear();
+        SignatureTypeSpec {
+            modifiers: vec![modifier(0x0100_0001)],
+            base: class(),
+        }
+        .type_tokens(&mut tokens);
+        assert_eq!(tokens, expected, "type spec");
+
+        tokens.clear();
+        SignatureLocalVariable {
+            modifiers: vec![modifier(0x0100_0001)],
+            base: class(),
+            ..SignatureLocalVariable::default()
+        }
+        .type_tokens(&mut tokens);
+        assert_eq!(tokens, expected, "local");
     }
 }

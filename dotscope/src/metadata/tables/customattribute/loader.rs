@@ -137,7 +137,7 @@ impl MetadataLoader for CustomAttributeLoader {
                 row.to_owned(
                     |coded_index| context.get_ref(coded_index),
                     blob,
-                    Some(context.types),
+                    context.types,
                 ),
                 DiagnosticCategory::CustomAttribute,
                 token_msg,
@@ -206,16 +206,21 @@ impl MetadataLoader for CustomAttributeLoader {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
 
     use crate::{
-        metadata::tables::{skip_unreadable, CustomAttributeRaw, TableId},
+        metadata::{
+            customattributes::CustomAttributeArgument,
+            tables::{skip_unreadable, CustomAttributeRaw, MethodDefRaw, TableId},
+            token::Token,
+            typesystem::CilTypeReference,
+        },
+        testkit::{fixture, helpers::load_sample},
         CilObject,
     };
 
     #[test]
     fn an_owner_lists_its_attributes_in_table_order() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        let path = fixture("WindowsBase.dll");
         let assembly = CilObject::from_path(&path).expect("WindowsBase loads");
         let owner = assembly.assembly().expect("an assembly row");
 
@@ -236,5 +241,38 @@ mod tests {
 
         assert!(expected.len() > 8, "enough attributes for an order to show");
         assert_eq!(listed, expected);
+    }
+
+    /// ConfuserEx marks a module with `ConfusedByAttribute`, whose constructor (MethodDef 37 of
+    /// this sample) takes a string and has no Param row for it: the argument is read by the
+    /// constructor's signature, as the runtime reads it.
+    #[test]
+    fn an_argument_without_a_param_row_is_read_by_the_signature() {
+        let assembly = load_sample("packers/confuserex/1.6.0/mkaring_invalidmetadata.exe");
+        let constructor = Token::new(0x0600_0025);
+        let tables = assembly.tables().expect("tables");
+        let methods = tables.table::<MethodDefRaw>().expect("MethodDef");
+        let first_param = methods.get(37).expect("row").expect("method").param_list;
+        let params_end = match methods.get(38) {
+            Ok(Some(next)) => next.param_list,
+            _ => tables.table_row_count(TableId::Param) + 1,
+        };
+        assert_eq!(first_param, params_end, "the constructor has no Param row");
+
+        let watermark = assembly
+            .module()
+            .expect("module")
+            .custom_attributes
+            .iter()
+            .find(|(_, attribute)| {
+                matches!(&attribute.constructor, CilTypeReference::MethodDef(m)
+                    if m.upgrade().is_some_and(|m| m.token == constructor))
+            })
+            .map(|(_, attribute)| attribute.fixed_args.clone())
+            .expect("the ConfusedByAttribute is loaded");
+        assert!(
+            matches!(watermark.as_slice(), [CustomAttributeArgument::String(s)] if s == "Confuser.Core 1.6.0+447341964f"),
+            "{watermark:?}"
+        );
     }
 }
