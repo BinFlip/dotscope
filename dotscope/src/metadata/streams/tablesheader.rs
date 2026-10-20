@@ -95,7 +95,7 @@
 //! use dotscope::metadata::{streams::TablesHeader, tables::{TableId, TypeDefRaw, MethodDefRaw}};
 //!
 //! # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
-//! let tables = TablesHeader::from(tables_data)?;
+//! let tables = TablesHeader::from(tables_data, false)?;
 //!
 //! // Analyze assembly structure
 //! println!("Assembly contains {} metadata tables", tables.table_count());
@@ -134,7 +134,7 @@
 //! use dotscope::metadata::{streams::TablesHeader, tables::{TableId, TypeDefRaw, FieldRaw}};
 //!
 //! # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
-//! let tables = TablesHeader::from(tables_data)?;
+//! let tables = TablesHeader::from(tables_data, false)?;
 //!
 //! // Analyze types and their fields together
 //! if let (Some(typedef_table), Some(field_table)) = (
@@ -171,7 +171,7 @@
 //! use rayon::prelude::*;
 //!
 //! # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
-//! let tables = TablesHeader::from(tables_data)?;
+//! let tables = TablesHeader::from(tables_data, false)?;
 //!
 //! // Process custom attributes in parallel for large assemblies
 //! if let Some(ca_table) = tables.table::<CustomAttributeRaw>() {
@@ -199,7 +199,7 @@
 //! use dotscope::metadata::{streams::TablesHeader, tables::{TableId, MemberRefRaw}};
 //!
 //! # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
-//! let tables = TablesHeader::from(tables_data)?;
+//! let tables = TablesHeader::from(tables_data, false)?;
 //!
 //! // Process large tables in chunks to manage memory usage
 //! if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
@@ -235,7 +235,7 @@
 //! use dotscope::metadata::{streams::TablesHeader, tables::TableId};
 //!
 //! # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
-//! let tables = TablesHeader::from(tables_data)?;
+//! let tables = TablesHeader::from(tables_data, false)?;
 //!
 //! println!("Assembly Metadata Summary:");
 //! println!("========================");
@@ -324,6 +324,9 @@ use crate::{
     Error, ParseFailure, ParseStage, Result,
 };
 
+/// HeapSizes bit 0x40 (ExtraData): a u32 follows the row counts, before the first table.
+const HEAP_SIZES_EXTRA_DATA: u8 = 0x40;
+
 /// ECMA-335 compliant metadata tables header providing efficient access to .NET assembly metadata.
 ///
 /// The [`crate::metadata::streams::tablesheader::TablesHeader`] struct represents the compressed metadata tables stream (`#~`) header
@@ -384,7 +387,7 @@ use crate::{
 /// use dotscope::metadata::{streams::TablesHeader, tables::{TableId, TypeDefRaw, MethodDefRaw}};
 ///
 /// # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
-/// let tables = TablesHeader::from(tables_data)?;
+/// let tables = TablesHeader::from(tables_data, false)?;
 ///
 /// // Safe table presence checking
 /// if tables.has_table(TableId::TypeDef) {
@@ -414,7 +417,7 @@ use crate::{
 /// use dotscope::metadata::{streams::TablesHeader, tables::{TableId, TypeDefRaw, FieldRaw, MethodDefRaw}};
 ///
 /// # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
-/// let tables = TablesHeader::from(tables_data)?;
+/// let tables = TablesHeader::from(tables_data, false)?;
 ///
 /// // Analyze complete type structure with members
 /// if let (Some(typedef_table), Some(field_table), Some(method_table)) = (
@@ -455,7 +458,7 @@ use crate::{
 /// use std::collections::HashMap;
 ///
 /// # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
-/// let tables = TablesHeader::from(tables_data)?;
+/// let tables = TablesHeader::from(tables_data, false)?;
 ///
 /// // Parallel analysis of custom attributes
 /// if let Some(ca_table) = tables.table::<CustomAttributeRaw>() {
@@ -487,7 +490,7 @@ use crate::{
 /// use dotscope::metadata::{streams::TablesHeader, tables::{TableId, MemberRefRaw}};
 ///
 /// # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
-/// let tables = TablesHeader::from(tables_data)?;
+/// let tables = TablesHeader::from(tables_data, false)?;
 ///
 /// // Process large tables without loading all data into memory
 /// if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
@@ -533,7 +536,7 @@ use crate::{
 /// use dotscope::metadata::{streams::TablesHeader, tables::TableId};
 ///
 /// # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
-/// let tables = TablesHeader::from(tables_data)?;
+/// let tables = TablesHeader::from(tables_data, false)?;
 ///
 /// println!("Assembly Metadata Analysis");
 /// println!("=========================");
@@ -856,7 +859,10 @@ impl<'a> TablesHeader<'a> {
     /// 5. **Validation**: Verify all tables conform to ECMA-335 format
     ///
     /// # Arguments
-    /// * `data` - Complete binary data of the compressed metadata tables stream
+    /// * `data` - Complete binary data of the metadata tables stream (`#~` or `#-`)
+    /// * `wide_columns` - Every index column is four bytes wide: the CLR's reading of
+    ///   uncompressed (`#-`) tables beside a `#JTD` stream, which only the stream directory
+    ///   can tell. `false` for any other tables stream.
     ///
     /// # Returns
     /// * `Ok(TablesHeader)` - Successfully parsed and validated tables header
@@ -882,7 +888,7 @@ impl<'a> TablesHeader<'a> {
     /// # let tables_stream_data = include_bytes!("../../../tests/samples/WB_STREAM_TABLES_O-0x6C_S-0x59EB4.bin");
     /// let tables_stream_data = &[/* binary data from #~ stream */];
     ///
-    /// let tables = TablesHeader::from(tables_stream_data)?;
+    /// let tables = TablesHeader::from(tables_stream_data, false)?;
     ///
     /// // Verify successful construction
     /// println!("Parsed metadata with {} tables", tables.table_count());
@@ -907,7 +913,7 @@ impl<'a> TablesHeader<'a> {
     /// # fn example() {
     /// // Error: Data too short
     /// let too_short = [0u8; 20]; // Only 20 bytes, need at least 24
-    /// assert!(TablesHeader::from(&too_short).is_err());
+    /// assert!(TablesHeader::from(&too_short, false).is_err());
     ///
     /// // Error: No valid tables
     /// let no_tables = [
@@ -917,7 +923,7 @@ impl<'a> TablesHeader<'a> {
     ///     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Valid = 0 (no tables)
     ///     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Sorted
     /// ];
-    /// assert!(TablesHeader::from(&no_tables).is_err());
+    /// assert!(TablesHeader::from(&no_tables, false).is_err());
     /// # }
     /// ```
     ///
@@ -931,7 +937,7 @@ impl<'a> TablesHeader<'a> {
     /// let large_assembly_data = &[/* large assembly #~ stream data */];
     ///
     /// let start_time = std::time::Instant::now();
-    /// let tables = TablesHeader::from(large_assembly_data)?;
+    /// let tables = TablesHeader::from(large_assembly_data, false)?;
     /// let parse_time = start_time.elapsed();
     ///
     /// println!("Parsed {} tables in {:?}", tables.table_count(), parse_time);
@@ -966,7 +972,7 @@ impl<'a> TablesHeader<'a> {
     /// # fn example() -> dotscope::Result<()> {
     /// # let assembly_data = include_bytes!("../../../tests/samples/WB_STREAM_TABLES_O-0x6C_S-0x59EB4.bin");
     /// let assembly_data = &[/* assembly #~ stream data */];
-    /// let tables = TablesHeader::from(assembly_data)?;
+    /// let tables = TablesHeader::from(assembly_data, false)?;
     ///
     /// println!("Assembly Feature Analysis:");
     /// println!("=========================");
@@ -1024,7 +1030,7 @@ impl<'a> TablesHeader<'a> {
     /// - [`TablesHeader::table_summary`]: Get overview of all present tables
     /// - [`crate::metadata::tables::TableInfo`]: Table metadata and row count information
     /// - [ECMA-335 II.24.2.6](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): Tables header specification
-    pub fn from(data: &'a [u8]) -> Result<TablesHeader<'a>> {
+    pub fn from(data: &'a [u8], wide_columns: bool) -> Result<TablesHeader<'a>> {
         let truncated = |expected: usize, found: usize| ParseFailure::Truncated {
             stage: ParseStage::TildeStream,
             expected,
@@ -1047,8 +1053,19 @@ impl<'a> TablesHeader<'a> {
             .into());
         }
 
+        // HeapSizes bit 0x40 (ExtraData): one more u32 follows the row counts, and the tables
+        // start after it, as the CLR and dnlib read it. ECMA-335 does not document the bit.
+        let heap_sizes = read_le::<u8>(
+            data.get(6..)
+                .ok_or_else(|| Error::from(truncated(7, data.len())))?,
+        )?;
+        let extra_data_words = usize::from(heap_sizes & HEAP_SIZES_EXTRA_DATA != 0);
         let tables_offset = 24usize
-            .checked_add((valid_bitvec.count_ones() as usize).saturating_mul(4))
+            .checked_add(
+                (valid_bitvec.count_ones() as usize)
+                    .saturating_add(extra_data_words)
+                    .saturating_mul(4),
+            )
             .ok_or_else(|| ParseFailure::InvalidField {
                 stage: ParseStage::TildeStream,
                 field: "valid",
@@ -1070,7 +1087,7 @@ impl<'a> TablesHeader<'a> {
                 data.get(16..)
                     .ok_or_else(|| Error::from(truncated(24, data.len())))?,
             )?,
-            info: Arc::new(TableInfo::new(data, valid_bitvec)?),
+            info: Arc::new(TableInfo::new(data, valid_bitvec, wide_columns)?),
             tables_offset,
             tables: Vec::with_capacity(table_capacity),
         };
@@ -1632,7 +1649,7 @@ impl<'a> TablesHeader<'a> {
 /// use dotscope::metadata::streams::TablesHeader;
 ///
 /// # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
-/// let tables = TablesHeader::from(tables_data)?;
+/// let tables = TablesHeader::from(tables_data, false)?;
 ///
 /// // Get overview of all tables
 /// let summaries = tables.table_summary();
@@ -1654,7 +1671,7 @@ impl<'a> TablesHeader<'a> {
 /// use dotscope::metadata::{streams::TablesHeader, tables::TableId};
 ///
 /// # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
-/// let tables = TablesHeader::from(tables_data)?;
+/// let tables = TablesHeader::from(tables_data, false)?;
 /// let summaries = tables.table_summary();
 ///
 /// // Find the largest tables
@@ -1788,12 +1805,12 @@ impl_table_access!(EncMapRaw, TableId::EncMap, EncMap);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::verify_tableheader;
+    use crate::testkit::verify_tableheader;
 
     #[test]
     fn wb_stream_0() {
         let data = include_bytes!("../../../tests/samples/WB_STREAM_TABLES_O-0x6C_S-0x59EB4.bin");
-        let header = TablesHeader::from(data).unwrap();
+        let header = TablesHeader::from(data, false).unwrap();
 
         verify_tableheader(&header);
     }
@@ -1802,7 +1819,7 @@ mod tests {
     fn test_tables_header_too_short() {
         // Header must be at least 24 bytes
         let data = [0u8; 20];
-        assert!(TablesHeader::from(&data).is_err());
+        assert!(TablesHeader::from(&data, false).is_err());
     }
 
     #[test]
@@ -1815,7 +1832,7 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // valid bitmask (8 bytes)
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // sorted bitmask (8 bytes)
         ];
-        assert!(TablesHeader::from(&data).is_err());
+        assert!(TablesHeader::from(&data, false).is_err());
     }
 
     #[test]
@@ -1829,7 +1846,7 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // sorted bitmask
         ];
         // Note: This may fail due to row count parsing - depends on exact header format requirements
-        let result = TablesHeader::from(&data);
+        let result = TablesHeader::from(&data, false);
         // Empty valid bitmask means no tables, which should be accepted
         // but may require row counts, so we just verify it doesn't panic
         let _ = result;
@@ -1838,7 +1855,7 @@ mod tests {
     #[test]
     fn test_has_table() {
         let data = include_bytes!("../../../tests/samples/WB_STREAM_TABLES_O-0x6C_S-0x59EB4.bin");
-        let header = TablesHeader::from(data).unwrap();
+        let header = TablesHeader::from(data, false).unwrap();
 
         // Module table (0x00) should always be present
         assert!(header.has_table(TableId::Module));
@@ -1850,7 +1867,7 @@ mod tests {
     #[test]
     fn test_has_table_by_id() {
         let data = include_bytes!("../../../tests/samples/WB_STREAM_TABLES_O-0x6C_S-0x59EB4.bin");
-        let header = TablesHeader::from(data).unwrap();
+        let header = TablesHeader::from(data, false).unwrap();
 
         // Module table (0x00) should always be present
         assert!(header.has_table_by_id(0x00));
@@ -1866,7 +1883,7 @@ mod tests {
     #[test]
     fn test_table_count() {
         let data = include_bytes!("../../../tests/samples/WB_STREAM_TABLES_O-0x6C_S-0x59EB4.bin");
-        let header = TablesHeader::from(data).unwrap();
+        let header = TablesHeader::from(data, false).unwrap();
 
         // table_count should match the number of bits set in the valid bitmask
         let count = header.table_count();
@@ -1881,7 +1898,7 @@ mod tests {
     #[test]
     fn test_table_summary() {
         let data = include_bytes!("../../../tests/samples/WB_STREAM_TABLES_O-0x6C_S-0x59EB4.bin");
-        let header = TablesHeader::from(data).unwrap();
+        let header = TablesHeader::from(data, false).unwrap();
 
         let summaries = header.table_summary();
 
@@ -1900,7 +1917,7 @@ mod tests {
     #[test]
     fn test_type_safe_table_access() {
         let data = include_bytes!("../../../tests/samples/WB_STREAM_TABLES_O-0x6C_S-0x59EB4.bin");
-        let header = TablesHeader::from(data).unwrap();
+        let header = TablesHeader::from(data, false).unwrap();
 
         // Access Module table with type-safe generic method
         let module_table = header.table::<ModuleRaw>();
@@ -1917,7 +1934,7 @@ mod tests {
     #[test]
     fn test_write_header_to() {
         let data = include_bytes!("../../../tests/samples/WB_STREAM_TABLES_O-0x6C_S-0x59EB4.bin");
-        let header = TablesHeader::from(data).unwrap();
+        let header = TablesHeader::from(data, false).unwrap();
 
         let mut buffer = Vec::new();
         header.write_header_to(&mut buffer).unwrap();
@@ -1950,7 +1967,7 @@ mod tests {
     #[test]
     fn test_header_size() {
         let data = include_bytes!("../../../tests/samples/WB_STREAM_TABLES_O-0x6C_S-0x59EB4.bin");
-        let header = TablesHeader::from(data).unwrap();
+        let header = TablesHeader::from(data, false).unwrap();
 
         // Header size should be 24 + (4 * number of tables)
         let expected_size = 24 + (header.table_count() as usize * 4);

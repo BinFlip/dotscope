@@ -17,6 +17,9 @@ cached in the `dotscope-samples-cache` volume.
 .NET Reactor is commercial and runs only on a licensed Windows install: its samples come
 from `../packers/regenerate.sh` instead.
 
+New or regenerated outputs change `tests/samples/MANIFEST.toml`'s hashes: refresh it with
+`DOTSCOPE_WRITE_MANIFEST=1 cargo test --profile ci-test -p dotscope --lib -- testkit::fixtures`.
+
 ## Families
 
 | Family | Output | How |
@@ -79,18 +82,42 @@ Packer samples whose output does not match on the .NET Framework, and why:
 
 ## How the CLR reads the stream directory
 
-Measured with `metadata/streams` (StreamProbe prints one value from each heap; a
-repeated header points at a copy of its heap with that value changed). The .NET
-Framework 4.8 and CoreCLR agree on all 42 experiments:
+Measured with `metadata/streams` (StreamProbe prints one value from each heap; a repeated
+header points at a copy of its heap with that value changed) and `metadata/layouts`. The
+.NET Framework 4.8 and CoreCLR agree on every experiment; Mono accepts more (of the images
+both CLRs refuse below it rejects only a header it reads that points out of range, and a
+junk tables stream it reads, taking the last of two `#~`).
 
-| Directory | Which header of a repeated name is read |
+The CLR refuses the image when:
+
+- any header's offset or size reaches past the metadata, whatever its name and whether or
+  not its stream is then read (`unknown_bad_*`, `us_shadowed_bad_offset`);
+- a header's name with its terminating zero is longer than 32 bytes (`unknown_name_32`);
+- there is more than one tables stream (`tables_*`, valid copies included);
+- `#Schema` stands before the tables header (`schema_before*`).
+
+Otherwise, of the headers repeating a heap's name it reads:
+
+| Directory | Header read |
 |---|---|
 | `#~` tables, no `#Schema` | the **last** |
 | `#-` tables | the **first** |
 | `#Schema` after the tables header | the **first** (ConfuserEx's "invalid metadata" relies on this) |
 
-- `#Schema` as the first header: the image does not load.
-- Names the CLR does not use are ignored wherever they stand; 13 headers load.
-- `#JTD` and `#Pdb` (four zero bytes) change nothing in `#~` metadata.
-- The `#~` header's ExtraData word (HeapSizes `0x40`) and `#-` metadata with HasDelete
-  (`0x80`) load on every runtime (`metadata/layouts`).
+- Names the CLR does not use are ignored; 45 headers load (`unknown_after_40`).
+- `#JTD` beside `#-` tables (CoreCLR's "minimal delta" marker) makes every index column
+  four bytes wide, heap indices included, whatever HeapSizes says:
+  `metadata/layouts/minimal_delta_all{,_heapsizes}.exe` run, `minimal_delta_tables_only`
+  (heap indices left at their HeapSizes width) and the normal-width `jtd_*_enc` fail. In
+  `#~` metadata `#JTD` and `#Pdb` change nothing. Mono reads no minimal-delta tables.
+- The `#~` header's ExtraData word (HeapSizes `0x40`) is skipped, `#-` metadata with
+  HasDelete (`0x80`) loads, and HeapSizes bits `0x08`, `0x10` and `0x20` are ignored
+  (`metadata/layouts`).
+
+## Other layout fixtures
+
+`metadata/layouts/two_corelibs_foreign_{first,last}.exe` import `System.RuntimeTypeHandle`
+from System.Private.CoreLib as well as from TestApp's own mscorlib, with the foreign TypeRef
+listed before and after the program's: a module's core library types must resolve to its
+own core library whichever the table lists first. In `foreign_first` TestApp's own code
+uses the foreign TypeRef, so it runs only on CoreCLR; `foreign_last` runs everywhere.

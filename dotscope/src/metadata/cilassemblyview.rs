@@ -109,7 +109,7 @@
 
 use std::{path::Path, sync::Arc};
 
-use log::{debug, warn};
+use log::debug;
 use ouroboros::self_referencing;
 
 use crate::{
@@ -248,112 +248,54 @@ impl<'a> CilAssemblyViewData<'a> {
 
         let diagnostics = Arc::new(Diagnostics::new());
 
-        let mut metadata_tables = None;
-        let mut strings_heap = None;
-        let mut userstrings_heap = None;
-        let mut guid_heap = None;
-        let mut blob_heap = None;
-
-        // Track which streams we've seen to detect duplicates
-        let mut seen_tables = false;
-        let mut seen_strings = false;
-        let mut seen_userstrings = false;
-        let mut seen_guid = false;
-        let mut seen_blob = false;
-
-        for stream in &metadata_root.stream_headers {
-            let stream_offset = stream.offset as usize;
-            let stream_size = stream.size as usize;
-            let stream_end = stream_offset
-                .checked_add(stream_size)
+        // Each stream is read from the header the runtime reads (`Root::stream`); a header
+        // it does not read, a repeat or a name it gives no stream, is only recorded.
+        let stream_data = |header: &StreamHeader| -> Result<&[u8]> {
+            let start = header.offset as usize;
+            let end = start
+                .checked_add(header.size as usize)
                 .ok_or(out_of_bounds_error!())?;
-
-            if stream_end > metadata_slice.len() {
-                return Err(out_of_bounds_error!());
-            }
-
-            let stream_data = metadata_slice
-                .get(stream_offset..stream_end)
-                .ok_or(out_of_bounds_error!())?;
-
-            match stream.name.as_str() {
-                "#~" | "#-" => {
-                    if seen_tables {
-                        warn!(
-                            "Duplicate metadata stream '{}' detected, using first occurrence",
-                            stream.name
-                        );
-                        diagnostics.warning(
-                            DiagnosticCategory::Heap,
-                            format!(
-                                "Duplicate metadata tables stream '{}' found, using first occurrence",
-                                stream.name
-                            ),
-                        );
-                    } else {
-                        metadata_tables = Some(TablesHeader::from(stream_data)?);
-                        seen_tables = true;
-                    }
-                }
-                "#Strings" => {
-                    if seen_strings {
-                        warn!(
-                            "Duplicate metadata stream '#Strings' detected, using first occurrence"
-                        );
-                        diagnostics.warning(
-                            DiagnosticCategory::Heap,
-                            "Duplicate #Strings heap found, using first occurrence",
-                        );
-                    } else {
-                        strings_heap = Some(Strings::from(stream_data)?);
-                        seen_strings = true;
-                    }
-                }
-                "#US" => {
-                    if seen_userstrings {
-                        warn!("Duplicate metadata stream '#US' detected, using first occurrence");
-                        diagnostics.warning(
-                            DiagnosticCategory::Heap,
-                            "Duplicate #US heap found, using first occurrence",
-                        );
-                    } else {
-                        userstrings_heap = Some(UserStrings::from(stream_data)?);
-                        seen_userstrings = true;
-                    }
-                }
-                "#GUID" => {
-                    if seen_guid {
-                        warn!("Duplicate metadata stream '#GUID' detected, using first occurrence");
-                        diagnostics.warning(
-                            DiagnosticCategory::Heap,
-                            "Duplicate #GUID heap found, using first occurrence",
-                        );
-                    } else {
-                        guid_heap = Some(Guid::from(stream_data)?);
-                        seen_guid = true;
-                    }
-                }
-                "#Blob" => {
-                    if seen_blob {
-                        warn!("Duplicate metadata stream '#Blob' detected, using first occurrence");
-                        diagnostics.warning(
-                            DiagnosticCategory::Heap,
-                            "Duplicate #Blob heap found, using first occurrence",
-                        );
-                    } else {
-                        blob_heap = Some(Blob::from(stream_data)?);
-                        seen_blob = true;
-                    }
-                }
-                _ => {
-                    // Unknown stream - this could be a custom heap or obfuscation
-                    diagnostics.info(
-                        DiagnosticCategory::Heap,
-                        format!("Unknown metadata stream '{}' encountered", stream.name),
-                    );
-                }
-            }
+            metadata_slice.get(start..end).ok_or(out_of_bounds_error!())
+        };
+        for unread in metadata_root.unread_streams() {
+            diagnostics.info(
+                DiagnosticCategory::Heap,
+                format!(
+                    "metadata stream '{}' at offset {} is not read: the runtime reads another header of that name, or gives the name no stream",
+                    unread.name, unread.offset
+                ),
+            );
         }
+
+        // `#JTD` beside uncompressed tables is the CLR's "minimal delta" marker: it then reads
+        // every index column as four bytes, whatever the row counts and heap sizes say.
+        let minimal_delta = metadata_root
+            .stream_headers
+            .iter()
+            .any(|s| s.name == "#JTD");
+        let metadata_tables = metadata_root
+            .tables_stream()
+            .map(|header| {
+                stream_data(header)
+                    .and_then(|data| TablesHeader::from(data, minimal_delta && header.name == "#-"))
+            })
+            .transpose()?;
+        let strings_heap = metadata_root
+            .stream("#Strings")
+            .map(|header| stream_data(header).and_then(Strings::from))
+            .transpose()?;
+        let userstrings_heap = metadata_root
+            .stream("#US")
+            .map(|header| stream_data(header).and_then(UserStrings::from))
+            .transpose()?;
+        let guid_heap = metadata_root
+            .stream("#GUID")
+            .map(|header| stream_data(header).and_then(Guid::from))
+            .transpose()?;
+        let blob_heap = metadata_root
+            .stream("#Blob")
+            .map(|header| stream_data(header).and_then(Blob::from))
+            .transpose()?;
 
         Ok(CilAssemblyViewData {
             file,
@@ -1280,14 +1222,16 @@ impl CilAssemblyView {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf};
+    use std::fs;
 
     use super::*;
-    use crate::test::factories::metadata::cilassemblyview::verify_assembly_view_complete;
+    use crate::testkit::{
+        factories::metadata::cilassemblyview::verify_assembly_view_complete, fixture,
+    };
 
     #[test]
     fn from_file() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        let path = fixture("WindowsBase.dll");
         let view = CilAssemblyView::from_path(&path).unwrap();
 
         verify_assembly_view_complete(&view);
@@ -1295,7 +1239,7 @@ mod tests {
 
     #[test]
     fn from_buffer() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        let path = fixture("WindowsBase.dll");
         let data = fs::read(path).unwrap();
         let view = CilAssemblyView::from_mem(data.clone()).unwrap();
 
