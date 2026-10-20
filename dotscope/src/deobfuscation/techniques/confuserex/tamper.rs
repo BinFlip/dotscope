@@ -87,7 +87,8 @@ use crate::{
     compiler::{EventKind, EventLog},
     deobfuscation::{
         techniques::{
-            confuserex::helpers, Detection, Evidence, Technique, TechniqueCategory, WorkingAssembly,
+            confuserex::helpers, Detection, Evidence, Technique, TechniqueCapability,
+            TechniqueCategory, WorkingAssembly,
         },
         utils::find_methods_calling_apis,
     },
@@ -130,6 +131,10 @@ impl Technique for ConfuserExAntiTamper {
 
     fn category(&self) -> TechniqueCategory {
         TechniqueCategory::Protection
+    }
+
+    fn capabilities(&self) -> Vec<TechniqueCapability> {
+        vec![TechniqueCapability::ByteTransform]
     }
 
     fn requires(&self) -> &[&'static str] {
@@ -598,12 +603,12 @@ mod tests {
             confuserex::tamper::{AntiTamperFindings, ConfuserExAntiTamper},
             Technique,
         },
-        test::helpers::load_sample,
+        testkit::helpers::load_sample,
     };
 
     #[test]
     fn test_detect_positive() {
-        let assembly = load_sample("tests/samples/packers/confuserex/1.6.0/mkaring_antitamper.exe");
+        let assembly = load_sample("packers/confuserex/1.6.0/mkaring_antitamper.exe");
 
         let technique = ConfuserExAntiTamper;
         let detection = technique.detect(&assembly);
@@ -629,7 +634,7 @@ mod tests {
 
     #[test]
     fn test_detect_negative() {
-        let assembly = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+        let assembly = load_sample("packers/confuserex/1.6.0/original.exe");
 
         let technique = ConfuserExAntiTamper;
         let detection = technique.detect(&assembly);

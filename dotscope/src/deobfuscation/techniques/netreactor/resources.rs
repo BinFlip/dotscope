@@ -96,7 +96,8 @@ use crate::{
                 helpers::{self, find_resources_referenced_by_methods},
                 hooks,
             },
-            Detection, Evidence, Technique, TechniqueCategory, WorkingAssembly,
+            Detection, Evidence, Technique, TechniqueCapability, TechniqueCategory,
+            WorkingAssembly,
         },
     },
     emulation::{tokens, CapturedAssembly, EmValue, EmulationOutcome, ProcessBuilder},
@@ -180,6 +181,13 @@ impl Technique for NetReactorResources {
 
     fn category(&self) -> TechniqueCategory {
         TechniqueCategory::Value
+    }
+
+    fn capabilities(&self) -> Vec<TechniqueCapability> {
+        vec![
+            TechniqueCapability::ByteTransform,
+            TechniqueCapability::SsaPass,
+        ]
     }
 
     fn detect(&self, assembly: &CilObject) -> Detection {
@@ -1206,35 +1214,17 @@ fn is_assembly_load_reflection_shim(
 #[cfg(test)]
 mod tests {
 
-    use std::{
-        env,
-        path::{Path, PathBuf},
-        sync::Arc,
-    };
+    use std::{env, path::PathBuf, sync::Arc};
 
     use super::*;
     use crate::{
         emulation::{EmulationOutcome, ProcessBuilder, TracingConfig},
-        metadata::validation::ValidationConfig,
+        testkit::load_sample,
     };
-
-    fn try_load_sample(name: &str) -> Option<CilObject> {
-        let path = format!("tests/samples/packers/netreactor/7.5.0/{name}");
-        if !Path::new(&path).exists() {
-            eprintln!("Skipping test: sample not found at {path}");
-            return None;
-        }
-        Some(
-            CilObject::from_path_with_validation(&path, ValidationConfig::analysis())
-                .unwrap_or_else(|e| panic!("Failed to load {name}: {e}")),
-        )
-    }
 
     #[test]
     fn test_detect_positive_reactor_resources() {
-        let Some(assembly) = try_load_sample("reactor_resources.exe") else {
-            return;
-        };
+        let assembly = load_sample("packers/netreactor/7.5.0/reactor_resources.exe");
         let detection = NetReactorResources.detect(&assembly);
         assert!(
             detection.is_detected(),
@@ -1292,9 +1282,7 @@ mod tests {
         // resolver is still found by its structure, and the transform learns
         // the blob from what the decrypter opens.
         for name in &["reactor_full.exe", "reactor_virtualization_full.exe"] {
-            let Some(assembly) = try_load_sample(name) else {
-                continue;
-            };
+            let assembly = load_sample(&format!("packers/netreactor/7.5.0/{name}"));
             let detection = NetReactorResources.detect(&assembly);
             assert!(detection.is_detected(), "{name} encrypts its resources");
         }
@@ -1302,9 +1290,7 @@ mod tests {
 
     #[test]
     fn test_detect_negative_baseline() {
-        let Some(assembly) = try_load_sample("original.exe") else {
-            return;
-        };
+        let assembly = load_sample("packers/netreactor/7.5.0/original.exe");
         let detection = NetReactorResources.detect(&assembly);
         assert!(
             !detection.is_detected(),
@@ -1326,9 +1312,7 @@ mod tests {
             .is_test(true)
             .try_init();
 
-        let Some(assembly) = try_load_sample("reactor_resources.exe") else {
-            return;
-        };
+        let assembly = load_sample("packers/netreactor/7.5.0/reactor_resources.exe");
         let detection = NetReactorResources.detect(&assembly);
         assert!(detection.is_detected(), "detection should fire");
         let findings = detection.findings::<ResourceFindings>().unwrap();
@@ -1426,9 +1410,7 @@ mod tests {
             "reactor_necrobit.exe",
             "reactor_antitamp.exe",
         ] {
-            let Some(assembly) = try_load_sample(name) else {
-                continue;
-            };
+            let assembly = load_sample(&format!("packers/netreactor/7.5.0/{name}"));
             let detection = NetReactorResources.detect(&assembly);
             assert!(
                 !detection.is_detected(),

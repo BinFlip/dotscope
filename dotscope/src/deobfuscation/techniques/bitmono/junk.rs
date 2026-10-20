@@ -23,7 +23,7 @@ use std::any::Any;
 use crate::{
     compiler::{EventKind, EventLog},
     deobfuscation::techniques::{
-        Detection, Evidence, Technique, TechniqueCategory, WorkingAssembly,
+        Detection, Evidence, Technique, TechniqueCapability, TechniqueCategory, WorkingAssembly,
     },
     CilObject, Result,
 };
@@ -54,6 +54,10 @@ impl Technique for BitMonoJunk {
 
     fn category(&self) -> TechniqueCategory {
         TechniqueCategory::Metadata
+    }
+
+    fn capabilities(&self) -> Vec<TechniqueCapability> {
+        vec![TechniqueCapability::ByteTransform]
     }
 
     fn detect(&self, assembly: &CilObject) -> Detection {
@@ -127,12 +131,12 @@ impl Technique for BitMonoJunk {
 mod tests {
     use crate::{
         deobfuscation::techniques::{bitmono::BitMonoJunk, Technique},
-        test::helpers::load_sample,
+        testkit::helpers::load_sample,
     };
 
     #[test]
     fn test_detect_positive() {
-        let assembly = load_sample("tests/samples/packers/bitmono/0.39.0/bitmono_junk.exe");
+        let assembly = load_sample("packers/bitmono/0.39.0/bitmono_junk.exe");
 
         let technique = BitMonoJunk;
         let detection = technique.detect(&assembly);
@@ -149,7 +153,7 @@ mod tests {
 
     #[test]
     fn test_detect_negative() {
-        let assembly = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+        let assembly = load_sample("packers/confuserex/1.6.0/original.exe");
 
         let technique = BitMonoJunk;
         let detection = technique.detect(&assembly);

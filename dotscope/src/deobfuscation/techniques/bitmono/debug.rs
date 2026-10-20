@@ -67,7 +67,7 @@ use crate::{
 };
 
 /// The local an `stloc` (`store`) or `ldloc` names, in any of its forms.
-fn local_slot(instruction: &Instruction, store: bool) -> Option<u16> {
+pub fn local_slot(instruction: &Instruction, store: bool) -> Option<u16> {
     let rest = instruction
         .mnemonic
         .strip_prefix(if store { "stloc" } else { "ldloc" })?;
@@ -202,12 +202,12 @@ impl Technique for BitMonoAntiDebug {
 mod tests {
     use crate::{
         deobfuscation::techniques::{bitmono::BitMonoAntiDebug, Technique},
-        test::helpers::load_sample,
+        testkit::helpers::load_sample,
     };
 
     #[test]
     fn test_detect_positive() {
-        let assembly = load_sample("tests/samples/packers/bitmono/0.39.0/bitmono_antidebug.exe");
+        let assembly = load_sample("packers/bitmono/0.39.0/bitmono_antidebug.exe");
 
         let technique = BitMonoAntiDebug;
         let detection = technique.detect(&assembly);
@@ -231,13 +231,13 @@ mod tests {
     /// its arithmetic and force its branch.
     #[test]
     fn test_detect_elapsed_time_code_is_not_the_injection() {
-        let assembly = load_sample("tests/samples/mono_4.5/System.dll");
+        let assembly = load_sample("mono_4.5/System.dll");
         assert!(!BitMonoAntiDebug.detect(&assembly).is_detected());
     }
 
     #[test]
     fn test_detect_negative() {
-        let assembly = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+        let assembly = load_sample("packers/confuserex/1.6.0/original.exe");
 
         let technique = BitMonoAntiDebug;
         let detection = technique.detect(&assembly);

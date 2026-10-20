@@ -34,30 +34,24 @@
 //! println!("{}", stats.summary());
 //! ```
 
-use std::collections::{hash_map::Entry, BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::{
     analysis::{SsaOpCilExt, TypeContext},
     assembly::Operand,
     cilassembly::{
-        compute_entry_points, expand_type_tokens, find_unreferenced_types, CilAssembly,
-        CleanupRequest, GeneratorConfig, TypeNames,
+        compute_entry_points, expand_type_tokens, find_unreferenced_types, CleanupRequest,
+        GeneratorConfig, TypeNames,
     },
     compiler::{EventKind, ProxyDevirtualizationPass},
     deobfuscation::{
         context::AnalysisContext,
         engine::DeobfuscationEngine,
-        renamer,
+        renamer, repairs,
         techniques::{Detections, Technique, TechniqueCapability},
     },
     metadata::{
-        tables::{
-            skip_unreadable, AssemblyRaw, FieldRaw, MethodSpecRaw, ModuleRaw, NestedClassRaw,
-            TableDataOwned, TableId, TypeDefRaw,
-        },
-        token::Token,
-        typesystem::wellknown,
-        validation::ValidationConfig,
+        tables::TableId, token::Token, typesystem::wellknown, validation::ValidationConfig,
     },
     CilObject, Result,
 };
@@ -282,6 +276,11 @@ pub(crate) fn build_cleanup_request(
     // Detect empty module methods and add to cleanup request.
     sweep_empty_module_cctor(assembly, &mut request, ctx);
 
+    // Rows whose removal repairs an ECMA-335 violation are proposed here, so that the
+    // retraction below keeps those surviving code still names; the repair renames or
+    // otherwise repairs what is kept.
+    repairs::propose_removals(assembly, &mut request);
+
     // Last, and over everything the producers above decided: withdraw whatever
     // surviving code still names.
     retract_referenced_removals(
@@ -335,6 +334,16 @@ fn tokens_named_by_survivors(
 ) -> BTreeSet<Token> {
     let mut named = BTreeSet::new();
 
+    // A token names a row of this assembly, and through a MemberRef or MethodSpec the method
+    // or field of this assembly it stands for: a generic method's instantiation, a member of
+    // a generic type.
+    let resolver = assembly.resolver();
+    let naming = |token: Token| {
+        std::iter::once(token)
+            .chain(resolver.resolve_method(token))
+            .chain(resolver.resolve_field(token))
+    };
+
     // A converted method's call to a protection method is what neutralization
     // strips, so it does not keep the method. A method that never converted
     // cannot be rewritten, and still does.
@@ -344,8 +353,10 @@ fn tokens_named_by_survivors(
         }
         for (_, _, instr) in entry.value().iter_instructions() {
             if let Some(token) = instr.op().referenced_token() {
-                if removed.contains(&token) && !request.strips_call_sites(token) {
-                    named.insert(token);
+                for token in naming(token) {
+                    if removed.contains(&token) && !request.strips_call_sites(token) {
+                        named.insert(token);
+                    }
                 }
             }
         }
@@ -366,9 +377,6 @@ fn tokens_named_by_survivors(
 
     // The original body names more than its calls: the fields it loads, the
     // types it casts to, the generic methods its MethodSpecs instantiate.
-    let method_specs = assembly
-        .tables()
-        .and_then(|tables| tables.table::<MethodSpecRaw>());
     for entry in assembly.methods().iter() {
         let method = *entry.key();
         if removed.contains(&method) || !ships_original(&method) {
@@ -381,11 +389,7 @@ fn tokens_named_by_survivors(
             let Operand::Token(token) = instr.operand else {
                 continue;
             };
-            let instantiated = method_specs
-                .filter(|_| token.is_table(TableId::MethodSpec))
-                .and_then(|table| table.get(token.row()).ok().flatten())
-                .map(|spec| spec.method.token);
-            for token in std::iter::once(token).chain(instantiated) {
+            for token in naming(token) {
                 if removed.contains(&token) {
                     named.insert(token);
                 }
@@ -587,15 +591,15 @@ pub fn execute_cleanup(
 
     // Nothing to do.
     //
-    // Metadata repairs (`repair_*` below) must run even when the request is
+    // Metadata repairs (`repairs::REPAIRS`) must run even when the request is
     // empty - some samples (notably .NET Reactor's SuppressIldasm) have no
     // technique-driven deletions but still carry ECMA-335 violations that
-    // break strict-mode reload. `needs_metadata_repair` short-circuits the
+    // break strict-mode reload. `repairs::needs_repair` short-circuits the
     // exit when any of those violations are present.
     if !request.has_deletions()
         && request.excluded_sections().is_empty()
         && !rename_obfuscated
-        && !needs_metadata_repair(&assembly)
+        && !repairs::needs_repair(&assembly)
     {
         return Ok(assembly);
     }
@@ -644,39 +648,13 @@ pub fn execute_cleanup(
     // Convert directly - no reparsing needed (consumes CilObject)
     let mut cil_assembly = assembly.into_assembly();
 
-    // Repair metadata anomalies injected by obfuscators.
-    // ECMA-335 §22.2: Assembly table shall contain zero or one row.
-    // Some obfuscators inject duplicate rows to confuse tooling.
-    repair_duplicate_assembly_rows(&mut cil_assembly, ctx);
-
-    // ECMA-335 §22.30: Module table shall contain exactly one row.
-    // .NET Reactor's SuppressIldasm injects a duplicate Module row to
-    // break parsers and the schema validator.
-    repair_duplicate_module_rows(&mut cil_assembly, ctx);
-
-    // ECMA-335 §22.30: Module row 1's `EncId` and `EncBaseId` are GUID
-    // heap indices that must be 0 (no value) or point inside the heap.
-    // .NET Reactor's SuppressIldasm sets them to 0xFFFF to break loaders
-    // that don't bounds-check the lookup.
-    repair_invalid_module_guids(&mut cil_assembly, ctx);
-
-    // ECMA-335 §22.37: TypeDef names must be unique within (name, namespace, enclosingClass).
-    // Some obfuscators inject duplicate nested types (e.g., multiple <>c closures).
-    // Empty duplicates are removed directly; non-empty ones are added to the cleanup request.
-    let duplicate_types = repair_duplicate_typedef_rows(&mut cil_assembly, ctx);
-
-    // ECMA-335 §22.15: Global fields (<Module>) must have CompilerControlled, Private, or Public access.
-    // Some obfuscators set invalid access flags (e.g., Assembly/Family) on <Module> fields.
-    repair_global_field_visibility(&mut cil_assembly, ctx);
-
     // Clone excluded sections before moving request
     let excluded_sections: HashSet<String> = request.excluded_sections().clone();
 
-    // Add non-empty duplicate types to cleanup request for deletion
+    // Repair the ECMA-335 violations obfuscators plant in metadata; a repair may hand rows
+    // to the cleanup executor through the request.
     let mut request = request;
-    for token in duplicate_types {
-        request.add_type(token);
-    }
+    repairs::apply_repairs(&mut cil_assembly, &mut request, ctx);
 
     // Add cleanup request (the actual cleanup is executed during generation)
     cil_assembly.add_cleanup(&request);
@@ -745,400 +723,6 @@ fn log_cleanup_request(request: &CleanupRequest, assembly: &CilObject, ctx: &Ana
             .message(format!(
                 "Removing custom attribute 0x{:08X}",
                 attr_token.value()
-            ));
-    }
-}
-
-/// Repairs duplicate Assembly table rows injected by obfuscators.
-///
-/// ECMA-335 §22.2 requires the Assembly table to contain at most 1 row.
-/// Some obfuscators inject extra rows to confuse decompilers and analysis tools.
-/// This removes any rows beyond the first, keeping the original assembly identity.
-fn repair_duplicate_assembly_rows(cil_assembly: &mut CilAssembly, ctx: &AnalysisContext) {
-    let row_count = cil_assembly.original_table_row_count(TableId::Assembly);
-    if row_count <= 1 {
-        return;
-    }
-
-    // Remove duplicate rows (keep RID 1, remove RID 2..N)
-    let duplicates = row_count.saturating_sub(1);
-    for rid in (2..=row_count).rev() {
-        if let Err(e) = cil_assembly.table_row_remove(TableId::Assembly, rid) {
-            log::warn!("Failed to remove duplicate Assembly row {rid}: {e}");
-        }
-    }
-
-    log::info!(
-        "Repaired Assembly table: removed {duplicates} duplicate row(s) (ECMA-335 §22.2 violation)"
-    );
-    ctx.events
-        .record(EventKind::ArtifactRemoved)
-        .message(format!(
-            "Repaired Assembly table: removed {duplicates} duplicate row(s)"
-        ));
-}
-
-/// Repairs duplicate Module table rows injected by obfuscators.
-///
-/// ECMA-335 §22.30 requires the Module table to contain exactly one row.
-/// .NET Reactor's SuppressIldasm protection injects a second row to break
-/// parsers and our `SchemaValidator` (`shared/schema.rs:135`). Removes any
-/// rows beyond the first, keeping the original module identity.
-fn repair_duplicate_module_rows(cil_assembly: &mut CilAssembly, ctx: &AnalysisContext) {
-    let row_count = cil_assembly.original_table_row_count(TableId::Module);
-    if row_count <= 1 {
-        return;
-    }
-
-    let duplicates = row_count.saturating_sub(1);
-    for rid in (2..=row_count).rev() {
-        if let Err(e) = cil_assembly.table_row_remove(TableId::Module, rid) {
-            log::warn!("Failed to remove duplicate Module row {rid}: {e}");
-        }
-    }
-
-    log::info!(
-        "Repaired Module table: removed {duplicates} duplicate row(s) (ECMA-335 §22.30 violation)"
-    );
-    ctx.events
-        .record(EventKind::ArtifactRemoved)
-        .message(format!(
-            "Repaired Module table: removed {duplicates} duplicate row(s)"
-        ));
-}
-
-/// Repairs out-of-bounds GUID indices on Module row 1.
-///
-/// ECMA-335 §22.30: `EncId` / `EncBaseId` are `#GUID` heap indices that must
-/// be 0 (no value) or point inside the heap. .NET Reactor's SuppressIldasm
-/// injects `0xFFFF` to crash strict loaders that look the indices up
-/// without bounds checking - dotscope's loader fails at
-/// `streams/guid.rs:505` with `Out of Bounds`, which then blocks the
-/// roundtrip reload.
-///
-/// Clamps any out-of-bounds value back to 0 (the standard "no value"
-/// sentinel). The user-visible Mvid is left untouched.
-fn repair_invalid_module_guids(cil_assembly: &mut CilAssembly, ctx: &AnalysisContext) {
-    let guid_count: u32 = cil_assembly
-        .view()
-        .guids()
-        .map_or(0, |g| (g.data().len() / 16) as u32);
-
-    let Some(tables) = cil_assembly.view().tables() else {
-        return;
-    };
-    let Some(module_table) = tables.table::<ModuleRaw>() else {
-        return;
-    };
-    let Some(row) = module_table.get(1).ok().flatten() else {
-        return;
-    };
-
-    let bad_encid = row.encid != 0 && row.encid > guid_count;
-    let bad_encbaseid = row.encbaseid != 0 && row.encbaseid > guid_count;
-
-    if !bad_encid && !bad_encbaseid {
-        return;
-    }
-
-    let original_encid = row.encid;
-    let original_encbaseid = row.encbaseid;
-    let fixed = ModuleRaw {
-        rid: row.rid,
-        token: row.token,
-        offset: row.offset,
-        generation: row.generation,
-        name: row.name,
-        mvid: row.mvid,
-        encid: if bad_encid { 0 } else { row.encid },
-        encbaseid: if bad_encbaseid { 0 } else { row.encbaseid },
-    };
-
-    if let Err(e) = cil_assembly.table_row_update(TableId::Module, 1, TableDataOwned::Module(fixed))
-    {
-        log::warn!("Failed to repair Module row 1 GUID indices: {e}");
-        return;
-    }
-
-    log::info!(
-        "Repaired Module row 1 GUIDs: encid {original_encid} → 0 ({}), encbaseid {original_encbaseid} → 0 ({}); heap has {guid_count} GUID(s)",
-        if bad_encid { "fixed" } else { "kept" },
-        if bad_encbaseid { "fixed" } else { "kept" },
-    );
-    ctx.events
-        .record(EventKind::ArtifactRemoved)
-        .message(format!(
-            "Repaired Module row 1: cleared out-of-bounds ENC GUID indices \
-             (encid={original_encid}, encbaseid={original_encbaseid})"
-        ));
-}
-
-/// Returns `true` if the assembly carries any ECMA-335 metadata-table
-/// violation that the `repair_*` functions know how to fix.
-///
-/// Used by [`execute_cleanup`] to bypass its early-exit when a cleanup
-/// request is otherwise empty: a sample with only metadata corruption
-/// (e.g. .NET Reactor's SuppressIldasm) needs cleanup to actually run.
-///
-/// Currently checks:
-/// - Duplicate `Module` rows (`row_count > 1`).
-/// - Duplicate `Assembly` rows (`row_count > 1`).
-/// - Module row 1's `EncId` / `EncBaseId` pointing outside the `#GUID`
-///   heap.
-///
-/// All other repairs in this module either run only when there is a
-/// pre-existing reason for cleanup (e.g. duplicate TypeDefs piggyback on
-/// the technique-driven deletions that already trigger cleanup) or are
-/// triggered explicitly by techniques.
-fn needs_metadata_repair(assembly: &CilObject) -> bool {
-    let Some(tables) = assembly.tables() else {
-        return false;
-    };
-
-    if let Some(t) = tables.table::<ModuleRaw>() {
-        if t.row_count > 1 {
-            return true;
-        }
-        if let Some(row) = t.get(1).ok().flatten() {
-            let guid_count: u32 = assembly.guids().map_or(0, |g| (g.data().len() / 16) as u32);
-            if (row.encid != 0 && row.encid > guid_count)
-                || (row.encbaseid != 0 && row.encbaseid > guid_count)
-            {
-                return true;
-            }
-        }
-    }
-
-    if let Some(t) = tables.table::<AssemblyRaw>() {
-        if t.row_count > 1 {
-            return true;
-        }
-    }
-
-    false
-}
-
-/// Detects duplicate TypeDef rows with the same (name, namespace, enclosingClass) tuple.
-///
-/// ECMA-335 §22.37 rule 1: No two rows shall have the same combination of
-/// TypeName, TypeNamespace, and enclosing class. Some obfuscators (e.g., BitMono)
-/// inject duplicate nested types like `<>c` which cause peverify failures.
-///
-/// Strategy:
-/// - Empty duplicates (no methods, no fields) are removed outright along with
-///   their NestedClass entries.
-/// - Non-empty duplicates are returned as tokens to be added to the cleanup
-///   request for deletion during the normal cleanup phase.
-fn repair_duplicate_typedef_rows(
-    cil_assembly: &mut CilAssembly,
-    ctx: &AnalysisContext,
-) -> Vec<Token> {
-    let Some(tables) = cil_assembly.view().tables() else {
-        return Vec::new();
-    };
-    let Some(strings) = cil_assembly.view().strings() else {
-        return Vec::new();
-    };
-
-    // Build a NestedClass map: nested_type_rid → (enclosing_type_rid, nestedclass_rid)
-    let nested_class_entries: Vec<(u32, u32, u32)> = tables
-        .table::<NestedClassRaw>()
-        .map(|rows| {
-            rows.into_iter()
-                .filter_map(skip_unreadable)
-                .map(|r| (r.nested_class, r.enclosing_class, r.rid))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let nested_class_map: HashMap<u32, u32> = nested_class_entries
-        .iter()
-        .map(|&(nested, enclosing, _)| (nested, enclosing))
-        .collect();
-
-    // Collect TypeDef rows to check for duplicates and emptiness
-    let typedef_rows: Vec<TypeDefRaw> = tables
-        .table::<TypeDefRaw>()
-        .map(|t| t.into_iter().filter_map(skip_unreadable).collect())
-        .unwrap_or_default();
-
-    let method_count = cil_assembly.original_table_row_count(TableId::MethodDef);
-    let field_count = cil_assembly.original_table_row_count(TableId::Field);
-
-    // Scan for duplicates based on (name, namespace, enclosing_class)
-    let mut seen: HashMap<(String, String, u32), u32> = HashMap::new();
-    let mut duplicates_to_remove: Vec<u32> = Vec::new();
-    let mut duplicates_for_cleanup: Vec<Token> = Vec::new();
-
-    for row in &typedef_rows {
-        let name = strings
-            .get(row.type_name as usize)
-            .unwrap_or_default()
-            .to_string();
-        let namespace = strings
-            .get(row.type_namespace as usize)
-            .unwrap_or_default()
-            .to_string();
-        let enclosing = nested_class_map.get(&row.rid).copied().unwrap_or(0);
-
-        let key = (name, namespace, enclosing);
-        if let Entry::Vacant(entry) = seen.entry(key) {
-            entry.insert(row.rid);
-        } else {
-            // Check if the duplicate has methods or fields
-            let method_start = row.method_list;
-            let next_rid = row.rid.saturating_add(1);
-            let method_end = typedef_rows
-                .iter()
-                .find(|t| t.rid == next_rid)
-                .map(|t| t.method_list)
-                .unwrap_or_else(|| method_count.saturating_add(1));
-            let field_start = row.field_list;
-            let field_end = typedef_rows
-                .iter()
-                .find(|t| t.rid == next_rid)
-                .map(|t| t.field_list)
-                .unwrap_or_else(|| field_count.saturating_add(1));
-
-            let has_methods = method_end > method_start;
-            let has_fields = field_end > field_start;
-
-            if !has_methods && !has_fields {
-                // Empty duplicate - safe to remove directly
-                duplicates_to_remove.push(row.rid);
-            } else {
-                // Non-empty duplicate - schedule for cleanup deletion
-                duplicates_for_cleanup.push(Token::from_parts(TableId::TypeDef, row.rid));
-            }
-        }
-    }
-
-    if duplicates_to_remove.is_empty() && duplicates_for_cleanup.is_empty() {
-        return Vec::new();
-    }
-
-    let removed_count = duplicates_to_remove.len();
-    let cleanup_count = duplicates_for_cleanup.len();
-
-    // Remove empty duplicates directly
-    if !duplicates_to_remove.is_empty() {
-        let dup_set: HashSet<u32> = duplicates_to_remove.iter().copied().collect();
-
-        // Remove corresponding NestedClass entries first
-        for &(nested, _, nc_rid) in &nested_class_entries {
-            if dup_set.contains(&nested) {
-                if let Err(e) = cil_assembly.table_row_remove(TableId::NestedClass, nc_rid) {
-                    log::warn!("Failed to remove NestedClass row {nc_rid}: {e}");
-                }
-            }
-        }
-
-        // Remove duplicate TypeDef rows (in reverse order)
-        for rid in duplicates_to_remove.iter().rev() {
-            if let Err(e) = cil_assembly.table_row_remove(TableId::TypeDef, *rid) {
-                log::warn!("Failed to remove duplicate TypeDef row {rid}: {e}");
-            }
-        }
-    }
-
-    let total = removed_count.saturating_add(cleanup_count);
-    log::info!(
-        "Repaired TypeDef table: {removed_count} removed, {cleanup_count} scheduled for cleanup ({total} total duplicates, ECMA-335 §22.37)"
-    );
-    ctx.events
-        .record(EventKind::ArtifactRemoved)
-        .message(format!(
-            "Repaired TypeDef table: {removed_count} removed, {cleanup_count} scheduled for cleanup ({total} duplicates)"
-        ));
-
-    duplicates_for_cleanup
-}
-
-/// Repairs invalid field visibility on `<Module>` global fields.
-///
-/// ECMA-335 §22.15 rule 4: Fields owned by `<Module>` (global fields) must have
-/// accessibility `CompilerControlled` (0), `Private` (1), or `Public` (6).
-/// Some obfuscators set invalid values like `Assembly` (3) or `Family` (4).
-///
-/// This corrects any invalid access to `Private` (1), which is the most
-/// restrictive valid option and unlikely to break anything.
-fn repair_global_field_visibility(cil_assembly: &mut CilAssembly, ctx: &AnalysisContext) {
-    // Collected in a first pass so the read borrow of the view is released before the writes
-    // below take `cil_assembly` mutably.
-    let pending: Vec<(u32, FieldRaw)> = {
-        let Some(tables) = cil_assembly.view().tables() else {
-            return;
-        };
-        let Some(typedefs) = tables.table::<TypeDefRaw>() else {
-            return;
-        };
-
-        // Find <Module> type (always RID 1) and its field range.
-        //
-        // Fetched by RID rather than by position in a collected `Vec`: `skip_unreadable`
-        // drops unparseable rows, so in a damaged assembly - exactly what this function
-        // exists to repair - position stops tracking RID and `<Module>` would be read from
-        // whatever type happened to survive first. `MetadataTable::get` derives each row's
-        // offset from its RID, so one unreadable row cannot displace any other.
-        let Some(module_type) = typedefs.get(1).ok().flatten() else {
-            return;
-        };
-        let field_start = module_type.field_list;
-        let field_end = match typedefs.get(2) {
-            Ok(Some(next)) => next.field_list,
-            // Only one type, or TypeDef RID 2 is unreadable: fall back to the whole table.
-            _ => cil_assembly
-                .original_table_row_count(TableId::Field)
-                .saturating_add(1),
-        };
-
-        if field_start >= field_end {
-            return;
-        }
-
-        let Some(fields_table) = tables.table::<FieldRaw>() else {
-            return;
-        };
-
-        (field_start..field_end)
-            .filter_map(|rid| {
-                // Same reason as above, and it matters more here: the repaired row is written
-                // back under this `rid`, so reading the wrong row would copy one field's flags
-                // onto a different field.
-                let field = fields_table.get(rid).ok().flatten()?;
-                let access = field.flags & 0x0007; // FieldAccessMask per ECMA-335 §II.23.1.5
-
-                // Valid for global fields: CompilerControlled(0), Private(1), Public(6).
-                if matches!(access, 0x0000 | 0x0001 | 0x0006) {
-                    return None;
-                }
-
-                let mut fixed = field;
-                fixed.flags = (fixed.flags & !0x0007) | 0x0001; // Set to Private
-                Some((rid, fixed))
-            })
-            .collect()
-    };
-
-    let mut repaired: usize = 0;
-    for (rid, fixed) in pending {
-        if let Err(e) =
-            cil_assembly.table_row_update(TableId::Field, rid, TableDataOwned::Field(fixed))
-        {
-            log::warn!("Failed to repair <Module> field {rid} visibility: {e}");
-        } else {
-            repaired = repaired.saturating_add(1);
-        }
-    }
-
-    if repaired > 0 {
-        log::info!(
-            "Repaired {repaired} <Module> field(s) with invalid visibility (ECMA-335 §22.15)"
-        );
-        ctx.events
-            .record(EventKind::ArtifactRemoved)
-            .message(format!(
-                "Repaired {repaired} <Module> field(s) with invalid visibility"
             ));
     }
 }
@@ -1480,7 +1064,7 @@ mod tests {
         cilassembly::CleanupRequest,
         deobfuscation::utils::{is_obfuscated_name, is_special_name},
         metadata::token::Token,
-        test::helpers::test_assembly_arc,
+        testkit::helpers::{load_sample, test_assembly_arc},
     };
 
     /// A virtual method of `crafted_2` with a body, and the type declaring it,
@@ -1535,6 +1119,76 @@ mod tests {
         assert!(
             !request.methods().any(|&token| token == method),
             "{method:?} left its type's slot empty"
+        );
+    }
+
+    #[test]
+    fn a_converted_caller_keeps_the_generic_method_its_method_spec_instantiates() {
+        // ConfuserEx's type scrambler: SayHello calls `BuildMessage<string>` through a
+        // MethodSpec, and names BuildMessage only through it.
+        let assembly = load_sample("packers/confuserex/1.6.0/mkaring_typescramble.exe");
+        let say_hello = Token::new(0x0600_0007);
+        let build_message = Token::new(0x0600_0009);
+        let ctx = AnalysisContext::new(Arc::new(CallGraph::new()));
+        let ssa = assembly
+            .method(&say_hello)
+            .and_then(|method| method.ssa(&assembly))
+            .expect("SayHello converts");
+        ctx.ssa_functions.insert(say_hello, ssa);
+
+        let mut request = CleanupRequest::new();
+        request.add_method(build_message);
+        retract_referenced_removals(
+            &assembly,
+            &mut request,
+            &BTreeMap::new(),
+            &ctx,
+            &BTreeSet::new(),
+        );
+
+        assert!(
+            !request.methods().any(|&token| token == build_message),
+            "BuildMessage removed while SayHello calls it"
+        );
+    }
+
+    #[test]
+    fn a_converted_method_keeps_the_field_a_member_ref_names() {
+        // WindowsBase reads fields of its own generic types through MemberRefs.
+        let assembly = load_sample("WindowsBase.dll");
+        let resolver = assembly.resolver();
+        let (method, field) = assembly
+            .methods()
+            .iter()
+            .find_map(|entry| {
+                let method = entry.value();
+                let field = method.instructions().find_map(|instr| {
+                    instr
+                        .get_token_operand()
+                        .filter(|token| token.is_table(TableId::MemberRef))
+                        .and_then(|token| resolver.resolve_field(token))
+                })?;
+                let ssa = method.ssa(&assembly).ok()?;
+                Some(((method.token, ssa), field))
+            })
+            .expect("a method reading a local field through a MemberRef");
+        let ctx = AnalysisContext::new(Arc::new(CallGraph::new()));
+        ctx.ssa_functions.insert(method.0, method.1);
+
+        let mut request = CleanupRequest::new();
+        request.add_field(field);
+        retract_referenced_removals(
+            &assembly,
+            &mut request,
+            &BTreeMap::new(),
+            &ctx,
+            &BTreeSet::new(),
+        );
+
+        assert!(
+            !request.fields().any(|&token| token == field),
+            "{field} removed while {} reads it",
+            method.0
         );
     }
 

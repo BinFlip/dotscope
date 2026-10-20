@@ -510,7 +510,7 @@ mod tests {
     use super::*;
     use crate::{
         analysis::{CallGraph, FieldRef, SsaFunctionBuilder, SsaInstruction, SsaType},
-        test::helpers::test_assembly_arc,
+        testkit::helpers::test_assembly_arc,
     };
 
     /// A site whose decryption fails keeps the salt and key loads it shares

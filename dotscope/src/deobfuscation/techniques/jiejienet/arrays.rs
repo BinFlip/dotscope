@@ -47,7 +47,8 @@ use crate::{
         context::AnalysisContext,
         passes::jiejienet::ArrayInitRestorationPass,
         techniques::{
-            Detection, Detections, Evidence, Technique, TechniqueCategory, WorkingAssembly,
+            Detection, Detections, Evidence, Technique, TechniqueCapability, TechniqueCategory,
+            WorkingAssembly,
         },
     },
     metadata::{
@@ -91,6 +92,13 @@ impl Technique for JiejieNetArrays {
 
     fn category(&self) -> TechniqueCategory {
         TechniqueCategory::Value
+    }
+
+    fn capabilities(&self) -> Vec<TechniqueCapability> {
+        vec![
+            TechniqueCapability::ByteTransform,
+            TechniqueCapability::SsaPass,
+        ]
     }
 
     fn detect(&self, assembly: &CilObject) -> Detection {
@@ -876,13 +884,12 @@ mod tests {
             jiejienet::arrays::{xor_decrypt_array_data, ArrayFindings, JiejieNetArrays},
             Technique,
         },
-        test::helpers::load_sample,
+        testkit::helpers::load_sample,
     };
 
     #[test]
     fn test_detect_positive_controlflow() {
-        let asm =
-            load_sample("tests/samples/packers/jiejie/source/jiejie_controlflow_no_rename.exe");
+        let asm = load_sample("packers/jiejie/source/jiejie_controlflow_no_rename.exe");
         let technique = JiejieNetArrays;
         let detection = technique.detect(&asm);
 
@@ -900,7 +907,7 @@ mod tests {
 
     #[test]
     fn test_detect_negative_strings_only() {
-        let asm = load_sample("tests/samples/packers/jiejie/source/jiejie_strings_only.exe");
+        let asm = load_sample("packers/jiejie/source/jiejie_strings_only.exe");
         let technique = JiejieNetArrays;
         let detection = technique.detect(&asm);
 
@@ -912,7 +919,7 @@ mod tests {
 
     #[test]
     fn test_detect_negative_original() {
-        let asm = load_sample("tests/samples/packers/jiejie/source/original.exe");
+        let asm = load_sample("packers/jiejie/source/original.exe");
         let technique = JiejieNetArrays;
         let detection = technique.detect(&asm);
 

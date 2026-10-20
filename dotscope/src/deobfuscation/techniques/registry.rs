@@ -7,8 +7,8 @@ use std::{
 
 use crate::deobfuscation::techniques::{
     bitmono::{
-        BitMonoAntiDebug, BitMonoCalli, BitMonoHooks, BitMonoJunk, BitMonoNops, BitMonoPeRepair,
-        BitMonoRenamer, BitMonoStrings, BitMonoUnmanaged,
+        BitMonoAntiDebug, BitMonoCalli, BitMonoHooks, BitMonoJunk, BitMonoLocals, BitMonoNops,
+        BitMonoPeRepair, BitMonoRenamer, BitMonoStrings, BitMonoTokens, BitMonoUnmanaged,
     },
     confuserex::{
         ConfuserExAntiDebug, ConfuserExAntiDump, ConfuserExAntiTamper, ConfuserExConstants,
@@ -74,19 +74,22 @@ impl TechniqueRegistry {
 
     /// Creates a registry pre-populated with all built-in techniques.
     ///
-    /// # Byte-capable techniques (12)
+    /// # Byte-capable techniques
     ///
     /// Generic:     metadata, ildasm, handlers, decompiler
     /// ConfuserEx:  marker, metadata, tamper, resources, natives
-    /// BitMono:     pe, hooks, junk
+    /// BitMono:     pe, tokens, hooks, junk
+    /// JIEJIE.NET:  arrays, resources
+    /// .NET Reactor: necrobit, resources
     ///
-    /// # SSA-capable techniques (17+5)
+    /// # SSA-capable techniques
     ///
     /// Generic:     flattening, strings, constants, debug, dump, opaquefields, delegates
     /// ConfuserEx:  constants, debug, dump
-    /// BitMono:     calli, strings, unmanaged, debug, nops, renamer
+    /// BitMono:     strings, unmanaged, debug, nops, renamer, locals
     /// JIEJIE.NET:  constants, strings, typeof, arrays, resources
     /// Obfuscar:    strings
+    /// .NET Reactor: antitamp, resources
     #[must_use]
     pub fn with_defaults() -> Self {
         Self::with_config(50_000)
@@ -124,8 +127,10 @@ impl TechniqueRegistry {
 
         // BitMono techniques
         registry.register(Box::new(BitMonoPeRepair));
+        registry.register(Box::new(BitMonoTokens));
         registry.register(Box::new(BitMonoHooks));
         registry.register(Box::new(BitMonoJunk));
+        registry.register(Box::new(BitMonoLocals));
         registry.register(Box::new(BitMonoCalli));
         registry.register(Box::new(BitMonoStrings));
         registry.register(Box::new(BitMonoUnmanaged));
@@ -377,6 +382,7 @@ impl ObfuscatorMatcher {
                 "bitmono.nops",
                 "bitmono.unmanaged",
                 "bitmono.pe",
+                "bitmono.locals",
             ],
         });
 
@@ -392,6 +398,7 @@ impl ObfuscatorMatcher {
             "bitmono.junk",
             "bitmono.nops",
             "bitmono.pe",
+            "bitmono.locals",
         ];
         for sig in single_technique_signatures("BitMono", bitmono_ids, &[]) {
             matcher.add_signature(sig);
@@ -580,10 +587,33 @@ fn single_technique_signatures(
 
 #[cfg(test)]
 mod tests {
-    use crate::deobfuscation::techniques::{
-        Detection, Detections, ObfuscatorMatcher, ObfuscatorSignature, Technique,
-        TechniqueCategory, TechniqueRegistry,
+    use crate::{
+        deobfuscation::techniques::{
+            Detection, Detections, ObfuscatorMatcher, ObfuscatorSignature, Technique,
+            TechniqueCapability, TechniqueCategory, TechniqueRegistry, WorkingAssembly,
+        },
+        testkit::helpers::load_sample,
     };
+
+    #[test]
+    fn a_technique_declares_byte_transform_exactly_when_it_has_one() {
+        // Cleanup withholds what a failed or never-run byte transform's technique would remove,
+        // and the pipeline reruns for a pending one, both by the declared capability; the
+        // declaration must be the transform's. Every byte transform answers an empty detection,
+        // with an empty event log; a technique without one answers nothing.
+        let registry = TechniqueRegistry::with_defaults();
+        for technique in registry.techniques() {
+            let mut assembly =
+                WorkingAssembly::new(load_sample("packers/confuserex/1.6.0/original.exe"));
+            let has_transform = technique
+                .byte_transform(&mut assembly, &mut Detection::new_empty())
+                .is_some();
+            let declares = technique
+                .capabilities()
+                .contains(&TechniqueCapability::ByteTransform);
+            assert_eq!(has_transform, declares, "{}", technique.id());
+        }
+    }
 
     /// Minimal mock technique for registry tests.
     struct MockTechnique {

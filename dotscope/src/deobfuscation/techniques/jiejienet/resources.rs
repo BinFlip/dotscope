@@ -54,7 +54,9 @@ use crate::{
     deobfuscation::{
         context::AnalysisContext,
         passes::jiejienet::{ResourceRestorationPass, ResourceTarget},
-        techniques::{Detection, Evidence, Technique, TechniqueCategory, WorkingAssembly},
+        techniques::{
+            Detection, Evidence, Technique, TechniqueCapability, TechniqueCategory, WorkingAssembly,
+        },
         utils::get_field_data_size,
     },
     error::Error,
@@ -111,6 +113,13 @@ impl Technique for JiejieNetResources {
 
     fn category(&self) -> TechniqueCategory {
         TechniqueCategory::Value
+    }
+
+    fn capabilities(&self) -> Vec<TechniqueCapability> {
+        vec![
+            TechniqueCapability::ByteTransform,
+            TechniqueCapability::SsaPass,
+        ]
     }
 
     fn detect(&self, _assembly: &CilObject) -> Detection {
@@ -863,13 +872,13 @@ mod tests {
             },
             Technique,
         },
-        test::helpers::load_sample,
+        testkit::helpers::load_sample,
     };
 
     #[test]
     fn test_detect_returns_empty() {
         // detect() returns empty — all detection is SSA-based
-        let asm = load_sample("tests/samples/packers/jiejie/source/jiejie_resources_only.exe");
+        let asm = load_sample("packers/jiejie/source/jiejie_resources_only.exe");
         let technique = JiejieNetResources;
         let detection = technique.detect(&asm);
 
@@ -878,7 +887,7 @@ mod tests {
 
     #[test]
     fn test_structural_detection() {
-        let asm = load_sample("tests/samples/packers/jiejie/source/jiejie_resources_only.exe");
+        let asm = load_sample("packers/jiejie/source/jiejie_resources_only.exe");
         let structure = detect_resource_structure(&asm);
 
         assert!(structure.is_some(), "Should find resource structure");
@@ -897,7 +906,7 @@ mod tests {
 
     #[test]
     fn test_xor_key_extraction() {
-        let asm = load_sample("tests/samples/packers/jiejie/source/jiejie_resources_only.exe");
+        let asm = load_sample("packers/jiejie/source/jiejie_resources_only.exe");
         let structure = detect_resource_structure(&asm).expect("Should find structure");
 
         let xor_key = extract_xor_key_from_stream(&asm, structure.stream_type);
@@ -906,7 +915,7 @@ mod tests {
 
     #[test]
     fn test_detect_negative_controlflow_only() {
-        let asm = load_sample("tests/samples/packers/jiejie/source/jiejie_controlflow_only.exe");
+        let asm = load_sample("packers/jiejie/source/jiejie_controlflow_only.exe");
         let structure = detect_resource_structure(&asm);
 
         assert!(
@@ -917,7 +926,7 @@ mod tests {
 
     #[test]
     fn test_detect_negative_original() {
-        let asm = load_sample("tests/samples/packers/jiejie/source/original.exe");
+        let asm = load_sample("packers/jiejie/source/original.exe");
         let structure = detect_resource_structure(&asm);
 
         assert!(structure.is_none(), "Should not detect in original");

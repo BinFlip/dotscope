@@ -23,7 +23,9 @@ use crate::{
         engine::{codegen::GeneratedCode, DeobfuscationEngine, PipelineRun},
         passes::NeutralizationPass,
         result::DeobfuscationResult,
-        techniques::{Detections, TechniqueResult, TechniqueResults, WorkingAssembly},
+        techniques::{
+            Detections, TechniqueCapability, TechniqueResult, TechniqueResults, WorkingAssembly,
+        },
         workqueue::{DrainedWorkItems, WorkItem},
         EmulationTemplatePool,
     },
@@ -230,14 +232,16 @@ impl<'a> PipelineRun<'a> {
     /// Whether a detected technique still has a byte transform to run.
     ///
     /// A technique has one when it is detected, not yet transformed, declares
-    /// `requires_regeneration()`, and has not already failed on the assembly
-    /// as it stands: rerunning the pipeline for a transform that will fail the
-    /// same way rebuilds every method's SSA for nothing.
+    /// [`TechniqueCapability::ByteTransform`], and has not already failed on the
+    /// assembly as it stands: rerunning the pipeline for a transform that will
+    /// fail the same way rebuilds every method's SSA for nothing.
     fn has_pending_byte_transforms(&self) -> bool {
         self.engine.registry.techniques().iter().any(|tech| {
             self.detections.is_detected(tech.id())
                 && !self.detections.is_transformed(tech.id())
-                && tech.requires_regeneration()
+                && tech
+                    .capabilities()
+                    .contains(&TechniqueCapability::ByteTransform)
                 && self.failed_transforms.get(tech.id()) != Some(&self.transforms_applied)
         })
     }

@@ -20,7 +20,7 @@ use std::any::Any;
 use crate::{
     compiler::{EventKind, EventLog},
     deobfuscation::techniques::{
-        Detection, Evidence, Technique, TechniqueCategory, WorkingAssembly,
+        Detection, Evidence, Technique, TechniqueCapability, TechniqueCategory, WorkingAssembly,
     },
     metadata::{
         method::{MethodBody, MethodImplCodeType},
@@ -51,6 +51,10 @@ impl Technique for GenericHandlers {
 
     fn category(&self) -> TechniqueCategory {
         TechniqueCategory::Metadata
+    }
+
+    fn capabilities(&self) -> Vec<TechniqueCapability> {
+        vec![TechniqueCapability::ByteTransform]
     }
 
     fn detect(&self, assembly: &CilObject) -> Detection {
@@ -158,7 +162,7 @@ impl Technique for GenericHandlers {
 
 #[cfg(test)]
 mod tests {
-    use crate::{deobfuscation::techniques::Technique, test::helpers::load_sample};
+    use crate::{deobfuscation::techniques::Technique, testkit::helpers::load_sample};
 
     /// Verify detection runs without error on a protected sample.
     ///
@@ -167,14 +171,14 @@ mod tests {
     /// without panicking.
     #[test]
     fn test_detect_no_panic_on_obfuscated() {
-        let asm = load_sample("tests/samples/packers/confuserex/1.6.0/mkaring_normal.exe");
+        let asm = load_sample("packers/confuserex/1.6.0/mkaring_normal.exe");
         let technique = super::GenericHandlers;
         let _detection = technique.detect(&asm);
     }
 
     #[test]
     fn test_detect_negative() {
-        let asm = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+        let asm = load_sample("packers/confuserex/1.6.0/original.exe");
         let technique = super::GenericHandlers;
         let detection = technique.detect(&asm);
         assert!(!detection.is_detected());

@@ -40,8 +40,8 @@ use crate::{
     cilassembly::GeneratorConfig,
     compiler::{EventKind, EventLog},
     deobfuscation::techniques::{
-        confuserex::hooks::create_lzma_hook, Detection, Evidence, Technique, TechniqueCategory,
-        WorkingAssembly,
+        confuserex::hooks::create_lzma_hook, Detection, Evidence, Technique, TechniqueCapability,
+        TechniqueCategory, WorkingAssembly,
     },
     emulation::{EmulationOutcome, ProcessBuilder},
     error::Error,
@@ -81,6 +81,10 @@ impl Technique for ConfuserExResources {
 
     fn category(&self) -> TechniqueCategory {
         TechniqueCategory::Protection
+    }
+
+    fn capabilities(&self) -> Vec<TechniqueCapability> {
+        vec![TechniqueCapability::ByteTransform]
     }
 
     fn detect(&self, assembly: &CilObject) -> Detection {
@@ -441,12 +445,12 @@ mod tests {
             confuserex::resources::{ConfuserExResources, ResourceFindings},
             Technique,
         },
-        test::helpers::load_sample,
+        testkit::helpers::load_sample,
     };
 
     #[test]
     fn test_detect_positive() {
-        let assembly = load_sample("tests/samples/packers/confuserex/1.6.0/mkaring_resources.exe");
+        let assembly = load_sample("packers/confuserex/1.6.0/mkaring_resources.exe");
 
         let technique = ConfuserExResources;
         let detection = technique.detect(&assembly);
@@ -472,7 +476,7 @@ mod tests {
 
     #[test]
     fn test_detect_negative() {
-        let assembly = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+        let assembly = load_sample("packers/confuserex/1.6.0/original.exe");
 
         let technique = ConfuserExResources;
         let detection = technique.detect(&assembly);

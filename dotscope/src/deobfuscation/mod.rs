@@ -103,6 +103,7 @@ mod engine;
 mod passes;
 mod processcell;
 mod renamer;
+mod repairs;
 mod result;
 mod statemachine;
 mod techniques;
@@ -142,12 +143,13 @@ mod tests {
     use crate::{
         deobfuscation::{DeobfuscationEngine, EngineConfig},
         metadata::validation::ValidationConfig,
+        testkit::fixture,
         CilObject,
     };
 
     #[test]
     fn test_process_file_api() -> crate::Result<()> {
-        let path = "tests/samples/packers/confuserex/1.6.0/original.exe";
+        let path = fixture("packers/confuserex/1.6.0/original.exe");
 
         let engine = DeobfuscationEngine::new(EngineConfig::default());
         let (deobfuscated, result) = engine.process_file(path)?;
@@ -161,7 +163,7 @@ mod tests {
 
     #[test]
     fn test_process_assembly_api() -> crate::Result<()> {
-        let path = "tests/samples/packers/confuserex/1.6.0/original.exe";
+        let path = fixture("packers/confuserex/1.6.0/original.exe");
 
         let assembly = CilObject::from_path_with_validation(path, ValidationConfig::analysis())?;
 
@@ -176,7 +178,7 @@ mod tests {
 
     #[test]
     fn test_process_bytes_api() -> crate::Result<()> {
-        let path = "tests/samples/packers/confuserex/1.6.0/original.exe";
+        let path = fixture("packers/confuserex/1.6.0/original.exe");
         let bytes = std::fs::read(path)?;
 
         let engine = DeobfuscationEngine::new(EngineConfig::default());
