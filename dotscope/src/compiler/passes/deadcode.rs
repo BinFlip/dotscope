@@ -4,7 +4,7 @@
 //! [`analyssa::passes::DeadCodeEliminationPass`] directly. This file keeps
 //! [`DeadMethodEliminationPass`], which uses a CIL-specific [`CtxWorld`]
 //! adapter that combines the SSA-derived call graph
-//! (`ctx.build_ssa_call_graph()`) with the static call graph
+//! (`ctx.build_ssa_call_graph(..)`) with the static call graph
 //! (`ctx.call_graph`) so the reachability walk sees both. The combined
 //! view is richer than what `World<CilTarget>` on `CompilerContext`
 //! provides today (which only reads the static call graph), so the
@@ -81,7 +81,7 @@ impl SsaPass<CilTarget, CompilerContext> for DeadMethodEliminationPass {
 /// `World<CilTarget>` adapter over `CompilerContext`.
 ///
 /// Built once per `run_global` invocation. Combines the SSA-derived call
-/// graph (from `ctx.build_ssa_call_graph()`) with the static call graph
+/// graph (from `ctx.build_ssa_call_graph(..)`) with the static call graph
 /// (`ctx.call_graph`) so [`World::callees`] returns a single unified view —
 /// SSA-derived edges win when present, static edges fill in for methods we
 /// haven't built SSA for.
@@ -94,7 +94,7 @@ struct CtxWorld<'a> {
 
 impl<'a> CtxWorld<'a> {
     fn new(ctx: &'a CompilerContext) -> Self {
-        let ssa_callees = ctx.build_ssa_call_graph();
+        let ssa_callees = ctx.build_ssa_call_graph(ctx.assembly().as_deref());
         let methods: Vec<Token> = ctx.all_methods().collect();
         let entries: Vec<Token> = ctx.entry_points.iter().map(|e| *e).collect();
         Self {

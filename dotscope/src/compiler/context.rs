@@ -474,12 +474,20 @@ impl CompilerContext {
     /// transformations that may have removed or added calls since the
     /// initial static call graph was built.
     ///
+    /// A call through a MemberRef or MethodSpec naming a method of this assembly records that
+    /// method as well as the token: a generic method's instantiation, or a method of a generic
+    /// type, is called through one, and is called all the same. Without `assembly` such a call
+    /// records the token alone.
+    ///
     /// Note this graph only has entries for methods that *have* an SSA function. A method whose
     /// body never converted contributes no edges at all, which reads as "calls nothing" rather
     /// than "unknown". Reachability consumers must use [`Self::build_effective_call_graph`];
     /// this one is for consumers that specifically want the post-transformation view.
     #[must_use]
-    pub fn build_ssa_call_graph(&self) -> BTreeMap<Token, BTreeSet<Token>> {
+    pub fn build_ssa_call_graph(
+        &self,
+        assembly: Option<&CilObject>,
+    ) -> BTreeMap<Token, BTreeSet<Token>> {
         let mut call_graph = BTreeMap::new();
         for entry in &self.ssa_functions {
             let caller_token = *entry.key();
@@ -501,6 +509,14 @@ impl CompilerContext {
                     }
                 }
             }
+            if let Some(assembly) = assembly {
+                let resolver = assembly.resolver();
+                let local: Vec<Token> = callees
+                    .iter()
+                    .filter_map(|&callee| resolver.resolve_method(callee))
+                    .collect();
+                callees.extend(local);
+            }
             call_graph.insert(caller_token, callees);
         }
         call_graph
@@ -519,13 +535,41 @@ impl CompilerContext {
     /// So SSA edges win where they exist, and the static call graph fills in for every method
     /// that has none. This mirrors what `CtxWorld::callees` does for dead-method elimination.
     #[must_use]
-    pub fn build_effective_call_graph(&self) -> BTreeMap<Token, BTreeSet<Token>> {
-        let mut call_graph = self.build_ssa_call_graph();
+    pub fn build_effective_call_graph(
+        &self,
+        assembly: &CilObject,
+    ) -> BTreeMap<Token, BTreeSet<Token>> {
+        let mut call_graph = self.build_ssa_call_graph(Some(assembly));
         for node in self.call_graph.nodes() {
             call_graph
                 .entry(node.token)
                 .or_insert_with(|| self.call_graph.callees(node.token).into_iter().collect());
         }
         call_graph
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testkit::helpers::load_sample;
+
+    #[test]
+    fn a_call_through_a_method_spec_is_a_call_of_its_method() {
+        // ConfuserEx's type scrambler: SayHello calls `BuildMessage<string>` through MethodSpec
+        // 0x2B000013.
+        let assembly = load_sample("packers/confuserex/1.6.0/mkaring_typescramble.exe");
+        let say_hello = Token::new(0x0600_0007);
+        let ctx = CompilerContext::new(Arc::new(CallGraph::new()));
+        let ssa = assembly
+            .method(&say_hello)
+            .and_then(|method| method.ssa(&assembly))
+            .expect("SayHello converts");
+        ctx.ssa_functions.insert(say_hello, ssa);
+
+        let callees = ctx.build_ssa_call_graph(Some(&assembly));
+        let callees = callees.get(&say_hello).expect("SayHello's calls");
+        assert!(callees.contains(&Token::new(0x2B00_0013)), "{callees:x?}");
+        assert!(callees.contains(&Token::new(0x0600_0009)), "{callees:x?}");
     }
 }

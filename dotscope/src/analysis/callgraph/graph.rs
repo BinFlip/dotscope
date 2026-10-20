@@ -555,7 +555,9 @@ impl CallGraph {
         call_type: CallType,
         token: Token,
     ) -> CallTarget {
-        // Check if method is in current assembly
+        // A MemberRef or MethodSpec naming a method of this assembly calls that method: a
+        // generic method's instantiation, or a method of a generic type, is called through one.
+        let token = assembly.resolver().resolve_method(token).unwrap_or(token);
         if assembly.methods().contains_key(&token) {
             if call_type.is_virtual() {
                 // Virtual call - use CHA
@@ -1046,7 +1048,53 @@ impl CallGraphStats {
 
 #[cfg(test)]
 mod tests {
-    use crate::analysis::callgraph::CallGraphStats;
+    use super::*;
+    use crate::{
+        analysis::callgraph::CallGraphStats, metadata::tables::TableId,
+        testkit::helpers::load_sample,
+    };
+
+    #[test]
+    fn a_call_through_a_member_ref_or_method_spec_naming_a_local_method_is_an_edge_to_it() {
+        // WindowsBase calls methods of its own generic types through MemberRefs; ConfuserEx's
+        // type scrambler calls `BuildMessage<string>` through a MethodSpec.
+        for (path, through) in [
+            ("WindowsBase.dll", TableId::MemberRef),
+            (
+                "packers/confuserex/1.6.0/mkaring_typescramble.exe",
+                TableId::MethodSpec,
+            ),
+        ] {
+            let assembly = load_sample(path);
+            let graph = CallGraph::build(&assembly).expect("built");
+            let resolver = assembly.resolver();
+            let mut calls = 0usize;
+            for entry in assembly.methods().iter() {
+                let caller = entry.value();
+                for instr in caller.instructions() {
+                    if !matches!(instr.mnemonic, "call" | "newobj" | "ldftn") {
+                        continue;
+                    }
+                    let Some(token) = instr.get_token_operand() else {
+                        continue;
+                    };
+                    let Some(local) = resolver.resolve_method(token) else {
+                        continue;
+                    };
+                    if !token.is_table(through) {
+                        continue;
+                    }
+                    calls = calls.saturating_add(1);
+                    assert!(
+                        graph.callees(caller.token).contains(&local),
+                        "{path}: {} calls {local} through {token}",
+                        caller.token
+                    );
+                }
+            }
+            assert!(calls > 0, "{path}: calls through {through:?}");
+        }
+    }
 
     #[test]
     fn test_call_graph_stats_resolution_rate() {
