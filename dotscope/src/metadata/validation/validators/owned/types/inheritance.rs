@@ -85,12 +85,12 @@
 use std::{collections::HashSet, mem, sync::Arc};
 
 use rayon::prelude::*;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     metadata::{
         method::{Method, MethodAccessFlags, MethodModifiers},
-        tables::{InterfaceEntryList, TypeAttributes},
+        tables::{InterfaceEntryList, TableId, TypeAttributes},
         typesystem::{CilFlavor, CilType, CilTypeRc},
         validation::{
             context::{MethodTypeMapping, OwnedValidationContext, ValidationContext},
@@ -168,47 +168,47 @@ impl OwnedInheritanceValidator {
         &self,
         context: &OwnedValidationContext,
     ) -> Result<()> {
-        let mut visited = FxHashSet::default();
+        let mut heights = FxHashMap::default();
         let mut visiting = FxHashSet::default();
 
         for type_entry in context.target_assembly_types() {
-            let type_ptr = Arc::as_ptr(type_entry) as usize;
-            if !visited.contains(&type_ptr) {
-                self.check_inheritance_cycles(type_entry, &mut visited, &mut visiting, context, 0)?;
-            }
+            self.inheritance_height(type_entry, type_entry, &mut heights, &mut visiting, context)?;
         }
 
         Ok(())
     }
 
-    /// Checks for circular inheritance dependencies starting from a given type.
+    /// How many bases and interfaces stand above `type_entry` on its longest chain, walked
+    /// from `start`.
     ///
-    /// Uses depth-first search to detect cycles in the inheritance graph.
-    /// Includes recursion depth limiting to prevent stack overflow.
-    /// Uses Arc pointers as unique type identifiers to avoid token collisions
-    /// between types from different assemblies.
-    fn check_inheritance_cycles(
+    /// Heights are memoized by type, so a chain is measured whichever of its types the walk
+    /// meets first. The walk fails for `start` once the chain from it passes the nesting
+    /// limit, which also bounds the recursion, and on a cycle. Types are told apart by
+    /// pointer: tokens repeat across assemblies.
+    fn inheritance_height(
         &self,
+        start: &CilType,
         type_entry: &CilType,
-        visited: &mut FxHashSet<usize>,
+        heights: &mut FxHashMap<usize, usize>,
         visiting: &mut FxHashSet<usize>,
         context: &OwnedValidationContext,
-        depth: usize,
-    ) -> Result<()> {
-        if depth > context.config().max_nesting_depth {
-            return Err(Error::ValidationOwnedFailed {
-                validator: self.name().to_string(),
-                message: format!(
-                    "Inheritance chain depth exceeds maximum nesting depth limit of {} for type '{}'",
-                    context.config().max_nesting_depth, type_entry.name
-                ),
-
-            });
-        }
-
-        // Use pointer as unique identifier to avoid token collisions across assemblies
+    ) -> Result<usize> {
+        let limit = context.config().max_nesting_depth;
+        let too_deep = || Error::ValidationOwnedFailed {
+            validator: self.name().to_string(),
+            message: format!(
+                "Inheritance chain depth exceeds maximum nesting depth limit of {} for type '{}'",
+                limit, start.name
+            ),
+        };
         let type_ptr = std::ptr::from_ref::<CilType>(type_entry) as usize;
 
+        if let Some(&height) = heights.get(&type_ptr) {
+            if visiting.len().saturating_add(height) > limit {
+                return Err(too_deep());
+            }
+            return Ok(height);
+        }
         if visiting.contains(&type_ptr) {
             let type_name = type_entry.fullname();
             return Err(Error::ValidationOwnedFailed {
@@ -218,39 +218,26 @@ impl OwnedInheritanceValidator {
                 ),
             });
         }
-
-        if visited.contains(&type_ptr) {
-            return Ok(());
+        if visiting.len() > limit {
+            return Err(too_deep());
         }
 
         visiting.insert(type_ptr);
-
-        if let Some(base_type) = type_entry.base() {
-            self.check_inheritance_cycles(
-                &base_type,
-                visited,
-                visiting,
-                context,
-                depth.saturating_add(1),
-            )?;
+        let parents = type_entry.base().into_iter().chain(
+            type_entry
+                .interfaces
+                .iter()
+                .filter_map(|(_, entry)| entry.interface.upgrade()),
+        );
+        let mut height = 0usize;
+        for parent in parents {
+            let above = self.inheritance_height(start, &parent, heights, visiting, context)?;
+            height = height.max(above.saturating_add(1));
         }
-
-        for (_, entry) in type_entry.interfaces.iter() {
-            if let Some(interface_type) = entry.interface.upgrade() {
-                self.check_inheritance_cycles(
-                    &interface_type,
-                    visited,
-                    visiting,
-                    context,
-                    depth.saturating_add(1),
-                )?;
-            }
-        }
-
         visiting.remove(&type_ptr);
-        visited.insert(type_ptr);
 
-        Ok(())
+        heights.insert(type_ptr, height);
+        Ok(height)
     }
 
     /// Validates base type accessibility and compatibility.
@@ -745,6 +732,22 @@ impl OwnedInheritanceValidator {
         let method_mapping = context.method_type_mapping();
 
         for type_entry in context.target_assembly_types() {
+            // A concrete type cannot have abstract methods, whatever it derives from.
+            if type_entry.token.is_table(TableId::TypeDef) && !type_entry.flags.is_abstract() {
+                for (_, method) in type_entry.methods.iter() {
+                    if let Some(method) = method.upgrade() {
+                        if method.is_abstract() {
+                            return Err(Error::ValidationOwnedFailed {
+                                validator: self.name().to_string(),
+                                message: format!(
+                                    "Concrete type '{}' cannot have abstract method '{}'",
+                                    type_entry.name, method.name
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
             if let Some(base_type) = type_entry.base() {
                 self.validate_basic_method_overrides(type_entry, &base_type, method_mapping)?;
             }
@@ -775,7 +778,6 @@ impl OwnedInheritanceValidator {
     /// # Errors
     ///
     /// Returns [`crate::Error::ValidationOwnedFailed`] if:
-    /// - Concrete types contain abstract methods (ECMA-335 violation)
     /// - Virtual method override validation fails for any method pair
     ///
     /// # Thread Safety
@@ -802,16 +804,6 @@ impl OwnedInheritanceValidator {
                         base_type,
                         method_mapping,
                     )?;
-                }
-
-                if method.is_abstract() && !derived_type.flags.is_abstract() {
-                    return Err(Error::ValidationOwnedFailed {
-                        validator: self.name().to_string(),
-                        message: format!(
-                            "Concrete type '{}' cannot have abstract method '{}'",
-                            derived_type.name, method.name
-                        ),
-                    });
                 }
             }
         }
@@ -906,10 +898,6 @@ impl OwnedInheritanceValidator {
         if base_method.name.contains('.')
             && (base_method.name.starts_with("System.I") || base_method.name.contains(".I"))
         {
-            return false;
-        }
-
-        if derived_method.params.count() != base_method.params.count() {
             return false;
         }
 
@@ -1149,26 +1137,69 @@ impl Default for OwnedInheritanceValidator {
 }
 
 #[cfg(test)]
-#[cfg_attr(feature = "skip-expensive-tests", allow(unused_imports))]
 mod tests {
     use super::*;
     use crate::{
-        metadata::validation::ValidationConfig,
-        test::{
+        metadata::{
+            signatures::{SignatureMethod, SignatureParameter, TypeSignature},
+            validation::ValidationConfig,
+        },
+        testkit::{
+            builders::MethodBuilder,
             factories::validation::inheritance::owned_inheritance_validator_file_factory,
             owned_validator_test,
         },
     };
 
+    /// Two methods with the same name and signature match as an override whether or not they
+    /// have Param rows: a Param row is optional (ECMA-335 §22.33), and obfuscators drop them.
     #[test]
-    #[cfg(not(feature = "skip-expensive-tests"))]
+    fn an_override_matches_by_signature_not_param_rows() {
+        let signature = SignatureMethod {
+            has_this: true,
+            param_count: 1,
+            return_type: SignatureParameter {
+                modifiers: Vec::new(),
+                by_ref: false,
+                base: TypeSignature::Void,
+            },
+            params: vec![SignatureParameter {
+                modifiers: Vec::new(),
+                by_ref: false,
+                base: TypeSignature::I4,
+            }],
+            ..Default::default()
+        };
+        let with_rows = MethodBuilder::new()
+            .with_name("Run")
+            .with_signature(signature.clone())
+            .build();
+        let without_rows = MethodBuilder::new()
+            .with_rid(2)
+            .with_name("Run")
+            .with_signature(signature)
+            .without_auto_params()
+            .build();
+        assert_eq!(with_rows.params.count(), 1);
+        assert_eq!(without_rows.params.count(), 0);
+
+        assert!(OwnedInheritanceValidator::is_potential_method_override(
+            &without_rows,
+            &with_rows
+        ));
+        assert!(OwnedInheritanceValidator::is_potential_method_override(
+            &with_rows,
+            &without_rows
+        ));
+    }
+
+    #[test]
     fn test_owned_inheritance_validator_comprehensive() -> Result<()> {
         let validator = OwnedInheritanceValidator::new();
 
         owned_validator_test(
             owned_inheritance_validator_file_factory,
             "OwnedInheritanceValidator",
-            "",
             ValidationConfig {
                 enable_semantic_validation: true,
                 ..Default::default()

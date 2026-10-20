@@ -163,7 +163,10 @@ pub struct CilType {
     pub namespace: String,
     /// Type name (class name, interface name, etc.)
     pub name: String,
-    /// External type reference for imported types (from `AssemblyRef`, `File`, `ModuleRef`)
+    /// The scope the type belongs to: for a type reference where it resolves (`AssemblyRef`,
+    /// `File`, `ModuleRef`, an enclosing `TypeRef`); for a type definition its own assembly.
+    /// Set for both, so it does not tell an imported type from a defined one: the token's
+    /// table does.
     external: OnceLock<CilTypeReference>,
     /// Base type reference - the type this type inherits from (for classes) or extends (for interfaces)
     base: OnceLock<CilTypeRef>,
@@ -617,14 +620,17 @@ impl CilType {
         }
     }
 
-    /// Gets the external type reference for this type, if it exists.
+    /// The scope this type belongs to.
     ///
-    /// Returns the external reference that indicates where this type is defined,
-    /// or `None` if this is a type defined in the current assembly or if no
-    /// external reference has been set.
+    /// For a type reference, where it resolves (`AssemblyRef`, `File`, `ModuleRef`, or the
+    /// `TypeRef` enclosing a nested reference); for a type definition, the assembly that
+    /// defines it, when the module has an Assembly row. It is therefore set for defined
+    /// types too and does not tell an imported type from a defined one: the token's table
+    /// does (`TypeDef` defines, `TypeRef` imports).
     ///
     /// ## Returns
-    /// Returns the external reference if it has been set, or `None` if it's still pending resolution.
+    /// The scope, or `None` when none was recorded (a netmodule's type definitions, or a
+    /// reference whose scope is still pending resolution).
     pub fn external(&self) -> Option<&CilTypeReference> {
         self.external.get()
     }
@@ -1686,7 +1692,7 @@ impl fmt::Display for CilType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::builders::CilTypeBuilder;
+    use crate::testkit::builders::CilTypeBuilder;
 
     /// Builds a type with a distinct token so the visited set can tell instances apart.
     fn typ(rid: u32, name: &str) -> CilTypeRc {

@@ -166,7 +166,7 @@ impl OwnedMethodValidator {
     /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Method names are empty
     /// - Parameter types are unresolved or have empty names
-    /// - Return types are unresolved (Unknown type signatures)
+    /// - Return or parameter types name types that do not resolve
     /// - Local variable types are unresolved or have empty names
     fn validate_method_signatures(&self, context: &OwnedValidationContext) -> Result<()> {
         let methods = context.object().methods();
@@ -182,6 +182,21 @@ impl OwnedMethodValidator {
                         entry.key().value()
                     ),
                 });
+            }
+
+            // Every parameter's type must resolve, whether or not a Param row describes it.
+            for (index, param) in method.signature.params.iter().enumerate() {
+                if let Some(token) = context.unresolved_type(|out| param.type_tokens(out)) {
+                    return Err(Error::ValidationOwnedFailed {
+                        validator: self.name().to_string(),
+                        message: format!(
+                            "Method '{}' parameter {} has unresolved type 0x{:08X}",
+                            method.name,
+                            index,
+                            token.value()
+                        ),
+                    });
+                }
             }
 
             for (index, (_, param)) in method.params.iter().enumerate() {
@@ -216,13 +231,16 @@ impl OwnedMethodValidator {
                 }
             }
 
-            if let crate::metadata::signatures::TypeSignature::Unknown =
-                &method.signature.return_type.base
+            if let Some(token) =
+                context.unresolved_type(|out| method.signature.return_type.type_tokens(out))
             {
                 let method_name = &method.name;
                 return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
-                    message: format!("Method '{method_name}' has unresolved return type"),
+                    message: format!(
+                        "Method '{method_name}' has unresolved return type 0x{:08X}",
+                        token.value()
+                    ),
                 });
             }
 
@@ -620,19 +638,17 @@ impl Default for OwnedMethodValidator {
 }
 
 #[cfg(test)]
-#[cfg_attr(feature = "skip-expensive-tests", allow(unused_imports))]
 mod tests {
     use super::*;
     use crate::{
         metadata::validation::ValidationConfig,
-        test::{
+        testkit::{
             factories::validation::members_method::owned_method_validator_file_factory,
             owned_validator_test,
         },
     };
 
     #[test]
-    #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_owned_method_validator() -> Result<()> {
         let validator = OwnedMethodValidator::new();
         let config = ValidationConfig {
@@ -643,7 +659,6 @@ mod tests {
         owned_validator_test(
             owned_method_validator_file_factory,
             "OwnedMethodValidator",
-            "ValidationOwnedFailed",
             config,
             |context| validator.validate_owned(context),
         )

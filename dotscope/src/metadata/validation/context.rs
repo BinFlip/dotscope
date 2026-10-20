@@ -606,6 +606,16 @@ impl<'a> OwnedValidationContext<'a> {
 }
 
 impl OwnedValidationContext<'_> {
+    /// The first type a signature names that this assembly's type system does not hold: a
+    /// TypeDef, TypeRef or TypeSpec token no loaded row answers. `names` adds the signature's
+    /// tokens (a `type_tokens` method of the signature types).
+    pub fn unresolved_type(&self, names: impl FnOnce(&mut Vec<Token>)) -> Option<Token> {
+        let mut tokens = Vec::new();
+        names(&mut tokens);
+        let types = self.object.types();
+        tokens.into_iter().find(|token| types.get(token).is_none())
+    }
+
     /// Get types that belong to the assembly being validated (cached).
     ///
     /// This method returns only the types that should be validated for the current assembly,
@@ -829,74 +839,68 @@ pub mod factory {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
 
     use rayon::ThreadPoolBuilder;
 
     use super::*;
-    use crate::metadata::validation::config::ValidationConfig;
+    use crate::{metadata::validation::config::ValidationConfig, testkit::fixture};
 
     #[test]
     fn test_raw_loading_context() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let scanner = ReferenceScanner::from_view(&view).unwrap();
-            let config = ValidationConfig::minimal();
-            let thread_pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+        let path = fixture("WindowsBase.dll");
+        let view = CilAssemblyView::from_path(&path).expect("the fixture loads");
+        let scanner = ReferenceScanner::from_view(&view).unwrap();
+        let config = ValidationConfig::minimal();
+        let thread_pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
 
-            let context =
-                RawValidationContext::new_for_loading(&view, &scanner, &config, &thread_pool);
+        let context = RawValidationContext::new_for_loading(&view, &scanner, &config, &thread_pool);
 
-            assert_eq!(context.validation_stage(), ValidationStage::Raw);
-            assert!(context.is_loading_validation());
-            assert!(!context.is_modification_validation());
-            assert!(context.changes().is_none());
-        }
+        assert_eq!(context.validation_stage(), ValidationStage::Raw);
+        assert!(context.is_loading_validation());
+        assert!(!context.is_modification_validation());
+        assert!(context.changes().is_none());
     }
 
     #[test]
     fn test_raw_modification_context() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let scanner = ReferenceScanner::from_view(&view).unwrap();
-            let config = ValidationConfig::minimal();
-            let changes = AssemblyChanges::new();
-            let thread_pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+        let path = fixture("WindowsBase.dll");
+        let view = CilAssemblyView::from_path(&path).expect("the fixture loads");
+        let scanner = ReferenceScanner::from_view(&view).unwrap();
+        let config = ValidationConfig::minimal();
+        let changes = AssemblyChanges::new();
+        let thread_pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
 
-            let context = RawValidationContext::new_for_modification(
-                &view,
-                &changes,
-                &scanner,
-                &config,
-                &thread_pool,
-            );
+        let context = RawValidationContext::new_for_modification(
+            &view,
+            &changes,
+            &scanner,
+            &config,
+            &thread_pool,
+        );
 
-            assert_eq!(context.validation_stage(), ValidationStage::Raw);
-            assert!(!context.is_loading_validation());
-            assert!(context.is_modification_validation());
-            assert!(context.changes().is_some());
-        }
+        assert_eq!(context.validation_stage(), ValidationStage::Raw);
+        assert!(!context.is_loading_validation());
+        assert!(context.is_modification_validation());
+        assert!(context.changes().is_some());
     }
 
     #[test]
     fn test_factory_functions() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let scanner = ReferenceScanner::from_view(&view).unwrap();
-            let config = ValidationConfig::minimal();
-            let changes = AssemblyChanges::new();
-            let thread_pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+        let path = fixture("WindowsBase.dll");
+        let view = CilAssemblyView::from_path(&path).expect("the fixture loads");
+        let scanner = ReferenceScanner::from_view(&view).unwrap();
+        let config = ValidationConfig::minimal();
+        let changes = AssemblyChanges::new();
+        let thread_pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
 
-            let loading_context =
-                factory::raw_loading_context(&view, &scanner, &config, &thread_pool);
-            assert_eq!(loading_context.validation_stage(), ValidationStage::Raw);
+        let loading_context = factory::raw_loading_context(&view, &scanner, &config, &thread_pool);
+        assert_eq!(loading_context.validation_stage(), ValidationStage::Raw);
 
-            let modification_context =
-                factory::raw_modification_context(&view, &changes, &scanner, &config, &thread_pool);
-            assert_eq!(
-                modification_context.validation_stage(),
-                ValidationStage::Raw
-            );
-        }
+        let modification_context =
+            factory::raw_modification_context(&view, &changes, &scanner, &config, &thread_pool);
+        assert_eq!(
+            modification_context.validation_stage(),
+            ValidationStage::Raw
+        );
     }
 }
