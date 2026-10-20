@@ -61,22 +61,21 @@ mod tables;
 
 // Re-export for use by other crate modules
 // Public re-exports
-pub use generator::GeneratorConfig;
 // Internal use by CilAssembly
 pub(super) use generator::PeGenerator;
+pub use generator::{DanglingPolicy, GeneratorConfig};
 pub(crate) use tables::ResolvePlaceholders;
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
 
     use tempfile::NamedTempFile;
 
-    use crate::{metadata::tables::TableId, CilAssemblyView};
+    use crate::{metadata::tables::TableId, testkit::fixture, CilAssemblyView};
 
     #[test]
     fn test_assembly_to_file_basic() {
-        let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))
+        let view = CilAssemblyView::from_path(fixture("crafted_2.exe"))
             .expect("Failed to load test assembly");
         let mut assembly = view.to_owned();
 
@@ -93,7 +92,7 @@ mod tests {
     #[test]
     fn test_assembly_roundtrip_preserves_basic_structure() {
         // Test that writing and reloading preserves basic structure
-        let view1 = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))
+        let view1 = CilAssemblyView::from_path(fixture("crafted_2.exe"))
             .expect("Failed to load test assembly");
 
         let original_type_count = view1
@@ -137,7 +136,7 @@ mod tests {
 
     #[test]
     fn test_assembly_to_memory() {
-        let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))
+        let view = CilAssemblyView::from_path(fixture("crafted_2.exe"))
             .expect("Failed to load test assembly");
         let mut assembly = view.to_owned();
 

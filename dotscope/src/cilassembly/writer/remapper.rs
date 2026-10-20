@@ -40,6 +40,14 @@
 //! Remapping: 4→3, 5→4, 6→5, 8→6, 9→7, 10→8
 //! ```
 //!
+//! # References and list starts
+//!
+//! A deleted row has no new RID. A list column (`TypeDef.FieldList`, `MethodDef.ParamList`
+//! and the like) that starts at one starts at the next surviving row instead, its
+//! continuation, since the list it opens has lost that row. Any other reference to a deleted
+//! row is dangling: the write fails with [`Error::DanglingReference`], or writes a null
+//! reference under [`DanglingPolicy::Null`]. It is never retargeted.
+//!
 //! # References
 //!
 //! - ECMA-335 §II.22 - Metadata logical format
@@ -48,7 +56,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    cilassembly::{AssemblyChanges, TableModifications},
+    cilassembly::{AssemblyChanges, DanglingPolicy, TableModifications},
     metadata::{
         tables::{
             AssemblyOsRaw, AssemblyProcessorRaw, AssemblyRaw, AssemblyRefOsRaw,
@@ -66,6 +74,7 @@ use crate::{
         },
         token::Token,
     },
+    Error, Referrer, Result,
 };
 
 /// Remaps RIDs after row deletions to maintain valid cross-table references.
@@ -87,19 +96,16 @@ use crate::{
 /// During table serialization, call `remap_references` on each row:
 ///
 /// ```rust,ignore
-/// row.remap_references(&remapper);
+/// row.remap_references(&remapper)?;
 /// ```
 #[derive(Debug, Default)]
 pub struct RidRemapper {
-    /// For each table with deletions: maps old RID → new RID
-    ///
-    /// Only RIDs that actually change are stored. If an old RID maps to itself
-    /// (no rows before it were deleted), it won't be in the map.
-    ///
-    /// Note: This includes "continuation" mappings for deleted rows (pointing to
-    /// the next surviving row). For signature remapping, use `typedef_remap()`
-    /// which excludes deleted rows.
-    remaps: HashMap<TableId, HashMap<u32, u32>>,
+    /// For each table with deletions: the new RID of every surviving row whose RID changes.
+    refs: HashMap<TableId, HashMap<u32, u32>>,
+
+    /// For each table with deletions: where a list starting at a deleted row, or one past
+    /// the last row, starts once the deletions are made. Only RIDs that change are stored.
+    list_starts: HashMap<TableId, HashMap<u32, u32>>,
 
     /// Tables that have any deletions (for quick lookup)
     tables_with_deletions: HashSet<TableId>,
@@ -115,6 +121,9 @@ pub struct RidRemapper {
     /// accounted for → the RID it is written at. Only tables whose order
     /// actually changes appear. Applied after the deletion shift.
     sort_orders: HashMap<TableId, HashMap<u32, u32>>,
+
+    /// What a reference to a deleted row becomes.
+    dangling: DanglingPolicy,
 }
 
 impl RidRemapper {
@@ -148,6 +157,7 @@ impl RidRemapper {
     ///
     /// * `changes` - The assembly changes containing table modifications
     /// * `original_counts` - Map from TableId to original row count (before modifications)
+    /// * `dangling` - What a reference to a deleted row becomes
     ///
     /// # Returns
     ///
@@ -156,8 +166,10 @@ impl RidRemapper {
     pub fn from_changes(
         changes: &AssemblyChanges,
         original_counts: &HashMap<TableId, u32>,
+        dangling: DanglingPolicy,
     ) -> Self {
-        let mut remaps = HashMap::new();
+        let mut refs = HashMap::new();
+        let mut list_starts = HashMap::new();
         let mut tables_with_deletions = HashSet::new();
         let mut deleted_rids = HashMap::new();
 
@@ -171,19 +183,25 @@ impl RidRemapper {
                 deleted_rids.insert(*table_id, deleted_rows.clone());
 
                 let original_count = original_counts.get(table_id).copied().unwrap_or(0);
-                let remap = Self::calculate_remapping(deleted_rows, original_count);
+                let (table_refs, table_list_starts) =
+                    Self::calculate_remapping(deleted_rows, original_count);
 
-                if !remap.is_empty() {
-                    remaps.insert(*table_id, remap);
+                if !table_refs.is_empty() {
+                    refs.insert(*table_id, table_refs);
+                }
+                if !table_list_starts.is_empty() {
+                    list_starts.insert(*table_id, table_list_starts);
                 }
             }
         }
 
         Self {
-            remaps,
+            refs,
+            list_starts,
             tables_with_deletions,
             deleted_rids,
             sort_orders: HashMap::new(),
+            dangling,
         }
     }
 
@@ -226,10 +244,10 @@ impl RidRemapper {
         self.sort_orders.contains_key(&table_id)
     }
 
-    /// The RID a row of `table_id` known as `old_rid` has once deletions are
+    /// The RID a surviving row of `table_id` known as `old_rid` has once deletions are
     /// accounted for, before any reordering.
     fn shift(&self, table_id: TableId, old_rid: u32) -> u32 {
-        self.remaps
+        self.refs
             .get(&table_id)
             .and_then(|map| map.get(&old_rid))
             .copied()
@@ -256,10 +274,14 @@ impl RidRemapper {
     ///
     /// # Returns
     ///
-    /// HashMap mapping old RIDs to new RIDs (includes both surviving rows that
-    /// changed AND deleted rows mapped to their continuation)
-    fn calculate_remapping(deleted_rows: &HashSet<u32>, original_count: u32) -> HashMap<u32, u32> {
+    /// The new RID of each surviving row that changes, and the continuation of each
+    /// deleted row and of one past the last row, where it differs.
+    fn calculate_remapping(
+        deleted_rows: &HashSet<u32>,
+        original_count: u32,
+    ) -> (HashMap<u32, u32>, HashMap<u32, u32>) {
         let mut remap = HashMap::new();
+        let mut continuations = HashMap::new();
         let mut new_rid = 1u32;
 
         // First pass: calculate new RIDs for surviving rows
@@ -289,7 +311,9 @@ impl RidRemapper {
                 .find(|(orig, _)| *orig > old_rid)
                 .map_or(final_new_rid, |(_, new)| *new); // If no surviving row after, point past end
 
-            remap.insert(old_rid, continuation);
+            if continuation != old_rid {
+                continuations.insert(old_rid, continuation);
+            }
         }
 
         // Third pass: handle the "continuation" value (one past the original end)
@@ -298,238 +322,214 @@ impl RidRemapper {
         // When rows are deleted, this continuation value must also be remapped.
         let old_continuation = original_count.saturating_add(1);
         if old_continuation != final_new_rid {
-            remap.insert(old_continuation, final_new_rid);
+            continuations.insert(old_continuation, final_new_rid);
         }
 
-        remap
+        (remap, continuations)
     }
 
-    /// Remaps a direct RID reference to a specific table.
-    ///
-    /// If the target table has deletions and this RID needs remapping,
-    /// returns the new RID. Otherwise returns the original RID unchanged.
+    /// The RID a reference to row `old_rid` of `target_table` has in the output.
     ///
     /// # Arguments
     ///
+    /// * `referrer` - What holds the reference, for the error naming it
     /// * `target_table` - The table that the RID references
     /// * `old_rid` - The original RID value
     ///
     /// # Returns
     ///
-    /// The remapped RID if it changed, or the original RID if unchanged.
+    /// The row's RID once deletions and reordering are made; 0 stays 0. A deleted row
+    /// becomes 0 under [`DanglingPolicy::Null`].
     ///
-    /// # Example
+    /// # Errors
     ///
-    /// ```rust,ignore
-    /// // If MethodDef row 7 became row 6 after deletions:
-    /// let new_rid = remapper.remap_rid(TableId::MethodDef, 7);
-    /// assert_eq!(new_rid, 6);
-    /// ```
-    #[must_use]
-    pub fn remap_rid(&self, target_table: TableId, old_rid: u32) -> u32 {
-        // RID 0 is null reference, never remap
+    /// [`Error::DanglingReference`] when the row is deleted, under [`DanglingPolicy::Error`].
+    pub fn reference(
+        &self,
+        referrer: Referrer,
+        target_table: TableId,
+        old_rid: u32,
+    ) -> Result<u32> {
         if old_rid == 0 {
-            return 0;
+            return Ok(0);
+        }
+        if self
+            .deleted_rids
+            .get(&target_table)
+            .is_some_and(|deleted| deleted.contains(&old_rid))
+        {
+            let target = Token::from_parts(target_table, old_rid);
+            return match self.dangling {
+                DanglingPolicy::Error => Err(Error::DanglingReference { referrer, target }),
+                DanglingPolicy::Null => {
+                    log::warn!(
+                        "{referrer} names {target}, which the write deletes: written as null"
+                    );
+                    Ok(0)
+                }
+            };
         }
 
         let shifted = self.shift(target_table, old_rid);
-        self.sort_orders
+        Ok(self
+            .sort_orders
             .get(&target_table)
             .and_then(|map| map.get(&shifted))
             .copied()
-            .unwrap_or(shifted)
+            .unwrap_or(shifted))
     }
 
-    /// Returns the TypeDef RID remapping for signature blob processing.
+    /// The RID a list column starting at row `old_rid` of `target_table` has in the output.
     ///
-    /// Signature blobs contain TypeDefOrRefOrSpec encoded tokens that reference
-    /// TypeDef rows. When TypeDef rows are deleted and RIDs shift, these embedded
-    /// tokens must also be updated.
-    ///
-    /// **Important**: This method filters out deleted TypeDef RIDs from the remapping.
-    /// The general remapping includes "continuation" values for deleted rows (pointing
-    /// to the next surviving row), which is correct for list pointers but WRONG for
-    /// type references. If a signature references a deleted type, remapping it to the
-    /// next surviving type would silently corrupt the type system.
-    ///
-    /// # Returns
-    ///
-    /// A HashMap mapping old TypeDef RIDs to new RIDs for surviving rows only,
-    /// or `None` if there are no TypeDef deletions.
-    ///
-    /// # Example
-    ///
-    /// If TypeDef rows 1, 2, 3, 4, 5 exist and row 3 is deleted:
-    /// - Full remap: {3→3, 4→3, 5→4} (3→3 is continuation pointing to what was row 4)
-    /// - Signature remap: {4→3, 5→4} (excludes deleted row 3)
+    /// A list that started at a deleted row, or one past the last row, starts at the next
+    /// surviving row: the rows it kept are the ones from there to the next list's start.
     #[must_use]
-    pub fn typedef_remap(&self) -> Option<HashMap<u32, u32>> {
-        let full_remap = self.remaps.get(&TableId::TypeDef)?;
-        let deleted = self.deleted_rids.get(&TableId::TypeDef);
-
-        // Filter out deleted RIDs - they should NOT be remapped to other types
-        let filtered: HashMap<u32, u32> = full_remap
-            .iter()
-            .filter(|(old_rid, _)| deleted.is_none_or(|d| !d.contains(old_rid)))
-            .map(|(&k, &v)| (k, v))
-            .collect();
-
-        if filtered.is_empty() {
-            None
-        } else {
-            Some(filtered)
+    pub fn list_start(&self, target_table: TableId, old_rid: u32) -> u32 {
+        if old_rid == 0 {
+            return 0;
         }
+        self.list_starts
+            .get(&target_table)
+            .and_then(|map| map.get(&old_rid))
+            .copied()
+            .unwrap_or_else(|| self.shift(target_table, old_rid))
     }
 
-    /// Returns the TypeRef RID remapping for signature blob processing.
-    ///
-    /// Signature blobs contain TypeDefOrRefOrSpec encoded tokens that reference
-    /// TypeRef rows (external type references). When TypeRef rows are deleted
-    /// and RIDs shift, these embedded tokens must also be updated.
-    ///
-    /// **Important**: Like `typedef_remap()`, this method filters out deleted
-    /// TypeRef RIDs from the remapping to avoid corrupting type references.
-    ///
-    /// # Returns
-    ///
-    /// A HashMap mapping old TypeRef RIDs to new RIDs for surviving rows only,
-    /// or `None` if there are no TypeRef deletions.
+    /// The new RID of every surviving row of `table_id` whose RID changes, for the tokens
+    /// signature blobs hold; `None` if none does.
     #[must_use]
-    pub fn typeref_remap(&self) -> Option<HashMap<u32, u32>> {
-        let full_remap = self.remaps.get(&TableId::TypeRef)?;
-        let deleted = self.deleted_rids.get(&TableId::TypeRef);
-
-        // Filter out deleted RIDs - they should NOT be remapped to other types
-        let filtered: HashMap<u32, u32> = full_remap
-            .iter()
-            .filter(|(old_rid, _)| deleted.is_none_or(|d| !d.contains(old_rid)))
-            .map(|(&k, &v)| (k, v))
-            .collect();
-
-        if filtered.is_empty() {
-            None
-        } else {
-            Some(filtered)
-        }
+    pub fn surviving_remap(&self, table_id: TableId) -> Option<HashMap<u32, u32>> {
+        self.refs.get(&table_id).cloned()
     }
 
-    /// Returns the TypeSpec RID remapping for signature blob processing.
-    ///
-    /// `TypeDefOrRefOrSpecEncoded` tokens (the operand of
-    /// `ELEMENT_TYPE_CLASS` / `ELEMENT_TYPE_VALUETYPE` in a signature) can
-    /// reference TypeSpec rows in addition to TypeDef and TypeRef. Without
-    /// this remapping, signature blobs that reference a surviving TypeSpec
-    /// continue to point at its **old** RID, breaking strict-mode reload
-    /// (the typesystem lookup fails because the post-deletion table only
-    /// contains the row at its **new** RID).
-    ///
-    /// **Important**: Like `typedef_remap()` / `typeref_remap()`, this
-    /// method filters out deleted TypeSpec RIDs.
-    ///
-    /// # Returns
-    ///
-    /// A HashMap mapping old TypeSpec RIDs to new RIDs for surviving rows
-    /// only, or `None` if there are no TypeSpec deletions.
-    #[must_use]
-    pub fn typespec_remap(&self) -> Option<HashMap<u32, u32>> {
-        let full_remap = self.remaps.get(&TableId::TypeSpec)?;
-        let deleted = self.deleted_rids.get(&TableId::TypeSpec);
-
-        let filtered: HashMap<u32, u32> = full_remap
-            .iter()
-            .filter(|(old_rid, _)| deleted.is_none_or(|d| !d.contains(old_rid)))
-            .map(|(&k, &v)| (k, v))
-            .collect();
-
-        if filtered.is_empty() {
-            None
-        } else {
-            Some(filtered)
-        }
-    }
-
-    /// Remaps a coded index reference.
-    ///
-    /// Coded indices encode both the target table (in the tag) and the RID.
-    /// This method extracts the table from the tag, remaps the RID if needed,
-    /// and updates the coded index in place.
+    /// Remaps a coded index reference in place.
     ///
     /// # Arguments
     ///
-    /// * `coded_index` - Mutable reference to the coded index to remap
+    /// * `row` - The row holding the coded index
+    /// * `column` - Its column, by its ECMA-335 name
+    /// * `coded_index` - The coded index to remap
     ///
-    /// # Example
+    /// # Errors
     ///
-    /// ```rust,ignore
-    /// // CustomAttribute.parent pointing to MethodDef row 7
-    /// let mut ci = CodedIndex::new(TableId::MethodDef, 7, CodedIndexType::HasCustomAttribute);
-    /// remapper.remap_coded_index(&mut ci);
-    /// // If MethodDef row 7 became row 6, ci.row is now 6
-    /// ```
-    pub fn remap_coded_index(&self, coded_index: &mut CodedIndex) {
-        // Null coded indices (row 0) are never remapped
+    /// As [`RidRemapper::reference`].
+    pub fn remap_coded_index(
+        &self,
+        row: Token,
+        column: &'static str,
+        coded_index: &mut CodedIndex,
+    ) -> Result<()> {
         if coded_index.row == 0 {
-            return;
+            return Ok(());
         }
 
         let table_id = coded_index.tag;
-        let new_rid = self.remap_rid(table_id, coded_index.row);
+        let new_rid =
+            self.reference(Referrer::Column { row, column }, table_id, coded_index.row)?;
         if new_rid != coded_index.row {
             coded_index.row = new_rid;
-            // Update the token to reflect the new row
             coded_index.token = Token::from_parts(table_id, new_rid);
         }
+        Ok(())
     }
 
     /// Returns the number of tables that have remappings.
     #[must_use]
     pub fn table_count(&self) -> usize {
-        self.remaps.len()
+        self.refs.len()
     }
 
     /// Returns the total number of RID remappings across all tables.
     #[must_use]
     pub fn total_remappings(&self) -> usize {
-        self.remaps.values().map(HashMap::len).sum()
+        self.refs.values().map(HashMap::len).sum()
     }
 
-    /// Builds a token remapping for IL instruction patching.
-    ///
-    /// IL instructions use metadata tokens (table_id << 24 | rid). When rows are
-    /// deleted and RIDs shift, the tokens in IL code must also be updated.
-    ///
-    /// This method converts all RID remappings to token remappings by prepending
-    /// the table ID to each RID.
-    ///
-    /// # Returns
-    ///
-    /// A HashMap mapping old tokens to new tokens, suitable for patching IL code.
-    ///
-    /// # Example
-    ///
-    /// If MethodDef RID 7 → 6 after deletion, this produces:
-    /// `0x06000007 → 0x06000006`
+    /// How the tokens a method body or the CLI header holds are renumbered: every surviving
+    /// row whose RID changes, and the deleted rows, which no token may name.
     #[must_use]
-    pub fn build_token_remapping(&self) -> HashMap<u32, u32> {
-        let mut token_remap = HashMap::new();
-
-        for (table_id, rid_map) in &self.remaps {
-            // Get the table ID byte (upper 8 bits of token)
+    pub fn token_remap(&self) -> TokenRemap {
+        let mut map = HashMap::new();
+        for (table_id, rid_map) in &self.refs {
             let table_byte = (*table_id as u32) << 24;
-
             for (&old_rid, &new_rid) in rid_map {
-                // Skip RID 0 (null) and unchanged mappings
-                if old_rid == 0 || old_rid == new_rid {
-                    continue;
+                if old_rid != new_rid {
+                    map.insert(table_byte | old_rid, table_byte | new_rid);
                 }
-
-                let old_token = table_byte | old_rid;
-                let new_token = table_byte | new_rid;
-                token_remap.insert(old_token, new_token);
             }
         }
+        let deleted = self
+            .deleted_rids
+            .iter()
+            .flat_map(|(table_id, rids)| {
+                let table_byte = (*table_id as u32) << 24;
+                rids.iter().map(move |rid| table_byte | rid)
+            })
+            .collect();
+        TokenRemap {
+            map,
+            deleted,
+            dangling: self.dangling,
+        }
+    }
+}
 
-        token_remap
+/// How a write renumbers the metadata tokens outside the tables: instruction operands, local
+/// variable signatures, catch types and the entry point.
+#[derive(Debug, Default)]
+pub struct TokenRemap {
+    /// Old token to new token, for every token that changes.
+    map: HashMap<u32, u32>,
+    /// The tokens of the rows the write deletes.
+    deleted: HashSet<u32>,
+    /// What a token naming a deleted row becomes.
+    dangling: DanglingPolicy,
+}
+
+impl TokenRemap {
+    /// Records that `old` is written as `new`, overriding the deletion shift.
+    pub fn insert(&mut self, old: u32, new: u32) {
+        self.map.insert(old, new);
+    }
+
+    /// Whether no token changes.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty() && self.deleted.is_empty()
+    }
+
+    /// The number of tokens that change.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    /// The token `token` is written as.
+    ///
+    /// # Arguments
+    ///
+    /// * `referrer` - What holds the token, for the error naming it
+    /// * `token` - The token as the input assembly has it
+    ///
+    /// # Errors
+    ///
+    /// [`Error::DanglingReference`] when it names a deleted row, under
+    /// [`DanglingPolicy::Error`]. Under [`DanglingPolicy::Null`] it becomes the null token
+    /// of its table.
+    pub fn remap(&self, referrer: Referrer, token: u32) -> Result<u32> {
+        if self.deleted.contains(&token) {
+            let target = Token::new(token);
+            return match self.dangling {
+                DanglingPolicy::Error => Err(Error::DanglingReference { referrer, target }),
+                DanglingPolicy::Null => {
+                    log::warn!(
+                        "{referrer} names {target}, which the write deletes: written as null"
+                    );
+                    Ok(token & 0xFF00_0000)
+                }
+            };
+        }
+        Ok(self.map.get(&token).copied().unwrap_or(token))
     }
 }
 
@@ -547,333 +547,506 @@ pub trait RemapReferences {
     /// # Arguments
     ///
     /// * `remapper` - The RID remapper containing old→new RID mappings
-    fn remap_references(&mut self, remapper: &RidRemapper);
+    ///
+    /// # Errors
+    ///
+    /// [`Error::DanglingReference`] when a column names a row the write deletes.
+    fn remap_references(&mut self, remapper: &RidRemapper) -> Result<()>;
 }
 
 impl RemapReferences for TypeRefRaw {
-    fn remap_references(&mut self, remapper: &RidRemapper) {
+    fn remap_references(&mut self, remapper: &RidRemapper) -> Result<()> {
         // ResolutionScope: Module, ModuleRef, AssemblyRef, TypeRef
-        remapper.remap_coded_index(&mut self.resolution_scope);
+        remapper.remap_coded_index(self.token, "ResolutionScope", &mut self.resolution_scope)?;
+        Ok(())
     }
 }
 
 impl RemapReferences for TypeDefRaw {
-    fn remap_references(&mut self, remapper: &RidRemapper) {
+    fn remap_references(&mut self, remapper: &RidRemapper) -> Result<()> {
         // Extends: TypeDef, TypeRef, TypeSpec
-        remapper.remap_coded_index(&mut self.extends);
+        remapper.remap_coded_index(self.token, "Extends", &mut self.extends)?;
 
         // FieldList: direct RID into Field table
-        self.field_list = remapper.remap_rid(TableId::Field, self.field_list);
+        self.field_list = remapper.list_start(TableId::Field, self.field_list);
 
         // MethodList: direct RID into MethodDef table
-        self.method_list = remapper.remap_rid(TableId::MethodDef, self.method_list);
+        self.method_list = remapper.list_start(TableId::MethodDef, self.method_list);
+        Ok(())
     }
 }
 
 impl RemapReferences for MethodDefRaw {
-    fn remap_references(&mut self, remapper: &RidRemapper) {
+    fn remap_references(&mut self, remapper: &RidRemapper) -> Result<()> {
         // ParamList: direct RID into Param table
-        self.param_list = remapper.remap_rid(TableId::Param, self.param_list);
+        self.param_list = remapper.list_start(TableId::Param, self.param_list);
+        Ok(())
     }
 }
 
 impl RemapReferences for InterfaceImplRaw {
-    fn remap_references(&mut self, remapper: &RidRemapper) {
+    fn remap_references(&mut self, remapper: &RidRemapper) -> Result<()> {
         // Class: direct RID into TypeDef table
-        self.class = remapper.remap_rid(TableId::TypeDef, self.class);
+        self.class = remapper.reference(
+            Referrer::Column {
+                row: self.token,
+                column: "Class",
+            },
+            TableId::TypeDef,
+            self.class,
+        )?;
 
         // Interface: TypeDef, TypeRef, TypeSpec
-        remapper.remap_coded_index(&mut self.interface);
+        remapper.remap_coded_index(self.token, "Interface", &mut self.interface)?;
+        Ok(())
     }
 }
 
 impl RemapReferences for MemberRefRaw {
-    fn remap_references(&mut self, remapper: &RidRemapper) {
+    fn remap_references(&mut self, remapper: &RidRemapper) -> Result<()> {
         // Class: TypeDef, TypeRef, ModuleRef, MethodDef, TypeSpec
-        remapper.remap_coded_index(&mut self.class);
+        remapper.remap_coded_index(self.token, "Class", &mut self.class)?;
+        Ok(())
     }
 }
 
 impl RemapReferences for ConstantRaw {
-    fn remap_references(&mut self, remapper: &RidRemapper) {
+    fn remap_references(&mut self, remapper: &RidRemapper) -> Result<()> {
         // Parent: Field, Param, Property
-        remapper.remap_coded_index(&mut self.parent);
+        remapper.remap_coded_index(self.token, "Parent", &mut self.parent)?;
+        Ok(())
     }
 }
 
 impl RemapReferences for CustomAttributeRaw {
-    fn remap_references(&mut self, remapper: &RidRemapper) {
+    fn remap_references(&mut self, remapper: &RidRemapper) -> Result<()> {
         // Parent: HasCustomAttribute (22 tables!)
-        remapper.remap_coded_index(&mut self.parent);
+        remapper.remap_coded_index(self.token, "Parent", &mut self.parent)?;
 
         // Constructor: MethodDef, MemberRef
-        remapper.remap_coded_index(&mut self.constructor);
+        remapper.remap_coded_index(self.token, "Type", &mut self.constructor)?;
+        Ok(())
     }
 }
 
 impl RemapReferences for FieldMarshalRaw {
-    fn remap_references(&mut self, remapper: &RidRemapper) {
+    fn remap_references(&mut self, remapper: &RidRemapper) -> Result<()> {
         // Parent: Field, Param
-        remapper.remap_coded_index(&mut self.parent);
+        remapper.remap_coded_index(self.token, "Parent", &mut self.parent)?;
+        Ok(())
     }
 }
 
 impl RemapReferences for DeclSecurityRaw {
-    fn remap_references(&mut self, remapper: &RidRemapper) {
+    fn remap_references(&mut self, remapper: &RidRemapper) -> Result<()> {
         // Parent: TypeDef, MethodDef, Assembly
-        remapper.remap_coded_index(&mut self.parent);
+        remapper.remap_coded_index(self.token, "Parent", &mut self.parent)?;
+        Ok(())
     }
 }
 
 impl RemapReferences for ClassLayoutRaw {
-    fn remap_references(&mut self, remapper: &RidRemapper) {
+    fn remap_references(&mut self, remapper: &RidRemapper) -> Result<()> {
         // Parent: direct RID into TypeDef table
-        self.parent = remapper.remap_rid(TableId::TypeDef, self.parent);
+        self.parent = remapper.reference(
+            Referrer::Column {
+                row: self.token,
+                column: "Parent",
+            },
+            TableId::TypeDef,
+            self.parent,
+        )?;
+        Ok(())
     }
 }
 
 impl RemapReferences for FieldLayoutRaw {
-    fn remap_references(&mut self, remapper: &RidRemapper) {
+    fn remap_references(&mut self, remapper: &RidRemapper) -> Result<()> {
         // Field: direct RID into Field table
-        self.field = remapper.remap_rid(TableId::Field, self.field);
+        self.field = remapper.reference(
+            Referrer::Column {
+                row: self.token,
+                column: "Field",
+            },
+            TableId::Field,
+            self.field,
+        )?;
+        Ok(())
     }
 }
 
 impl RemapReferences for EventMapRaw {
-    fn remap_references(&mut self, remapper: &RidRemapper) {
+    fn remap_references(&mut self, remapper: &RidRemapper) -> Result<()> {
         // Parent: direct RID into TypeDef table
-        self.parent = remapper.remap_rid(TableId::TypeDef, self.parent);
+        self.parent = remapper.reference(
+            Referrer::Column {
+                row: self.token,
+                column: "Parent",
+            },
+            TableId::TypeDef,
+            self.parent,
+        )?;
 
         // EventList: direct RID into Event table
-        self.event_list = remapper.remap_rid(TableId::Event, self.event_list);
+        self.event_list = remapper.list_start(TableId::Event, self.event_list);
+        Ok(())
     }
 }
 
 impl RemapReferences for EventRaw {
-    fn remap_references(&mut self, remapper: &RidRemapper) {
+    fn remap_references(&mut self, remapper: &RidRemapper) -> Result<()> {
         // EventType: TypeDef, TypeRef, TypeSpec
-        remapper.remap_coded_index(&mut self.event_type);
+        remapper.remap_coded_index(self.token, "EventType", &mut self.event_type)?;
+        Ok(())
     }
 }
 
 impl RemapReferences for PropertyMapRaw {
-    fn remap_references(&mut self, remapper: &RidRemapper) {
+    fn remap_references(&mut self, remapper: &RidRemapper) -> Result<()> {
         // Parent: direct RID into TypeDef table
-        self.parent = remapper.remap_rid(TableId::TypeDef, self.parent);
+        self.parent = remapper.reference(
+            Referrer::Column {
+                row: self.token,
+                column: "Parent",
+            },
+            TableId::TypeDef,
+            self.parent,
+        )?;
 
         // PropertyList: direct RID into Property table
-        self.property_list = remapper.remap_rid(TableId::Property, self.property_list);
+        self.property_list = remapper.list_start(TableId::Property, self.property_list);
+        Ok(())
     }
 }
 
 impl RemapReferences for MethodSemanticsRaw {
-    fn remap_references(&mut self, remapper: &RidRemapper) {
+    fn remap_references(&mut self, remapper: &RidRemapper) -> Result<()> {
         // Method: direct RID into MethodDef table
-        self.method = remapper.remap_rid(TableId::MethodDef, self.method);
+        self.method = remapper.reference(
+            Referrer::Column {
+                row: self.token,
+                column: "Method",
+            },
+            TableId::MethodDef,
+            self.method,
+        )?;
 
         // Association: Event, Property
-        remapper.remap_coded_index(&mut self.association);
+        remapper.remap_coded_index(self.token, "Association", &mut self.association)?;
+        Ok(())
     }
 }
 
 impl RemapReferences for MethodImplRaw {
-    fn remap_references(&mut self, remapper: &RidRemapper) {
+    fn remap_references(&mut self, remapper: &RidRemapper) -> Result<()> {
         // Class: direct RID into TypeDef table
-        self.class = remapper.remap_rid(TableId::TypeDef, self.class);
+        self.class = remapper.reference(
+            Referrer::Column {
+                row: self.token,
+                column: "Class",
+            },
+            TableId::TypeDef,
+            self.class,
+        )?;
 
         // MethodBody: MethodDef, MemberRef
-        remapper.remap_coded_index(&mut self.method_body);
+        remapper.remap_coded_index(self.token, "MethodBody", &mut self.method_body)?;
 
         // MethodDeclaration: MethodDef, MemberRef
-        remapper.remap_coded_index(&mut self.method_declaration);
+        remapper.remap_coded_index(
+            self.token,
+            "MethodDeclaration",
+            &mut self.method_declaration,
+        )?;
+        Ok(())
     }
 }
 
 impl RemapReferences for ImplMapRaw {
-    fn remap_references(&mut self, remapper: &RidRemapper) {
+    fn remap_references(&mut self, remapper: &RidRemapper) -> Result<()> {
         // MemberForwarded: Field, MethodDef
-        remapper.remap_coded_index(&mut self.member_forwarded);
+        remapper.remap_coded_index(self.token, "MemberForwarded", &mut self.member_forwarded)?;
 
         // ImportScope: direct RID into ModuleRef table
-        self.import_scope = remapper.remap_rid(TableId::ModuleRef, self.import_scope);
+        self.import_scope = remapper.reference(
+            Referrer::Column {
+                row: self.token,
+                column: "ImportScope",
+            },
+            TableId::ModuleRef,
+            self.import_scope,
+        )?;
+        Ok(())
     }
 }
 
 impl RemapReferences for FieldRvaRaw {
-    fn remap_references(&mut self, remapper: &RidRemapper) {
+    fn remap_references(&mut self, remapper: &RidRemapper) -> Result<()> {
         // Field: direct RID into Field table
-        self.field = remapper.remap_rid(TableId::Field, self.field);
+        self.field = remapper.reference(
+            Referrer::Column {
+                row: self.token,
+                column: "Field",
+            },
+            TableId::Field,
+            self.field,
+        )?;
+        Ok(())
     }
 }
 
 impl RemapReferences for AssemblyRefRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
         // AssemblyRef has no cross-table references, only heap refs
+        Ok(())
     }
 }
 
 impl RemapReferences for ExportedTypeRaw {
-    fn remap_references(&mut self, remapper: &RidRemapper) {
+    fn remap_references(&mut self, remapper: &RidRemapper) -> Result<()> {
         // Implementation: File, AssemblyRef, ExportedType
-        remapper.remap_coded_index(&mut self.implementation);
+        remapper.remap_coded_index(self.token, "Implementation", &mut self.implementation)?;
+        Ok(())
     }
 }
 
 impl RemapReferences for ManifestResourceRaw {
-    fn remap_references(&mut self, remapper: &RidRemapper) {
+    fn remap_references(&mut self, remapper: &RidRemapper) -> Result<()> {
         // Implementation: File, AssemblyRef (ExportedType not valid here per spec)
-        remapper.remap_coded_index(&mut self.implementation);
+        remapper.remap_coded_index(self.token, "Implementation", &mut self.implementation)?;
+        Ok(())
     }
 }
 
 impl RemapReferences for NestedClassRaw {
-    fn remap_references(&mut self, remapper: &RidRemapper) {
+    fn remap_references(&mut self, remapper: &RidRemapper) -> Result<()> {
         // NestedClass: direct RID into TypeDef table
-        self.nested_class = remapper.remap_rid(TableId::TypeDef, self.nested_class);
+        self.nested_class = remapper.reference(
+            Referrer::Column {
+                row: self.token,
+                column: "NestedClass",
+            },
+            TableId::TypeDef,
+            self.nested_class,
+        )?;
 
         // EnclosingClass: direct RID into TypeDef table
-        self.enclosing_class = remapper.remap_rid(TableId::TypeDef, self.enclosing_class);
+        self.enclosing_class = remapper.reference(
+            Referrer::Column {
+                row: self.token,
+                column: "EnclosingClass",
+            },
+            TableId::TypeDef,
+            self.enclosing_class,
+        )?;
+        Ok(())
     }
 }
 
 impl RemapReferences for GenericParamRaw {
-    fn remap_references(&mut self, remapper: &RidRemapper) {
+    fn remap_references(&mut self, remapper: &RidRemapper) -> Result<()> {
         // Owner: TypeDef, MethodDef
-        remapper.remap_coded_index(&mut self.owner);
+        remapper.remap_coded_index(self.token, "Owner", &mut self.owner)?;
+        Ok(())
     }
 }
 
 impl RemapReferences for MethodSpecRaw {
-    fn remap_references(&mut self, remapper: &RidRemapper) {
+    fn remap_references(&mut self, remapper: &RidRemapper) -> Result<()> {
         // Method: MethodDef, MemberRef
-        remapper.remap_coded_index(&mut self.method);
+        remapper.remap_coded_index(self.token, "Method", &mut self.method)?;
+        Ok(())
     }
 }
 
 impl RemapReferences for GenericParamConstraintRaw {
-    fn remap_references(&mut self, remapper: &RidRemapper) {
+    fn remap_references(&mut self, remapper: &RidRemapper) -> Result<()> {
         // Owner: direct RID into GenericParam table
-        self.owner = remapper.remap_rid(TableId::GenericParam, self.owner);
+        self.owner = remapper.reference(
+            Referrer::Column {
+                row: self.token,
+                column: "Owner",
+            },
+            TableId::GenericParam,
+            self.owner,
+        )?;
 
         // Constraint: TypeDef, TypeRef, TypeSpec
-        remapper.remap_coded_index(&mut self.constraint);
+        remapper.remap_coded_index(self.token, "Constraint", &mut self.constraint)?;
+        Ok(())
     }
 }
 
 impl RemapReferences for ModuleRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for FieldPtrRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for FieldRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for MethodPtrRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for ParamPtrRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for ParamRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for StandAloneSigRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for EventPtrRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for PropertyPtrRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for PropertyRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for ModuleRefRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for TypeSpecRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for EncLogRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for EncMapRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for AssemblyRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for AssemblyProcessorRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for AssemblyOsRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for AssemblyRefProcessorRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for AssemblyRefOsRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for FileRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for DocumentRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for MethodDebugInformationRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for LocalScopeRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for LocalVariableRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for LocalConstantRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for ImportScopeRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for StateMachineMethodRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for CustomDebugInformationRaw {
-    fn remap_references(&mut self, _remapper: &RidRemapper) {}
+    fn remap_references(&mut self, _remapper: &RidRemapper) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl RemapReferences for TableDataOwned {
-    fn remap_references(&mut self, remapper: &RidRemapper) {
+    fn remap_references(&mut self, remapper: &RidRemapper) -> Result<()> {
         match self {
             TableDataOwned::TypeRef(r) => r.remap_references(remapper),
             TableDataOwned::TypeDef(r) => r.remap_references(remapper),
@@ -928,9 +1101,7 @@ impl RemapReferences for TableDataOwned {
             | TableDataOwned::LocalConstant(_)
             | TableDataOwned::ImportScope(_)
             | TableDataOwned::StateMachineMethod(_)
-            | TableDataOwned::CustomDebugInformation(_) => {
-                // No cross-table references to remap
-            }
+            | TableDataOwned::CustomDebugInformation(_) => Ok(()),
         }
     }
 }
@@ -957,200 +1128,204 @@ mod tests {
     use super::*;
     use crate::metadata::tables::CodedIndexType;
 
+    /// A remapper for `table` of `count` rows with `deleted` rows deleted.
+    fn deleting(
+        table: TableId,
+        deleted: &[u32],
+        count: u32,
+        dangling: DanglingPolicy,
+    ) -> RidRemapper {
+        let deleted: HashSet<u32> = deleted.iter().copied().collect();
+        let (refs, list_starts) = RidRemapper::calculate_remapping(&deleted, count);
+        RidRemapper {
+            refs: [(table, refs)].into_iter().collect(),
+            list_starts: [(table, list_starts)].into_iter().collect(),
+            tables_with_deletions: [table].into_iter().collect(),
+            deleted_rids: [(table, deleted)].into_iter().collect(),
+            sort_orders: HashMap::new(),
+            dangling,
+        }
+    }
+
+    /// The referrer the tests name.
+    const REFERRER: Referrer = Referrer::Column {
+        row: Token::new(0x0C00_0001),
+        column: "Type",
+    };
+
     #[test]
     fn test_calculate_remapping_no_deletions() {
-        let deleted = HashSet::new();
-        let remap = RidRemapper::calculate_remapping(&deleted, 10);
-        assert!(remap.is_empty());
+        let (refs, starts) = RidRemapper::calculate_remapping(&HashSet::new(), 10);
+        assert!(refs.is_empty());
+        assert!(starts.is_empty());
     }
 
     #[test]
     fn test_calculate_remapping_single_deletion() {
-        let mut deleted = HashSet::new();
-        deleted.insert(3);
-
-        let remap = RidRemapper::calculate_remapping(&deleted, 10);
+        let deleted = [3].into_iter().collect();
+        let (refs, starts) = RidRemapper::calculate_remapping(&deleted, 10);
 
         // Row 3 deleted, rows 4-10 shift down by 1
-        assert_eq!(remap.get(&1), None); // unchanged
-        assert_eq!(remap.get(&2), None); // unchanged
-        assert_eq!(remap.get(&3), Some(&3)); // deleted, maps to continuation (first surviving row after = 4→3)
-        assert_eq!(remap.get(&4), Some(&3)); // 4 → 3
-        assert_eq!(remap.get(&5), Some(&4)); // 5 → 4
-        assert_eq!(remap.get(&10), Some(&9)); // 10 → 9
+        assert_eq!(refs.get(&1), None); // unchanged
+        assert_eq!(refs.get(&2), None); // unchanged
+        assert_eq!(refs.get(&3), None); // deleted: no new RID
+        assert_eq!(refs.get(&4), Some(&3));
+        assert_eq!(refs.get(&10), Some(&9));
+        // A list starting at row 3 starts at what was row 4, now 3: unchanged.
+        assert_eq!(starts.get(&3), None);
+        // One past the end moves with the end.
+        assert_eq!(starts.get(&11), Some(&10));
     }
 
     #[test]
     fn test_calculate_remapping_multiple_deletions() {
-        let mut deleted = HashSet::new();
-        deleted.insert(3);
-        deleted.insert(7);
+        let deleted = [3, 7].into_iter().collect();
+        let (refs, starts) = RidRemapper::calculate_remapping(&deleted, 10);
 
-        let remap = RidRemapper::calculate_remapping(&deleted, 10);
-
-        // Rows 3 and 7 deleted
-        // Row 1-2: unchanged
-        // Row 3: deleted
-        // Row 4-6: shift by 1 (4→3, 5→4, 6→5)
-        // Row 7: deleted
-        // Row 8-10: shift by 2 (8→6, 9→7, 10→8)
-        assert_eq!(remap.get(&1), None);
-        assert_eq!(remap.get(&2), None);
-        assert_eq!(remap.get(&4), Some(&3));
-        assert_eq!(remap.get(&5), Some(&4));
-        assert_eq!(remap.get(&6), Some(&5));
-        assert_eq!(remap.get(&8), Some(&6));
-        assert_eq!(remap.get(&9), Some(&7));
-        assert_eq!(remap.get(&10), Some(&8));
+        assert_eq!(refs.get(&1), None);
+        assert_eq!(refs.get(&2), None);
+        assert_eq!(refs.get(&4), Some(&3));
+        assert_eq!(refs.get(&6), Some(&5));
+        assert_eq!(refs.get(&8), Some(&6));
+        assert_eq!(refs.get(&10), Some(&8));
+        assert!(!refs.contains_key(&3) && !refs.contains_key(&7));
+        assert_eq!(starts.get(&7), Some(&6));
     }
 
     #[test]
     fn test_calculate_remapping_consecutive_deletions() {
-        let mut deleted = HashSet::new();
-        deleted.insert(3);
-        deleted.insert(4);
-        deleted.insert(5);
+        let deleted = [3, 4, 5].into_iter().collect();
+        let (refs, starts) = RidRemapper::calculate_remapping(&deleted, 10);
 
-        let remap = RidRemapper::calculate_remapping(&deleted, 10);
-
-        // Rows 3, 4, 5 deleted
-        // Row 6-10: shift by 3
-        assert_eq!(remap.get(&1), None);
-        assert_eq!(remap.get(&2), None);
-        assert_eq!(remap.get(&6), Some(&3));
-        assert_eq!(remap.get(&7), Some(&4));
-        assert_eq!(remap.get(&10), Some(&7));
+        assert_eq!(refs.get(&6), Some(&3));
+        assert_eq!(refs.get(&10), Some(&7));
+        // Each deleted row continues at what was row 6.
+        assert_eq!(starts.get(&4), Some(&3));
+        assert_eq!(starts.get(&5), Some(&3));
     }
 
     #[test]
     fn test_calculate_remapping_first_row_deleted() {
-        let mut deleted = HashSet::new();
-        deleted.insert(1);
+        let deleted = [1].into_iter().collect();
+        let (refs, _) = RidRemapper::calculate_remapping(&deleted, 5);
 
-        let remap = RidRemapper::calculate_remapping(&deleted, 5);
-
-        // Row 1 deleted, all others shift
-        assert_eq!(remap.get(&2), Some(&1));
-        assert_eq!(remap.get(&3), Some(&2));
-        assert_eq!(remap.get(&4), Some(&3));
-        assert_eq!(remap.get(&5), Some(&4));
+        assert_eq!(refs.get(&2), Some(&1));
+        assert_eq!(refs.get(&5), Some(&4));
     }
 
     #[test]
     fn test_calculate_remapping_last_row_deleted() {
-        let mut deleted = HashSet::new();
-        deleted.insert(10);
+        let deleted = [10].into_iter().collect();
+        let (refs, starts) = RidRemapper::calculate_remapping(&deleted, 10);
 
-        let remap = RidRemapper::calculate_remapping(&deleted, 10);
-
-        // Last row deleted, surviving rows 1-9 unchanged
-        // Two entries needed:
-        // - Deleted row 10 maps to continuation (10 = new past-end)
-        // - Old continuation (11) maps to new continuation (10)
-        assert_eq!(remap.len(), 2);
-        assert_eq!(remap.get(&10), Some(&10)); // deleted, maps to new past-end
-        assert_eq!(remap.get(&11), Some(&10)); // old continuation maps to new past-end
+        // Surviving rows 1-9 keep their RIDs.
+        assert!(refs.is_empty());
+        // The deleted last row and one past the end both continue at the new end.
+        assert_eq!(starts.len(), 1);
+        assert_eq!(starts.get(&11), Some(&10));
     }
 
     #[test]
-    fn test_remap_rid() {
-        let mut deleted = HashSet::new();
-        deleted.insert(3);
+    fn a_reference_follows_the_shift() {
+        let remapper = deleting(TableId::MethodDef, &[3], 10, DanglingPolicy::Error);
 
-        let mut remaps = HashMap::new();
-        remaps.insert(
-            TableId::MethodDef,
-            RidRemapper::calculate_remapping(&deleted, 10),
+        assert_eq!(
+            remapper.reference(REFERRER, TableId::MethodDef, 0).unwrap(),
+            0
         );
+        assert_eq!(
+            remapper.reference(REFERRER, TableId::MethodDef, 2).unwrap(),
+            2
+        );
+        assert_eq!(
+            remapper.reference(REFERRER, TableId::MethodDef, 4).unwrap(),
+            3
+        );
+        assert_eq!(remapper.reference(REFERRER, TableId::Field, 5).unwrap(), 5);
+    }
 
-        let mut deleted_rids = HashMap::new();
-        deleted_rids.insert(TableId::MethodDef, deleted);
+    #[test]
+    fn a_reference_to_a_deleted_row_is_dangling_never_retargeted() {
+        let remapper = deleting(TableId::MethodDef, &[3], 10, DanglingPolicy::Error);
 
-        let remapper = RidRemapper {
-            remaps,
-            tables_with_deletions: [TableId::MethodDef].into_iter().collect(),
-            deleted_rids,
-            sort_orders: HashMap::new(),
-        };
+        let err = remapper
+            .reference(REFERRER, TableId::MethodDef, 3)
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::DanglingReference { referrer, target }
+                    if referrer == REFERRER && target == Token::new(0x0600_0003)
+            ),
+            "{err}"
+        );
+    }
 
-        // RID 0 never remapped (null reference)
-        assert_eq!(remapper.remap_rid(TableId::MethodDef, 0), 0);
+    #[test]
+    fn a_dangling_reference_is_null_under_the_null_policy() {
+        let remapper = deleting(TableId::MethodDef, &[3], 10, DanglingPolicy::Null);
 
-        // Unchanged RIDs
-        assert_eq!(remapper.remap_rid(TableId::MethodDef, 1), 1);
-        assert_eq!(remapper.remap_rid(TableId::MethodDef, 2), 2);
+        assert_eq!(
+            remapper.reference(REFERRER, TableId::MethodDef, 3).unwrap(),
+            0
+        );
+    }
 
-        // Remapped RIDs
-        assert_eq!(remapper.remap_rid(TableId::MethodDef, 4), 3);
-        assert_eq!(remapper.remap_rid(TableId::MethodDef, 5), 4);
+    #[test]
+    fn a_list_starting_at_a_deleted_row_continues_at_the_next_survivor() {
+        let remapper = deleting(TableId::MethodDef, &[3, 4], 10, DanglingPolicy::Error);
 
-        // Table without deletions returns original
-        assert_eq!(remapper.remap_rid(TableId::Field, 5), 5);
+        assert_eq!(remapper.list_start(TableId::MethodDef, 3), 3);
+        assert_eq!(remapper.list_start(TableId::MethodDef, 4), 3);
+        assert_eq!(remapper.list_start(TableId::MethodDef, 6), 4);
+        assert_eq!(remapper.list_start(TableId::MethodDef, 11), 9);
     }
 
     #[test]
     fn test_remap_coded_index() {
-        let mut deleted = HashSet::new();
-        deleted.insert(3);
+        let remapper = deleting(TableId::MethodDef, &[3], 10, DanglingPolicy::Error);
+        let row = Token::new(0x0C00_0001);
 
-        let mut remaps = HashMap::new();
-        remaps.insert(
-            TableId::MethodDef,
-            RidRemapper::calculate_remapping(&deleted, 10),
-        );
-
-        let mut deleted_rids = HashMap::new();
-        deleted_rids.insert(TableId::MethodDef, deleted);
-
-        let remapper = RidRemapper {
-            remaps,
-            tables_with_deletions: [TableId::MethodDef].into_iter().collect(),
-            deleted_rids,
-            sort_orders: HashMap::new(),
-        };
-
-        // Coded index pointing to MethodDef row 5 (should become 4)
         let mut ci = CodedIndex::new(TableId::MethodDef, 5, CodedIndexType::HasCustomAttribute);
-        remapper.remap_coded_index(&mut ci);
+        remapper.remap_coded_index(row, "Parent", &mut ci).unwrap();
         assert_eq!(ci.row, 4);
         assert_eq!(ci.token.row(), 4);
 
-        // Coded index pointing to TypeDef (no deletions in that table)
         let mut ci2 = CodedIndex::new(TableId::TypeDef, 5, CodedIndexType::HasCustomAttribute);
-        remapper.remap_coded_index(&mut ci2);
-        assert_eq!(ci2.row, 5); // unchanged
+        remapper.remap_coded_index(row, "Parent", &mut ci2).unwrap();
+        assert_eq!(ci2.row, 5);
+
+        let mut deleted =
+            CodedIndex::new(TableId::MethodDef, 3, CodedIndexType::HasCustomAttribute);
+        let err = remapper
+            .remap_coded_index(row, "Parent", &mut deleted)
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::DanglingReference {
+                    referrer: Referrer::Column { row: r, column: "Parent" },
+                    target,
+                } if r == row && target == Token::new(0x0600_0003)
+            ),
+            "{err}"
+        );
     }
 
     #[test]
     fn test_remap_coded_index_null() {
         let remapper = RidRemapper::empty();
 
-        // Null coded index should never be remapped
         let mut ci = CodedIndex::new(TableId::MethodDef, 0, CodedIndexType::HasCustomAttribute);
-        remapper.remap_coded_index(&mut ci);
+        remapper
+            .remap_coded_index(Token::new(0x0C00_0001), "Parent", &mut ci)
+            .unwrap();
         assert_eq!(ci.row, 0);
     }
 
     #[test]
     fn test_typedef_remap_references() {
-        let mut deleted = HashSet::new();
-        deleted.insert(3); // Delete method 3
-
-        let mut remaps = HashMap::new();
-        remaps.insert(
-            TableId::MethodDef,
-            RidRemapper::calculate_remapping(&deleted, 10),
-        );
-
-        let mut deleted_rids = HashMap::new();
-        deleted_rids.insert(TableId::MethodDef, deleted);
-
-        let remapper = RidRemapper {
-            remaps,
-            tables_with_deletions: [TableId::MethodDef].into_iter().collect(),
-            deleted_rids,
-            sort_orders: HashMap::new(),
-        };
+        let remapper = deleting(TableId::MethodDef, &[3], 10, DanglingPolicy::Error);
 
         let mut typedef = TypeDefRaw {
             rid: 1,
@@ -1161,76 +1336,48 @@ mod tests {
             type_namespace: 0,
             extends: CodedIndex::null(CodedIndexType::TypeDefOrRef),
             field_list: 1,
-            method_list: 5, // Points to MethodDef row 5
+            method_list: 3, // starts at the deleted MethodDef row 3
         };
 
-        typedef.remap_references(&remapper);
+        typedef.remap_references(&remapper).unwrap();
 
-        // method_list 5 should become 4 (row 3 was deleted)
-        assert_eq!(typedef.method_list, 4);
+        // A list column is not a reference: it continues at the next survivor.
+        assert_eq!(typedef.method_list, 3);
     }
 
     #[test]
-    fn test_typedef_remap_excludes_deleted_rids() {
-        // Test that typedef_remap() correctly excludes deleted TypeDefs
-        // for signature remapping
-        let mut deleted = HashSet::new();
-        deleted.insert(3); // Delete TypeDef 3
+    fn surviving_remap_holds_no_deleted_row() {
+        let remapper = deleting(TableId::TypeDef, &[3], 5, DanglingPolicy::Error);
 
-        let mut remaps = HashMap::new();
-        remaps.insert(
-            TableId::TypeDef,
-            RidRemapper::calculate_remapping(&deleted, 5),
-        );
+        let sig_remap = remapper
+            .surviving_remap(TableId::TypeDef)
+            .expect("should have remap");
+        assert!(!sig_remap.contains_key(&3));
+        assert_eq!(sig_remap.get(&4), Some(&3));
+        assert_eq!(sig_remap.get(&5), Some(&4));
+        assert!(remapper.surviving_remap(TableId::MethodDef).is_none());
+    }
 
-        let mut deleted_rids = HashMap::new();
-        deleted_rids.insert(TableId::TypeDef, deleted);
+    #[test]
+    fn a_token_naming_a_deleted_row_is_dangling() {
+        let mut tokens =
+            deleting(TableId::MethodDef, &[3], 10, DanglingPolicy::Error).token_remap();
+        let body = Referrer::Body(Token::new(0x0600_0001));
 
-        let remapper = RidRemapper {
-            remaps,
-            tables_with_deletions: [TableId::TypeDef].into_iter().collect(),
-            deleted_rids,
-            sort_orders: HashMap::new(),
-        };
-
-        // Get the signature-safe typedef remap
-        let sig_remap = remapper.typedef_remap().expect("should have remap");
-
-        // The full remap would have {3→3, 4→3, 5→4}
-        // But the signature remap should NOT include 3 (the deleted row)
+        assert_eq!(tokens.remap(body, 0x0600_0004).unwrap(), 0x0600_0003);
+        assert_eq!(tokens.remap(body, 0x0400_0004).unwrap(), 0x0400_0004);
+        let err = tokens.remap(body, 0x0600_0003).unwrap_err();
         assert!(
-            !sig_remap.contains_key(&3),
-            "deleted RID should not be in signature remap"
+            matches!(err, Error::DanglingReference { referrer, target }
+                if referrer == body && target == Token::new(0x0600_0003)),
+            "{err}"
         );
 
-        // Surviving rows that shifted should still be included
-        assert_eq!(sig_remap.get(&4), Some(&3), "row 4 should map to 3");
-        assert_eq!(sig_remap.get(&5), Some(&4), "row 5 should map to 4");
-    }
+        // A token the write renumbers itself, as the StandAloneSig deduplication does.
+        tokens.insert(0x1100_0002, 0x1100_0001);
+        assert_eq!(tokens.remap(body, 0x1100_0002).unwrap(), 0x1100_0001);
 
-    #[test]
-    fn test_typedef_remap_with_no_typedef_deletions() {
-        // Test that typedef_remap() returns None when only other tables have deletions
-        let mut deleted = HashSet::new();
-        deleted.insert(3);
-
-        let mut remaps = HashMap::new();
-        remaps.insert(
-            TableId::MethodDef, // Only MethodDef has deletions, not TypeDef
-            RidRemapper::calculate_remapping(&deleted, 10),
-        );
-
-        let mut deleted_rids = HashMap::new();
-        deleted_rids.insert(TableId::MethodDef, deleted);
-
-        let remapper = RidRemapper {
-            remaps,
-            tables_with_deletions: [TableId::MethodDef].into_iter().collect(),
-            deleted_rids,
-            sort_orders: HashMap::new(),
-        };
-
-        // Should return None since there are no TypeDef deletions
-        assert!(remapper.typedef_remap().is_none());
+        let null = deleting(TableId::MethodDef, &[3], 10, DanglingPolicy::Null).token_remap();
+        assert_eq!(null.remap(body, 0x0600_0003).unwrap(), 0x0600_0000);
     }
 }

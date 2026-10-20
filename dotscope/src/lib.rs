@@ -963,7 +963,9 @@ pub use cilassembly::{
 ///     Err(e) => println!("Error: {}", e),
 /// }
 /// ```
-pub use error::{Error, HeapKind, MethodLookupError, ParseFailure, ParseStage, StreamKind};
+pub use error::{
+    Error, HeapKind, MethodLookupError, ParseFailure, ParseStage, Referrer, StreamKind,
+};
 /// Raw assembly view for editing and modification operations.
 ///
 /// `CilAssemblyView` provides direct access to .NET assembly metadata structures

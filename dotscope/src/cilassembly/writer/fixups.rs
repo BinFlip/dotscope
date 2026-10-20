@@ -59,7 +59,7 @@ use crate::{
     cilassembly::writer::{context::WriteContext, output::Output},
     file::pe::{constants::COR20_HEADER_SIZE, SectionTable},
     utils::align_to,
-    Error, Result,
+    Error, Referrer, Result,
 };
 
 /// Standard metadata stream names in the order they are written.
@@ -374,8 +374,11 @@ pub fn fixup_cor20_header(ctx: &mut WriteContext) -> Result<()> {
     //   28-31: Resources Size
 
     // Entry point token (offset 20-23) - may need remapping if methods were deleted
-    if ctx.entry_point_token != 0 && !ctx.token_remapping.is_empty() {
-        if let Some(&new_token) = ctx.token_remapping.get(&ctx.entry_point_token) {
+    if ctx.entry_point_token != 0 && !ctx.tokens.is_empty() {
+        let new_token = ctx
+            .tokens
+            .remap(Referrer::EntryPoint, ctx.entry_point_token)?;
+        if new_token != ctx.entry_point_token {
             ctx.write_u32_at(cor20_field(20)?, new_token)?;
         }
     }
@@ -873,13 +876,13 @@ fn calculate_pe_checksum(output: &Output, checksum_offset: u64, actual_size: usi
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
 
     use tempfile::NamedTempFile;
 
     use super::*;
     use crate::{
         cilassembly::{writer::generator::PeGenerator, CilAssembly},
+        testkit::fixture,
         CilAssemblyView,
     };
 
@@ -913,7 +916,7 @@ mod tests {
     #[test]
     fn test_apply_fixups_integration() {
         // Load a test assembly
-        let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))
+        let view = CilAssemblyView::from_path(fixture("crafted_2.exe"))
             .expect("Failed to load test assembly");
         let assembly: CilAssembly = view.to_owned();
 

@@ -31,7 +31,7 @@
 //! - [PE Format Specification](https://docs.microsoft.com/en-us/windows/win32/debug/pe-format)
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     io::Write,
     path::Path,
     sync::Arc,
@@ -127,6 +127,24 @@ pub struct GeneratorConfig {
     ///
     /// Default: `false`
     pub skip_original_method_bodies: bool,
+
+    /// What the write does with a reference to a row it deletes.
+    ///
+    /// Default: [`DanglingPolicy::Error`]
+    pub dangling: DanglingPolicy,
+}
+
+/// What a write does with a reference to a row it deletes.
+///
+/// Deleting a row shifts the rows after it, so a reference to the deleted row has nowhere
+/// to go: the writer never retargets it to a neighbour.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DanglingPolicy {
+    /// Fail the write with [`Error::DanglingReference`](crate::Error::DanglingReference).
+    #[default]
+    Error,
+    /// Write a null reference in its place, and log a warning naming both rows.
+    Null,
 }
 
 impl GeneratorConfig {
@@ -137,6 +155,7 @@ impl GeneratorConfig {
     /// A new `GeneratorConfig` with:
     /// - `excluded_sections`: empty
     /// - `skip_original_method_bodies`: `false`
+    /// - `dangling`: [`DanglingPolicy::Error`]
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -177,6 +196,21 @@ impl GeneratorConfig {
     #[must_use]
     pub fn with_skip_original_method_bodies(mut self, enabled: bool) -> Self {
         self.skip_original_method_bodies = enabled;
+        self
+    }
+
+    /// Sets what the write does with a reference to a row it deletes.
+    ///
+    /// # Arguments
+    ///
+    /// * `policy` - Fail the write, or write a null reference
+    ///
+    /// # Returns
+    ///
+    /// The modified configuration for method chaining.
+    #[must_use]
+    pub fn with_dangling(mut self, policy: DanglingPolicy) -> Self {
+        self.dangling = policy;
         self
     }
 }
@@ -517,18 +551,19 @@ impl<'a> PeGenerator<'a> {
                 }
             }
 
-            let remapper = RidRemapper::from_changes(changes, &original_counts);
+            let remapper =
+                RidRemapper::from_changes(changes, &original_counts, self.config.dangling);
             if !remapper.is_empty() {
-                ctx.token_remapping = remapper.build_token_remapping();
-                // Store TypeDef RID remapping for signature blob processing
-                // Note: typedef_remap() filters out deleted TypeDefs so signatures
-                // referencing deleted types won't be corrupted by remapping to other types
-                if let Some(typedef_remap) = remapper.typedef_remap() {
+                ctx.tokens = remapper.token_remap();
+                // Store TypeDef RID remapping for signature blob processing. It holds
+                // surviving rows only, so a signature naming a deleted type is not
+                // retargeted to another one.
+                if let Some(typedef_remap) = remapper.surviving_remap(TableId::TypeDef) {
                     ctx.typedef_rid_remap = typedef_remap;
                 }
                 // Store TypeRef RID remapping for signature blob processing
                 // When orphaned TypeRefs are removed, signature blobs must also be updated
-                if let Some(typeref_remap) = remapper.typeref_remap() {
+                if let Some(typeref_remap) = remapper.surviving_remap(TableId::TypeRef) {
                     ctx.typeref_rid_remap = typeref_remap;
                 }
                 // Store TypeSpec RID remapping for signature blob processing.
@@ -536,7 +571,7 @@ impl<'a> PeGenerator<'a> {
                 // `TypeDefOrRefOrSpecEncoded`, so a `LocalVarSig` (or any other
                 // signature) can carry a TypeSpec token that needs to follow
                 // the row shift when neighbouring TypeSpecs are deleted.
-                if let Some(typespec_remap) = remapper.typespec_remap() {
+                if let Some(typespec_remap) = remapper.surviving_remap(TableId::TypeSpec) {
                     ctx.typespec_rid_remap = typespec_remap;
                 }
             }
@@ -616,7 +651,7 @@ impl<'a> PeGenerator<'a> {
             "PE layout: .text={}, methods={} bytes, metadata={} bytes",
             ctx.text_section_size, ctx.method_bodies_size, ctx.metadata_size
         );
-        debug!("Applied {} RID remappings", ctx.token_remapping.len());
+        debug!("Applied {} RID remappings", ctx.tokens.len());
 
         Ok(ctx)
     }
@@ -1147,7 +1182,7 @@ impl<'a> PeGenerator<'a> {
 
         // Write using the struct's write_to method
         // MetaData RVA and Size will be fixed up later in apply_fixups
-        // Entry point token remapping is also handled in fixups (after token_remapping is built)
+        // Entry point token remapping is also handled in fixups (after the token remap is built)
         cor20_header.write_to(ctx)?;
 
         Ok(())
@@ -1286,7 +1321,8 @@ impl<'a> PeGenerator<'a> {
 
                             let rebuilt = rebuild_method_body(
                                 available_data,
-                                &ctx.token_remapping,
+                                Token::from_parts(TableId::MethodDef, row.rid),
+                                &ctx.tokens,
                                 &ctx.heap_remapping.userstrings,
                                 None,
                             )?;
@@ -1306,14 +1342,59 @@ impl<'a> PeGenerator<'a> {
             }
         }
 
+        // The surviving MethodDef row each new body is the body of, by its placeholder RVA.
+        // A body no surviving row has is dead and is not written: its method was deleted, or
+        // regenerated again under a newer placeholder, and it may name rows deleted with it.
+        let mut owners: HashMap<u32, Token> = HashMap::new();
+        let mut own = |rid: u32, row: &TableDataOwned| {
+            if let TableDataOwned::MethodDef(method) = row {
+                if ChangeRef::is_placeholder(method.rva) {
+                    owners
+                        .entry(method.rva)
+                        .or_insert_with(|| Token::from_parts(TableId::MethodDef, rid));
+                }
+            }
+        };
+        match changes.get_table_modifications(TableId::MethodDef) {
+            Some(TableModifications::Replaced(rows)) => {
+                for (rid, row) in (1u32..).zip(rows) {
+                    own(rid, row);
+                }
+            }
+            Some(TableModifications::Sparse {
+                operations,
+                deleted_rows,
+                ..
+            }) => {
+                // The last operation on a row is the row the write emits.
+                let mut last: BTreeMap<u32, &TableDataOwned> = BTreeMap::new();
+                for op in operations {
+                    if let Operation::Insert(rid, row) | Operation::Update(rid, row) = &op.operation
+                    {
+                        last.insert(*rid, row);
+                    }
+                }
+                for (rid, row) in last {
+                    if !deleted_rows.contains(&rid) {
+                        own(rid, row);
+                    }
+                }
+            }
+            None => {}
+        }
+
         // Write new method bodies (sorted by placeholder RVA)
         let mut bodies: Vec<_> = changes.method_bodies().collect();
         bodies.sort_by_key(|(placeholder, _)| *placeholder);
 
         for (placeholder_rva, body_bytes) in bodies {
+            let Some(&owner) = owners.get(&placeholder_rva) else {
+                continue;
+            };
             let rebuilt = rebuild_method_body(
                 body_bytes,
-                &ctx.token_remapping,
+                owner,
+                &ctx.tokens,
                 &HashMap::new(),
                 Some(changes),
             )?;
@@ -2065,7 +2146,8 @@ impl<'a> PeGenerator<'a> {
         }
 
         // Build RID remapper for handling row deletions
-        let mut remapper = RidRemapper::from_changes(changes, &original_counts);
+        let mut remapper =
+            RidRemapper::from_changes(changes, &original_counts, self.config.dangling);
 
         // Calculate new row counts for all tables and build valid bitvector
         let mut valid = tables.valid;
@@ -2375,7 +2457,7 @@ impl<'a> PeGenerator<'a> {
                 let mut resolved_row = row.clone();
                 resolved_row.resolve_placeholders(changes);
                 if needs_remapping {
-                    resolved_row.remap_references(remapper);
+                    resolved_row.remap_references(remapper)?;
                 }
                 emit(rid, &resolved_row, &mut buffer)?;
             }
@@ -2452,13 +2534,13 @@ impl<'a> PeGenerator<'a> {
                         let mut resolved_row = (*row_data).clone();
                         resolved_row.resolve_placeholders(changes);
                         if needs_remapping {
-                            resolved_row.remap_references(remapper);
+                            resolved_row.remap_references(remapper)?;
                         }
                         emit(rid, &resolved_row, &mut buffer)?;
                     } else if let Some(mut row) = table.get(rid)? {
                         // Use parsed original row
                         if needs_remapping {
-                            row.remap_references(remapper);
+                            row.remap_references(remapper)?;
                         }
                         emit(rid, &row, &mut buffer)?;
                     }
@@ -2474,7 +2556,7 @@ impl<'a> PeGenerator<'a> {
             let mut resolved_row = (*final_data).clone();
             resolved_row.resolve_placeholders(changes);
             if needs_remapping {
-                resolved_row.remap_references(remapper);
+                resolved_row.remap_references(remapper)?;
             }
             emit(*rid, &resolved_row, &mut buffer)?;
         }
@@ -2571,7 +2653,7 @@ impl<'a> PeGenerator<'a> {
     /// Scans the StandAloneSig table and identifies entries with identical blob content.
     /// For each group of duplicates, keeps one canonical entry and maps others to it.
     /// Updates `ctx.standalonesig_skip` with RIDs to skip during table writing,
-    /// and adds token remappings to `ctx.token_remapping` including RID shifts.
+    /// and adds token remappings to `ctx.tokens` including RID shifts.
     fn build_standalonesig_dedup(&self, ctx: &mut WriteContext, changes: &AssemblyChanges) {
         let view = self.assembly.view();
         let Some(tables) = view.tables() else {
@@ -2686,13 +2768,13 @@ impl<'a> PeGenerator<'a> {
                 // Duplicate: map to canonical's output RID
                 if let Some(&canon_output) = rid_to_output.get(&canonical_rid) {
                     let new_token = Token::from_parts(TableId::StandAloneSig, canon_output).value();
-                    ctx.token_remapping.insert(old_token, new_token);
+                    ctx.tokens.insert(old_token, new_token);
                 }
             } else if let Some(&new_rid) = rid_to_output.get(&sig.rid) {
                 // Non-duplicate: map to shifted output RID if different
                 if sig.rid != new_rid {
                     let new_token = Token::from_parts(TableId::StandAloneSig, new_rid).value();
-                    ctx.token_remapping.insert(old_token, new_token);
+                    ctx.tokens.insert(old_token, new_token);
                 }
             }
         }
@@ -2708,7 +2790,7 @@ impl<'a> PeGenerator<'a> {
                             let old_token = Token::from_parts(TableId::StandAloneSig, *rid).value();
                             let new_token =
                                 Token::from_parts(TableId::StandAloneSig, new_rid).value();
-                            ctx.token_remapping.insert(old_token, new_token);
+                            ctx.tokens.insert(old_token, new_token);
                         }
                     }
                 }
@@ -3295,7 +3377,6 @@ impl<'a> PeGenerator<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
 
     use tempfile::NamedTempFile;
 
@@ -3309,10 +3390,11 @@ mod tests {
             },
             token::Token,
         },
+        testkit::fixture,
         CilAssemblyView, CilObject, MethodBuilder,
     };
 
-    const SAMPLE: &str = "tests/samples/crafted_2.exe";
+    const SAMPLE: &str = "crafted_2.exe";
 
     /// An attribute added to a method goes where the CustomAttribute table's
     /// sort order puts it, not at the end, and the method finds it. Appended
@@ -3321,13 +3403,13 @@ mod tests {
     #[test]
     fn an_added_attribute_is_written_where_its_table_sorts_it() {
         let target = Token::new(0x0600_0001);
-        let before = CilObject::from_path(Path::new(SAMPLE))
+        let before = CilObject::from_path(fixture(SAMPLE))
             .and_then(|object| object.method(&target))
             .expect("the method loads")
             .custom_attributes
             .count();
 
-        let view = CilAssemblyView::from_path(Path::new(SAMPLE)).expect("the sample loads");
+        let view = CilAssemblyView::from_path(fixture(SAMPLE)).expect("the sample loads");
         // Copy an existing attribute's constructor and blob, so the added one
         // decodes like any other.
         let (constructor, value) = {
@@ -3412,7 +3494,7 @@ mod tests {
     /// its own parameter there.
     #[test]
     fn constraints_follow_their_parameters_when_the_parameters_are_sorted() {
-        let original = CilObject::from_path(Path::new(SAMPLE)).expect("the sample loads");
+        let original = CilObject::from_path(fixture(SAMPLE)).expect("the sample loads");
         let expected = constraints_of(&original);
         assert!(
             !expected.is_empty(),
@@ -3440,7 +3522,7 @@ mod tests {
             "the new parameter sorts ahead of an existing one"
         );
 
-        let view = CilAssemblyView::from_path(Path::new(SAMPLE)).expect("the sample loads");
+        let view = CilAssemblyView::from_path(fixture(SAMPLE)).expect("the sample loads");
         let mut assembly = CilAssembly::new(view);
         GenericParamBuilder::new()
             .name("TAdded")
@@ -3461,7 +3543,7 @@ mod tests {
 
     #[test]
     fn test_pe_generator_basic() {
-        let view = CilAssemblyView::from_path(std::path::Path::new("tests/samples/crafted_2.exe"))
+        let view = CilAssemblyView::from_path(fixture("crafted_2.exe"))
             .expect("Failed to load test assembly");
         let assembly = view.to_owned();
 
@@ -3486,7 +3568,7 @@ mod tests {
 
     #[test]
     fn test_pe_generator_with_modifications() {
-        let view = CilAssemblyView::from_path(std::path::Path::new("tests/samples/crafted_2.exe"))
+        let view = CilAssemblyView::from_path(fixture("crafted_2.exe"))
             .expect("Failed to load test assembly");
 
         let original_method_count = view
@@ -3532,7 +3614,7 @@ mod tests {
 
     #[test]
     fn test_pe_generator_to_memory() {
-        let view = CilAssemblyView::from_path(std::path::Path::new("tests/samples/crafted_2.exe"))
+        let view = CilAssemblyView::from_path(fixture("crafted_2.exe"))
             .expect("Failed to load test assembly");
         let assembly = view.to_owned();
 
@@ -3572,7 +3654,7 @@ mod tests {
 
     #[test]
     fn test_pe_generator_to_memory_can_reload() {
-        let view = CilAssemblyView::from_path(std::path::Path::new("tests/samples/crafted_2.exe"))
+        let view = CilAssemblyView::from_path(fixture("crafted_2.exe"))
             .expect("Failed to load test assembly");
         let assembly = view.to_owned();
 
@@ -3590,7 +3672,7 @@ mod tests {
 
     #[test]
     fn test_pe_generator_to_memory_with_modifications() {
-        let view = CilAssemblyView::from_path(std::path::Path::new("tests/samples/crafted_2.exe"))
+        let view = CilAssemblyView::from_path(fixture("crafted_2.exe"))
             .expect("Failed to load test assembly");
 
         let original_method_count = view
@@ -3638,7 +3720,7 @@ mod tests {
 
     #[test]
     fn test_pe_generator_file_and_memory_produce_same_result() {
-        let view = CilAssemblyView::from_path(std::path::Path::new("tests/samples/crafted_2.exe"))
+        let view = CilAssemblyView::from_path(fixture("crafted_2.exe"))
             .expect("Failed to load test assembly");
         let assembly = view.to_owned();
 

@@ -39,12 +39,17 @@ use std::collections::HashMap;
 
 use crate::{
     assembly::{decode_stream, Operand},
-    cilassembly::{changes::ChangeRef, writer::output::Output, AssemblyChanges},
+    cilassembly::{
+        changes::ChangeRef,
+        writer::{output::Output, remapper::TokenRemap},
+        AssemblyChanges,
+    },
     metadata::{
         method::{ExceptionHandlerFlags, MethodBody},
         tables::TableId,
+        token::Token,
     },
-    Error, Parser, Result,
+    Error, Parser, Referrer, Result,
 };
 
 /// UserString heap table ID (0x70) - used in ldstr tokens.
@@ -106,16 +111,19 @@ pub fn write_method_body(
 /// # Arguments
 ///
 /// * `il_bytes` - The raw IL instruction bytes (modified in place)
-/// * `token_map` - Maps old metadata tokens to new tokens (for row deletions)
+/// * `method` - The method whose body this is, as the input assembly numbers it
+/// * `tokens` - How metadata tokens are renumbered (for row deletions)
 /// * `userstring_map` - Maps old UserString offsets to new offsets
 /// * `changes` - Assembly changes for resolving placeholders (can be None if not needed)
 ///
 /// # Errors
 ///
-/// Returns an error if IL decoding fails.
+/// Returns an error if IL decoding fails, or [`Error::DanglingReference`] when an
+/// instruction names a row the write deletes.
 pub fn remap_il_tokens(
     il_bytes: &mut [u8],
-    token_map: &HashMap<u32, u32>,
+    method: Token,
+    tokens: &TokenRemap,
     userstring_map: &HashMap<u32, u32>,
     changes: Option<&AssemblyChanges>,
 ) -> Result<()> {
@@ -163,7 +171,8 @@ pub fn remap_il_tokens(
                 }
             } else {
                 // Regular token remapping
-                token_map.get(&token_value).copied()
+                let new = tokens.remap(Referrer::Body(method), token_value)?;
+                (new != token_value).then_some(new)
             };
 
             if let Some(new_value) = new_token_value {
@@ -206,7 +215,8 @@ pub fn remap_il_tokens(
 /// # Arguments
 ///
 /// * `body_data` - Raw bytes starting at the method body header
-/// * `token_map` - Maps old metadata tokens to new tokens (for row deletions/shifts)
+/// * `method` - The method whose body this is, as the input assembly numbers it
+/// * `tokens` - How metadata tokens are renumbered (for row deletions/shifts)
 /// * `userstring_map` - Maps old UserString offsets to new offsets
 /// * `changes` - Assembly changes for resolving placeholder tokens (None for original methods)
 ///
@@ -216,10 +226,12 @@ pub fn remap_il_tokens(
 ///
 /// # Errors
 ///
-/// Returns an error if method body parsing or IL decoding fails.
+/// Returns an error if method body parsing or IL decoding fails, or
+/// [`Error::DanglingReference`] when the body names a row the write deletes.
 pub fn rebuild_method_body(
     body_data: &[u8],
-    token_map: &HashMap<u32, u32>,
+    method: Token,
+    tokens: &TokenRemap,
     userstring_map: &HashMap<u32, u32>,
     changes: Option<&AssemblyChanges>,
 ) -> Result<Vec<u8>> {
@@ -240,7 +252,7 @@ pub fn rebuild_method_body(
         .to_vec();
 
     // Remap IL tokens (metadata tokens, UserString references, placeholders)
-    remap_il_tokens(&mut il_code, token_map, userstring_map, changes)?;
+    remap_il_tokens(&mut il_code, method, tokens, userstring_map, changes)?;
 
     // Remap local_var_sig_token
     if body.local_var_sig_token != 0 {
@@ -261,17 +273,14 @@ pub fn rebuild_method_body(
         }
 
         // Apply token remapping
-        if let Some(&new_token) = token_map.get(&body.local_var_sig_token) {
-            body.local_var_sig_token = new_token;
-        }
+        body.local_var_sig_token =
+            tokens.remap(Referrer::Body(method), body.local_var_sig_token)?;
     }
 
     // Remap exception handler catch type tokens
     for handler in &mut body.exception_handlers {
         if handler.flags == ExceptionHandlerFlags::EXCEPTION && handler.filter_offset != 0 {
-            if let Some(&new_token) = token_map.get(&handler.filter_offset) {
-                handler.filter_offset = new_token;
-            }
+            handler.filter_offset = tokens.remap(Referrer::Body(method), handler.filter_offset)?;
         }
     }
 
@@ -289,6 +298,9 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+
+    /// The method the bodies under test belong to.
+    const METHOD: Token = Token::new(0x0600_0001);
 
     #[test]
     fn test_write_tiny_method() {
@@ -387,9 +399,9 @@ mod tests {
         let mut userstring_map = HashMap::new();
         userstring_map.insert(0x100, 0x200); // Map offset 0x100 -> 0x200
 
-        let token_map = HashMap::new();
+        let token_map = TokenRemap::default();
 
-        remap_il_tokens(&mut il_bytes, &token_map, &userstring_map, None).unwrap();
+        remap_il_tokens(&mut il_bytes, METHOD, &token_map, &userstring_map, None).unwrap();
 
         // Check that token was updated to 0x70000200
         let new_token = read_token_at(&il_bytes, 2);
@@ -406,10 +418,10 @@ mod tests {
         ];
 
         let userstring_map = HashMap::new();
-        let mut token_map = HashMap::new();
+        let mut token_map = TokenRemap::default();
         token_map.insert(0x06000001, 0x06000005); // Map method 1 -> method 5
 
-        remap_il_tokens(&mut il_bytes, &token_map, &userstring_map, None).unwrap();
+        remap_il_tokens(&mut il_bytes, METHOD, &token_map, &userstring_map, None).unwrap();
 
         // Check that token was updated
         let new_token = read_token_at(&il_bytes, 2);
@@ -429,11 +441,11 @@ mod tests {
         let mut userstring_map = HashMap::new();
         userstring_map.insert(0x100, 0x200);
 
-        let mut token_map = HashMap::new();
+        let mut token_map = TokenRemap::default();
         token_map.insert(0x06000001, 0x06000010);
         token_map.insert(0x06000002, 0x06000020);
 
-        remap_il_tokens(&mut il_bytes, &token_map, &userstring_map, None).unwrap();
+        remap_il_tokens(&mut il_bytes, METHOD, &token_map, &userstring_map, None).unwrap();
 
         // Check all tokens were updated
         assert_eq!(read_token_at(&il_bytes, 1), 0x70000200);
@@ -451,9 +463,9 @@ mod tests {
         ];
 
         let userstring_map = HashMap::new(); // Empty - no mappings
-        let token_map = HashMap::new(); // Empty - no mappings
+        let token_map = TokenRemap::default(); // Empty - no mappings
 
-        remap_il_tokens(&mut il_bytes, &token_map, &userstring_map, None).unwrap();
+        remap_il_tokens(&mut il_bytes, METHOD, &token_map, &userstring_map, None).unwrap();
 
         // Tokens should remain unchanged
         assert_eq!(read_token_at(&il_bytes, 1), 0x70000100);
@@ -472,10 +484,10 @@ mod tests {
         ];
 
         let userstring_map = HashMap::new();
-        let mut token_map = HashMap::new();
+        let mut token_map = TokenRemap::default();
         token_map.insert(0x02000001, 0x02000005);
 
-        remap_il_tokens(&mut il_bytes, &token_map, &userstring_map, None).unwrap();
+        remap_il_tokens(&mut il_bytes, METHOD, &token_map, &userstring_map, None).unwrap();
 
         // Check token at offset 3 (after 0xFE 0x1C)
         let new_token = read_token_at(&il_bytes, 3);

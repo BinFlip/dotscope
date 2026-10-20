@@ -249,11 +249,6 @@ pub use crate::assembly::{
 // - All builders implement Default trait for clippy compliance
 // - Multiple builders can be used in sequence without borrow checker issues
 pub use crate::cilassembly::ChangeRefRc;
-/// Generator configuration for PE file output.
-///
-/// Use `CilAssembly::to_file()` or `CilAssembly::to_memory()` to generate assemblies.
-/// Use `GeneratorConfig` for advanced configuration.
-pub use crate::cilassembly::GeneratorConfig;
 /// High-level builders for .NET constructs.
 ///
 /// Create complete class, interface, property, event, and method definitions with implementations, signatures, local variables,
@@ -264,6 +259,11 @@ pub use crate::cilassembly::{
     ClassBuilder, EnumBuilder, EventBuilder, InterfaceBuilder, MethodBodyBuilder, MethodBuilder,
     PropertyBuilder,
 };
+/// Generator configuration for PE file output.
+///
+/// Use `CilAssembly::to_file()` or `CilAssembly::to_memory()` to generate assemblies.
+/// Use `GeneratorConfig` for advanced configuration.
+pub use crate::cilassembly::{DanglingPolicy, GeneratorConfig};
 /// Code generation from SSA.
 ///
 /// Convert SSA form back to CIL bytecode after transformations.
@@ -914,4 +914,4 @@ pub use crate::{File, Parser};
 /// Lets consumers categorize parse failures (truncated headers, bad magic,
 /// unsupported schemas, heap corruption, invalid fields) without parsing
 /// string messages.
-pub use crate::{HeapKind, ParseFailure, ParseStage, StreamKind};
+pub use crate::{HeapKind, ParseFailure, ParseStage, Referrer, StreamKind};

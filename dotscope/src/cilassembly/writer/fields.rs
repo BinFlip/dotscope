@@ -261,13 +261,6 @@ fn collect_original_fieldrva_data(
         #[allow(clippy::cast_possible_truncation)]
         let size = calculate_field_size(view, field_index, ptr_size)? as u32;
 
-        // Sanity check: reject unreasonable sizes (> 1MB)
-        if size > 1024 * 1024 {
-            return Err(Error::ModificationInvalid(format!(
-                "Field {field_index} has unreasonable size {size} bytes"
-            )));
-        }
-
         // Read original data
         let offset = file.rva_to_offset(rva as usize).map_err(|_| {
             Error::ModificationInvalid(format!(

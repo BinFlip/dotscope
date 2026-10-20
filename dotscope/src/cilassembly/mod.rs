@@ -176,9 +176,9 @@ pub use operation::{Operation, TableOperation};
 pub use resolver::{
     Conflict, ConflictResolver, LastWriteWinsResolver, OperationResolution, Resolution,
 };
-pub use writer::GeneratorConfig;
 use writer::PeGenerator;
 pub(crate) use writer::ResolvePlaceholders;
+pub use writer::{DanglingPolicy, GeneratorConfig};
 
 /// A mutable view of a .NET assembly that tracks changes for editing operations.
 ///
@@ -628,9 +628,8 @@ impl CilAssembly {
     pub fn string_remove(&mut self, index: u32) -> Result<()> {
         let original_heap_size = self
             .view()
-            .streams()
-            .iter()
-            .find(|s| s.name == "#Strings")
+            .metadata_root()
+            .stream("#Strings")
             .map_or(0, |s| s.size);
 
         if index >= original_heap_size {
@@ -1943,127 +1942,121 @@ impl fmt::Debug for CilAssembly {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
 
     use super::*;
-    use crate::{test::factories::table::cilassembly::create_test_typedef_row, Error};
+    use crate::{
+        testkit::{
+            factories::table::cilassembly::create_test_typedef_row,
+            fixture,
+            helpers::{runtime_type_handle_rows, TWO_CORELIB_FIXTURES},
+        },
+        Error,
+    };
 
     #[test]
     fn test_convert_from_view() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(_assembly) = CilAssembly::from_path(&path) {
-            // Basic smoke test - conversion should succeed
-        }
+        let path = fixture("WindowsBase.dll");
+        let _assembly = CilAssembly::from_path(&path).expect("the fixture loads");
+        // Basic smoke test - conversion should succeed
     }
 
     #[test]
     fn test_add_string() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
-            let ref1 = assembly.string_add("Hello").unwrap();
-            let ref2 = assembly.string_add("World").unwrap();
+        let path = fixture("WindowsBase.dll");
+        let mut assembly = CilAssembly::from_path(&path).expect("the fixture loads");
+        let ref1 = assembly.string_add("Hello").unwrap();
+        let ref2 = assembly.string_add("World").unwrap();
 
-            assert_ne!(ref1.placeholder(), ref2.placeholder());
-            assert!(ref2.placeholder() > ref1.placeholder());
-        }
+        assert_ne!(ref1.placeholder(), ref2.placeholder());
+        assert!(ref2.placeholder() > ref1.placeholder());
     }
 
     #[test]
     fn test_add_blob() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
-            let ref1 = assembly.blob_add(&[1, 2, 3]).unwrap();
-            let ref2 = assembly.blob_add(&[4, 5, 6]).unwrap();
+        let path = fixture("WindowsBase.dll");
+        let mut assembly = CilAssembly::from_path(&path).expect("the fixture loads");
+        let ref1 = assembly.blob_add(&[1, 2, 3]).unwrap();
+        let ref2 = assembly.blob_add(&[4, 5, 6]).unwrap();
 
-            assert_ne!(ref1.placeholder(), ref2.placeholder());
-            assert!(ref2.placeholder() > ref1.placeholder());
-        }
+        assert_ne!(ref1.placeholder(), ref2.placeholder());
+        assert!(ref2.placeholder() > ref1.placeholder());
     }
 
     #[test]
     fn test_add_guid() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
-            let guid1 = [
-                0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
-                0x77, 0x88,
-            ];
-            let guid2 = [
-                0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
-                0x88, 0x99,
-            ];
+        let path = fixture("WindowsBase.dll");
+        let mut assembly = CilAssembly::from_path(&path).expect("the fixture loads");
+        let guid1 = [
+            0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
+            0x77, 0x88,
+        ];
+        let guid2 = [
+            0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+            0x88, 0x99,
+        ];
 
-            let ref1 = assembly.guid_add(&guid1).unwrap();
-            let ref2 = assembly.guid_add(&guid2).unwrap();
+        let ref1 = assembly.guid_add(&guid1).unwrap();
+        let ref2 = assembly.guid_add(&guid2).unwrap();
 
-            assert_ne!(ref1.placeholder(), ref2.placeholder());
-            assert!(ref2.placeholder() > ref1.placeholder());
-        }
+        assert_ne!(ref1.placeholder(), ref2.placeholder());
+        assert!(ref2.placeholder() > ref1.placeholder());
     }
 
     #[test]
     fn test_add_userstring() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
-            let ref1 = assembly.userstring_add("Hello").unwrap();
-            let ref2 = assembly.userstring_add("World").unwrap();
+        let path = fixture("WindowsBase.dll");
+        let mut assembly = CilAssembly::from_path(&path).expect("the fixture loads");
+        let ref1 = assembly.userstring_add("Hello").unwrap();
+        let ref2 = assembly.userstring_add("World").unwrap();
 
-            assert_ne!(ref1.placeholder(), ref2.placeholder());
-            assert!(ref2.placeholder() > ref1.placeholder());
-        }
+        assert_ne!(ref1.placeholder(), ref2.placeholder());
+        assert!(ref2.placeholder() > ref1.placeholder());
     }
 
     #[test]
     fn test_table_row_assignment_uses_correct_rid() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
-            // Create a minimal TypeDef row for testing
-            if let Ok(typedef_row) = create_test_typedef_row() {
-                // Add table row should return a ChangeRefRc
-                if let Ok(change_ref) = assembly.table_row_add(TableId::TypeDef, typedef_row) {
-                    // Verify the ChangeRef is for the TypeDef table
-                    assert!(
-                        change_ref.kind().is_table(),
-                        "ChangeRef should be a table row reference"
-                    );
-                    assert_eq!(
-                        change_ref.kind().table_id(),
-                        Some(TableId::TypeDef),
-                        "ChangeRef should be for TypeDef table"
-                    );
+        let path = fixture("WindowsBase.dll");
+        let mut assembly = CilAssembly::from_path(&path).expect("the fixture loads");
+        // Create a minimal TypeDef row for testing
+        let typedef_row = create_test_typedef_row().expect("the TypeDef row builds");
+        let change_ref = assembly
+            .table_row_add(TableId::TypeDef, typedef_row)
+            .expect("the row is added");
+        assert!(
+            change_ref.kind().is_table(),
+            "ChangeRef should be a table row reference"
+        );
+        assert_eq!(
+            change_ref.kind().table_id(),
+            Some(TableId::TypeDef),
+            "ChangeRef should be for TypeDef table"
+        );
 
-                    // Add another row should get a different ChangeRef
-                    if let Ok(typedef_row2) = create_test_typedef_row() {
-                        if let Ok(change_ref2) =
-                            assembly.table_row_add(TableId::TypeDef, typedef_row2)
-                        {
-                            // The two ChangeRefs should have different IDs
-                            assert_ne!(
-                                change_ref.id(),
-                                change_ref2.id(),
-                                "Different rows should have different ChangeRef IDs"
-                            );
-                        }
-                    }
-                }
-            }
-        }
+        // Another row gets a different ChangeRef.
+        let typedef_row2 = create_test_typedef_row().expect("the TypeDef row builds");
+        let change_ref2 = assembly
+            .table_row_add(TableId::TypeDef, typedef_row2)
+            .expect("the second row is added");
+        assert_ne!(
+            change_ref.id(),
+            change_ref2.id(),
+            "Different rows should have different ChangeRef IDs"
+        );
     }
 
     #[test]
     fn test_heap_changes_initialized() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(assembly) = CilAssembly::from_path(&path) {
-            // Verify heap changes are properly initialized
-            // The additions count should be 0 initially
-            assert_eq!(assembly.changes.string_heap_changes.additions_count(), 0);
-            assert_eq!(assembly.changes.blob_heap_changes.additions_count(), 0);
-            assert_eq!(assembly.changes.guid_heap_changes.additions_count(), 0);
-            assert_eq!(
-                assembly.changes.userstring_heap_changes.additions_count(),
-                0
-            );
-        }
+        let path = fixture("WindowsBase.dll");
+        let assembly = CilAssembly::from_path(&path).expect("the fixture loads");
+        // Verify heap changes are properly initialized
+        // The additions count should be 0 initially
+        assert_eq!(assembly.changes.string_heap_changes.additions_count(), 0);
+        assert_eq!(assembly.changes.blob_heap_changes.additions_count(), 0);
+        assert_eq!(assembly.changes.guid_heap_changes.additions_count(), 0);
+        assert_eq!(
+            assembly.changes.userstring_heap_changes.additions_count(),
+            0
+        );
     }
 
     /// Mono runtime compatibility tests for assembly modification and execution
@@ -2077,13 +2070,15 @@ mod tests {
                 tables::{CodedIndex, CodedIndexType, MemberRefBuilder, TableId, TypeRefBuilder},
                 token::Token,
             },
-            test::mono::*,
+            testkit::mono::*,
         };
 
         #[test]
         fn test_mono_runtime_compatibility() -> Result<()> {
             // Create test runner using the new utilities
-            let runner = TestRunner::new()?;
+            let Some(runner) = TestRunner::new()? else {
+                return Ok(());
+            };
 
             // Define the assembly modification that adds a simple method
             let modify_assembly = |assembly: &mut CilAssembly| -> Result<()> {
@@ -2108,6 +2103,7 @@ mod tests {
                 &runner,
                 compilation::templates::HELLO_WORLD,
                 modify_assembly,
+                |_| Vec::new(),
             )?;
 
             // Assert all architectures passed all tests
@@ -2128,9 +2124,10 @@ mod tests {
                     result.architecture.name, result.errors
                 );
                 assert!(
-                    result.disassembly_success,
+                    result.disassembly_success != Some(false),
                     "Disassembly verification failed for {}: {:?}",
-                    result.architecture.name, result.errors
+                    result.architecture.name,
+                    result.errors
                 );
                 assert!(
                     result.reflection_success,
@@ -2162,7 +2159,9 @@ mod tests {
         #[test]
         fn test_mono_enhanced_modifications() -> Result<()> {
             // Create test runner using the new utilities
-            let runner = TestRunner::new()?;
+            let Some(runner) = TestRunner::new()? else {
+                return Ok(());
+            };
 
             // Test string modification by adding a simple method
             let modify_assembly = |assembly: &mut CilAssembly| -> Result<()> {
@@ -2212,6 +2211,7 @@ mod tests {
                 &runner,
                 compilation::templates::HELLO_WORLD,
                 modify_assembly,
+                |_| Vec::new(),
             )?;
 
             // Assert all tests passed
@@ -2291,7 +2291,9 @@ mod tests {
         #[test]
         fn test_mono_mathematical_operations() -> Result<()> {
             // Test advanced mathematical operations and complex arithmetic
-            let runner = TestRunner::new()?;
+            let Some(runner) = TestRunner::new()? else {
+                return Ok(());
+            };
 
             let modify_assembly = |assembly: &mut CilAssembly| -> Result<()> {
                 // Create method that performs multiple arithmetic operations
@@ -2344,7 +2346,7 @@ mod tests {
                 Ok(())
             };
 
-            let results = run_complete_test_with_reflection(
+            let results = run_complete_test(
                 &runner,
                 compilation::templates::HELLO_WORLD,
                 modify_assembly,
@@ -2396,7 +2398,9 @@ mod tests {
         #[test]
         fn test_mono_local_variables_and_stack_operations() -> Result<()> {
             // Test local variable manipulation and stack operations
-            let runner = TestRunner::new()?;
+            let Some(runner) = TestRunner::new()? else {
+                return Ok(());
+            };
 
             let modify_assembly = |assembly: &mut CilAssembly| -> Result<()> {
                 // TestLocalVariables: temp1=input*2, temp2=temp1+5, return temp2-temp1 (always 5)
@@ -2444,7 +2448,7 @@ mod tests {
                 Ok(())
             };
 
-            let results = run_complete_test_with_reflection(
+            let results = run_complete_test(
                 &runner,
                 compilation::templates::HELLO_WORLD,
                 modify_assembly,
@@ -2494,7 +2498,9 @@ mod tests {
         #[test]
         fn test_mono_multiple_method_cross_references() -> Result<()> {
             // Test multiple methods that call each other
-            let runner = TestRunner::new()?;
+            let Some(runner) = TestRunner::new()? else {
+                return Ok(());
+            };
 
             let modify_assembly = |assembly: &mut CilAssembly| -> Result<()> {
                 // DoubleNumber: value * 2
@@ -2582,7 +2588,7 @@ mod tests {
                 Ok(())
             };
 
-            let results = run_complete_test_with_reflection(
+            let results = run_complete_test(
                 &runner,
                 compilation::templates::HELLO_WORLD,
                 modify_assembly,
@@ -2652,9 +2658,11 @@ mod tests {
         #[test]
         fn test_mono_blob_heap_and_complex_signatures() -> Result<()> {
             // Test blob heap modifications with complex method signatures
-            let runner = TestRunner::new()?;
+            let Some(runner) = TestRunner::new()? else {
+                return Ok(());
+            };
 
-            let results = run_complete_test_with_reflection(
+            let results = run_complete_test(
                 &runner,
                 compilation::templates::HELLO_WORLD,
                 |assembly: &mut CilAssembly| -> Result<()> {
@@ -2780,10 +2788,12 @@ mod tests {
         fn test_mono_reflection_detects_wrong_results() -> Result<()> {
             // Negative test: verify that our test framework actually detects wrong results
             // This ensures we're not just passing everything blindly
-            let runner = TestRunner::new()?;
+            let Some(runner) = TestRunner::new()? else {
+                return Ok(());
+            };
 
             // Create a simple Add method: returns a + b
-            let results = run_complete_test_with_reflection(
+            let results = run_complete_test(
                 &runner,
                 compilation::templates::HELLO_WORLD,
                 |assembly: &mut CilAssembly| -> Result<()> {
@@ -2839,24 +2849,36 @@ mod tests {
 
     #[test]
     fn a_type_imported_from_two_core_libraries_resolves_to_the_modules_own() {
-        // BitMono, running on .NET 10, imports `RuntimeTypeHandle` from that
-        // runtime's System.Private.CoreLib (TypeRef 0x0D) beside the protected
-        // program's mscorlib import (TypeRef 0x17).
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/samples/packers/bitmono/0.39.0/bitmono_calltocalli.exe");
-        let assembly = CilAssembly::from_path(&path).unwrap();
+        // A module importing `System.RuntimeTypeHandle` from System.Private.CoreLib as
+        // well as from its own mscorlib takes its core library, and the type, from
+        // mscorlib, whichever of the two TypeRefs the table lists first.
+        for name in TWO_CORELIB_FIXTURES {
+            let path = fixture(&format!("metadata/layouts/{name}"));
+            let rows = runtime_type_handle_rows(&path);
+            let (own, foreign) = (rows["mscorlib"], rows["System.Private.CoreLib"]);
+            assert_eq!(
+                foreign < own,
+                name.contains("foreign_first"),
+                "{name} lists the foreign TypeRef where its name says"
+            );
 
-        let corelib = assembly.find_core_library_ref().unwrap();
-        assert_eq!(
-            Some(corelib.row),
-            assembly
-                .find_assembly_ref_by_name("mscorlib")
-                .map(|mscorlib| mscorlib.row)
-        );
-        let handle = assembly
-            .find_corelib_typeref("System", "RuntimeTypeHandle")
-            .unwrap();
-        assert_eq!((handle.tag, handle.row), (TableId::TypeRef, 0x17));
-        assert!(assembly.find_corelib_typeref("No.Such", "Type").is_none());
+            let assembly = CilAssembly::from_path(&path).unwrap();
+            let corelib = assembly.find_core_library_ref().unwrap();
+            assert_eq!(
+                Some(corelib.row),
+                assembly
+                    .find_assembly_ref_by_name("mscorlib")
+                    .map(|mscorlib| mscorlib.row),
+                "{name}"
+            );
+            let handle = assembly
+                .find_corelib_typeref("System", "RuntimeTypeHandle")
+                .unwrap();
+            assert_eq!((handle.tag, handle.row), (TableId::TypeRef, own), "{name}");
+            assert!(
+                assembly.find_corelib_typeref("No.Such", "Type").is_none(),
+                "{name}"
+            );
+        }
     }
 }

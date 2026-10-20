@@ -33,7 +33,7 @@ use std::collections::{HashMap, HashSet};
 use crate::{
     cilassembly::{
         changes::AssemblyChanges,
-        writer::{heaps::HeapRemapping, output::Output},
+        writer::{heaps::HeapRemapping, output::Output, remapper::TokenRemap},
         CilAssembly,
     },
     file::pe::{OptionalHeader, SectionTable},
@@ -314,9 +314,9 @@ pub struct WriteContext<'a> {
     /// rows that reference heap entries.
     pub heap_remapping: HeapRemapping,
 
-    /// Token remapping for table modifications. When rows are added or deleted,
-    /// tokens shift. This map translates original tokens to new tokens.
-    pub token_remapping: HashMap<u32, u32>,
+    /// How the tokens outside the tables (instruction operands, local signatures, catch
+    /// types, the entry point) are renumbered once rows are deleted or deduplicated.
+    pub tokens: TokenRemap,
 
     /// TypeDef RID remapping for signature blob processing. When TypeDef rows are
     /// deleted, RIDs shift. Signature blobs contain TypeDefOrRef encoded tokens
@@ -517,7 +517,7 @@ impl<'a> WriteContext<'a> {
             original_method_rva_delta: 0,
             resource_offset_remap: HashMap::new(),
             heap_remapping: HeapRemapping::default(),
-            token_remapping: HashMap::new(),
+            tokens: TokenRemap::default(),
             typedef_rid_remap: HashMap::new(),
             typeref_rid_remap: HashMap::new(),
             typespec_rid_remap: HashMap::new(),

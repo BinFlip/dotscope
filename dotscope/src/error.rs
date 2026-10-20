@@ -526,6 +526,19 @@ pub enum Error {
     #[error("Layout failed: {0}")]
     LayoutFailed(String),
 
+    /// A row the write deletes is still named by something the write keeps.
+    ///
+    /// The writer never retargets such a reference to a neighbouring row. Under
+    /// [`DanglingPolicy::Null`](crate::cilassembly::DanglingPolicy::Null) it writes a null
+    /// reference instead of failing.
+    #[error("{referrer} names {target}, which the write deletes")]
+    DanglingReference {
+        /// What names the deleted row; its tokens are the ones the input assembly has.
+        referrer: Referrer,
+        /// The deleted row, as the input assembly numbers it.
+        target: Token,
+    },
+
     /// Memory mapping failed during binary reading or writing.
     ///
     /// This error occurs when memory-mapped file operations fail,
@@ -843,6 +856,35 @@ impl std::fmt::Display for StreamKind {
             StreamKind::Guid => "#GUID",
             StreamKind::Pdb => "#Pdb",
         })
+    }
+}
+
+/// What names a row in a write: a column of another row, a method body, or the CLI header.
+///
+/// Carried by [`Error::DanglingReference`]. Its tokens are the ones the input assembly has.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Referrer {
+    /// A column of a metadata row.
+    Column {
+        /// The row.
+        row: Token,
+        /// The column, by its ECMA-335 name.
+        column: &'static str,
+    },
+    /// A method body: an instruction operand, its local variable signature or a catch type.
+    Body(Token),
+    /// The entry point in the CLI header.
+    EntryPoint,
+}
+
+impl std::fmt::Display for Referrer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Referrer::Column { row, column } => write!(f, "{column} of {row}"),
+            Referrer::Body(method) => write!(f, "the body of {method}"),
+            Referrer::EntryPoint => f.write_str("the entry point"),
+        }
     }
 }
 
