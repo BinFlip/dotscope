@@ -29,12 +29,8 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
-//! use dotscope::compiler::NeutralizationPass;
-//!
-//! let pass = NeutralizationPass::new(&removed_tokens);
-//! pass.run_on_method(&mut ssa, method_token, &ctx, &assembly)?;
-//! ```
+//! The `tests::test_neutralization_removes_tainted_instructions` test in this module runs
+//! the pass on a method whose call to a removed method feeds an addition.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 

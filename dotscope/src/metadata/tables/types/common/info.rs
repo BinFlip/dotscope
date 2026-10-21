@@ -732,10 +732,11 @@ impl TableInfo {
     ///
     /// ## Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// let heap_sizes = table_info.heap_sizes();
     /// // Use in tables stream header serialization
     /// writer.write_all(&[heap_sizes])?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
     pub fn heap_sizes(&self) -> u8 {
@@ -797,7 +798,7 @@ impl TableInfo {
     ///
     /// ## Example
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use std::collections::HashMap;
     /// use dotscope::metadata::tables::TableId;
     ///

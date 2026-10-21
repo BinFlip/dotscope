@@ -83,6 +83,7 @@ use crate::{
         traits::OwnedValidator,
     },
     prelude::CilTypeRc,
+    utils::TryForEachInOrder,
     Error, Result,
 };
 
@@ -144,7 +145,7 @@ impl OwnedTypeDependencyValidator {
     /// - Type dependencies violate accessibility constraints
     /// - Base type dependencies are invalid or inaccessible
     fn validate_type_dependency_resolution(&self, context: &OwnedValidationContext) -> Result<()> {
-        context.target_assembly_types().par_iter().try_for_each(|type_rc| -> Result<()> {
+        context.target_assembly_types().par_iter().try_for_each_in_order(|type_rc| -> Result<()> {
             let token = type_rc.token;
 
             // Validate base type dependency if it exists

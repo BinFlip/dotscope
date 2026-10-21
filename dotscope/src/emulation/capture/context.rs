@@ -27,8 +27,8 @@
 //!
 //! Creating a capture context with default settings (captures everything):
 //!
-//! ```ignore
-//! use dotscope::emulation::capture::CaptureContext;
+//! ```no_run
+//! use dotscope::emulation::CaptureContext;
 //!
 //! let ctx = CaptureContext::new();
 //!
@@ -44,8 +44,8 @@
 //!
 //! Creating a minimal context for assembly extraction only:
 //!
-//! ```ignore
-//! use dotscope::emulation::capture::CaptureContext;
+//! ```no_run
+//! use dotscope::emulation::CaptureContext;
 //!
 //! let ctx = CaptureContext::assemblies_only();
 //! // Strings, file ops, and network ops will not be captured
@@ -95,9 +95,9 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```ignore
-/// use dotscope::emulation::capture::CaptureContext;
-/// use dotscope::emulation::process::CaptureConfig;
+/// ```no_run
+/// use dotscope::emulation::CaptureContext;
+/// use dotscope::emulation::CaptureConfig;
 ///
 /// // Capture only assemblies and strings
 /// let config = CaptureConfig {
@@ -198,7 +198,7 @@ pub struct ResourceRead {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```no_run
 /// let ctx = CaptureContext::new();
 /// // ... run emulation ...
 ///
@@ -258,7 +258,7 @@ impl CaptureContext {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
     /// let ctx = CaptureContext::new();
     /// assert!(ctx.config().assemblies);
     /// assert!(ctx.config().strings);
@@ -292,7 +292,7 @@ impl CaptureContext {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
     /// let config = CaptureConfig {
     ///     assemblies: true,
     ///     strings: false,  // Don't capture strings

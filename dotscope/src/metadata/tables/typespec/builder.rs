@@ -467,6 +467,7 @@ impl TypeSpecBuilder {
     ///     stdcall: false,
     ///     thiscall: false,
     ///     fastcall: false,
+    ///     unmanaged: false,
     ///     param_count_generic: 0,
     ///     param_count: 2,
     ///     return_type: SignatureParameter {
@@ -681,6 +682,7 @@ mod tests {
             stdcall: false,
             thiscall: false,
             fastcall: false,
+            unmanaged: false,
             param_count: 1,
             param_count_generic: 0,
             varargs: vec![],

@@ -72,8 +72,8 @@ impl ImportScopeRaw {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// # use dotscope::metadata::tables::importscope::ImportScopeRaw;
+    /// ```no_run
+    /// # use dotscope::metadata::tables::ImportScopeRaw;
     /// # use dotscope::metadata::token::Token;
     /// # fn example() -> dotscope::Result<()> {
     /// let scope_raw = ImportScopeRaw {
@@ -87,6 +87,7 @@ impl ImportScopeRaw {
     /// let scope = scope_raw.to_owned(blobs)?;
     /// # Ok(())
     /// # }
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     ///
     /// # Errors

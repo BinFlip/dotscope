@@ -801,6 +801,7 @@ impl MethodBuilder {
             stdcall: self.stdcall,
             thiscall: self.thiscall,
             fastcall: self.fastcall,
+            unmanaged: false,
             param_count_generic: 0,
             param_count: u32::try_from(parameters.len())
                 .map_err(|_| malformed_error!("Method parameter count exceeds u32 range"))?,

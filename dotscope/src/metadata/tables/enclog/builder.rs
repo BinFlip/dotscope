@@ -6,7 +6,7 @@
 //!
 //! # Usage Example
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::prelude::*;
 //!
 //! # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
@@ -16,6 +16,7 @@
 //!     .token_value(0x06000001)       // MethodDef token
 //!     .func_code(1)                  // Update operation
 //!     .build(&mut assembly)?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 
 use crate::{
@@ -45,7 +46,7 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::prelude::*;
 ///
 /// // Record creation of a new method
@@ -65,6 +66,7 @@ use crate::{
 ///     .token_value(0x04000025)  // Field token
 ///     .func_code(2)             // Delete operation
 ///     .build(&mut assembly)?;
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct EncLogBuilder {
@@ -254,7 +256,7 @@ impl EncLogBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use dotscope::prelude::*;
     ///
     /// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
@@ -263,6 +265,7 @@ impl EncLogBuilder {
     ///     .token_value(0x06000001)
     ///     .func_code(1)
     ///     .build(&mut assembly)?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let token_value = self.token_value.ok_or_else(|| {

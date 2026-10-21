@@ -319,6 +319,9 @@ impl OwnedAccessibilityValidator {
                 }
             }
 
+            // ECMA-335 II.12: an interface may have static fields, constant or not, but no
+            // instance fields. (CLS-compliant interfaces define no fields at all, but that is a
+            // language rule, not one the runtime enforces.)
             if type_entry.flags.is_interface() {
                 for (_, field) in type_entry.fields.iter() {
                     if !field.flags.is_static() {
@@ -326,17 +329,6 @@ impl OwnedAccessibilityValidator {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Interface '{}' contains non-static field '{}'",
-                                type_entry.name, field.name
-                            ),
-                        });
-                    }
-
-                    if !field.flags.is_literal() {
-                        // Not LITERAL
-                        return Err(Error::ValidationOwnedFailed {
-                            validator: self.name().to_string(),
-                            message: format!(
-                                "Interface '{}' contains non-constant field '{}'",
                                 type_entry.name, field.name
                             ),
                         });

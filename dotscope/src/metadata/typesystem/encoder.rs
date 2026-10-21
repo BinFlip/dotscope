@@ -39,8 +39,9 @@
 
 use crate::{
     metadata::{
-        signatures::{CustomModifier, SignatureMethod, TypeSignature},
+        signatures::{CustomModifier, SignatureMethod, SignatureParameter, TypeSignature},
         token::Token,
+        typesystem::ELEMENT_TYPE,
     },
     utils::{write_compressed_int, write_compressed_uint},
     Error, Result,
@@ -373,21 +374,20 @@ impl TypeSignatureEncoder {
         Ok(())
     }
 
-    /// Encodes a method signature for function pointers.
+    /// Encodes a method signature (ECMA-335 II.23.2.1, II.23.2.2): the one implementation,
+    /// for a function pointer's signature and for a method's own, carrying `depth` so a
+    /// signature nesting through function pointers stays bounded.
     ///
-    /// Encodes a method signature structure including calling convention,
-    /// parameter count, return type, and parameter types according to
-    /// ECMA-335 method signature format.
+    /// Writes the calling convention (its kind, and the `HASTHIS`, `EXPLICITTHIS` and
+    /// `GENERIC` flags), the generic parameter count, the parameter count (a vararg call
+    /// site's extra arguments included), the return type, the parameters, and for a vararg
+    /// call site a `SENTINEL` and its extra arguments.
     ///
-    /// # Arguments
+    /// # Errors
     ///
-    /// * `method_sig` - The method signature to encode
-    /// * `buffer` - The output buffer to write encoded bytes to
-    ///
-    /// # Returns
-    ///
-    /// Success or error result from encoding.
-    fn encode_method_signature(
+    /// [`crate::Error::RecursionLimit`] past the nesting limit, and any error encoding a
+    /// parameter's type.
+    pub(crate) fn encode_method_signature(
         method_sig: &SignatureMethod,
         buffer: &mut Vec<u8>,
         depth: usize,
@@ -395,57 +395,54 @@ impl TypeSignatureEncoder {
         if depth >= MAX_RECURSION_DEPTH {
             return Err(crate::Error::RecursionLimit(MAX_RECURSION_DEPTH));
         }
-        let mut calling_conv = 0u8;
-        if method_sig.has_this {
-            calling_conv |= 0x20;
-        }
-        if method_sig.explicit_this {
-            calling_conv |= 0x40;
-        }
-        if method_sig.default {
-            calling_conv |= 0x00;
-        }
-        if method_sig.vararg {
-            calling_conv |= 0x05;
-        }
-        if method_sig.cdecl {
-            calling_conv |= 0x01;
-        }
-        if method_sig.stdcall {
-            calling_conv |= 0x02;
-        }
-        if method_sig.thiscall {
-            calling_conv |= 0x03;
-        }
-        if method_sig.fastcall {
-            calling_conv |= 0x04;
+
+        buffer.push(method_sig.calling_convention());
+        if method_sig.param_count_generic > 0 {
+            write_compressed_uint(method_sig.param_count_generic, buffer);
         }
 
-        buffer.push(calling_conv);
-
+        let total = method_sig
+            .params
+            .len()
+            .saturating_add(method_sig.varargs.len());
         write_compressed_uint(
-            u32::try_from(method_sig.params.len()).map_err(|_| {
-                malformed_error!(
-                    "Method parameters length out of range: {}",
-                    method_sig.params.len()
-                )
+            u32::try_from(total).map_err(|_| {
+                malformed_error!("Method parameters length out of range: {}", total)
             })?,
             buffer,
         );
-        // Carries the depth rather than calling the public depth-0 wrapper:
-        // re-entering at zero re-armed the cap on every FNPTR hop, so a
-        // signature nesting through method signatures was unbounded.
-        Self::encode_type_signature_internal(
-            &method_sig.return_type.base,
-            buffer,
-            depth.saturating_add(1),
-        )?;
 
+        let depth = depth.saturating_add(1);
+        Self::encode_parameter(&method_sig.return_type, buffer, depth)?;
         for param in &method_sig.params {
-            Self::encode_type_signature_internal(&param.base, buffer, depth.saturating_add(1))?;
+            Self::encode_parameter(param, buffer, depth)?;
+        }
+        if !method_sig.varargs.is_empty() {
+            buffer.push(ELEMENT_TYPE::SENTINEL);
+            for param in &method_sig.varargs {
+                Self::encode_parameter(param, buffer, depth)?;
+            }
         }
 
         Ok(())
+    }
+
+    /// Encodes a parameter or return type: its custom modifiers, `BYREF` for a by-reference
+    /// one, then its type.
+    ///
+    /// # Errors
+    ///
+    /// Any error encoding a modifier or the type.
+    pub(crate) fn encode_parameter(
+        parameter: &SignatureParameter,
+        buffer: &mut Vec<u8>,
+        depth: usize,
+    ) -> Result<()> {
+        Self::encode_custom_modifiers(&parameter.modifiers, buffer)?;
+        if parameter.by_ref {
+            buffer.push(ELEMENT_TYPE::BYREF);
+        }
+        Self::encode_type_signature_internal(&parameter.base, buffer, depth)
     }
 
     /// Encodes custom modifiers.

@@ -1,6 +1,6 @@
 //! Readers and writers for the binary encodings .NET metadata uses.
 //!
-//! Little- and big-endian integers of any width that implements [`CilIO`],
+//! Little- and big-endian integers of any width that implements [`CilIO`](crate::io::CilIO),
 //! read from a slice at a fixed or advancing offset and written to a buffer;
 //! the ECMA-335 compressed integers of II.23.2, signed and unsigned, with the
 //! size an unsigned one takes; and the string forms blobs carry. These are the

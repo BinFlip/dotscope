@@ -30,7 +30,7 @@
 //!
 //! # Usage Examples
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use crate::cilassembly::modifications::TableModifications;
 //! use crate::cilassembly::operation::{TableOperation, Operation};
 //! use crate::metadata::tables::TableDataOwned;
@@ -86,7 +86,7 @@ use crate::{
 ///
 /// # Usage Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use crate::cilassembly::modifications::TableModifications;
 /// use crate::cilassembly::operation::{TableOperation, Operation};
 /// use crate::metadata::tables::TableDataOwned;
@@ -119,8 +119,8 @@ pub enum TableModifications {
     Sparse {
         /// Chronologically ordered operations
         ///
-        /// Operations are stored in the order they were applied, with
-        /// microsecond-precision timestamps for conflict resolution.
+        /// Operations are stored in timestamp order, equal timestamps in the order they
+        /// were applied, for conflict resolution.
         operations: Vec<TableOperation>,
 
         /// Quick lookup for deleted RIDs
@@ -972,8 +972,8 @@ mod tests {
     #[test]
     fn test_same_timestamp_fifo_ordering() {
         // Test that operations with the same timestamp maintain FIFO insertion order.
-        // This is critical for scenarios where Insert is followed by Update on the
-        // same RID within the same microsecond - the Update must come AFTER Insert.
+        // Explicit timestamps (`new_with_timestamp`) can be equal: an Insert followed by an
+        // Update of the same RID at one timestamp must keep the Update after the Insert.
         let mut mods = TableModifications::new_sparse(1);
 
         let fixed_timestamp = 1000u64;
@@ -984,7 +984,7 @@ mod tests {
             fixed_timestamp,
         );
 
-        // Create Update operation with same timestamp (simulates same-microsecond operations)
+        // Create Update operation with the same timestamp
         let update_op = TableOperation::new_with_timestamp(
             Operation::Update(10, make_test_row(200)),
             fixed_timestamp,

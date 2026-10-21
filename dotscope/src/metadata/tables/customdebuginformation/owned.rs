@@ -64,9 +64,9 @@ use crate::metadata::{
 ///
 /// # Usage Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::metadata::tables::CustomDebugInformation;
-/// use dotscope::metadata::customdebuginformation::types::CustomDebugInfo;
+/// use dotscope::metadata::customdebuginformation::CustomDebugInfo;
 ///
 /// # fn process_custom_debug(custom_debug: &CustomDebugInformation) -> crate::Result<()> {
 /// // Example: Processing different types of custom debug information

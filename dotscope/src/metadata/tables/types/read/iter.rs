@@ -55,7 +55,7 @@ use crate::{
 /// sequence is not its RID**. Never derive a RID from `enumerate()`, an index into a
 /// collected `Vec`, `.first()`, or `.next()`:
 ///
-/// ```rust,ignore
+/// ```no_run
 /// // Wrong: one unreadable row ahead of the match names a different row entirely.
 /// for (index, row) in table.iter().filter_map(skip_unreadable).enumerate() {
 ///     let rid = index as u32 + 1;

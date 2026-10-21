@@ -210,7 +210,7 @@ impl Exports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use dotscope::metadata::exports::Exports;
     /// use dotscope::metadata::token::Token;
     ///

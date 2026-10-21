@@ -24,7 +24,7 @@
 //! - [`crate::metadata::tables::PropertyRaw`] - Raw table entry structure
 //! - [`crate::metadata::tables::Property`] - Owned table entry type
 
-use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+use rayon::iter::IndexedParallelIterator;
 
 use crate::{
     metadata::{
@@ -33,6 +33,7 @@ use crate::{
         tables::PropertyRaw,
     },
     prelude::TableId,
+    utils::TryForEachInOrder,
     Result,
 };
 
@@ -70,24 +71,27 @@ impl MetadataLoader for PropertyLoader {
             return Ok(());
         };
 
-        table.par_iter().enumerate().try_for_each(|(index, row)| {
-            let Some(row) = context.handle_row(row, index)? else {
-                return Ok(());
-            };
-            let token_msg = || format!("property 0x{:08x}", row.token.value());
+        table
+            .par_iter()
+            .enumerate()
+            .try_for_each_in_order(|(index, row)| {
+                let Some(row) = context.handle_row(row, index)? else {
+                    return Ok(());
+                };
+                let token_msg = || format!("property 0x{:08x}", row.token.value());
 
-            let Some(res) = context.handle_result(
-                row.to_owned(strings, blob),
-                DiagnosticCategory::Table,
-                token_msg,
-            )?
-            else {
-                return Ok(());
-            };
+                let Some(res) = context.handle_result(
+                    row.to_owned(strings, blob),
+                    DiagnosticCategory::Table,
+                    token_msg,
+                )?
+                else {
+                    return Ok(());
+                };
 
-            context.property.insert(row.token, res.clone());
-            Ok(())
-        })
+                context.property.insert(row.token, res.clone());
+                Ok(())
+            })
     }
 
     /// Returns the table identifier for the Property table.

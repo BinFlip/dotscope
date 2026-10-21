@@ -59,13 +59,13 @@
 //!
 //! # Usage Examples
 //!
-//! ## Parse Existing Export Table
+//! ## Read an Assembly's Export Table
 //!
-//! ```rust,ignore
-//! use dotscope::metadata::exports::native::NativeExports;
+//! ```no_run
+//! use dotscope::CilObject;
 //!
-//! let pe_data = std::fs::read("library.dll")?;
-//! let native_exports = NativeExports::parse_from_pe(&pe_data)?;
+//! let assembly = CilObject::from_path("library.dll")?;
+//! let native_exports = assembly.exports().native();
 //!
 //! // Analyze exported functions
 //! for function in native_exports.functions() {
@@ -73,13 +73,14 @@
 //!         Some(name) => println!("Export: {} @ ordinal {}", name, function.ordinal),
 //!         None => println!("Export: ordinal {} only", function.ordinal),
 //!     }
-//!
-//!     if function.is_forwarder() {
-//!         println!("  Forwarded to: {}", function.get_forwarder_target().unwrap());
-//!     } else {
-//!         println!("  Address: 0x{:X}", function.address);
-//!     }
+//!     println!("  Address: 0x{:X}", function.address);
 //! }
+//!
+//! // Exports forwarded to another library
+//! for forwarder in native_exports.forwarders() {
+//!     println!("Ordinal {} forwards to {}", forwarder.ordinal, forwarder.target);
+//! }
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! ## Create Export Table
@@ -304,9 +305,9 @@ impl NativeExports {
     /// - Adding functions or forwarders to the directory fails
     ///
     /// # Examples
-    /// ```rust,ignore
+    /// ```no_run
     /// use dotscope::metadata::exports::NativeExports;
-    /// use dotscope::file::pe::Export;
+    /// use dotscope::PeExport;
     ///
     /// let pe_exports = vec![
     ///     Export {
@@ -794,9 +795,9 @@ impl NativeExports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use dotscope::metadata::exports::NativeExports;
-    /// use dotscope::metadata::exports::native::ExportForwarder;
+    /// use dotscope::metadata::exports::ExportForwarder;
     ///
     /// let mut exports = NativeExports::new("MyLibrary.dll");
     /// exports.add_forwarder("Forwarder1", 1, "kernel32.dll.Function1")?;

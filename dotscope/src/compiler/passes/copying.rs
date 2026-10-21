@@ -7,7 +7,7 @@
 //! 2. `propagate_local_types` — the CIL-side post-step that runs once per
 //!    iteration and propagates `SsaType` from local-origin destinations to
 //!    their ultimate sources. It uses `ssa.original_local_types()` (CIL
-//!    signature data) and `SsaType::from_type_signature(..., assembly)`,
+//!    signature data) and `SsaType::from_local(..., assembly)`,
 //!    so it cannot move into analyssa.
 
 use std::collections::BTreeMap;
@@ -112,12 +112,11 @@ fn propagate_local_types(
             continue;
         };
 
-        let local_type = match original_types.get(local_idx as usize) {
-            Some(sig) => &sig.base,
-            None => continue,
+        let Some(local) = original_types.get(local_idx as usize) else {
+            continue;
         };
 
-        let ssa_type = SsaType::from_type_signature(local_type, assembly);
+        let ssa_type = SsaType::from_local(local, assembly);
 
         if ssa_type.is_unknown() || matches!(ssa_type, SsaType::I32) {
             continue;

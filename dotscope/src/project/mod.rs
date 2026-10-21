@@ -544,7 +544,6 @@ impl std::fmt::Debug for CilProject {
 }
 
 #[cfg(test)]
-#[cfg_attr(feature = "skip-expensive-tests", allow(unused_imports))]
 mod tests {
     use super::*;
     use crate::{
@@ -611,7 +610,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_get_primary_with_loader() {
         let result = ProjectLoader::new()
             .primary_file(fixture("crafted_2.exe"))
@@ -629,7 +627,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_load_crafted2_exe() {
         let crafted2_path = fixture("crafted_2.exe");
         let mono_deps_path = fixture("mono_4.8");
@@ -691,7 +688,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_load_windowsbase_dll() {
         let windowsbase_path = fixture("WindowsBase.dll");
         let mono_deps_path = fixture("mono_4.8");

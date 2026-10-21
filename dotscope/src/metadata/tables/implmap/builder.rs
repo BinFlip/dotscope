@@ -189,7 +189,7 @@ impl ImplMapBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// # use dotscope::metadata::tables::{CodedIndex, TableId, ImplMapBuilder};
     /// let builder = ImplMapBuilder::new()
     ///     .member_forwarded(CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MemberForwarded));

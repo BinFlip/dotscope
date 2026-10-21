@@ -36,7 +36,7 @@ use crate::{
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::emulation::{Interpreter, EmulationContext, EmulationLimits};
 ///
 /// let limits = EmulationLimits::default();

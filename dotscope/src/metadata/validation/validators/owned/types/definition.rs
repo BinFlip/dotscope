@@ -85,6 +85,7 @@ use crate::{
             traits::OwnedValidator,
         },
     },
+    utils::TryForEachInOrder,
     Error, Result,
 };
 
@@ -134,7 +135,7 @@ impl OwnedTypeDefinitionValidator {
         context
             .target_assembly_types()
             .par_iter()
-            .try_for_each(|type_entry| -> Result<()> {
+            .try_for_each_in_order(|type_entry| -> Result<()> {
                 // Validate type name is not empty (except for special cases)
                 if type_entry.name.is_empty() && type_entry.namespace != "<Module>" {
                     return Err(Error::ValidationOwnedFailed {

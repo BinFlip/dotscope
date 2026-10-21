@@ -64,7 +64,7 @@
 //!
 //! ## Parsing from Metadata
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::metadata::tables::AssemblyRef;
 //! use dotscope::metadata::identity::AssemblyIdentity;
 //!
@@ -432,7 +432,7 @@ impl AssemblyIdentity {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use dotscope::metadata::identity::AssemblyIdentity;
     ///
     /// let assembly_ref = // ... loaded from metadata
@@ -479,7 +479,7 @@ impl AssemblyIdentity {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use dotscope::metadata::identity::AssemblyIdentity;
     ///
     /// let assembly = // ... loaded from metadata

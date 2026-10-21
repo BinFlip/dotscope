@@ -17,7 +17,7 @@
 //! # ECMA-335 Reference
 //! See ECMA-335, Partition II, §22.16 for the `FieldLayout` table specification.
 
-use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+use rayon::iter::IndexedParallelIterator;
 
 use crate::{
     metadata::{
@@ -26,6 +26,7 @@ use crate::{
         tables::FieldLayoutRaw,
     },
     prelude::TableId,
+    utils::TryForEachInOrder,
     Result,
 };
 
@@ -71,25 +72,28 @@ impl MetadataLoader for FieldLayoutLoader {
             return Ok(());
         };
 
-        table.par_iter().enumerate().try_for_each(|(index, row)| {
-            let Some(row) = context.handle_row(row, index)? else {
-                return Ok(());
-            };
-            let token_msg = || format!("field layout 0x{:08x}", row.token.value());
+        table
+            .par_iter()
+            .enumerate()
+            .try_for_each_in_order(|(index, row)| {
+                let Some(row) = context.handle_row(row, index)? else {
+                    return Ok(());
+                };
+                let token_msg = || format!("field layout 0x{:08x}", row.token.value());
 
-            let Some(owned) = context.handle_result(
-                row.to_owned(&context.field),
-                DiagnosticCategory::Field,
-                token_msg,
-            )?
-            else {
-                return Ok(());
-            };
+                let Some(owned) = context.handle_result(
+                    row.to_owned(context.field),
+                    DiagnosticCategory::Field,
+                    token_msg,
+                )?
+                else {
+                    return Ok(());
+                };
 
-            context.handle_error(owned.apply(), DiagnosticCategory::Field, token_msg)?;
-            context.field_layout.insert(row.token, owned);
-            Ok(())
-        })
+                context.handle_error(owned.apply(), DiagnosticCategory::Field, token_msg)?;
+                context.field_layout.insert(row.token, owned);
+                Ok(())
+            })
     }
 
     /// Returns the table identifier for the `FieldLayout` table.

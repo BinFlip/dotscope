@@ -58,7 +58,7 @@
 //!
 //! ## Process-Based Emulation
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::emulation::ProcessBuilder;
 //! use dotscope::CilObject;
 //!
@@ -76,11 +76,12 @@
 //! for (idx, asm) in process.captured_assemblies().iter().enumerate() {
 //!     std::fs::write(format!("extracted_{}.dll", idx), &asm.data)?;
 //! }
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! ## String Decryption Pattern
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::emulation::ProcessBuilder;
 //!
 //! let process = ProcessBuilder::new()
@@ -93,6 +94,7 @@
 //! for string in process.captured_strings() {
 //!     println!("Decrypted: {}", string.value);
 //! }
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! # Integration with Analysis

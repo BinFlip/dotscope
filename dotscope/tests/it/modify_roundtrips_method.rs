@@ -410,6 +410,7 @@ fn create_writeline_signature() -> Result<Vec<u8>> {
         stdcall: false,
         thiscall: false,
         fastcall: false,
+        unmanaged: false,
         param_count_generic: 0,
         param_count: 1,
         return_type: SignatureParameter {

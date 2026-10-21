@@ -15,7 +15,7 @@
 //!
 //! # Usage
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::analysis::{ControlFlowGraph, SsaConverter};
 //! use dotscope::assembly::decode_blocks;
 //!
@@ -32,6 +32,7 @@
 //!         println!("{}", phi);
 //!     }
 //! }
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 
 use std::collections::BTreeMap;
@@ -2164,17 +2165,9 @@ mod tests {
     use super::*;
     use crate::{
         analysis::{SsaVerifier, TypeRef, VerifyLevel},
-        assembly::{decode_blocks, InstructionAssembler},
-        testkit::TestTypeProvider,
+        assembly::InstructionAssembler,
+        testkit::{build_cfg, build_ssa, TestTypeProvider},
     };
-
-    /// Helper to build a CFG from assembled bytecode.
-    fn build_cfg(assembler: InstructionAssembler) -> ControlFlowGraph<'static> {
-        let (bytecode, _max_stack, _) = assembler.finish().expect("Failed to assemble bytecode");
-        let blocks =
-            decode_blocks(&bytecode, 0, 0x1000, Some(bytecode.len())).expect("Failed to decode");
-        ControlFlowGraph::from_basic_blocks(blocks).expect("Failed to build CFG")
-    }
 
     #[test]
     fn test_simple_function() {
@@ -2189,9 +2182,9 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 2, 0, &TestTypeProvider::new(2, 0), Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa =
+            build_ssa(&cfg, &TestTypeProvider::all_i32(2, 0)).expect("SSA construction failed");
 
         // Should have 1 block
         assert_eq!(ssa.block_count(), 1);
@@ -2213,9 +2206,9 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 1, &TestTypeProvider::new(1, 1), Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa =
+            build_ssa(&cfg, &TestTypeProvider::all_i32(1, 1)).expect("SSA construction failed");
 
         // Should have 1 block
         assert_eq!(ssa.block_count(), 1);
@@ -2224,11 +2217,10 @@ mod tests {
         assert!(ssa.variable_count() >= 2);
     }
 
-    /// The operation that defines `var`, if an instruction does.
+    /// arg ? null : 1.0 on the stack, then dropped: a phi of a reference and a double, which
+    /// no type holds. Typing it must still finish; a stall hangs the test.
     #[test]
     fn a_merge_no_type_holds_does_not_stall_phi_typing() {
-        // arg ? null : 1.0 on the stack, then dropped: a phi of a reference
-        // and a double, which no type holds. Typing it must still finish.
         let mut asm = InstructionAssembler::new();
         asm.ldarg_0()
             .unwrap()
@@ -2250,18 +2242,9 @@ mod tests {
             .unwrap()
             .ret()
             .unwrap();
-        let cfg = build_cfg(asm);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
 
-        let (sender, receiver) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let built =
-                SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0), Vec::new()).is_ok();
-            let _ = sender.send(built);
-        });
-        let built = receiver
-            .recv_timeout(std::time::Duration::from_secs(30))
-            .expect("phi typing did not finish");
-        assert!(built);
+        build_ssa(&cfg, &TestTypeProvider::all_i32(1, 0)).expect("SSA construction");
     }
 
     #[test]
@@ -2294,6 +2277,7 @@ mod tests {
         assert_eq!(join_merge_types(&SsaType::F64, &class), SsaType::Unknown);
     }
 
+    /// The operation that defines `var`, if an instruction does.
     fn defining_op(ssa: &SsaFunction, var: SsaVarId) -> Option<&SsaOp> {
         ssa.blocks()
             .iter()
@@ -2324,9 +2308,9 @@ mod tests {
         let mut asm = InstructionAssembler::new();
         asm.ldloc_0().unwrap().ret().unwrap();
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 1, &TestTypeProvider::new(0, 1), Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa =
+            build_ssa(&cfg, &TestTypeProvider::all_i32(0, 1)).expect("SSA construction failed");
 
         assert!(
             matches!(
@@ -2347,9 +2331,9 @@ mod tests {
 
     /// The conversion `ret`urned by a two-instruction body.
     fn conversion_of(asm: InstructionAssembler) -> SsaOp {
-        let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0), Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa =
+            build_ssa(&cfg, &TestTypeProvider::all_i32(0, 0)).expect("SSA construction failed");
         defining_op(&ssa, returned_value(&ssa))
             .cloned()
             .expect("the returned value has a definition")
@@ -2357,9 +2341,9 @@ mod tests {
 
     /// The type of the value a function built from `asm` returns.
     fn returned_type(asm: InstructionAssembler) -> SsaType {
-        let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0), Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa =
+            build_ssa(&cfg, &TestTypeProvider::all_i32(0, 0)).expect("SSA construction failed");
         ssa.variable(returned_value(&ssa))
             .map(|variable| variable.var_type().clone())
             .expect("the returned value is a variable")
@@ -2485,10 +2469,9 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
-        let provider = TestTypeProvider::new(0, 0);
-        let ssa = SsaConverter::build(&cfg, 0, 0, &provider, Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let provider = TestTypeProvider::all_i32(0, 0);
+        let ssa = build_ssa(&cfg, &provider).expect("SSA construction failed");
 
         let copies: Vec<SsaType> = ssa
             .blocks()
@@ -2507,10 +2490,9 @@ mod tests {
         let mut asm = InstructionAssembler::new();
         asm.ldloc_0().unwrap().ret().unwrap();
 
-        let cfg = build_cfg(asm);
-        let provider = TestTypeProvider::new(0, 1).without_locals_init();
-        let ssa = SsaConverter::build(&cfg, 0, 1, &provider, Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let provider = TestTypeProvider::all_i32(0, 1).without_locals_init();
+        let ssa = build_ssa(&cfg, &provider).expect("SSA construction failed");
 
         assert!(
             defining_op(&ssa, returned_value(&ssa)).is_none(),
@@ -2543,9 +2525,9 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 1, &TestTypeProvider::new(1, 1), Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa =
+            build_ssa(&cfg, &TestTypeProvider::all_i32(1, 1)).expect("SSA construction failed");
 
         let findings = SsaVerifier::new(&ssa).verify(VerifyLevel::Full);
         assert!(
@@ -2574,11 +2556,10 @@ mod tests {
         let mut asm = InstructionAssembler::new();
         asm.ldloc_0().unwrap().ret().unwrap();
 
-        let cfg = build_cfg(asm);
-        let provider = TestTypeProvider::new(0, 1)
-            .with_local_type(0, SsaType::ValueType(TypeRef::new(Token::new(0x0200_0002))));
-        let ssa = SsaConverter::build(&cfg, 0, 1, &provider, Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let provider = TestTypeProvider::all_i32(0, 1)
+            .local(0, SsaType::ValueType(TypeRef::new(Token::new(0x0200_0002))));
+        let ssa = build_ssa(&cfg, &provider).expect("SSA construction failed");
 
         assert!(
             ssa.blocks()
@@ -2609,9 +2590,9 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0), Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa =
+            build_ssa(&cfg, &TestTypeProvider::all_i32(1, 0)).expect("SSA construction failed");
 
         // Should have 3 blocks: entry, then, else
         assert_eq!(ssa.block_count(), 3);
@@ -2647,9 +2628,9 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 1, &TestTypeProvider::new(1, 1), Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa =
+            build_ssa(&cfg, &TestTypeProvider::all_i32(1, 1)).expect("SSA construction failed");
 
         // Should have 4 blocks: entry, then, else, merge
         assert_eq!(ssa.block_count(), 4);
@@ -2692,9 +2673,9 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 1, &TestTypeProvider::new(1, 1), Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa =
+            build_ssa(&cfg, &TestTypeProvider::all_i32(1, 1)).expect("SSA construction failed");
 
         // Should have multiple blocks
         assert!(ssa.block_count() >= 2);
@@ -2710,8 +2691,8 @@ mod tests {
         let mut asm = InstructionAssembler::new();
         asm.ret().unwrap();
 
-        let cfg = build_cfg(asm);
-        let result = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0), Vec::new());
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let result = build_ssa(&cfg, &TestTypeProvider::all_i32(0, 0));
         assert!(result.is_ok());
     }
 
@@ -2737,9 +2718,9 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 1, &TestTypeProvider::new(0, 1), Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa =
+            build_ssa(&cfg, &TestTypeProvider::all_i32(0, 1)).expect("SSA construction failed");
 
         // Collect all versions of local0
         let local0_vars: Vec<_> = ssa.variables_from_local(0).collect();
@@ -2794,9 +2775,9 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 1, &TestTypeProvider::new(1, 1), Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa =
+            build_ssa(&cfg, &TestTypeProvider::all_i32(1, 1)).expect("SSA construction failed");
 
         // Find the merge block (block 3 in 0-indexed: entry=0, then=1, else=2, merge=3)
         // There should be a phi node for local0 in the merge block
@@ -2868,9 +2849,9 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 1, &TestTypeProvider::new(0, 1), Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa =
+            build_ssa(&cfg, &TestTypeProvider::all_i32(0, 1)).expect("SSA construction failed");
 
         // Loop header should have a phi node for local0 (merges initial value and loop value)
         assert!(
@@ -2933,9 +2914,9 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 2, 1, &TestTypeProvider::new(2, 1), Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa =
+            build_ssa(&cfg, &TestTypeProvider::all_i32(2, 1)).expect("SSA construction failed");
 
         // All variable IDs should be unique
         let mut ids: Vec<_> = ssa.variables().iter().map(|v| v.id().index()).collect();
@@ -2966,9 +2947,9 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 3, 0, &TestTypeProvider::new(3, 0), Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa =
+            build_ssa(&cfg, &TestTypeProvider::all_i32(3, 0)).expect("SSA construction failed");
 
         // Check that we have argument variables
         let arg_vars: Vec<_> = ssa.argument_variables().collect();
@@ -3011,9 +2992,9 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0), Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa =
+            build_ssa(&cfg, &TestTypeProvider::all_i32(1, 0)).expect("SSA construction failed");
 
         // Should succeed without error (this was failing before the stack depth fix)
         assert!(ssa.block_count() >= 2);
@@ -3067,9 +3048,9 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 2, 1, &TestTypeProvider::new(2, 1), Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa =
+            build_ssa(&cfg, &TestTypeProvider::all_i32(2, 1)).expect("SSA construction failed");
 
         // Should have phi nodes at merge points
         assert!(ssa.phi_count() >= 1, "Expected phi nodes at merge points");
@@ -3101,9 +3082,9 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0), Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa =
+            build_ssa(&cfg, &TestTypeProvider::all_i32(1, 0)).expect("SSA construction failed");
 
         // Should have multiple versions of arg0
         let arg0_vars: Vec<_> = ssa.variables_from_argument(0).collect();
@@ -3145,9 +3126,9 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 1, &TestTypeProvider::new(1, 1), Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa =
+            build_ssa(&cfg, &TestTypeProvider::all_i32(1, 1)).expect("SSA construction failed");
 
         // For each phi node, verify all operand values reference valid variables
         let var_ids: BTreeSet<_> = ssa.variables().iter().map(|v| v.id()).collect();
@@ -3176,9 +3157,9 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 1, &TestTypeProvider::new(0, 1), Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa =
+            build_ssa(&cfg, &TestTypeProvider::all_i32(0, 1)).expect("SSA construction failed");
 
         // Find the non-initial version of local0 (the one from stloc)
         let local0_defs: Vec<_> = ssa
@@ -3233,9 +3214,9 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0), Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa =
+            build_ssa(&cfg, &TestTypeProvider::all_i32(1, 0)).expect("SSA construction failed");
 
         // Find the merge block (should be the last block)
         let merge_block_idx = ssa.block_count() - 1;
@@ -3310,9 +3291,9 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0), Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa =
+            build_ssa(&cfg, &TestTypeProvider::all_i32(0, 0)).expect("SSA construction failed");
 
         // The dispatcher block should use the constant from block 0 in rem.un
         // Find the rem.un instruction
@@ -3378,9 +3359,9 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0), Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa =
+            build_ssa(&cfg, &TestTypeProvider::all_i32(0, 0)).expect("SSA construction failed");
 
         // Find the add instruction and check its operands
         let mut add_found = false;
@@ -3435,9 +3416,9 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0), Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa =
+            build_ssa(&cfg, &TestTypeProvider::all_i32(1, 0)).expect("SSA construction failed");
 
         // Find the switch instruction
         let mut switch_found = false;
@@ -3527,9 +3508,9 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0), Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa =
+            build_ssa(&cfg, &TestTypeProvider::all_i32(0, 0)).expect("SSA construction failed");
 
         // Verify ALL instruction operands are in the variable table
         // This catches any case where simulation variables aren't properly renamed
@@ -3645,9 +3626,9 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0), Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa =
+            build_ssa(&cfg, &TestTypeProvider::all_i32(0, 0)).expect("SSA construction failed");
 
         // Collect all variables used in the SSA
         let mut all_uses = BTreeSet::new();
@@ -3722,9 +3703,9 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0), Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa =
+            build_ssa(&cfg, &TestTypeProvider::all_i32(0, 0)).expect("SSA construction failed");
 
         // Find the pop instruction and verify its operand is registered
         let mut pop_found = false;
@@ -3803,9 +3784,9 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 3, &TestTypeProvider::new(0, 3), Vec::new())
-            .expect("SSA construction failed");
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa =
+            build_ssa(&cfg, &TestTypeProvider::all_i32(0, 3)).expect("SSA construction failed");
 
         // Verify ALL uses are registered
         let mut unregistered = vec![];

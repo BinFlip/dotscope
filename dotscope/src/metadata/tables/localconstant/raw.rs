@@ -75,8 +75,8 @@ impl LocalConstantRaw {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// # use dotscope::metadata::tables::localconstant::LocalConstantRaw;
+    /// ```no_run
+    /// # use dotscope::metadata::tables::LocalConstantRaw;
     /// # use dotscope::metadata::token::Token;
     /// # fn example() -> dotscope::Result<()> {
     /// let constant_raw = LocalConstantRaw {
@@ -90,6 +90,7 @@ impl LocalConstantRaw {
     /// let constant = constant_raw.to_owned(strings, blobs)?;
     /// # Ok(())
     /// # }
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn to_owned(&self, strings: &Strings, blobs: &Blob) -> Result<LocalConstantRc> {
         let name = if self.name == 0 {

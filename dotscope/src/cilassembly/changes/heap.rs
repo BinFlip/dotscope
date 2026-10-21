@@ -10,15 +10,7 @@
 //! references that survive heap rebuilding and deduplication. After the assembly is
 //! written, these references resolve to their final heap offsets.
 //!
-//! ```rust,ignore
-//! use dotscope::cilassembly::changes::{HeapChanges, ChangeRefKind};
-//!
-//! let mut changes = HeapChanges::<String>::new_strings(100);
-//! let string_ref = changes.append("MyString".to_string());
-//!
-//! // After assembly write, the ref resolves to final offset
-//! // let final_offset = string_ref.offset().unwrap();
-//! ```
+//! The `examples::module_example` test in this module runs this example.
 //!
 //! # Architecture
 //!
@@ -483,5 +475,23 @@ mod tests {
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].0, "one");
         assert_eq!(items[1].0, "two");
+    }
+}
+
+#[cfg(test)]
+mod examples {
+    use super::*;
+    use crate::Result;
+
+    /// An appended string is tracked with a reference that resolves to its heap offset only
+    /// when the assembly is written.
+    #[test]
+    fn module_example() -> Result<()> {
+        let mut changes = HeapChanges::<String>::new_strings();
+        let string_ref = changes.append("MyString".to_string());
+
+        assert_eq!(changes.appended_iter().count(), 1);
+        assert!(!string_ref.is_resolved());
+        Ok(())
     }
 }

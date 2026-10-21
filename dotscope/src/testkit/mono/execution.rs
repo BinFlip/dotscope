@@ -4,10 +4,12 @@
 //! from TestCapabilities.
 
 use std::{
-    path::Path,
+    path::{absolute, Path},
     process::{Command, Output},
     time::Duration,
 };
+
+use tempfile::TempDir;
 
 use crate::{
     prelude::*,
@@ -121,9 +123,17 @@ pub fn execute_with_runtime(runtime: Runtime, assembly_path: &Path) -> Result<Ex
     }
 }
 
-/// Execute using Mono runtime
+/// Execute using Mono runtime, in a working directory of its own: Mono writes its crash report
+/// (`mono_crash.*.json`) there, and so may the program, so neither lands in the caller's tree.
 fn execute_with_mono(assembly_path: &Path) -> Result<Output> {
-    run_with_timeout(Command::new("mono").arg(assembly_path), EXECUTION_TIMEOUT)
+    let assembly = absolute(assembly_path)?;
+    let workdir = TempDir::new()?;
+    run_with_timeout(
+        Command::new("mono")
+            .arg(assembly)
+            .current_dir(workdir.path()),
+        EXECUTION_TIMEOUT,
+    )
 }
 
 /// Execute using dotnet runtime
@@ -148,7 +158,7 @@ fn execute_with_dotnet(assembly_path: &Path) -> Result<Output> {
 
 #[cfg(test)]
 mod tests {
-    use tempfile::TempDir;
+    use std::env;
 
     use super::*;
     use crate::testkit::{
@@ -189,6 +199,52 @@ mod tests {
         );
         assert!(exec_result.stdout.contains("Hello from dotscope test!"));
 
+        Ok(())
+    }
+
+    #[test]
+    fn a_mono_program_writes_its_files_outside_the_callers_directory() -> Result<()> {
+        let Some(caps) = require_tool(ToolKind::Toolchain) else {
+            return Ok(());
+        };
+        if caps.runtime != Some(Runtime::Mono) {
+            eprintln!(
+                "skipped: the toolchain does not run on Mono ({})",
+                caps.summary()
+            );
+            return Ok(());
+        }
+        let probe = "dotscope_mono_workdir_probe.txt";
+        let source = format!(
+            "class Program {{ static void Main() {{ \
+             System.IO.File.WriteAllText(\"{probe}\", \"x\"); \
+             System.Console.WriteLine(System.IO.File.Exists(\"{probe}\")); }} }}"
+        );
+
+        let temp_dir = TempDir::new()?;
+        let arch = caps.supported_architectures.first().unwrap();
+        let compiled = compile(caps, &source, temp_dir.path(), "probe", arch)?;
+        assert!(compiled.is_success(), "Compilation failed");
+
+        let run = execute_with_runtime(Runtime::Mono, compiled.assembly_path())?;
+        assert!(
+            run.is_success(),
+            "Execution failed: {}",
+            run.error_summary()
+        );
+        assert_eq!(
+            run.stdout.trim(),
+            "True",
+            "the program could not write its file"
+        );
+        assert!(
+            !env::current_dir()?.join(probe).exists(),
+            "the program wrote into the caller's working directory"
+        );
+        assert!(
+            !temp_dir.path().join(probe).exists(),
+            "the program wrote next to its assembly"
+        );
         Ok(())
     }
 }

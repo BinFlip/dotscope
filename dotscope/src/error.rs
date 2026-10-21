@@ -179,7 +179,7 @@ macro_rules! malformed_error {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// # use dotscope::out_of_bounds_error;
 /// if index >= data.len() {
 ///     return Err(out_of_bounds_error!());

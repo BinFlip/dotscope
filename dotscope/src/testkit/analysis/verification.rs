@@ -8,14 +8,11 @@ use std::{collections::HashSet, fmt};
 use crate::{
     analysis::{
         CallGraph, ConstantPropagation, ControlFlowGraph, DataFlowSolver, LiveVariables, NodeId,
-        ReachingDefinitions, SsaConverter, SsaFunction, TypeContext, TypeProvider,
+        ReachingDefinitions, SsaFunction,
     },
     metadata::{method::Method, typesystem::PointerSize},
-    testkit::{
-        analysis::expectations::{
-            CallGraphExpectation, CfgExpectation, DataFlowExpectation, SsaExpectation,
-        },
-        TestTypeProvider,
+    testkit::analysis::expectations::{
+        CallGraphExpectation, CfgExpectation, DataFlowExpectation, SsaExpectation,
     },
     CilObject,
 };
@@ -478,45 +475,57 @@ pub fn verify_dataflow(
     errors
 }
 
-/// Builds CFG and SSA for a method and returns them.
-///
-/// # Arguments
-///
-/// * `method` - The method to analyze
+/// Builds the CFG and SSA of a method the way the library does, through [`Method::cfg`] and
+/// [`Method::ssa`], so a test verifies what analysis and deobfuscation see.
 ///
 /// # Returns
 ///
 /// A tuple of (CFG, SSA) or an error message.
-pub fn build_analysis(
-    method: &Method,
-    assembly: Option<&CilObject>,
-) -> Result<(ControlFlowGraph<'static>, SsaFunction), String> {
-    // Get the pre-decoded basic blocks from the method
-    let blocks = method
-        .blocks
-        .get()
-        .ok_or_else(|| "Method has no decoded blocks".to_string())?
-        .clone();
-
-    // Build CFG from the basic blocks
-    let cfg = ControlFlowGraph::from_basic_blocks(blocks)
-        .map_err(|e| format!("Failed to build CFG: {}", e))?;
-
-    // Get method parameter count from signature
-    let num_args = method.signature.param_count as usize;
-
-    // Get local variable count
-    let num_locals = method.local_vars.count();
-
-    // Build SSA with type context if assembly is available
-    let type_context = assembly.map(|asm| TypeContext::new(method, asm));
-    let fallback = TestTypeProvider::new(num_args, num_locals);
-    let provider: &dyn TypeProvider = match &type_context {
-        Some(ctx) => ctx,
-        None => &fallback,
-    };
-    let ssa = SsaConverter::build(&cfg, num_args, num_locals, provider, Vec::new())
-        .map_err(|e| format!("Failed to build SSA: {}", e))?;
-
+pub fn build_analysis<'m>(
+    method: &'m Method,
+    assembly: &CilObject,
+) -> Result<(ControlFlowGraph<'m>, SsaFunction), String> {
+    let cfg = method
+        .cfg()
+        .ok_or_else(|| format!("method {} has no decoded blocks", method.name))?;
+    let ssa = method
+        .ssa(assembly)
+        .map_err(|e| format!("Failed to build SSA: {e}"))?;
     Ok((cfg, ssa))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testkit::load_sample;
+
+    /// The analysis harness verifies the SSA the library builds, `this` and exception handlers
+    /// included, not a copy of its own.
+    #[test]
+    fn build_analysis_matches_the_library_s_ssa() {
+        let assembly = load_sample("crafted_2.exe");
+        let mut instance_methods = 0;
+        for entry in assembly.methods().iter() {
+            let method = entry.value();
+            let ours = build_analysis(method, &assembly).map(|(_, ssa)| ssa.to_string());
+            let library = method.ssa(&assembly).map(|ssa| ssa.to_string());
+            match (ours, library) {
+                (Ok(ours), Ok(library)) => {
+                    assert_eq!(ours, library, "method {}", method.name);
+                    instance_methods += usize::from(method.signature.has_this);
+                }
+                (Err(_), Err(_)) => {}
+                (ours, library) => {
+                    panic!(
+                        "method {}: harness {ours:?}, library {library:?}",
+                        method.name
+                    )
+                }
+            }
+        }
+        assert!(
+            instance_methods > 0,
+            "the sample has instance methods with bodies"
+        );
+    }
 }

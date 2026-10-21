@@ -304,7 +304,11 @@ fn field_get_field_type_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread)
             try_hook!(thread.heap().get_reflection_field_info(*fi_ref))
         {
             if let Some(asm) = thread.assembly().cloned() {
-                if let Some(sig) = asm.types().get_field_signature(&field_token) {
+                if let Some(sig) = asm
+                    .fields()
+                    .get(&field_token)
+                    .map(|entry| entry.value().signature.base.clone())
+                {
                     if let Ok(cil_type) = TypeResolver::new(asm.types()).resolve(&sig) {
                         if let Ok(type_ref) = thread
                             .heap_mut()

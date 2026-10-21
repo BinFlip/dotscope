@@ -38,7 +38,7 @@
 //!
 //! ## Basic Resource Enumeration
 //!
-//! ```ignore
+//! ```no_run
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
@@ -64,7 +64,7 @@
 //!
 //! ## Resource Data Access
 //!
-//! ```ignore
+//! ```no_run
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
@@ -90,7 +90,7 @@
 //!
 //! ## Comprehensive Resource Analysis
 //!
-//! ```ignore
+//! ```no_run
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
@@ -207,7 +207,7 @@ use crate::{
 ///
 /// ## Basic Resource Management
 ///
-/// ```ignore
+/// ```no_run
 /// use dotscope::CilObject;
 /// use std::path::Path;
 ///
@@ -229,7 +229,7 @@ use crate::{
 ///
 /// ## Resource Data Processing
 ///
-/// ```ignore
+/// ```no_run
 /// use dotscope::CilObject;
 /// use std::path::Path;
 ///
@@ -277,7 +277,7 @@ impl Resources {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
     /// use dotscope::metadata::resources::Resources;
     /// use std::sync::Arc;
     ///
@@ -310,7 +310,7 @@ impl Resources {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -349,7 +349,7 @@ impl Resources {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -396,7 +396,7 @@ impl Resources {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -457,7 +457,7 @@ impl Resources {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -519,7 +519,7 @@ impl Resources {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
     /// // This is typically called internally during metadata loading
     /// let resource = ManifestResourceRc::new(/* ... */);
     /// resources.insert(resource);
@@ -539,7 +539,7 @@ impl Resources {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -570,7 +570,7 @@ impl Resources {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///

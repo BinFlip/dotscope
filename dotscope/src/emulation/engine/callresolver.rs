@@ -2010,14 +2010,16 @@ fn native_delegate_fallback(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::emulation::{
-        engine::generics::GenericRegistry, process::EmulationConfig, runtime::RuntimeState,
-        tracer::TraceWriter,
+    use crate::{
+        emulation::{
+            engine::generics::GenericRegistry, runtime::RuntimeState, tracer::TraceWriter,
+        },
+        testkit::emulation::emulation_config,
     };
 
     fn create_test_resolver() -> CallResolver {
         let runtime = Arc::new(RwLock::new(RuntimeState::new()));
-        let config = Arc::new(EmulationConfig::default());
+        let config = Arc::new(emulation_config());
         let generics = Arc::new(GenericRegistry::new());
         CallResolver::new(runtime, config, None, generics).unwrap()
     }
@@ -2095,7 +2097,7 @@ mod tests {
     #[test]
     fn test_resolver_with_trace_writer() {
         let runtime = Arc::new(RwLock::new(RuntimeState::new()));
-        let config = Arc::new(EmulationConfig::default());
+        let config = Arc::new(emulation_config());
         let writer = Arc::new(TraceWriter::new_memory(1000, None));
         let generics = Arc::new(GenericRegistry::new());
         let resolver = CallResolver::new(runtime, config, Some(writer), generics).unwrap();

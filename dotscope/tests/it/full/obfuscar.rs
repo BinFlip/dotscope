@@ -22,10 +22,9 @@
 #![cfg(feature = "deobfuscation")]
 
 use dotscope::{
-    deobfuscation::{DeobfuscationEngine, EngineConfig},
     metadata::validation::ValidationConfig,
     testkit::{
-        fixture,
+        engine, fixture,
         framework::{
             assert_common_requirements, load_sample, print_summary, run_deobfuscation_test,
             ProcessMode, SampleSpec, SEMANTIC_TEST_METHODS,
@@ -143,29 +142,24 @@ fn all_samples() -> Vec<SampleSpec<ObfuscarExpectedProtections>> {
     ]
 }
 
-/// Main test that runs all Obfuscar samples through the deobfuscation pipeline.
-#[test]
-fn test_all_obfuscar_samples() {
-    let samples = all_samples();
-
-    // Load original.exe for semantic comparison
+/// Runs one Obfuscar sample through the deobfuscation pipeline and checks it against its
+/// description in [`all_samples`].
+fn check_sample(filename: &str) {
+    let sample = all_samples()
+        .into_iter()
+        .find(|sample| sample.filename == filename)
+        .unwrap_or_else(|| panic!("{filename} is not an Obfuscar sample"));
     let original_asm =
-        Some(load_sample(SAMPLES_DIR, "original.exe").expect("the unprotected original loads"));
+        load_sample(SAMPLES_DIR, "original.exe").expect("the unprotected original loads");
+    let result = run_deobfuscation_test(
+        &sample,
+        SAMPLES_DIR,
+        Some(&original_asm),
+        SEMANTIC_TEST_METHODS,
+        ProcessMode::Assembly,
+    );
 
-    let mut results = Vec::new();
-
-    for sample in &samples {
-        results.push(run_deobfuscation_test(
-            sample,
-            SAMPLES_DIR,
-            original_asm.as_ref(),
-            SEMANTIC_TEST_METHODS,
-            EngineConfig::default(),
-            ProcessMode::Assembly,
-        ));
-    }
-
-    print_summary(&results, "OBFUSCAR", |result| {
+    print_summary(std::slice::from_ref(&result), "OBFUSCAR", |result| {
         if !result.sample.is_original {
             eprintln!(
                 "       Detection: confidence={:.0}% techniques=[{}]",
@@ -175,41 +169,45 @@ fn test_all_obfuscar_samples() {
         }
     });
 
-    // ASSERTIONS
-    for result in &results {
-        if result.sample.is_original {
-            // Original should NOT be detected as Obfuscar
-            assert!(
-                result.detection.confidence() < 0.5,
-                "{}: Unprotected original should not be detected as Obfuscar (confidence: {:.0}%)",
-                result.sample.filename,
-                result.detection.confidence() * 100.0
-            );
-            continue;
-        }
-
-        let filename = result.sample.filename;
-        let expected = &result.sample.expected_protections;
-
-        // Common assertions: core validity, semantic preservation, structural match, diagnostics
-        let semantic_threshold = if expected.has_null_params { 0.85 } else { 0.90 };
-        assert_common_requirements(result, None, semantic_threshold, true);
-
-        // Detection assertions
-        if expected.has_string_hiding {
-            assert!(
-                result.detection.confidence() > 0.0,
-                "{}: Detection confidence should be positive for string hiding sample (confidence: {:.0}%)",
-                filename,
-                result.detection.confidence() * 100.0
-            );
-            assert!(
-                !result.detection.technique_ids.is_empty(),
-                "{}: Expected at least one detected technique for string hiding sample",
-                filename
-            );
-        }
+    if result.sample.is_original {
+        // Original should NOT be detected as Obfuscar
+        assert!(
+            result.detection.confidence() < 0.5,
+            "{}: Unprotected original should not be detected as Obfuscar (confidence: {:.0}%)",
+            result.sample.filename,
+            result.detection.confidence() * 100.0
+        );
+        return;
     }
+
+    let expected = &result.sample.expected_protections;
+
+    // Common assertions: core validity, semantic preservation, structural match, diagnostics
+    let semantic_threshold = if expected.has_null_params { 0.85 } else { 0.90 };
+    assert_common_requirements(&result, None, semantic_threshold, true);
+
+    // Detection assertions
+    if expected.has_string_hiding {
+        assert!(
+            result.detection.confidence() > 0.0,
+            "{filename}: Detection confidence should be positive for string hiding sample (confidence: {:.0}%)",
+            result.detection.confidence() * 100.0
+        );
+        assert!(
+            !result.detection.technique_ids.is_empty(),
+            "{filename}: Expected at least one detected technique for string hiding sample",
+        );
+    }
+}
+
+sample_tests! {
+    all_samples(), check_sample;
+    original => "original.exe",
+    default => "obfuscar_default.exe",
+    strings_only => "obfuscar_strings_only.exe",
+    rename_only => "obfuscar_rename_only.exe",
+    unicode => "obfuscar_unicode.exe",
+    maximum => "obfuscar_maximum.exe",
 }
 
 /// Test that the Obfuscar detection doesn't false-positive on ConfuserEx samples.
@@ -221,7 +219,7 @@ fn test_obfuscar_no_false_positives_on_confuserex() {
         CilObject::from_path_with_validation(confuserex_path, ValidationConfig::analysis())
             .expect("Failed to load ConfuserEx original");
 
-    let engine = DeobfuscationEngine::default();
+    let engine = engine();
     let det = engine.detect(&assembly);
     let attribution = det.attribution;
     let confidence = if attribution.is_some() { 1.0f64 } else { 0.0 };
@@ -249,7 +247,7 @@ fn test_obfuscar_detection_scoring() {
         let assembly = CilObject::from_path_with_validation(&path, ValidationConfig::analysis())
             .unwrap_or_else(|e| panic!("Failed to load {}: {}", filename, e));
 
-        let engine = DeobfuscationEngine::default();
+        let engine = engine();
         let det = engine.detect(&assembly);
         let attribution = det.attribution;
         let confidence = if attribution.is_some() { 1.0f64 } else { 0.0 };
@@ -282,7 +280,7 @@ fn test_obfuscar_rename_only_below_threshold() {
     let assembly = CilObject::from_path_with_validation(&path, ValidationConfig::analysis())
         .expect("Failed to load rename-only sample");
 
-    let engine = DeobfuscationEngine::default();
+    let engine = engine();
     let det = engine.detect(&assembly);
     let attribution = det.attribution;
     let confidence = if attribution.is_some() { 1.0f64 } else { 0.0 };

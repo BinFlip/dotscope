@@ -46,8 +46,8 @@
 //!
 //! ## Basic Usage
 //!
-//! ```ignore
-//! use dotscope::emulation::runtime::RuntimeState;
+//! ```no_run
+//! use dotscope::emulation::RuntimeState;
 //!
 //! // Create with default configuration (BCL hooks registered)
 //! let runtime = RuntimeState::new();
@@ -58,14 +58,17 @@
 //!
 //! ## Custom Configuration
 //!
-//! ```ignore
-//! use dotscope::emulation::runtime::{RuntimeState, RuntimeStateBuilder, Hook};
-//! use dotscope::emulation::process::EmulationConfig;
+//! ```no_run
+//! use dotscope::emulation::RuntimeState;
+//! use dotscope::emulation::RuntimeStateBuilder;
+//! use dotscope::emulation::Hook;
+//! use dotscope::emulation::EmulationConfig;
 //!
 //! let runtime = RuntimeStateBuilder::new()
 //!     .config(EmulationConfig::minimal())
 //!     .hook(Hook::new("my-hook").match_method_name("Decrypt"))
 //!     .build()?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! # Thread Safety
@@ -108,7 +111,7 @@ use crate::{
 /// passed to other components (e.g., the emulation controller) without needing to
 /// hold the `RuntimeState` lock. Registration and dispatch can happen concurrently:
 ///
-/// ```ignore
+/// ```no_run
 /// let runtime = RuntimeState::new();
 /// let hooks = runtime.hooks(); // Arc<HookManager>
 ///
@@ -127,9 +130,9 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```ignore
-/// use dotscope::emulation::runtime::RuntimeState;
-/// use dotscope::emulation::process::EmulationConfig;
+/// ```no_run
+/// use dotscope::emulation::RuntimeState;
+/// use dotscope::emulation::EmulationConfig;
 /// use std::sync::Arc;
 ///
 /// // Default configuration
@@ -171,8 +174,8 @@ impl RuntimeState {
     ///
     /// # Examples
     ///
-    /// ```ignore
-    /// use dotscope::emulation::runtime::RuntimeState;
+    /// ```no_run
+    /// use dotscope::emulation::RuntimeState;
     ///
     /// let runtime = RuntimeState::new();
     /// assert!(!runtime.hooks().is_empty());
@@ -198,9 +201,9 @@ impl RuntimeState {
     ///
     /// # Examples
     ///
-    /// ```ignore
-    /// use dotscope::emulation::runtime::RuntimeState;
-    /// use dotscope::emulation::process::EmulationConfig;
+    /// ```no_run
+    /// use dotscope::emulation::RuntimeState;
+    /// use dotscope::emulation::EmulationConfig;
     /// use std::sync::Arc;
     ///
     /// let config = EmulationConfig::minimal();
@@ -361,31 +364,35 @@ impl Default for RuntimeState {
 ///
 /// ## Basic Usage
 ///
-/// ```ignore
-/// use dotscope::emulation::runtime::RuntimeStateBuilder;
-/// use dotscope::emulation::process::EmulationConfig;
+/// ```no_run
+/// use dotscope::emulation::RuntimeStateBuilder;
+/// use dotscope::emulation::EmulationConfig;
 ///
 /// let runtime = RuntimeStateBuilder::new()
 ///     .config(EmulationConfig::minimal())
 ///     .build()?;
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
 /// ## Adding Custom Hooks
 ///
-/// ```ignore
-/// use dotscope::emulation::runtime::{RuntimeStateBuilder, Hook, PreHookResult};
+/// ```no_run
+/// use dotscope::emulation::RuntimeStateBuilder;
+/// use dotscope::emulation::Hook;
+/// use dotscope::emulation::PreHookResult;
 ///
 /// let runtime = RuntimeStateBuilder::new()
 ///     .hook(Hook::new("my-hook")
 ///         .match_method_name("Decrypt")
 ///         .pre(|ctx, thread| PreHookResult::Continue))
 ///     .build()?;
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
 /// ## Disabling Defaults
 ///
-/// ```ignore
-/// use dotscope::emulation::runtime::RuntimeStateBuilder;
+/// ```no_run
+/// use dotscope::emulation::RuntimeStateBuilder;
 ///
 /// // Start with no default hooks
 /// let runtime = RuntimeStateBuilder::new()
@@ -394,6 +401,7 @@ impl Default for RuntimeState {
 ///     .build()?;
 ///
 /// // Only custom hooks are registered
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct RuntimeStateBuilder {
     /// The emulation configuration.
@@ -417,11 +425,12 @@ impl RuntimeStateBuilder {
     ///
     /// # Examples
     ///
-    /// ```ignore
-    /// use dotscope::emulation::runtime::RuntimeStateBuilder;
+    /// ```no_run
+    /// use dotscope::emulation::RuntimeStateBuilder;
     ///
     /// let builder = RuntimeStateBuilder::new();
     /// let runtime = builder.build()?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
     pub fn new() -> Self {
@@ -462,14 +471,17 @@ impl RuntimeStateBuilder {
     ///
     /// # Examples
     ///
-    /// ```ignore
-    /// use dotscope::emulation::runtime::{RuntimeStateBuilder, Hook, PreHookResult};
+    /// ```no_run
+    /// use dotscope::emulation::RuntimeStateBuilder;
+    /// use dotscope::emulation::Hook;
+    /// use dotscope::emulation::PreHookResult;
     ///
     /// let runtime = RuntimeStateBuilder::new()
     ///     .hook(Hook::new("my-hook")
     ///         .match_method_name("Decrypt")
     ///         .pre(|ctx, thread| PreHookResult::Continue))
     ///     .build()?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
     pub fn hook(mut self, hook: Hook) -> Self {
@@ -504,8 +516,8 @@ impl RuntimeStateBuilder {
     ///
     /// # Examples
     ///
-    /// ```ignore
-    /// use dotscope::emulation::runtime::RuntimeStateBuilder;
+    /// ```no_run
+    /// use dotscope::emulation::RuntimeStateBuilder;
     ///
     /// let runtime = RuntimeStateBuilder::new()
     ///     .no_defaults()
@@ -513,6 +525,7 @@ impl RuntimeStateBuilder {
     ///     .build()?;
     ///
     /// // Only custom hooks are registered
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
     pub fn no_defaults(mut self) -> Self {

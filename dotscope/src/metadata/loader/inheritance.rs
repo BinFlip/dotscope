@@ -8,14 +8,13 @@
 //! scattered across individual table loaders, providing a unified and more robust
 //! approach to handling circular dependencies.
 
-use rayon::iter::ParallelIterator;
-
 use crate::{
     metadata::{
         loader::{LoaderContext, MetadataLoader},
         tables::{TableId, TypeDefRaw},
         typesystem::CilTypeReference,
     },
+    utils::TryForEachInOrder,
     Error, Result,
 };
 
@@ -50,7 +49,7 @@ impl MetadataLoader for InheritanceResolver {
             if let Some(typedef_table) = header.table::<TypeDefRaw>() {
                 typedef_table
                     .par_iter()
-                    .try_for_each(|raw_typedef| -> Result<()> {
+                    .try_for_each_in_order(|raw_typedef| -> Result<()> {
                         let raw_typedef = raw_typedef?;
                         if raw_typedef.extends.row == 0 {
                             return Ok(());

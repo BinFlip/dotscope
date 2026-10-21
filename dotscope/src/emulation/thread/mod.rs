@@ -29,8 +29,10 @@
 //!
 //! # Usage
 //!
-//! ```ignore
-//! use dotscope::emulation::thread::{EmulationThread, ThreadScheduler, ThreadState};
+//! ```no_run
+//! use dotscope::emulation::EmulationThread;
+//! use dotscope::emulation::ThreadScheduler;
+//! use dotscope::emulation::ThreadState;
 //!
 //! // Create a scheduler with 1000 instructions per time quantum
 //! let mut scheduler = ThreadScheduler::new(1000);

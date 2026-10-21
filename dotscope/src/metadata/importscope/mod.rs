@@ -56,7 +56,7 @@
 //!
 //! ## Basic Import Scope Parsing
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::metadata::importscope::{parse_imports_blob, ImportDeclaration};
 //! use dotscope::metadata::streams::Blob;
 //!
@@ -91,7 +91,7 @@
 //!
 //! ## Debugging Context Resolution
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::metadata::importscope::{parse_imports_blob, ImportDeclaration};
 //! use dotscope::CilObject;
 //!
@@ -127,7 +127,7 @@
 //!
 //! ## Advanced Import Analysis
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::metadata::importscope::{parse_imports_blob, ImportDeclaration, ImportKind};
 //!
 //! # fn analyze_import_scope(blob_data: &[u8], blob_heap: &dotscope::metadata::streams::Blob) -> dotscope::Result<()> {
@@ -154,6 +154,7 @@
 //! println!("  Total declarations: {}", imports.declarations.len());
 //! # Ok(())
 //! # }
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! # Error Handling

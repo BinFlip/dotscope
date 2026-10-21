@@ -88,7 +88,7 @@
 //!
 //! ## Variable Analysis
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
@@ -586,7 +586,7 @@ impl MethodAccessFlags {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use dotscope::metadata::method::MethodAccessFlags;
     ///
     /// // Public method
@@ -1315,7 +1315,7 @@ impl SectionFlags {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::CilObject;
 /// use std::path::Path;
 ///
@@ -1503,7 +1503,7 @@ impl LocalVariable {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::CilObject;
 /// use std::path::Path;
 ///

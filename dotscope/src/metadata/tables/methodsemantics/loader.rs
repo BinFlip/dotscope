@@ -25,7 +25,7 @@
 //! - Semantic relationships conflict (e.g., duplicate setters)
 //! - Required dependency tables are missing or malformed
 
-use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+use rayon::iter::IndexedParallelIterator;
 
 use crate::{
     metadata::{
@@ -34,6 +34,7 @@ use crate::{
         tables::MethodSemanticsRaw,
     },
     prelude::TableId,
+    utils::TryForEachInOrder,
     Result,
 };
 
@@ -64,28 +65,31 @@ impl MetadataLoader for MethodSemanticsLoader {
             return Ok(());
         };
 
-        table.par_iter().enumerate().try_for_each(|(index, row)| {
-            let Some(row) = context.handle_row(row, index)? else {
-                return Ok(());
-            };
-            let token_msg = || format!("method semantics 0x{:08x}", row.token.value());
+        table
+            .par_iter()
+            .enumerate()
+            .try_for_each_in_order(|(index, row)| {
+                let Some(row) = context.handle_row(row, index)? else {
+                    return Ok(());
+                };
+                let token_msg = || format!("method semantics 0x{:08x}", row.token.value());
 
-            let Some(owned) = context.handle_result(
-                row.to_owned(
-                    |coded_index| context.get_ref(coded_index),
-                    context.method_def,
-                ),
-                DiagnosticCategory::Method,
-                token_msg,
-            )?
-            else {
-                return Ok(());
-            };
+                let Some(owned) = context.handle_result(
+                    row.to_owned(
+                        |coded_index| context.get_ref(coded_index),
+                        context.method_def,
+                    ),
+                    DiagnosticCategory::Method,
+                    token_msg,
+                )?
+                else {
+                    return Ok(());
+                };
 
-            context.handle_error(owned.apply(), DiagnosticCategory::Method, token_msg)?;
-            context.method_semantics.insert(row.token, owned);
-            Ok(())
-        })
+                context.handle_error(owned.apply(), DiagnosticCategory::Method, token_msg)?;
+                context.method_semantics.insert(row.token, owned);
+                Ok(())
+            })
     }
 
     /// Returns the table identifier for `MethodSemantics`.

@@ -120,8 +120,8 @@ impl DocumentRaw {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// # use dotscope::metadata::tables::document::DocumentRaw;
+    /// ```no_run
+    /// # use dotscope::metadata::tables::DocumentRaw;
     /// # use dotscope::metadata::token::Token;
     /// # fn example() -> dotscope::Result<()> {
     /// let document_raw = DocumentRaw {
@@ -137,6 +137,7 @@ impl DocumentRaw {
     /// // let document = document_raw.to_owned(&strings, &blobs, &guids)?;
     /// # Ok(())
     /// # }
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     ///
     /// # Errors

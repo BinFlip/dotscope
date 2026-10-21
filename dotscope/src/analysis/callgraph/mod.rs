@@ -24,7 +24,7 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::analysis::CallGraph;
 //! use dotscope::CilObject;
 //!
@@ -52,6 +52,7 @@
 //!         println!("Recursive method: {:?}", method);
 //!     }
 //! }
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 
 mod graph;

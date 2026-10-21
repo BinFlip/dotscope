@@ -15,7 +15,7 @@ use crate::metadata::{signatures::SignatureField, token::Token};
 ///
 /// # Usage Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::metadata::tables::LocalConstant;
 /// use dotscope::metadata::signatures::TypeSignature;
 ///

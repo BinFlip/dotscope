@@ -92,16 +92,16 @@ jobs:
     - name: Check compilation
       run: cargo check --workspace --all-features
 
-    - name: Run tests (Linux - full)
+    # Test tiers are defined in .cargo/config.toml and the Makefile.
+    - name: Run tests (Linux - oracle tier)
       if: runner.os == 'Linux'
       # The job installs the .NET SDK and Mono: a test that needs them fails rather than skips.
-      env:
-        DOTSCOPE_REQUIRE_TOOLS: "1"
-      run: cargo test --workspace --release --features z3 --lib --bins --tests --verbose
+      run: make test-oracle
 
-    - name: Run tests (macOS/Windows - skip expensive tests)
+    # macOS and Windows confirm the platform works; Linux carries the full coverage.
+    - name: Run tests (macOS/Windows - quick tier)
       if: runner.os != 'Linux'
-      run: cargo test --workspace --release --features z3,skip-expensive-tests --lib --bins --tests --verbose
+      run: cargo test-quick
 
     - name: Run doc tests (Linux only)
       if: runner.os == 'Linux'
@@ -138,7 +138,7 @@ jobs:
       run: cargo check -p dotscope --no-default-features
 
     - name: Run tests (no default features)
-      run: cargo test -p dotscope --no-default-features --release --lib --bins --tests --verbose
+      run: cargo test -p dotscope --no-default-features --profile ci-test --lib --bins --tests
 
   # Fuzzing on pushes to main or PRs targeting main
   fuzzing:
@@ -261,10 +261,10 @@ jobs:
     - name: Install cargo-llvm-cov
       uses: taiki-e/install-action@cargo-llvm-cov
       
-    - name: Generate code coverage
+    - name: Generate code coverage (full tier)
       env:
         DOTSCOPE_REQUIRE_TOOLS: "1"
-      run: cargo llvm-cov --workspace --features z3,skip-expensive-tests --lcov --output-path lcov.info --exclude dotscope-cli
+      run: make test-coverage
       
     - name: Upload to codecov.io
       uses: codecov/codecov-action@v7

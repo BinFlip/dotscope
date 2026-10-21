@@ -39,7 +39,7 @@
 //!
 //! # Usage
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::emulation::{ProcessBuilder, CallTreeBuilder};
 //!
 //! let tree_builder = CallTreeBuilder::new();
@@ -50,6 +50,7 @@
 //!
 //! // After emulation, retrieve the tree
 //! // (or use build_call_tree() for post-hoc construction from events)
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 
 use std::{fmt, sync::Mutex};

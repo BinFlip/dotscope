@@ -73,7 +73,7 @@
 //!
 //! ## Integration with Metadata
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::metadata::identity::AssemblyIdentity;
 //! use dotscope::metadata::tables::AssemblyRef;
 //!

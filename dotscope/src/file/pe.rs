@@ -23,19 +23,21 @@
 //! # Usage Examples
 //!
 //! ## Parsing from Goblin PE
-//! ```rust,ignore
+//! ```no_run
 //! use goblin::pe::PE;
 //! use dotscope::Pe;
 //!
 //! let goblin_pe = PE::parse(data)?;
 //! let owned_pe = Pe::from_goblin_pe(&goblin_pe)?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! ## Serialization for Write Pipeline
-//! ```rust,ignore
+//! ```no_run
 //! let mut buffer = Vec::new();
 //! owned_pe.write_headers(&mut buffer)?;
 //! owned_pe.write_section_table(&mut buffer)?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 
 use crate::{

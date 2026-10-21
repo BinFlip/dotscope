@@ -340,7 +340,7 @@ macro_rules! raw_validators {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use crate::owned_validators;
 ///
 /// let validators = owned_validators![

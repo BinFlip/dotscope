@@ -76,7 +76,7 @@
 //!
 //! ## Array Type Resolution
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::metadata::{
 //!     typesystem::{TypeResolver, ArrayDimensions},
 //!     signatures::{TypeSignature, SignatureArray}
@@ -94,6 +94,7 @@
 //! assert_eq!(array_type.name, "Int32[]");
 //! # Ok(())
 //! # }
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! ## Context-Aware Resolution
@@ -445,7 +446,7 @@ impl TypeResolver {
     ///
     /// ## Complex Type Resolution
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use dotscope::metadata::{
     ///     signatures::{TypeSignature, SignatureArray},
     ///     typesystem::ArrayDimensions,
@@ -466,6 +467,7 @@ impl TypeResolver {
     /// let array_type = resolver.resolve(&array_sig)?;
     /// # Ok(())
     /// # }
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     ///
     /// # Thread Safety
@@ -506,8 +508,12 @@ impl TypeResolver {
     ///
     /// # Returns
     /// A deterministic string like `FnPtr_stdcall_2_void` representing the signature.
-    fn format_fnptr_name(signature: &SignatureMethod) -> String {
-        let calling_convention = if signature.stdcall {
+    pub(crate) fn format_fnptr_name(signature: &SignatureMethod) -> String {
+        let calling_convention = if signature.vararg {
+            "vararg"
+        } else if signature.unmanaged {
+            "unmanaged"
+        } else if signature.stdcall {
             "stdcall"
         } else if signature.cdecl {
             "cdecl"

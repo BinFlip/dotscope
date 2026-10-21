@@ -6,7 +6,7 @@
 //!
 //! # Usage Example
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::prelude::*;
 //!
 //! # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
@@ -15,6 +15,7 @@
 //! let encmap_token = EncMapBuilder::new()
 //!     .original_token(0x06000001)    // MethodDef token before editing
 //!     .build(&mut assembly)?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 
 use crate::{
@@ -44,7 +45,7 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::prelude::*;
 ///
 /// // Map original method token
@@ -61,6 +62,7 @@ use crate::{
 /// let field_map = EncMapBuilder::new()
 ///     .original_token(0x04000025)  // Original Field token
 ///     .build(&mut assembly)?;
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct EncMapBuilder {
@@ -162,7 +164,7 @@ impl EncMapBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use dotscope::prelude::*;
     ///
     /// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
@@ -170,6 +172,7 @@ impl EncMapBuilder {
     /// let token = EncMapBuilder::new()
     ///     .original_token(0x06000001)
     ///     .build(&mut assembly)?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let original_token = self.original_token.ok_or_else(|| {

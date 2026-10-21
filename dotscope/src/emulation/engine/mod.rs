@@ -46,7 +46,7 @@
 //!
 //! # Usage Example
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::emulation::{Interpreter, EmulationLimits};
 //!
 //! // Create interpreter with limits
@@ -107,7 +107,9 @@ mod tests {
         prelude::PointerSize,
         project::ProjectLoader,
         testkit::{
-            emulation::{create_test_context, create_test_thread},
+            emulation::{
+                create_test_context, create_test_thread, emulation_limits, process_builder,
+            },
             fixture,
         },
         Result,
@@ -134,7 +136,7 @@ mod tests {
 
         // Set up interpreter and thread
         let ctx = create_test_context();
-        let limits = EmulationLimits::default();
+        let limits = emulation_limits();
         let mut interpreter =
             Interpreter::new(limits, Arc::clone(&ctx.address_space), PointerSize::Bit64);
         let mut thread = EmulationThread::new(ThreadId::MAIN, ctx);
@@ -1328,7 +1330,7 @@ mod tests {
         let context = EmulationContext::new(assembly.clone(), Arc::new(DashMap::new()));
 
         // Create process using ProcessBuilder
-        let process = crate::emulation::ProcessBuilder::new()
+        let process = process_builder()
             .name("test")
             .build()
             .expect("Should build process");

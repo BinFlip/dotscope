@@ -28,22 +28,7 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
-//! use dotscope::analysis::x86::flags::{FlagState, FlagProducer};
-//! use dotscope::analysis::{X86Condition, X86Operand, X86Register, SsaVarId, CmpKind};
-//!
-//! let mut flags = FlagState::new();
-//!
-//! // After CMP eax, 10
-//! let v0 = SsaVarId::from_index(0);  // SSA var for eax
-//! let v1 = SsaVarId::from_index(1);  // SSA var for constant 10
-//! flags.set_compare(v0, v1);
-//!
-//! // Get SSA comparison for JL
-//! let (cmp, left, right, unsigned) = flags.get_branch_operands(X86Condition::L).unwrap();
-//! assert_eq!(cmp, CmpKind::Lt);
-//! assert!(!unsigned);
-//! ```
+//! The `examples::module_example` test in this module runs this example.
 
 use crate::analysis::{
     ssa::{CmpKind, SsaVarId},
@@ -1041,5 +1026,31 @@ mod tests {
             }
             other => panic!("Expected OverflowFlag, got {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod examples {
+    use super::*;
+    use crate::{
+        analysis::{CmpKind, SsaVarId, X86Condition},
+        Result,
+    };
+
+    #[test]
+    fn module_example() -> Result<()> {
+        let mut flags = FlagState::new();
+
+        // After CMP eax, 10
+        let v0 = SsaVarId::from_index(0); // SSA var for eax
+        let v1 = SsaVarId::from_index(1); // SSA var for constant 10
+        flags.set_compare(v0, v1);
+
+        // Get SSA comparison for JL
+        let (cmp, left, right, unsigned) = flags.get_branch_operands(X86Condition::L).unwrap();
+        assert_eq!(cmp, CmpKind::Lt);
+        assert_eq!((left, right), (v0, v1));
+        assert!(!unsigned);
+        Ok(())
     }
 }

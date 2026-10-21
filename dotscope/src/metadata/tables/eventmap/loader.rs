@@ -14,7 +14,7 @@
 //! # Reference
 //! - [ECMA-335 II.22.12](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `EventMap` table specification
 
-use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+use rayon::iter::IndexedParallelIterator;
 
 use crate::{
     metadata::{
@@ -23,6 +23,7 @@ use crate::{
         tables::EventMapRaw,
     },
     prelude::TableId,
+    utils::TryForEachInOrder,
     Result,
 };
 
@@ -63,25 +64,28 @@ impl MetadataLoader for EventMapLoader {
             return Ok(());
         };
 
-        table.par_iter().enumerate().try_for_each(|(index, row)| {
-            let Some(row) = context.handle_row(row, index)? else {
-                return Ok(());
-            };
-            let token_msg = || format!("event map 0x{:08x}", row.token.value());
+        table
+            .par_iter()
+            .enumerate()
+            .try_for_each_in_order(|(index, row)| {
+                let Some(row) = context.handle_row(row, index)? else {
+                    return Ok(());
+                };
+                let token_msg = || format!("event map 0x{:08x}", row.token.value());
 
-            let Some(owned) = context.handle_result(
-                row.to_owned(context.types, &context.event, &context.event_ptr, table),
-                DiagnosticCategory::Table,
-                token_msg,
-            )?
-            else {
-                return Ok(());
-            };
+                let Some(owned) = context.handle_result(
+                    row.to_owned(context.types, &context.event, &context.event_ptr, table),
+                    DiagnosticCategory::Table,
+                    token_msg,
+                )?
+                else {
+                    return Ok(());
+                };
 
-            context.handle_error(owned.apply(), DiagnosticCategory::Table, token_msg)?;
-            context.event_map.insert(row.token, owned);
-            Ok(())
-        })
+                context.handle_error(owned.apply(), DiagnosticCategory::Table, token_msg)?;
+                context.event_map.insert(row.token, owned);
+                Ok(())
+            })
     }
 
     /// Returns the table identifier for `EventMap` table

@@ -23,7 +23,7 @@
 //!
 //! # Usage Examples
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use crate::cilassembly::changes::AssemblyChanges;
 //!
 //! let mut changes = AssemblyChanges::new();
@@ -64,7 +64,7 @@ use crate::{Error, Result};
 ///
 /// # Usage Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use crate::cilassembly::changes::AssemblyChanges;
 ///
 /// let changes = AssemblyChanges::new();

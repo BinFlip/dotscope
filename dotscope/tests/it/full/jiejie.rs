@@ -22,10 +22,9 @@
 #![cfg(feature = "deobfuscation")]
 
 use dotscope::{
-    deobfuscation::{DeobfuscationEngine, EngineConfig},
     metadata::validation::ValidationConfig,
     testkit::{
-        fixture,
+        engine, fixture,
         framework::{
             assert_common_requirements, load_sample, print_summary, run_deobfuscation_test,
             ProcessMode, SampleSpec, SEMANTIC_TEST_METHODS,
@@ -239,31 +238,28 @@ fn all_samples() -> Vec<SampleSpec<JiejieExpectedProtections>> {
     ]
 }
 
-/// Main test that runs all JIEJIE.NET samples through the deobfuscation pipeline.
-#[test]
-fn test_all_jiejie_samples() {
-    let samples = all_samples();
+/// Runs one JIEJIE.NET sample through the deobfuscation pipeline and checks it against its
+/// description in [`all_samples`].
+fn check_sample(filename: &str) {
+    let sample = all_samples()
+        .into_iter()
+        .find(|sample| sample.filename == filename)
+        .unwrap_or_else(|| panic!("{filename} is not a JIEJIE.NET sample"));
 
-    // Load original.exe for semantic and structural comparison
+    // The original, for semantic and structural comparison
     let original_asm =
-        Some(load_sample(SAMPLES_DIR, "original.exe").expect("the unprotected original loads"));
-    let original_path = fixture(&format!("{}/original.exe", SAMPLES_DIR));
-    let original_stats = Some(AssemblyStats::from_file(&original_path));
+        load_sample(SAMPLES_DIR, "original.exe").expect("the unprotected original loads");
+    let original_stats = AssemblyStats::from_file(&fixture(&format!("{SAMPLES_DIR}/original.exe")));
 
-    let mut results = Vec::new();
+    let result = run_deobfuscation_test(
+        &sample,
+        SAMPLES_DIR,
+        Some(&original_asm),
+        SEMANTIC_TEST_METHODS,
+        ProcessMode::Assembly,
+    );
 
-    for sample in &samples {
-        results.push(run_deobfuscation_test(
-            sample,
-            SAMPLES_DIR,
-            original_asm.as_ref(),
-            SEMANTIC_TEST_METHODS,
-            EngineConfig::default(),
-            ProcessMode::Assembly,
-        ));
-    }
-
-    print_summary(&results, "JIEJIE.NET", |result| {
+    print_summary(std::slice::from_ref(&result), "JIEJIE.NET", |result| {
         if !result.sample.is_original {
             eprintln!(
                 "       Detection: confidence={:.0}% techniques=[{}]",
@@ -273,55 +269,63 @@ fn test_all_jiejie_samples() {
         }
     });
 
-    // ASSERTIONS
-    for result in &results {
-        if result.sample.is_original {
-            // Original should NOT be detected as JIEJIE.NET
-            assert!(
-                result.detection.confidence() < 0.5,
-                "{}: Unprotected original should not be detected as JIEJIE.NET (confidence: {:.0}%)",
-                result.sample.filename,
-                result.detection.confidence() * 100.0
-            );
-            continue;
-        }
-
-        let filename = result.sample.filename;
-
-        // Common assertions: core validity, semantic preservation, structural match, diagnostics
-        let semantic_threshold = match result.sample.verification_level {
-            VerificationLevel::Relaxed => 0.85,
-            VerificationLevel::Normal => 0.90,
-        };
-        assert_common_requirements(result, original_stats.as_ref(), semantic_threshold, true);
-
-        // Detection: JIEJIE.NET should be identified when detectable protections
-        // are present. Rename-only samples have no structural pattern to detect.
-        let has_detectable_protection = result.sample.expected_protections.has_int32_container
-            || result.sample.expected_protections.has_string_encryption
-            || result.sample.expected_protections.has_typeof_encryption
-            || result.sample.expected_protections.has_array_encryption
-            || result.sample.expected_protections.has_resource_encryption;
-
-        if has_detectable_protection {
-            assert!(
-                result.detection.confidence() > 0.0,
-                "{}: Should be detected as JIEJIE.NET (confidence: {:.0}%)",
-                filename,
-                result.detection.confidence() * 100.0
-            );
-
-            // Post-deobfuscation: artifacts should be removed
-            assert!(
-                result.post_detection.confidence() < 0.5,
-                "{}: JIEJIE.NET artifacts should be removed after deobfuscation \
-                 (post-confidence: {:.0}%, remaining techniques: [{}])",
-                filename,
-                result.post_detection.confidence() * 100.0,
-                result.post_detection.technique_ids.join(", ")
-            );
-        }
+    if result.sample.is_original {
+        // Original should NOT be detected as JIEJIE.NET
+        assert!(
+            result.detection.confidence() < 0.5,
+            "{}: Unprotected original should not be detected as JIEJIE.NET (confidence: {:.0}%)",
+            result.sample.filename,
+            result.detection.confidence() * 100.0
+        );
+        return;
     }
+
+    // Common assertions: core validity, semantic preservation, structural match, diagnostics
+    let semantic_threshold = match result.sample.verification_level {
+        VerificationLevel::Relaxed => 0.85,
+        VerificationLevel::Normal => 0.90,
+    };
+    assert_common_requirements(&result, Some(&original_stats), semantic_threshold, true);
+
+    // Detection: JIEJIE.NET should be identified when detectable protections
+    // are present. Rename-only samples have no structural pattern to detect.
+    let expected = &result.sample.expected_protections;
+    let has_detectable_protection = expected.has_int32_container
+        || expected.has_string_encryption
+        || expected.has_typeof_encryption
+        || expected.has_array_encryption
+        || expected.has_resource_encryption;
+
+    if has_detectable_protection {
+        assert!(
+            result.detection.confidence() > 0.0,
+            "{filename}: Should be detected as JIEJIE.NET (confidence: {:.0}%)",
+            result.detection.confidence() * 100.0
+        );
+
+        // Post-deobfuscation: artifacts should be removed
+        assert!(
+            result.post_detection.confidence() < 0.5,
+            "{filename}: JIEJIE.NET artifacts should be removed after deobfuscation \
+             (post-confidence: {:.0}%, remaining techniques: [{}])",
+            result.post_detection.confidence() * 100.0,
+            result.post_detection.technique_ids.join(", ")
+        );
+    }
+}
+
+sample_tests! {
+    all_samples(), check_sample;
+    original => "original.exe",
+    strings_only => "jiejie_strings_only.exe",
+    highstrings => "jiejie_highstrings.exe",
+    controlflow_only => "jiejie_controlflow_only.exe",
+    controlflow_no_rename => "jiejie_controlflow_no_rename.exe",
+    rename_only => "jiejie_rename_only.exe",
+    resources_only => "jiejie_resources_only.exe",
+    no_rename => "jiejie_no_rename.exe",
+    default => "jiejie_default.exe",
+    maximum => "jiejie_maximum.exe",
 }
 
 /// Test that all samples can be loaded and parsed by dotscope.
@@ -368,7 +372,7 @@ fn test_jiejie_no_false_positive_on_original() {
     let assembly = CilObject::from_path_with_validation(&path, ValidationConfig::analysis())
         .expect("Failed to load original");
 
-    let engine = DeobfuscationEngine::default();
+    let engine = engine();
     let det = engine.detect(&assembly);
     let attribution = det.attribution;
     let confidence = if attribution.is_some() { 1.0f64 } else { 0.0 };
@@ -395,7 +399,7 @@ fn test_jiejie_no_confuserex_false_positive() {
         let assembly = CilObject::from_path_with_validation(&path, ValidationConfig::analysis())
             .unwrap_or_else(|e| panic!("Failed to load {}: {}", filename, e));
 
-        let engine = DeobfuscationEngine::default();
+        let engine = engine();
         let det = engine.detect(&assembly);
 
         if let Some(ref attr) = det.attribution {

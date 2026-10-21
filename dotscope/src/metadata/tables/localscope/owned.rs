@@ -107,7 +107,7 @@ impl LocalScope {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// # use dotscope::metadata::tables::LocalScope;
     /// # fn example(scope: &LocalScope) {
     /// if scope.has_variables() {
@@ -126,7 +126,7 @@ impl LocalScope {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// # use dotscope::metadata::tables::LocalScope;
     /// # fn example(scope: &LocalScope) {
     /// if scope.has_constants() {
@@ -146,7 +146,7 @@ impl LocalScope {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// # use dotscope::metadata::tables::LocalScope;
     /// # fn example(scope: &LocalScope) {
     /// if scope.has_import_scope() {

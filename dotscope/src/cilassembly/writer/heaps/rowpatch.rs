@@ -31,19 +31,7 @@
 //! table rows during heap rebuild mode. It's typically called from the generator
 //! when writing metadata tables.
 //!
-//! ```ignore
-//! use dotscope::cilassembly::writer::heaps::patch_row_heap_refs;
-//!
-//! // Patch a single row's heap references
-//! patch_row_heap_refs(
-//!     TableId::TypeDef,
-//!     &mut row_bytes,
-//!     &table_info,
-//!     &string_remapping,
-//!     &blob_remapping,
-//!     &guid_remapping,
-//! );
-//! ```
+//! The `examples::module_example` test in this module runs this example.
 
 use std::collections::HashMap;
 
@@ -191,5 +179,40 @@ mod tests {
 
         // Should not panic - just silently skip
         patch_heap_field(&mut data, 10, 2, &remap);
+    }
+}
+
+#[cfg(test)]
+mod examples {
+    use std::collections::HashMap;
+
+    use super::*;
+    use crate::{testkit::fixture, CilAssemblyView, Result};
+
+    /// A TypeDef row whose name string moved from offset 0x10 to 0x20: the name column is
+    /// patched, the namespace column, whose string did not move, is left alone.
+    #[test]
+    fn module_example() -> Result<()> {
+        let view = CilAssemblyView::from_path(fixture("crafted_2.exe"))?;
+        let table_info = view.tables().expect("tables").info.clone();
+
+        // Flags (4), Name, Namespace, Extends, FieldList, MethodList (two bytes each)
+        let mut row_bytes = [0u8; 14];
+        row_bytes[4..6].copy_from_slice(&0x10u16.to_le_bytes());
+        row_bytes[6..8].copy_from_slice(&0x30u16.to_le_bytes());
+        let string_remapping = HashMap::from([(0x10, 0x20)]);
+
+        patch_row_heap_refs(
+            TableId::TypeDef,
+            &mut row_bytes,
+            &table_info,
+            &string_remapping,
+            &HashMap::new(),
+            &HashMap::new(),
+        );
+
+        assert_eq!(row_bytes[4..6], 0x20u16.to_le_bytes());
+        assert_eq!(row_bytes[6..8], 0x30u16.to_le_bytes());
+        Ok(())
     }
 }

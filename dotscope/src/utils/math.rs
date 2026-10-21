@@ -36,16 +36,7 @@ pub fn to_i32_saturating(value: usize) -> i32 {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::utils::is_power_of_two;
-///
-/// assert_eq!(is_power_of_two(1), Some(0));   // 2^0 = 1
-/// assert_eq!(is_power_of_two(2), Some(1));   // 2^1 = 2
-/// assert_eq!(is_power_of_two(8), Some(3));   // 2^3 = 8
-/// assert_eq!(is_power_of_two(0), None);
-/// assert_eq!(is_power_of_two(-8), None);
-/// assert_eq!(is_power_of_two(6), None);
-/// ```
+/// The `examples::is_power_of_two_example` test in this module runs this example.
 #[must_use]
 #[allow(clippy::cast_sign_loss)] // value > 0 verified above
 #[allow(clippy::cast_possible_truncation)] // trailing_zeros <= 63 for u64
@@ -123,5 +114,22 @@ mod tests {
         assert_eq!(is_power_of_two(9), None);
         assert_eq!(is_power_of_two(15), None);
         assert_eq!(is_power_of_two(17), None);
+    }
+}
+
+#[cfg(test)]
+mod examples {
+    use super::*;
+    use crate::Result;
+
+    #[test]
+    fn is_power_of_two_example() -> Result<()> {
+        assert_eq!(is_power_of_two(1), Some(0)); // 2^0 = 1
+        assert_eq!(is_power_of_two(2), Some(1)); // 2^1 = 2
+        assert_eq!(is_power_of_two(8), Some(3)); // 2^3 = 8
+        assert_eq!(is_power_of_two(0), None);
+        assert_eq!(is_power_of_two(-8), None);
+        assert_eq!(is_power_of_two(6), None);
+        Ok(())
     }
 }

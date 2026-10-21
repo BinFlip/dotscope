@@ -133,7 +133,7 @@ impl CustomDebugInformationRaw {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use dotscope::metadata::tables::{CustomDebugInformationRaw, CodedIndex};
     /// use dotscope::metadata::token::Token;
     /// use dotscope::metadata::typesystem::CilTypeReference;
@@ -158,6 +158,7 @@ impl CustomDebugInformationRaw {
     /// // The value field now contains parsed CustomDebugInfo::SourceLink with structured JSON
     /// # Ok(())
     /// # }
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     ///
     /// # Errors

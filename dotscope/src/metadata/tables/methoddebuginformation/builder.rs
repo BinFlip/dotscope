@@ -186,7 +186,7 @@ impl MethodDebugInformationBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// # use dotscope::prelude::*;
     /// # use dotscope::metadata::sequencepoints::SequencePoints;
     /// # let points = SequencePoints::default();
@@ -227,7 +227,7 @@ impl MethodDebugInformationBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;

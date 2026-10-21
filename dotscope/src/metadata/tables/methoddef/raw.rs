@@ -123,8 +123,8 @@ use crate::{
 ///
 /// # Usage Patterns
 ///
-/// ```rust,ignore
-/// use dotscope::metadata::tables::methoddef::raw::MethodDefRaw;
+/// ```no_run
+/// use dotscope::metadata::tables::MethodDefRaw;
 /// use dotscope::metadata::streams::{Strings, Blob};
 ///
 /// # fn process_method_entry(raw_entry: &MethodDefRaw, strings: &Strings, blob: &Blob) -> dotscope::Result<()> {
@@ -144,6 +144,7 @@ use crate::{
 /// println!("Signature has {} bytes", signature_data.len());
 /// # Ok(())
 /// # }
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
 /// # Thread Safety

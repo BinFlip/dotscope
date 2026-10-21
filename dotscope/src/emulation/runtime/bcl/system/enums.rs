@@ -176,25 +176,21 @@ fn enum_get_underlying_type_pre(
                     // Find the special "value__" instance field (non-static, non-literal)
                     for (_, field) in cil_type.fields.iter() {
                         if !field.flags.is_static() && !field.flags.is_literal() {
-                            if let Some(sig) = asm.types().get_field_signature(&field.token) {
-                                let underlying_token = TypeResolver::new(asm.types())
-                                    .resolve(&sig)
-                                    .map(|t| t.token)
-                                    .unwrap_or_else(|_| CilPrimitiveKind::I4.token());
-                                match thread
-                                    .heap_mut()
-                                    .alloc_reflection_type(underlying_token, None)
-                                {
-                                    Ok(href) => {
-                                        return PreHookResult::Bypass(Some(EmValue::ObjectRef(
-                                            href,
-                                        )))
-                                    }
-                                    Err(e) => {
-                                        return PreHookResult::Error(format!(
-                                            "heap allocation failed: {e}"
-                                        ))
-                                    }
+                            let underlying_token = TypeResolver::new(asm.types())
+                                .resolve(&field.signature.base)
+                                .map(|t| t.token)
+                                .unwrap_or_else(|_| CilPrimitiveKind::I4.token());
+                            match thread
+                                .heap_mut()
+                                .alloc_reflection_type(underlying_token, None)
+                            {
+                                Ok(href) => {
+                                    return PreHookResult::Bypass(Some(EmValue::ObjectRef(href)))
+                                }
+                                Err(e) => {
+                                    return PreHookResult::Error(format!(
+                                        "heap allocation failed: {e}"
+                                    ))
                                 }
                             }
                         }

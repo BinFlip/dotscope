@@ -4,7 +4,7 @@
 //! `ImportScope` table data during metadata loading. The loader handles parallel
 //! processing and integration with the broader loader context.
 
-use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+use rayon::iter::IndexedParallelIterator;
 
 use crate::{
     metadata::{
@@ -12,6 +12,7 @@ use crate::{
         loader::{LoaderContext, MetadataLoader},
         tables::TableId,
     },
+    utils::TryForEachInOrder,
     Result,
 };
 
@@ -46,23 +47,29 @@ impl MetadataLoader for ImportScopeLoader {
             return Ok(());
         };
 
-        table.par_iter().enumerate().try_for_each(|(index, row)| {
-            let Some(row) = context.handle_row(row, index)? else {
-                return Ok(());
-            };
-            let token_msg = || format!("import scope 0x{:08x}", row.token.value());
+        table
+            .par_iter()
+            .enumerate()
+            .try_for_each_in_order(|(index, row)| {
+                let Some(row) = context.handle_row(row, index)? else {
+                    return Ok(());
+                };
+                let token_msg = || format!("import scope 0x{:08x}", row.token.value());
 
-            let Some(import_scope) =
-                context.handle_result(row.to_owned(blobs), DiagnosticCategory::Table, token_msg)?
-            else {
-                return Ok(());
-            };
+                let Some(import_scope) = context.handle_result(
+                    row.to_owned(blobs),
+                    DiagnosticCategory::Table,
+                    token_msg,
+                )?
+                else {
+                    return Ok(());
+                };
 
-            context
-                .import_scope
-                .insert(import_scope.token, import_scope);
-            Ok(())
-        })
+                context
+                    .import_scope
+                    .insert(import_scope.token, import_scope);
+                Ok(())
+            })
     }
 
     fn table_id(&self) -> Option<TableId> {

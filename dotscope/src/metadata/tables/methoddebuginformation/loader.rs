@@ -20,7 +20,7 @@
 //! # Reference
 //! * [Portable PDB Format - MethodDebugInformation Table](https://github.com/dotnet/core/blob/main/Documentation/diagnostics/portable_pdb.md#methoddebuginformation-table-0x31)
 
-use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+use rayon::iter::IndexedParallelIterator;
 
 use crate::{
     metadata::{
@@ -28,6 +28,7 @@ use crate::{
         loader::{LoaderContext, MetadataLoader},
         tables::{MethodDebugInformationRaw, TableId},
     },
+    utils::TryForEachInOrder,
     Result,
 };
 
@@ -62,23 +63,29 @@ impl MetadataLoader for MethodDebugInformationLoader {
             return Ok(());
         };
 
-        table.par_iter().enumerate().try_for_each(|(index, row)| {
-            let Some(row) = context.handle_row(row, index)? else {
-                return Ok(());
-            };
-            let token_msg = || format!("method debug info 0x{:08x}", row.token.value());
+        table
+            .par_iter()
+            .enumerate()
+            .try_for_each_in_order(|(index, row)| {
+                let Some(row) = context.handle_row(row, index)? else {
+                    return Ok(());
+                };
+                let token_msg = || format!("method debug info 0x{:08x}", row.token.value());
 
-            let Some(method_debug_info) =
-                context.handle_result(row.to_owned(blob), DiagnosticCategory::Method, token_msg)?
-            else {
-                return Ok(());
-            };
+                let Some(method_debug_info) = context.handle_result(
+                    row.to_owned(blob),
+                    DiagnosticCategory::Method,
+                    token_msg,
+                )?
+                else {
+                    return Ok(());
+                };
 
-            context
-                .method_debug_information
-                .insert(method_debug_info.token, method_debug_info);
-            Ok(())
-        })
+                context
+                    .method_debug_information
+                    .insert(method_debug_info.token, method_debug_info);
+                Ok(())
+            })
     }
 
     fn table_id(&self) -> Option<TableId> {

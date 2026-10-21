@@ -394,19 +394,19 @@ fn update_row_name_field(
 
 #[cfg(test)]
 mod tests {
-    // Only the `smart-rename`-off equivalence test uses this.
+    // Only the `smart-rename`-off equivalence test uses these.
     #[cfg(not(feature = "smart-rename"))]
     use std::collections::HashSet;
-    #[cfg(feature = "smart-rename")]
-    use std::path::PathBuf;
 
+    #[cfg(not(feature = "smart-rename"))]
+    use crate::deobfuscation::renamer::SmartRenameConfig;
     use crate::{
         cilassembly::{CilAssembly, GeneratorConfig},
         deobfuscation::renamer::{
             self,
             context::{IdentifierKind, RenameContext},
             providers::SimpleProvider,
-            RenameProvider, SmartRenameConfig,
+            RenameProvider,
         },
         metadata::{
             tables::{MethodDefRaw, TableId, TypeDefRaw},
@@ -747,82 +747,5 @@ mod tests {
             count, 2,
             "Both entries should count as renamed (second is a covered no-op)"
         );
-    }
-
-    /// Manual test for the LLM-backed smart renamer.
-    ///
-    /// Requires the `smart-rename` feature and a local GGUF model file.
-    /// Run with: `cargo test --release -p dotscope --lib --features smart-rename test_smart_rename_llm -- --ignored --nocapture`
-    #[test]
-    #[ignore]
-    #[cfg(feature = "smart-rename")]
-    fn test_smart_rename_llm() {
-        let model_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../qwen2.5-coder-3b-instruct-q4_k_m.gguf");
-        assert!(
-            model_path.exists(),
-            "GGUF model not found at {}",
-            model_path.display()
-        );
-
-        let assembly = load_sample(RENAMER_SAMPLE);
-
-        let config = SmartRenameConfig {
-            model_path,
-            ..SmartRenameConfig::default()
-        };
-
-        let entries = renamer::renames_collect(&assembly, Some(&config)).unwrap();
-        assert!(!entries.is_empty(), "Smart renamer should produce entries");
-
-        // Log all entries for manual inspection
-        for entry in &entries {
-            eprintln!(
-                "  {:?} RID {} → {:?}",
-                entry.table_id, entry.rid, entry.new_name
-            );
-        }
-
-        let types = entries
-            .iter()
-            .filter(|e| e.table_id == TableId::TypeDef)
-            .count();
-        let methods = entries
-            .iter()
-            .filter(|e| e.table_id == TableId::MethodDef)
-            .count();
-        let fields = entries
-            .iter()
-            .filter(|e| e.table_id == TableId::Field)
-            .count();
-        let params = entries
-            .iter()
-            .filter(|e| e.table_id == TableId::Param)
-            .count();
-        eprintln!(
-            "Smart rename: {types} types, {methods} methods, {fields} fields, {params} params"
-        );
-
-        // Same entry counts as simple renamer (same identifiers detected)
-        assert_eq!(types, 5, "TypeDef entries");
-        assert_eq!(methods, 17, "MethodDef entries");
-        assert_eq!(fields, 1, "Field entries");
-        assert_eq!(params, 19, "Param entries");
-
-        // Roundtrip: apply and regenerate
-        let bytes = assembly.file().data().to_vec();
-        let mut cil_assembly = CilAssembly::from_bytes(bytes).unwrap();
-        let count = renamer::renames_apply(&mut cil_assembly, entries).unwrap();
-        assert!(count > 0, "Should apply at least one rename");
-
-        let output = cil_assembly
-            .into_cilobject_with(ValidationConfig::production(), GeneratorConfig::default())
-            .expect("Roundtrip with smart renames should succeed");
-
-        CilObject::from_mem_with_validation(
-            output.file().data().to_vec(),
-            ValidationConfig::production(),
-        )
-        .expect("Reloaded assembly should pass production validation");
     }
 }

@@ -138,7 +138,7 @@ pub fn x86_decode_all_limited(
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```no_run
 /// let result = x86_decode_function_traversal(bytes, 32, 0x1000, 0)?;
 ///
 /// if result.has_indirect_control_flow {
@@ -146,6 +146,7 @@ pub fn x86_decode_all_limited(
 /// }
 ///
 /// let cfg = X86Function::new(&result.instructions, 32, 0x1000);
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug)]
 pub struct X86TraversalDecodeResult {
@@ -456,7 +457,7 @@ pub fn x86_decode_traversal_limited(
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::analysis::x86_native_body_size;
 ///
 /// let code = &[0x55, 0x8B, 0xEC, 0x33, 0xC0, 0x5D, 0xC3]; // push ebp; mov ebp,esp; xor eax,eax; pop ebp; ret

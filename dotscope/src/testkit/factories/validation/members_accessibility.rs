@@ -32,7 +32,7 @@ pub fn owned_accessibility_validator_file_factory() -> Result<Vec<TestAssembly>>
     // 3. NEGATIVE: Test interface with non-static field
     assemblies.push(create_assembly_with_interface_instance_field()?);
 
-    // 4. NEGATIVE: Test interface with non-constant field
+    // 4. ACCEPTED: An interface with a static field that is not a constant
     assemblies.push(create_assembly_with_interface_non_constant_field()?);
 
     // 5. NEGATIVE: Test method with empty name
@@ -135,38 +135,33 @@ pub fn create_assembly_with_interface_instance_field() -> Result<TestAssembly> {
     )
 }
 
-/// Creates an assembly with interface containing non-constant field - validation should fail
-///
-/// Originally from: `src/metadata/validation/validators/owned/members/accessibility.rs`
+/// Creates an assembly with an interface holding a static field that is not a constant, which
+/// ECMA-335 II.12 allows: an interface may have static fields, only no instance fields.
 pub fn create_assembly_with_interface_non_constant_field() -> Result<TestAssembly> {
-    create_test_assembly(
-        get_testfile_crafted2,
-        Expect::fail("Interface 'InterfaceWithNonConstantField' contains non-constant field 'NonConstantField'"),
-        |assembly| {
-            // Create static field without LITERAL flag - invalid in interface
-            let signature_bytes = vec![0x06, 0x08]; // FIELD signature marker + ELEMENT_TYPE_I4
-            let field_token = FieldBuilder::new()
-                .name("NonConstantField")
-                .flags(FieldAttributes::PUBLIC | FieldAttributes::STATIC) // Static but missing LITERAL (0x0040) - invalid in interface
-                .signature(&signature_bytes)
-                .build(assembly)?;
+    create_test_assembly(get_testfile_crafted2, Expect::Pass, |assembly| {
+        // A static field without LITERAL
+        let signature_bytes = vec![0x06, 0x08]; // FIELD signature marker + ELEMENT_TYPE_I4
+        let field_token = FieldBuilder::new()
+            .name("NonConstantField")
+            .flags(FieldAttributes::PUBLIC | FieldAttributes::STATIC)
+            .signature(&signature_bytes)
+            .build(assembly)?;
 
-            // Create interface type and explicitly associate the field with it
-            let _interface_token = TypeDefBuilder::new()
-                .name("InterfaceWithNonConstantField")
-                .namespace("")
-                .flags(TypeAttributes::INTERFACE | TypeAttributes::PUBLIC)
-                .field_list(
-                    field_token
-                        .token()
-                        .expect("Field token should be resolved")
-                        .row(),
-                ) // Explicitly associate field with this type
-                .build(assembly)?;
+        // Create interface type and explicitly associate the field with it
+        let _interface_token = TypeDefBuilder::new()
+            .name("InterfaceWithNonConstantField")
+            .namespace("")
+            .flags(TypeAttributes::INTERFACE | TypeAttributes::PUBLIC)
+            .field_list(
+                field_token
+                    .token()
+                    .expect("Field token should be resolved")
+                    .row(),
+            ) // Explicitly associate field with this type
+            .build(assembly)?;
 
-            Ok(())
-        },
-    )
+        Ok(())
+    })
 }
 
 /// Creates an assembly with method having empty name - validation should fail

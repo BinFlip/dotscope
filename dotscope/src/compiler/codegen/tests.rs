@@ -18,7 +18,7 @@ use crate::{
     },
     cilassembly::{CilAssembly, Operation, TableModifications},
     compiler::codegen::{LayoutEntry, SsaCodeGenerator},
-    deobfuscation::{DeobfuscationEngine, EngineConfig, PassConfig},
+    deobfuscation::{EngineConfig, PassConfig},
     metadata::{
         method::{ExceptionHandler, ExceptionHandlerFlags, Method, MethodBody},
         tables::{MemberRefRaw, MethodDefRaw, TableDataOwned, TableId},
@@ -26,7 +26,10 @@ use crate::{
         typesystem::PointerSize,
         validation::ValidationConfig,
     },
-    testkit::{factories::table::assemblyref::get_test_assembly, fixture, TestTypeProvider},
+    testkit::{
+        build_ssa_with_handlers, engine_with, factories::table::assemblyref::get_test_assembly,
+        fixture, TestTypeProvider,
+    },
     CilAssemblyView, CilObject, Error, Parser,
 };
 
@@ -2131,7 +2134,7 @@ fn test_fibonacci_deobfuscation_preserves_semantics() {
 
     // Run full deobfuscation
     let config = EngineConfig::default();
-    let engine = DeobfuscationEngine::new(config);
+    let engine = engine_with(config);
     let (output, _) = engine.process_assembly(assembly).expect("deobfuscation");
 
     // Find Fibonacci method
@@ -2250,7 +2253,7 @@ fn test_fibonacci_pass_combinations() {
         let assembly = CilObject::from_path_with_validation(&path, ValidationConfig::analysis())
             .expect("the fixture loads");
 
-        let engine = DeobfuscationEngine::new(config);
+        let engine = engine_with(config);
         let (output, _) = engine.process_assembly(assembly).expect("deobfuscate");
 
         let tables = output.tables().expect("tables");
@@ -3765,7 +3768,8 @@ fn an_argument_a_handler_reads_stays_in_its_argument_slot() {
     assert_eq!(blocks.len(), 3, "try, catch and the join after them");
     let ssa_handlers = Method::ssa_handlers_for_clauses(&handlers, &blocks).unwrap();
     let cfg = ControlFlowGraph::from_basic_blocks(blocks).unwrap();
-    let ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0), ssa_handlers).unwrap();
+    let ssa =
+        SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::all_i32(1, 0), ssa_handlers).unwrap();
     assert!(
         !ssa.exceptional_webs().is_empty(),
         "the handler must merge the argument over the throw points:\n{ssa}"
@@ -4940,16 +4944,10 @@ fn a_clause_emitted_without_its_handler_is_refused() {
 /// Lifts straight IL with no exception clauses.
 fn lift_il(asm: InstructionAssembler, args: usize, locals: usize) -> SsaFunction {
     let (bytecode, _max_stack, handlers) = asm.finish().unwrap();
-    let blocks =
-        decode_blocks_with_handlers(&bytecode, 0, 0x1000, Some(bytecode.len()), &handlers).unwrap();
-    let ssa_handlers = Method::ssa_handlers_for_clauses(&handlers, &blocks).unwrap();
-    let cfg = ControlFlowGraph::from_basic_blocks(blocks).unwrap();
-    SsaConverter::build(
-        &cfg,
-        args,
-        locals,
-        &TestTypeProvider::new(args, locals),
-        ssa_handlers,
+    build_ssa_with_handlers(
+        &bytecode,
+        &handlers,
+        &TestTypeProvider::all_i32(args, locals),
     )
     .unwrap()
 }

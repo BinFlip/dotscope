@@ -50,13 +50,13 @@
 //!
 //! # Usage Examples
 //!
-//! ## Parse Existing Import Table
+//! ## Read an Assembly's Import Table
 //!
-//! ```rust,ignore
-//! use dotscope::metadata::imports::NativeImports;
+//! ```no_run
+//! use dotscope::CilObject;
 //!
-//! let pe_data = std::fs::read("application.exe")?;
-//! let native_imports = NativeImports::parse_from_pe(&pe_data)?;
+//! let assembly = CilObject::from_path("application.exe")?;
+//! let native_imports = assembly.imports().native();
 //!
 //! // Analyze DLL dependencies
 //! for descriptor in native_imports.descriptors() {
@@ -68,6 +68,7 @@
 //!         }
 //!     }
 //! }
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! ## Create Import Table
@@ -291,9 +292,9 @@ impl NativeImports {
     /// - Import data contains invalid or inconsistent information
     ///
     /// # Examples
-    /// ```rust,ignore
+    /// ```no_run
     /// use dotscope::metadata::imports::NativeImports;
-    /// use dotscope::file::pe::Import;
+    /// use dotscope::PeImport;
     ///
     /// let pe_imports = vec![
     ///     Import {

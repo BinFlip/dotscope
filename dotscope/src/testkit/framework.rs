@@ -3,7 +3,12 @@
 //! Provides common types, harness functions, and assertion helpers used across
 //! all obfuscator integration tests (ConfuserEx, BitMono, JIEJIE.NET, Obfuscar).
 
-use std::{fmt::Debug, sync::Arc};
+use std::{
+    collections::HashMap,
+    fmt::Debug,
+    sync::{Arc, Mutex, OnceLock, PoisonError},
+    time::Duration,
+};
 
 use crate::{
     deobfuscation::{DeobfuscationEngine, DeobfuscationResult, EngineConfig},
@@ -16,8 +21,51 @@ use crate::{
             StructuralConfig, VerificationLevel,
         },
     },
-    CilObject,
+    CilObject, Error,
 };
+
+/// `config` without the emulation wall-clock limits, so a test's result never depends on
+/// how busy the machine is: emulation stays bounded by its instruction, call-depth and memory
+/// limits alone. Every engine a test builds goes through this.
+#[must_use]
+pub fn without_wall_clock(mut config: EngineConfig) -> EngineConfig {
+    config.emulation.timeout = Duration::ZERO;
+    config.emulation.warmup_timeout = Duration::ZERO;
+    config
+}
+
+/// An engine with the default configuration, [`without_wall_clock`].
+#[must_use]
+pub fn engine() -> DeobfuscationEngine {
+    DeobfuscationEngine::new(without_wall_clock(EngineConfig::default()))
+}
+
+/// An engine with `config`, [`without_wall_clock`].
+#[must_use]
+pub fn engine_with(config: EngineConfig) -> DeobfuscationEngine {
+    DeobfuscationEngine::new(without_wall_clock(config))
+}
+
+/// What [`engine`] made of one sample: the output and the run's result, or the error it
+/// refused the sample with.
+pub type DeobOutcome = std::result::Result<(CilObject, DeobfuscationResult), Error>;
+
+/// `sample`, a fixture path, deobfuscated by [`engine`] through `process_file`, once per test
+/// binary.
+///
+/// The run is the expensive part of a packer test, and several tests check the same sample.
+/// The first call runs it; every later call, from any test, gets that outcome, and a call made
+/// while the run is in progress waits for it.
+pub fn deobfuscated(sample: &str) -> &'static DeobOutcome {
+    static RUNS: OnceLock<Mutex<HashMap<String, &'static OnceLock<DeobOutcome>>>> = OnceLock::new();
+    let run: &'static OnceLock<DeobOutcome> = RUNS
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .entry(sample.to_owned())
+        .or_insert_with(|| Box::leak(Box::default()));
+    run.get_or_init(|| engine().process_file(fixture(sample)))
+}
 
 /// The 17 standard methods used for semantic preservation checks across all
 /// obfuscator test suites. Each obfuscator's original.exe contains these
@@ -67,12 +115,12 @@ pub struct SampleSpec<P: Clone + Debug> {
     pub structural_config: StructuralConfig,
 }
 
-/// How the engine processes the sample.
+/// How a sample is read before its [`deobfuscated`] run, which both modes share.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessMode {
-    /// Use `engine.process_assembly(assembly)`.
+    /// The sample loads as it is, and detection on it before the run joins the run's own.
     Assembly,
-    /// Use `engine.process_file(&path)`.
+    /// The sample may need the PE repair `process_file` applies; detection is the run's.
     File,
 }
 
@@ -218,7 +266,6 @@ pub fn run_deobfuscation_test<P: Clone + Debug>(
     samples_dir: &str,
     original_asm: Option<&CilObject>,
     semantic_methods: &[&str],
-    config: EngineConfig,
     mode: ProcessMode,
 ) -> TestResult<P> {
     let mut result = TestResult {
@@ -240,7 +287,7 @@ pub fn run_deobfuscation_test<P: Clone + Debug>(
         deobfuscated_stats: None,
     };
 
-    let path = fixture(&format!("{samples_dir}/{}", spec.filename));
+    let sample = format!("{samples_dir}/{}", spec.filename);
 
     // For File mode, try to load the assembly for pre-deobfuscation method count
     // (it may fail for PE-corrupted samples — that's fine).
@@ -262,7 +309,7 @@ pub fn run_deobfuscation_test<P: Clone + Debug>(
         result.methods_before = assembly.methods().iter().count();
 
         // Run pre-detection (IL + SSA)
-        let detect_engine = DeobfuscationEngine::default();
+        let detect_engine = engine();
         let pre_det = detect_engine.detect(&assembly);
         result.detection = DetectionInfo::from_results(&pre_det);
 
@@ -276,14 +323,12 @@ pub fn run_deobfuscation_test<P: Clone + Debug>(
             return result;
         }
 
-        // Run full deobfuscation pipeline
-        let engine = DeobfuscationEngine::new(config);
-        match engine.process_assembly(assembly) {
+        match deobfuscated(&sample) {
             Ok((output, deob_result)) => {
                 populate_success_result(
                     &mut result,
-                    &output,
-                    &deob_result,
+                    output,
+                    deob_result,
                     spec,
                     original_asm,
                     semantic_methods,
@@ -296,27 +341,28 @@ pub fn run_deobfuscation_test<P: Clone + Debug>(
     } else {
         // File mode — original check
         if spec.is_original {
-            if let Ok(assembly) = load_sample(samples_dir, spec.filename) {
-                result.methods_before = assembly.methods().iter().count();
-                result.methods_after = result.methods_before;
-                result.success = true;
-                result.assembly_valid = true;
-                result.has_valid_entry_point = assembly.cor20header().entry_point_token != 0;
-                result.roundtrip_ok = true;
+            match load_sample(samples_dir, spec.filename) {
+                Ok(assembly) => {
+                    result.methods_before = assembly.methods().iter().count();
+                    result.methods_after = result.methods_before;
+                    result.success = true;
+                    result.assembly_valid = true;
+                    result.has_valid_entry_point = assembly.cor20header().entry_point_token != 0;
+                    result.roundtrip_ok = true;
+                }
+                Err(e) => result.error = Some(e),
             }
             return result;
         }
 
-        // Run full pipeline via process_file
-        let engine = DeobfuscationEngine::new(config);
-        match engine.process_file(&path) {
+        match deobfuscated(&sample) {
             Ok((output, deob_result)) => {
                 // For File mode, detection comes from the pipeline result
-                result.detection = DetectionInfo::from_results(&deob_result);
+                result.detection = DetectionInfo::from_results(deob_result);
                 populate_success_result(
                     &mut result,
-                    &output,
-                    &deob_result,
+                    output,
+                    deob_result,
                     spec,
                     original_asm,
                     semantic_methods,
@@ -363,7 +409,7 @@ fn populate_success_result<P: Clone + Debug>(
     result.has_valid_entry_point = output.cor20header().entry_point_token != 0;
 
     // Re-detect on output
-    let post_engine = DeobfuscationEngine::default();
+    let post_engine = engine();
     let post_det = post_engine.detect(output);
     result.post_detection = DetectionInfo::from_results(&post_det);
 
@@ -560,4 +606,23 @@ where
     eprintln!("\n--------------------------------------------------------------------------------");
     eprintln!("TOTALS: {} passed, {} failed", total_passed, total_failed);
     eprintln!("--------------------------------------------------------------------------------\n");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every call for a sample, from any thread, gets the one outcome its first call produced.
+    #[test]
+    fn a_sample_is_deobfuscated_once() {
+        const SAMPLE: &str = "packers/confuserex/1.6.0/original.exe";
+        let outcomes: Vec<usize> = std::thread::scope(|scope| {
+            let runs: Vec<_> = (0..4)
+                .map(|_| scope.spawn(|| std::ptr::from_ref(deobfuscated(SAMPLE)) as usize))
+                .collect();
+            runs.into_iter().map(|run| run.join().unwrap()).collect()
+        });
+        assert!(outcomes.windows(2).all(|pair| pair[0] == pair[1]));
+        assert!(deobfuscated(SAMPLE).is_ok());
+    }
 }

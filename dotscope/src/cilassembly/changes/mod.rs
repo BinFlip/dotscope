@@ -17,7 +17,7 @@
 //! invalid after write, APIs return `Arc<ChangeRef>` which resolves to the final
 //! location after assembly write completes.
 //!
-//! ```rust,ignore
+//! ```no_run
 //! // Old API (problematic - offset may be invalid after write)
 //! let offset = context.string_add("MyString")?;  // u32
 //!
@@ -25,6 +25,7 @@
 //! let string_ref = context.string_add("MyString")?;  // Arc<ChangeRef>
 //! assembly.to_file(path)?;
 //! let final_offset = string_ref.offset().unwrap();  // Resolved after write
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! # Architecture
@@ -38,7 +39,7 @@
 //!
 //! # Usage Examples
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use crate::cilassembly::changes::{AssemblyChanges, HeapChanges, ChangeRef};
 //! use crate::metadata::cilassemblyview::CilAssemblyView;
 //! use std::path::Path;

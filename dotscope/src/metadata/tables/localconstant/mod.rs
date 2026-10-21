@@ -23,7 +23,7 @@
 //!
 //! # Usage Examples
 //!
-//! ```rust,ignore
+//! ```no_run
 //! # use dotscope::metadata::tables::LocalConstant;
 //! # fn example(local_constant: &LocalConstant) {
 //! // Display constant information

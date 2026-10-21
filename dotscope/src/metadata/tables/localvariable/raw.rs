@@ -80,8 +80,8 @@ impl LocalVariableRaw {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// # use dotscope::metadata::tables::localvariable::LocalVariableRaw;
+    /// ```no_run
+    /// # use dotscope::metadata::tables::LocalVariableRaw;
     /// # use dotscope::metadata::token::Token;
     /// # fn example() -> dotscope::Result<()> {
     /// let variable_raw = LocalVariableRaw {
@@ -96,6 +96,7 @@ impl LocalVariableRaw {
     /// let variable = variable_raw.to_owned(strings)?;
     /// # Ok(())
     /// # }
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn to_owned(&self, strings: &Strings) -> Result<LocalVariableRc> {
         let name = if self.name == 0 {

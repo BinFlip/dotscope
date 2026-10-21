@@ -41,18 +41,11 @@
 //!
 //! ## Using Native Hooks
 //!
-//! ```ignore
-//! use dotscope::emulation::runtime::{HookManager, native};
-//!
-//! let manager = HookManager::new();
-//! native::register(&manager).unwrap();
-//!
-//! // VirtualProtect, IsDebuggerPresent, etc. are now hooked
-//! ```
+//! The `examples::module_example` test in this module runs this example.
 //!
 //! ## Adding Custom Native Hooks
 //!
-//! ```ignore
+//! ```no_run
 //! use dotscope::emulation::{Hook, PreHookResult, EmValue};
 //!
 //! let manager = HookManager::new();
@@ -907,5 +900,23 @@ mod tests {
             ),
             "GetModuleHandleA(null) should return base address"
         );
+    }
+}
+
+#[cfg(test)]
+mod examples {
+    use super::*;
+    use crate::{emulation::HookManager, Result};
+
+    /// Registering the native hooks fills the hook manager.
+    #[test]
+    fn module_example() -> Result<()> {
+        let manager = HookManager::new();
+        let registry = NativeFunctionRegistry::new();
+        register(&manager, &registry)?;
+
+        // VirtualProtect, IsDebuggerPresent, etc. are now hooked
+        assert!(!manager.is_empty());
+        Ok(())
     }
 }

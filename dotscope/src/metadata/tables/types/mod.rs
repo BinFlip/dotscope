@@ -34,7 +34,7 @@
 //!
 //! # Usage Examples
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::metadata::tables::{MetadataTable, RowReadable, TableInfoRef, TableRow};
 //! use dotscope::Result;
 //!
@@ -68,6 +68,7 @@
 //! # Ok(())
 //! # }
 //! # fn process_row_data(_: &ExampleRow) -> Result<()> { Ok(()) }
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! # Error Handling

@@ -296,14 +296,7 @@ pub(crate) const MAX_DERIVED_KEY_LEN: usize = 1024;
 ///
 /// # Example
 ///
-/// ```rust,ignore
-/// use dotscope::utils::crypto::derive_pbkdf2_key;
-///
-/// let password = b"mypassword";
-/// let salt = b"somesalt";
-/// let key = derive_pbkdf2_key(password, salt, 1000, 32, "SHA256")?;
-/// assert_eq!(key.len(), 32);
-/// ```
+/// The `examples::derive_pbkdf2_key_example` test in this module runs this example.
 #[cfg(feature = "emulation")]
 pub fn derive_pbkdf2_key(
     password: &[u8],
@@ -390,14 +383,7 @@ pub fn derive_pbkdf2_key(
 ///
 /// # Example
 ///
-/// ```rust,ignore
-/// use dotscope::utils::crypto::derive_pbkdf1_key;
-///
-/// let password = b"mypassword";
-/// let salt = b"somesalt";
-/// let key = derive_pbkdf1_key(password, salt, 100, 16);
-/// assert_eq!(key.len(), 16);
-/// ```
+/// The `examples::derive_pbkdf1_key_example` test in this module runs this example.
 ///
 /// # Feature Requirements
 ///
@@ -1417,5 +1403,29 @@ mod legacy_tests {
         let ciphertext_3des =
             apply_crypto_transform("3DES", &key, &iv, true, plaintext, 1, 2).unwrap();
         assert_eq!(ciphertext, ciphertext_3des);
+    }
+}
+
+#[cfg(test)]
+mod examples {
+    use super::*;
+    use crate::Result;
+
+    #[test]
+    fn derive_pbkdf2_key_example() -> Result<()> {
+        let password = b"mypassword";
+        let salt = b"somesalt";
+        let key = derive_pbkdf2_key(password, salt, 1000, 32, "SHA256")?;
+        assert_eq!(key.len(), 32);
+        Ok(())
+    }
+
+    #[test]
+    fn derive_pbkdf1_key_example() -> Result<()> {
+        let password = b"mypassword";
+        let salt = b"somesalt";
+        let key = derive_pbkdf1_key(password, salt, 100, 16);
+        assert_eq!(key.len(), 16);
+        Ok(())
     }
 }

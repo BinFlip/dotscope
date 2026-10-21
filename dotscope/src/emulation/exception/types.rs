@@ -55,7 +55,7 @@ use crate::metadata::{
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// // For C# code:
 /// // try { /* IL 0x00-0x10 */ }
 /// // catch (Exception) { /* IL 0x10-0x20 */ }

@@ -51,9 +51,13 @@
 //! Locals start zero-initialized, so a never-written local holds the entry value
 //! of any local and nothing else.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, BTreeSet, VecDeque},
+};
 
 use analyssa::ir::ops::SsaEffectKind;
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use crate::{
@@ -956,6 +960,10 @@ enum Val {
 }
 
 /// The values a place is known to hold, all equal.
+///
+/// Kept sorted, so membership, insertion and removal of one value are binary searches and a
+/// meet is a merge. A place can hold hundreds: every phi whose inputs all trace back to a
+/// local's initial zero joins that local's set.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct ValSet(SmallVec<[Val; 2]>);
 
@@ -967,13 +975,12 @@ impl ValSet {
     }
 
     fn contains(&self, val: Val) -> bool {
-        self.0.contains(&val)
+        self.0.binary_search(&val).is_ok()
     }
 
     fn insert(&mut self, val: Val) {
-        if !self.contains(val) {
-            self.0.push(val);
-            self.0.sort_unstable();
+        if let Err(at) = self.0.binary_search(&val) {
+            self.0.insert(at, val);
         }
     }
 
@@ -981,19 +988,49 @@ impl ValSet {
         self.0.retain(|val| !predicate(*val));
     }
 
+    /// Removes every value from `low` to `high`, both included.
+    fn remove_between(&mut self, low: Val, high: Val) {
+        let start = self.0.partition_point(|val| *val < low);
+        let end = self.0.partition_point(|val| *val <= high);
+        if start < end {
+            self.0.drain(start..end);
+        }
+    }
+
+    /// Removes `val`, returning whether the set held it.
+    fn remove_one(&mut self, val: Val) -> bool {
+        match self.0.binary_search(&val) {
+            Ok(at) => {
+                self.0.remove(at);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
     fn intersect(&self, other: &Self) -> Self {
-        Self(
-            self.0
-                .iter()
-                .copied()
-                .filter(|val| other.contains(*val))
-                .collect(),
-        )
+        let mut common = SmallVec::new();
+        let (mut mine, mut theirs) = (self.0.iter().peekable(), other.0.iter().peekable());
+        while let (Some(&&a), Some(&&b)) = (mine.peek(), theirs.peek()) {
+            match a.cmp(&b) {
+                Ordering::Less => {
+                    mine.next();
+                }
+                Ordering::Greater => {
+                    theirs.next();
+                }
+                Ordering::Equal => {
+                    common.push(a);
+                    mine.next();
+                    theirs.next();
+                }
+            }
+        }
+        Self(common)
     }
 
     fn replace(&mut self, from: Val, to: Val) {
-        if self.contains(from) {
-            self.remove(|val| val == from);
+        if self.remove_one(from) {
             self.insert(to);
         }
     }
@@ -1008,6 +1045,25 @@ struct State {
 }
 
 impl State {
+    /// Every place in position order: the stack, then locals, then arguments.
+    fn places(&self) -> impl Iterator<Item = &ValSet> {
+        self.stack
+            .iter()
+            .chain(self.locals.iter())
+            .chain(self.args.iter())
+    }
+
+    /// The place at `position`, counted as [`State::places`] counts.
+    fn place_mut(&mut self, position: usize) -> Option<&mut ValSet> {
+        let Some(position) = position.checked_sub(self.stack.len()) else {
+            return self.stack.get_mut(position);
+        };
+        let Some(position) = position.checked_sub(self.locals.len()) else {
+            return self.locals.get_mut(position);
+        };
+        self.args.get_mut(position)
+    }
+
     /// Every place, for edits that apply to all of them.
     fn places_mut(&mut self) -> impl Iterator<Item = &mut ValSet> {
         self.stack
@@ -1019,7 +1075,7 @@ impl State {
     /// Forgets every instance of `val`.
     fn kill(&mut self, val: Val) {
         for set in self.places_mut() {
-            set.remove(|held| held == val);
+            set.remove_one(val);
         }
     }
 
@@ -1385,7 +1441,7 @@ impl<'a, 'b> Interpreter<'a, 'b> {
             index,
         );
         for set in state.places_mut() {
-            set.remove(|val| matches!(val, Val::Temp(at) if (start..=end).contains(&at)));
+            set.remove_between(Val::Temp(start), Val::Temp(end));
         }
 
         let expected = [group.floor, group.floor.saturating_add(1)];
@@ -1738,7 +1794,7 @@ impl<'a, 'b> Interpreter<'a, 'b> {
         let Some(block) = self.facts.ssa.block(handler) else {
             return;
         };
-        let mut established: Vec<(Val, Vec<usize>)> = Vec::new();
+        let mut established = Vec::new();
         for phi in block.phi_nodes() {
             let mut best: Option<(i64, SsaVarId)> = None;
             for operand in phi.exceptional_operands() {
@@ -1762,35 +1818,60 @@ impl<'a, 'b> Interpreter<'a, 'b> {
             let Some((_, current)) = best else {
                 continue;
             };
-            let positions = self.places_holding(state, current);
-            established.push((Val::Class(self.facts.class_of(phi.result())), positions));
+            established.push((Val::Class(self.facts.class_of(phi.result())), current));
         }
         self.establish(state, established);
     }
 
-    /// Place positions (stack, then locals, then arguments) holding `var`.
-    fn places_holding(&self, state: &State, var: SsaVarId) -> Vec<usize> {
-        state
-            .stack
-            .iter()
-            .chain(&state.locals)
-            .chain(&state.args)
-            .enumerate()
-            .filter(|(_, set)| self.facts.holds(set, var))
-            .map(|(position, _)| position)
-            .collect()
-    }
-
-    /// Records each phi result at the positions computed for it, after every
-    /// earlier instance of every result is forgotten: the phis of one block take
-    /// effect together.
-    fn establish(&self, state: &mut State, established: Vec<(Val, Vec<usize>)>) {
-        for (result, _) in &established {
-            state.kill(*result);
+    /// Records each phi result at every place holding the version the phi takes (`result`,
+    /// `current` pairs), after every earlier instance of every result is forgotten: the phis
+    /// of one block take effect together.
+    ///
+    /// One pass over the places' contents finds every phi's places, by the class each held
+    /// value stands for. A block with a phi per local, as a handler entry has, would otherwise
+    /// cost phis times places at every throwing instruction.
+    fn establish(&self, state: &mut State, established: Vec<(Val, SsaVarId)>) {
+        if established.is_empty() {
+            return;
         }
-        for (result, positions) in established {
-            for (position, set) in state.places_mut().enumerate() {
-                if positions.contains(&position) {
+        let mut by_class: FxHashMap<u32, Vec<usize>> = FxHashMap::default();
+        let mut from_zero = Vec::new();
+        for (index, (_, current)) in established.iter().enumerate() {
+            by_class
+                .entry(self.facts.class_of(*current))
+                .or_default()
+                .push(index);
+            if self.facts.is_local_entry(*current) {
+                from_zero.push(index);
+            }
+        }
+        let mut positions: Vec<Vec<usize>> = vec![Vec::new(); established.len()];
+        for (position, set) in state.places().enumerate() {
+            for val in &set.0 {
+                let phis = match val {
+                    Val::Class(class) => by_class.get(class).map_or(&[][..], Vec::as_slice),
+                    Val::Zero => from_zero.as_slice(),
+                    _ => &[],
+                };
+                for &index in phis {
+                    // A place holding both a phi's class and the zero it equals is one place.
+                    if let Some(held) = positions.get_mut(index) {
+                        if held.last() != Some(&position) {
+                            held.push(position);
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut results: Vec<Val> = established.iter().map(|(result, _)| *result).collect();
+        results.sort_unstable();
+        for set in state.places_mut() {
+            set.remove(|val| results.binary_search(&val).is_ok());
+        }
+        for ((result, _), held) in established.into_iter().zip(positions) {
+            for position in held {
+                if let Some(set) = state.place_mut(position) {
                     set.insert(result);
                 }
             }
@@ -1936,8 +2017,10 @@ impl<'a, 'b> Interpreter<'a, 'b> {
             let Some(operand) = phi.operand_from(source) else {
                 continue;
             };
-            let positions = self.places_holding(state, operand.value());
-            established.push((Val::Class(self.facts.class_of(phi.result())), positions));
+            established.push((
+                Val::Class(self.facts.class_of(phi.result())),
+                operand.value(),
+            ));
         }
         self.establish(state, established);
         Ok(())
@@ -2025,6 +2108,66 @@ fn writes_memory(mnemonic: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every set operation agrees with a `BTreeSet` over long runs of mixed operations, sets of
+    /// hundreds of values included, and the set stays sorted and free of duplicates.
+    #[test]
+    fn a_value_set_behaves_as_an_ordered_set() {
+        // A fixed linear congruential sequence: reproducible without a dependency.
+        let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+        let mut next = move |bound: u64| {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (seed >> 33) % bound
+        };
+        let val = |next: &mut dyn FnMut(u64) -> u64| match next(5) {
+            0 => Val::Zero,
+            1 => Val::Exception,
+            2 => Val::Temp(next(300) as usize),
+            3 => Val::Literal(next(300) as usize),
+            _ => Val::Class(next(300) as u32),
+        };
+        let mut sets = [ValSet::default(), ValSet::default()];
+        let mut oracle = [BTreeSet::new(), BTreeSet::new()];
+        let mut largest = 0;
+        for _ in 0..20_000 {
+            let which = next(2) as usize;
+            let v = val(&mut next);
+            match next(10) {
+                0..=5 => {
+                    sets[which].insert(v);
+                    oracle[which].insert(v);
+                }
+                6 => {
+                    assert_eq!(sets[which].remove_one(v), oracle[which].remove(&v));
+                }
+                7 => {
+                    let to = val(&mut next);
+                    sets[which].replace(v, to);
+                    if oracle[which].remove(&v) {
+                        oracle[which].insert(to);
+                    }
+                }
+                8 if next(2) == 0 => {
+                    let (low, high) = (val(&mut next), val(&mut next));
+                    sets[which].remove_between(low, high);
+                    oracle[which].retain(|held| !(low <= *held && *held <= high));
+                }
+                8 => {
+                    let common: Vec<Val> = oracle[0].intersection(&oracle[1]).copied().collect();
+                    assert_eq!(sets[0].intersect(&sets[1]).0.to_vec(), common);
+                }
+                _ => {
+                    assert_eq!(sets[which].contains(v), oracle[which].contains(&v));
+                }
+            }
+            let expected: Vec<Val> = oracle[which].iter().copied().collect();
+            assert_eq!(sets[which].0.to_vec(), expected);
+            largest = largest.max(expected.len());
+        }
+        assert!(largest > 200, "the run reached only {largest} values");
+    }
 
     #[test]
     fn a_narrow_width_fits_every_slot_holding_its_whole_range() {

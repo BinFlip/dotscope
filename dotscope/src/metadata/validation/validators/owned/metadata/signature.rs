@@ -139,7 +139,8 @@ impl OwnedSignatureValidator {
         let results: Vec<Result<()>> =
             methods
                 .iter()
-                .par_bridge()
+                // In token order, so the first error found is the first method's
+                .collect::<Vec<_>>()
                 .into_par_iter()
                 .map(|entry| {
                     let method = entry.value();

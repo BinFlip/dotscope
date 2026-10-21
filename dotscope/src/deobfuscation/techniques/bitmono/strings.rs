@@ -594,7 +594,7 @@ mod tests {
     /// Verify that IL-level detect() is a no-op (detection is SSA-based).
     ///
     /// Positive detection is tested through the full pipeline in
-    /// `dotscope/tests/bitmono.rs::test_all_bitmono_samples`.
+    /// `full::bitmono::test_all_bitmono_samples` (`dotscope/tests/it/full/bitmono.rs`).
     #[test]
     fn test_detect_is_noop() {
         let assembly = load_sample("packers/bitmono/0.39.0/bitmono_strings.exe");

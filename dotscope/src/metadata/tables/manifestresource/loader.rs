@@ -27,7 +27,7 @@
 //! # ECMA-335 Reference
 //! See ECMA-335, Partition II, §22.24 for the `ManifestResource` table specification.
 
-use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+use rayon::iter::IndexedParallelIterator;
 
 use crate::{
     metadata::{
@@ -36,6 +36,7 @@ use crate::{
         tables::ManifestResourceRaw,
     },
     prelude::TableId,
+    utils::TryForEachInOrder,
     Result,
 };
 
@@ -67,30 +68,33 @@ impl MetadataLoader for ManifestResourceLoader {
             return Ok(());
         };
 
-        table.par_iter().enumerate().try_for_each(|(index, row)| {
-            let Some(row) = context.handle_row(row, index)? else {
-                return Ok(());
-            };
-            let token_msg = || format!("manifest resource 0x{:08x}", row.token.value());
+        table
+            .par_iter()
+            .enumerate()
+            .try_for_each_in_order(|(index, row)| {
+                let Some(row) = context.handle_row(row, index)? else {
+                    return Ok(());
+                };
+                let token_msg = || format!("manifest resource 0x{:08x}", row.token.value());
 
-            let Some(owned) = context.handle_result(
-                row.to_owned(
-                    |coded_index| context.get_ref(coded_index),
-                    &context.input,
-                    context.header,
-                    strings,
-                    table,
-                ),
-                DiagnosticCategory::Table,
-                token_msg,
-            )?
-            else {
-                return Ok(());
-            };
+                let Some(owned) = context.handle_result(
+                    row.to_owned(
+                        |coded_index| context.get_ref(coded_index),
+                        &context.input,
+                        context.header,
+                        strings,
+                        table,
+                    ),
+                    DiagnosticCategory::Table,
+                    token_msg,
+                )?
+                else {
+                    return Ok(());
+                };
 
-            context.resources.insert(owned.clone());
-            Ok(())
-        })
+                context.resources.insert(owned.clone());
+                Ok(())
+            })
     }
 
     /// Returns the table identifier for `ManifestResource`.

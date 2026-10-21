@@ -29,8 +29,8 @@ use crate::metadata::{tables::TableId, token::Token};
 ///
 /// # Example
 ///
-/// ```rust,ignore
-/// use dotscope::cilassembly::cleanup::CleanupRequest;
+/// ```no_run
+/// use dotscope::CleanupRequest;
 ///
 /// let mut request = CleanupRequest::default();
 /// request.add_type(protection_type_token);

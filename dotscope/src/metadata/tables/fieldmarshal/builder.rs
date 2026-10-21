@@ -292,7 +292,7 @@ impl FieldMarshalBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use dotscope::metadata::marshalling::NativeType;
     /// use dotscope::metadata::tables::FieldMarshalBuilder;
     ///
@@ -311,6 +311,7 @@ impl FieldMarshalBuilder {
     ///         num_element: Some(10),
     ///     })
     ///     .build(&mut assembly)?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
     pub fn native_type_spec(mut self, native_type: NativeType) -> Self {
@@ -347,7 +348,7 @@ impl FieldMarshalBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use dotscope::metadata::marshalling::{NativeType, MarshallingInfo};
     /// use dotscope::metadata::tables::FieldMarshalBuilder;
     ///
@@ -365,6 +366,7 @@ impl FieldMarshalBuilder {
     ///     .parent(param_ref)
     ///     .marshalling_info(complex_info)
     ///     .build(&mut assembly)?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
     pub fn marshalling_info(mut self, info: &MarshallingInfo) -> Self {

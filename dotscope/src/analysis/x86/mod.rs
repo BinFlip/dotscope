@@ -62,7 +62,7 @@
 //!
 //! # Traversal-Based Example
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::analysis::{x86_decode_traversal, X86Function};
 //!
 //! // Decode using control-flow following (more robust)
@@ -72,6 +72,7 @@
 //!
 //! // Build CFG
 //! let cfg = X86Function::new(&result.instructions, 32, 0x1000);
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! # Supported Instructions
@@ -115,7 +116,7 @@
 //!
 //! The [`ssa`] module provides translation from x86 CFG to SSA form:
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::analysis::{x86_decode_all, X86Function, X86ToSsaTranslator};
 //!
 //! // Decode and build CFG
@@ -125,6 +126,7 @@
 //! // Translate to SSA
 //! let translator = X86ToSsaTranslator::new(&cfg);
 //! let ssa_function = translator.translate()?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! The translator handles:

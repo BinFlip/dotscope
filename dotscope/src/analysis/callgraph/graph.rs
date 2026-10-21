@@ -44,7 +44,7 @@ use crate::{
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// let assembly = CilObject::open("sample.dll")?;
 /// let call_graph = CallGraph::build(&assembly)?;
 ///
@@ -54,6 +54,7 @@ use crate::{
 ///
 /// // Find methods called by a specific method
 /// let callees = call_graph.callees(method_token);
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug)]
 pub struct CallGraph {

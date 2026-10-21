@@ -261,7 +261,14 @@ impl ConstantPropagationPass {
         Self::apply_constant_folding(ssa, &constants, &sccp_result, method_token, changes);
 
         // Apply control flow simplifications
-        Self::simplify_control_flow(ssa, &constants, &sccp_result, method_token, changes);
+        Self::simplify_control_flow(
+            ssa,
+            &constants,
+            &sccp_result,
+            method_token,
+            changes,
+            ptr_size,
+        );
 
         constants
     }
@@ -1614,12 +1621,15 @@ impl ConstantPropagationPass {
     /// * `sccp_result` - The SCCP analysis results.
     /// * `method_token` - The method token for change tracking.
     /// * `changes` - The change set to record modifications.
+    /// * `ptr_size` - Pointer size for the target architecture, the width of a
+    ///   native integer a branch compares.
     fn simplify_control_flow(
         ssa: &mut SsaFunction,
         constants: &BTreeMap<SsaVarId, ConstValue>,
         sccp_result: &SccpResult,
         method_token: Token,
         changes: &mut EventLog,
+        ptr_size: PointerSize,
     ) {
         // One dominator-tree walk answers for every block, and the answer has
         // to be taken before the first rewrite: folding a terminator changes
@@ -1696,7 +1706,7 @@ impl ConstantPropagationPass {
                                 (constants.get(left), constants.get(right))
                             {
                                 if let Some(is_true) = SsaEvaluator::evaluate_comparison(
-                                    left_val, right_val, *cmp, *unsigned,
+                                    left_val, right_val, *cmp, *unsigned, ptr_size,
                                 ) {
                                     let target = if is_true { *true_target } else { *false_target };
                                     Some((SsaOp::Jump { target }, target))

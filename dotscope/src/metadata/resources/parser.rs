@@ -31,7 +31,7 @@
 //!
 //! ## High-Level Resource Parsing
 //!
-//! ```ignore
+//! ```no_run
 //! use dotscope::metadata::resources::parse_dotnet_resource;
 //!
 //! // Parse complete resource file
@@ -46,11 +46,12 @@
 //!         _ => println!("  Other type"),
 //!     }
 //! }
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! ## Low-Level Resource Analysis
 //!
-//! ```ignore
+//! ```no_run
 //! use dotscope::metadata::resources::Resource;
 //!
 //! // Parse resource header and examine structure
@@ -65,6 +66,7 @@
 //!
 //! // Parse individual resources
 //! let resources = resource.read_resources(resource_data)?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! # Error Handling
@@ -126,7 +128,7 @@ const MAX_RESOURCES: u32 = 1_000_000;
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```no_run
 /// use dotscope::metadata::resources::parse_dotnet_resource;
 ///
 /// let resource_data = std::fs::read("MyApp.resources")?;
@@ -136,6 +138,7 @@ const MAX_RESOURCES: u32 = 1_000_000;
 /// for (name, entry) in &resources {
 ///     println!("  {}: {:?}", name, entry.data);
 /// }
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 pub fn parse_dotnet_resource(data: &[u8]) -> Result<BTreeMap<String, ResourceEntry>> {
     let mut resource = Resource::parse(data)?;
@@ -183,7 +186,7 @@ pub fn parse_dotnet_resource(data: &[u8]) -> Result<BTreeMap<String, ResourceEnt
 ///
 /// ## Basic Usage
 ///
-/// ```ignore
+/// ```no_run
 /// use dotscope::metadata::resources::parse_dotnet_resource_ref;
 /// use dotscope::metadata::resources::ResourceTypeRef;
 ///
@@ -209,7 +212,7 @@ pub fn parse_dotnet_resource(data: &[u8]) -> Result<BTreeMap<String, ResourceEnt
 ///
 /// ## Extracting Embedded ZIP Archives
 ///
-/// ```ignore
+/// ```no_run
 /// use dotscope::metadata::resources::parse_dotnet_resource_ref;
 /// use dotscope::metadata::resources::ResourceTypeRef;
 ///
@@ -278,7 +281,7 @@ pub fn parse_dotnet_resource_ref(data: &[u8]) -> Result<BTreeMap<String, Resourc
 ///
 /// ## Format Analysis
 ///
-/// ```ignore
+/// ```no_run
 /// use dotscope::metadata::resources::Resource;
 ///
 /// let resource_data = std::fs::read("MyApp.resources")?;
@@ -297,11 +300,12 @@ pub fn parse_dotnet_resource_ref(data: &[u8]) -> Result<BTreeMap<String, Resourc
 /// for (i, type_name) in resource.type_names.iter().enumerate() {
 ///     println!("  [{}] {}", i, type_name);
 /// }
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
 /// ## Custom Resource Processing
 ///
-/// ```ignore
+/// ```no_run
 /// use dotscope::metadata::resources::Resource;
 ///
 /// let resource_data = std::fs::read("MyApp.resources")?;
@@ -315,6 +319,7 @@ pub fn parse_dotnet_resource_ref(data: &[u8]) -> Result<BTreeMap<String, Resourc
 ///
 /// // Parse all resources with full control
 /// let resources = resource.read_resources(&resource_data)?;
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
 /// # Format Details from `CoreCLR`
@@ -430,7 +435,7 @@ impl Resource {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
     /// use dotscope::metadata::resources::Resource;
     ///
     /// let resource_data = std::fs::read("MyApp.resources")?;
@@ -442,6 +447,7 @@ impl Resource {
     /// println!("  Resource Count: {}", resource.resource_count);
     /// println!("  Type Count: {}", resource.type_names.len());
     /// println!("  Debug Build: {}", resource.is_debug);
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     ///
     /// # Format Validation
@@ -914,7 +920,7 @@ impl Resource {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
     /// use dotscope::metadata::resources::Resource;
     ///
     /// let resource_data = std::fs::read("MyApp.resources")?;
@@ -940,6 +946,7 @@ impl Resource {
     ///         }
     ///     }
     /// }
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     ///
     /// # Resource Types
@@ -1089,7 +1096,7 @@ impl Resource {
     ///
     /// ## Basic Zero-Copy Usage
     ///
-    /// ```ignore
+    /// ```no_run
     /// use dotscope::metadata::resources::Resource;
     /// use dotscope::metadata::resources::ResourceTypeRef;
     ///
@@ -1123,7 +1130,7 @@ impl Resource {
     ///
     /// ## Extracting Embedded ZIP Archives
     ///
-    /// ```ignore
+    /// ```no_run
     /// use dotscope::metadata::resources::Resource;
     /// use dotscope::metadata::resources::ResourceTypeRef;
     ///

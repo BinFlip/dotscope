@@ -1,21 +1,19 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, missing_docs)]
 
-//! Integration tests for .NET 10 runtime assembly compatibility.
-//!
-//! This test suite loads all available .NET 10 runtime assemblies from the test
-//! samples directory and compares the loading success rates between ProjectLoader
-//! (with dependency resolution) and CilAssemblyView. This exercises modern .NET
-//! metadata features such as nullable reference types, default interface methods,
-//! and InterfaceImpl custom attributes.
+//! .NET 10 runtime assemblies: every one loads, as a `CilAssemblyView` and through
+//! `ProjectLoader` with its dependencies, which exercises modern metadata such as nullable
+//! reference types, default interface methods and InterfaceImpl custom attributes.
 
 use dotscope::testkit::fixture;
 
-#[test]
-#[ignore] // Large-scale compatibility test - run manually with: cargo test -- --ignored
-fn test_dotnet10_assembly_compatibility() {
-    let dotnet10_path = fixture("dotnet_10.0");
+mod full {
+    use dotscope::testkit::{compatibility::run_assembly_compatibility_test, fixture};
 
-    dotscope::testkit::compatibility::run_assembly_compatibility_test(&dotnet10_path, ".NET 10");
+    /// Every .NET 10 runtime assembly loads, alone and as a project with its dependencies.
+    #[test]
+    fn every_dotnet10_runtime_assembly_loads() {
+        run_assembly_compatibility_test(&fixture("dotnet_10.0"), ".NET 10");
+    }
 }
 
 /// The core library's structs are value types on every load.

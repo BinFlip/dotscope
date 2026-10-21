@@ -56,8 +56,9 @@
 //!
 //! ## Basic Runtime Setup
 //!
-//! ```ignore
-//! use dotscope::emulation::runtime::{RuntimeState, RuntimeStateBuilder};
+//! ```no_run
+//! use dotscope::emulation::RuntimeState;
+//! use dotscope::emulation::RuntimeStateBuilder;
 //!
 //! // Create runtime with default BCL hooks
 //! let runtime = RuntimeState::new();
@@ -70,8 +71,10 @@
 //!
 //! ## Registering Custom Hooks
 //!
-//! ```ignore
-//! use dotscope::emulation::runtime::{RuntimeState, Hook, PreHookResult};
+//! ```no_run
+//! use dotscope::emulation::RuntimeState;
+//! use dotscope::emulation::Hook;
+//! use dotscope::emulation::PreHookResult;
 //!
 //! let runtime = RuntimeState::new();
 //! runtime.hooks().register(

@@ -19,19 +19,18 @@ use crate::{
     emulation::{
         engine::{interpreter::Interpreter, result::StepResult},
         memory::AddressSpace,
-        process::EmulationLimits,
         EmValue, EmulationThread, ThreadId,
     },
     metadata::{
         token::Token,
         typesystem::{CilFlavor, PointerSize},
     },
-    testkit::emulation::{create_test_context, create_test_thread},
+    testkit::emulation::{create_test_context, create_test_thread, emulation_limits},
 };
 
 fn create_test_interpreter() -> (Interpreter, Arc<AddressSpace>) {
     let ctx = create_test_context();
-    let limits = EmulationLimits::default();
+    let limits = emulation_limits();
     let address_space = Arc::clone(&ctx.address_space);
     (
         Interpreter::new(limits, Arc::clone(&address_space), PointerSize::Bit64),
@@ -354,7 +353,7 @@ fn test_conv_i8() {
 
 #[test]
 fn test_execution_stats() {
-    let limits = EmulationLimits::new().with_max_instructions(10);
+    let limits = emulation_limits().with_max_instructions(10);
     let ctx = create_test_context();
     let mut interpreter =
         Interpreter::new(limits, Arc::clone(&ctx.address_space), PointerSize::Bit64);
@@ -370,7 +369,7 @@ fn test_execution_stats() {
 
 #[test]
 fn test_instruction_limit() {
-    let limits = EmulationLimits::new().with_max_instructions(5);
+    let limits = emulation_limits().with_max_instructions(5);
     let ctx = create_test_context();
     let mut interpreter =
         Interpreter::new(limits, Arc::clone(&ctx.address_space), PointerSize::Bit64);

@@ -34,27 +34,26 @@
 //!
 //! # Usage Examples
 //!
-//! ```rust,ignore
-//! # use dotscope::metadata::loader::LoaderContext;
-//! # fn example(context: &LoaderContext) -> dotscope::Result<()> {
-//! // Access method debug information through the loader context
-//! let method_debug_infos = &context.method_debug_information;
+//! ```no_run
+//! use dotscope::{
+//!     metadata::tables::{MethodDebugInformationBuilder, MethodDebugInformationRaw},
+//!     CilAssembly, CilAssemblyView,
+//! };
 //!
-//! // Get debug info for a specific method by RID
-//! if let Some(debug_info) = method_debug_infos.get(&1) {
-//!     // Check if method has debugging information
-//!     if debug_info.has_sequence_points() {
-//!         println!("Method has {} bytes of sequence point data",
-//!                  debug_info.sequence_points_size());
-//!     }
+//! // The first method's source lives in Document 1; it has no sequence points yet
+//! let mut assembly = CilAssembly::from_path("app.dll")?;
+//! MethodDebugInformationBuilder::new()
+//!     .document(1)
+//!     .build(&mut assembly)?;
 //!
-//!     // Check for associated document
-//!     if debug_info.has_document() {
-//!         println!("Method references document index: {}", debug_info.document);
+//! let view = CilAssemblyView::from_mem(assembly.to_memory()?)?;
+//! if let Some(infos) = view.tables().and_then(|t| t.table::<MethodDebugInformationRaw>()) {
+//!     for info in infos.iter().filter_map(Result::ok) {
+//!         // 0 means no document; `sequence_points` indexes the #Blob heap
+//!         println!("method {}: document {}, sequence points blob {}", info.rid, info.document, info.sequence_points);
 //!     }
 //! }
-//! # Ok(())
-//! # }
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! # Thread Safety

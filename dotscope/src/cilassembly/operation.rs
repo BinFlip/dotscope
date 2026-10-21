@@ -2,7 +2,7 @@
 //!
 //! This module provides the fundamental operation types for modifying metadata table rows
 //! during assembly editing operations. It defines both the raw operation variants and the
-//! timestamped operation wrapper used for conflict resolution and chronological ordering.
+//! timestamped operation wrapper used for conflict resolution and ordering.
 //!
 //! # Key Components
 //!
@@ -11,7 +11,7 @@
 //!
 //! # Architecture
 //!
-//! The operation system is designed around precise temporal ordering and conflict resolution:
+//! The operation system is designed around a total order of operations and conflict resolution:
 //!
 //! ## Operation Types
 //! Three fundamental operations are supported:
@@ -19,18 +19,19 @@
 //! - **Update**: Modify existing row data while preserving RID
 //! - **Delete**: Mark rows as deleted (soft deletion for RID stability)
 //!
-//! ## Temporal Ordering
-//! All operations are timestamped with microsecond precision to enable deterministic
-//! conflict resolution when multiple operations target the same RID. The system uses
-//! a last-write-wins strategy based on these timestamps.
+//! ## Ordering
+//! Every operation carries a logical timestamp from a process-wide counter: an operation
+//! created after another always has a larger one, and no two share one. Conflict
+//! resolution is last-write-wins on these timestamps, so its result depends only on the
+//! order the operations were made in, never on the system clock.
 //!
 //! ## Conflict Resolution
-//! When operations conflict (multiple operations on the same RID), the system resolves
-//! conflicts based on temporal ordering, with later timestamps taking precedence.
+//! When operations conflict (multiple operations on the same RID), the later timestamp
+//! takes precedence.
 //!
 //! # Usage Examples
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use crate::cilassembly::operation::{Operation, TableOperation};
 //! use crate::metadata::tables::TableDataOwned;
 //!
@@ -59,9 +60,13 @@
 //! - Assembly validation - Operation validation and conflict detection
 //! - [`crate::metadata::tables`] - Table data structures and row types
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::metadata::tables::TableDataOwned;
+
+/// The logical clock [`TableOperation::new`] stamps operations with: strictly increasing
+/// across the process, so every operation orders after the ones created before it.
+static OPERATION_CLOCK: AtomicU64 = AtomicU64::new(1);
 
 /// Specific operation types that can be applied to table rows.
 ///
@@ -78,7 +83,7 @@ use crate::metadata::tables::TableDataOwned;
 ///
 /// # Usage Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use crate::cilassembly::operation::Operation;
 /// use crate::metadata::tables::TableDataOwned;
 ///
@@ -203,29 +208,28 @@ impl Operation {
     }
 }
 
-/// Individual table operation with temporal ordering for conflict resolution.
+/// Individual table operation with its place in the order of operations.
 ///
-/// This struct wraps an [`crate::cilassembly::operation::Operation`] with a microsecond-precision
-/// timestamp to enable deterministic conflict resolution when multiple operations target
-/// the same RID. The timestamp-based ordering ensures that the assembly modification system
-/// can consistently resolve conflicts using a last-write-wins strategy.
+/// This struct wraps an [`crate::cilassembly::operation::Operation`] with a logical timestamp
+/// that orders it among all operations, for last-write-wins conflict resolution when several
+/// operations target the same RID.
 ///
-/// # Timestamp Precision
+/// # Timestamps
 ///
-/// Timestamps are captured with microsecond precision using [`std::time::SystemTime`] to
-/// minimize the likelihood of timestamp collisions during rapid operations. The system
-/// uses Unix epoch time for cross-platform consistency.
+/// [`TableOperation::new`] takes the next value of a process-wide counter, so timestamps are
+/// strictly increasing in creation order and unique, whatever the system clock does.
+/// [`TableOperation::new_with_timestamp`] sets one explicitly, for replay or tests; equal
+/// explicit timestamps keep the order the operations were applied in.
 ///
 /// # Conflict Resolution
 ///
 /// When multiple operations target the same RID:
 /// - Operations are ordered by timestamp (ascending)
 /// - Later timestamps take precedence (last-write-wins)
-/// - Equal timestamps are resolved using operation type precedence
 ///
 /// # Usage Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use crate::cilassembly::operation::{Operation, TableOperation};
 /// use crate::metadata::tables::TableDataOwned;
 ///
@@ -245,7 +249,7 @@ impl Operation {
 /// and immutable timestamps.
 #[derive(Debug, Clone)]
 pub struct TableOperation {
-    /// Microsecond precision timestamp for ordering operations
+    /// Logical timestamp ordering this operation among all others.
     ///
     /// This timestamp is used for conflict resolution when multiple
     /// operations target the same RID. Later timestamps take precedence
@@ -257,11 +261,10 @@ pub struct TableOperation {
 }
 
 impl TableOperation {
-    /// Creates a new table operation with the current timestamp.
+    /// Creates a new table operation, ordered after every operation created before it.
     ///
-    /// This method wraps the provided operation with a timestamp captured at
-    /// the moment of creation. The timestamp will be used for conflict resolution
-    /// if multiple operations target the same RID.
+    /// The operation takes the next value of a process-wide counter as its timestamp, which
+    /// conflict resolution uses if multiple operations target the same RID.
     ///
     /// # Arguments
     ///
@@ -269,10 +272,10 @@ impl TableOperation {
     ///
     /// # Returns
     ///
-    /// A new [`crate::cilassembly::operation::TableOperation`] with the current timestamp.
+    /// A new [`crate::cilassembly::operation::TableOperation`] with the next timestamp.
     pub fn new(operation: Operation) -> Self {
         Self {
-            timestamp: Self::current_timestamp_micros(),
+            timestamp: OPERATION_CLOCK.fetch_add(1, Ordering::Relaxed),
             operation,
         }
     }
@@ -286,7 +289,7 @@ impl TableOperation {
     /// # Arguments
     ///
     /// * `operation` - The [`crate::cilassembly::operation::Operation`] to wrap
-    /// * `timestamp` - The microsecond-precision timestamp to assign
+    /// * `timestamp` - The logical timestamp to assign
     ///
     /// # Returns
     ///
@@ -335,24 +338,6 @@ impl TableOperation {
     /// `true` if the wrapped operation is an [`crate::cilassembly::operation::Operation::Delete`], `false` otherwise.
     pub fn is_delete(&self) -> bool {
         matches!(self.operation, Operation::Delete(_))
-    }
-
-    /// Gets the current timestamp in microseconds since Unix epoch.
-    ///
-    /// This internal method captures the current system time with microsecond precision
-    /// for use in operation timestamping. The timestamp is relative to the Unix epoch
-    /// for cross-platform consistency.
-    ///
-    /// # Returns
-    ///
-    /// Current timestamp in microseconds since Unix epoch, or 0 if system time
-    /// is not available.
-    #[allow(clippy::cast_possible_truncation)] // Intentional: timestamp fits in u64 for practical purposes
-    fn current_timestamp_micros() -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_micros() as u64
     }
 }
 
@@ -425,7 +410,6 @@ mod tests {
     #[test]
     fn test_table_operation_new_captures_timestamp() {
         let op = TableOperation::new(Operation::Delete(1));
-        // Timestamp should be non-zero (current time)
         assert!(op.timestamp > 0);
     }
 
@@ -435,13 +419,16 @@ mod tests {
         assert_eq!(op.timestamp, 12345);
     }
 
+    /// Operations created back to back, with nothing between them, still order strictly:
+    /// a timestamp from the system clock repeats within one tick.
     #[test]
-    fn test_table_operation_timestamp_ordering() {
-        let op1 = TableOperation::new(Operation::Delete(1));
-        std::thread::sleep(std::time::Duration::from_micros(10));
-        let op2 = TableOperation::new(Operation::Delete(2));
-
-        assert!(op2.timestamp > op1.timestamp);
+    fn operations_created_back_to_back_are_strictly_ordered() {
+        let mut previous = TableOperation::new(Operation::Delete(1)).timestamp;
+        for rid in 2..10_000 {
+            let timestamp = TableOperation::new(Operation::Delete(rid)).timestamp;
+            assert!(timestamp > previous, "{timestamp} after {previous}");
+            previous = timestamp;
+        }
     }
 
     #[test]

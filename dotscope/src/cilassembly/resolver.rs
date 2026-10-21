@@ -26,7 +26,7 @@
 //!
 //! # Usage Examples
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use crate::cilassembly::resolver::{LastWriteWinsResolver, ConflictResolver, Conflict};
 //!
 //! // Create a resolver
@@ -70,7 +70,7 @@ use crate::{cilassembly::TableOperation, Error, Result};
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use crate::cilassembly::resolver::{ConflictResolver, Conflict, Resolution};
 ///
 /// struct LastWriteWinsResolver;
@@ -109,7 +109,7 @@ pub trait ConflictResolver {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use crate::cilassembly::resolver::{ConflictResolver, Conflict};
     ///
     /// # let resolver = LastWriteWinsResolver;
@@ -191,7 +191,7 @@ pub enum OperationResolution {
 ///
 /// # Usage Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use crate::cilassembly::resolver::{LastWriteWinsResolver, ConflictResolver, Conflict};
 ///
 /// let resolver = LastWriteWinsResolver;
@@ -290,7 +290,7 @@ mod tests {
         let operations = vec![
             {
                 let mut op = TableOperation::new(Operation::Insert(100, create_test_row()));
-                op.timestamp = 1000; // Microseconds since epoch
+                op.timestamp = 1000;
                 op
             },
             {
@@ -381,11 +381,36 @@ mod tests {
         assert!(resolution.operations.contains_key(&100));
     }
 
+    /// A delete made right after an insert of the same row wins, however close together
+    /// they were made.
+    #[test]
+    fn a_delete_made_right_after_an_insert_wins() {
+        for rid in 1..1_000 {
+            let insert_op = TableOperation::new(Operation::Insert(rid, create_test_row()));
+            let delete_op = TableOperation::new(Operation::Delete(rid));
+            let conflict = Conflict::InsertDeleteConflict {
+                rid,
+                insert_op,
+                delete_op,
+            };
+            let resolution = LastWriteWinsResolver
+                .resolve_conflict(&[conflict])
+                .expect("resolves");
+            assert!(
+                matches!(
+                    resolution.operations.get(&rid),
+                    Some(OperationResolution::UseOperation(op)) if op.is_delete()
+                ),
+                "RID {rid}: the later delete must win"
+            );
+        }
+    }
+
     #[test]
     fn test_last_write_wins_resolver_insert_delete_conflict() {
         let insert_op = {
             let mut op = TableOperation::new(Operation::Insert(100, create_test_row()));
-            op.timestamp = 1000; // Microseconds since epoch
+            op.timestamp = 1000;
             op
         };
 

@@ -113,10 +113,9 @@ use crate::{
         token::Token,
         typesystem::{
             CilFlavor, CilModifier, CilPrimitiveKind, CilTypeRc, CilTypeReference,
-            CompleteTypeSpec, TypeRegistry, TypeSource,
+            CompleteTypeSpec, TypeRegistry, TypeResolver, TypeSource,
         },
     },
-    utils::truncate_chars,
     Error::TypeError,
     Result,
 };
@@ -793,7 +792,7 @@ impl TypeBuilder {
     /// # Errors
     /// Returns an error if the function pointer type cannot be created.
     pub fn function_pointer(mut self, signature: SignatureMethod) -> Result<Self> {
-        let name = Self::format_fnptr_name(&signature);
+        let name = TypeResolver::format_fnptr_name(&signature);
 
         let fn_ptr_type = self.registry.get_or_create_type(&CompleteTypeSpec {
             token_init: self.token_init.take(),
@@ -964,39 +963,6 @@ impl TypeBuilder {
         } else {
             format!("{base_name}`{arg_count}")
         }
-    }
-
-    /// Formats a stable name for function pointer types based on signature characteristics.
-    ///
-    /// Generates a deterministic name based on the function signature's calling convention,
-    /// parameter count, and return type rather than relying on unstable pointer addresses.
-    /// This produces reproducible names across runs and platforms.
-    ///
-    /// # Arguments
-    /// * `signature` - The method signature to derive the name from
-    ///
-    /// # Returns
-    /// A deterministic string like `FnPtr_stdcall_2_void` representing the signature.
-    fn format_fnptr_name(signature: &SignatureMethod) -> String {
-        let calling_convention = if signature.stdcall {
-            "stdcall"
-        } else if signature.cdecl {
-            "cdecl"
-        } else if signature.thiscall {
-            "thiscall"
-        } else if signature.fastcall {
-            "fastcall"
-        } else {
-            "default"
-        };
-
-        let param_count = signature.params.len();
-        let return_info = format!("{:?}", signature.return_type.base).replace(' ', "");
-
-        // Truncate return_info to avoid extremely long names
-        let return_short = truncate_chars(&return_info, 16);
-
-        format!("FnPtr_{calling_convention}_{param_count}_{return_short}")
     }
 
     /// Finalizes the type construction and returns the built type.
@@ -1315,6 +1281,7 @@ mod tests {
             stdcall: true,
             thiscall: false,
             fastcall: false,
+            unmanaged: false,
             param_count_generic: 0,
             param_count: 0,
             varargs: Vec::new(),

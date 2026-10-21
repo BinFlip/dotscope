@@ -50,8 +50,9 @@
 //!
 //! ## Basic Value Reading
 //!
-//! ```rust,ignore
-//! use dotscope::utils::{read_le, read_be};
+//! ```no_run
+//! use dotscope::io::read_le;
+//! use dotscope::io::read_be;
 //!
 //! // Little-endian reading (most common for PE files)
 //! let data = [0x01, 0x00, 0x00, 0x00]; // u32 value: 1
@@ -67,8 +68,9 @@
 //!
 //! ## Basic Value Writing
 //!
-//! ```rust,ignore
-//! use dotscope::utils::{write_le, write_be};
+//! ```no_run
+//! use dotscope::io::write_le;
+//! use dotscope::io::write_be;
 //!
 //! // Little-endian writing (most common for PE files)
 //! let mut data = [0u8; 4];
@@ -84,8 +86,8 @@
 //!
 //! ## Sequential Reading with Offset Tracking
 //!
-//! ```rust,ignore
-//! use dotscope::utils::read_le_at;
+//! ```no_run
+//! use dotscope::io::read_le_at;
 //!
 //! let data = [0x01, 0x00, 0x02, 0x00, 0x03, 0x00, 0x00, 0x00];
 //! let mut offset = 0;
@@ -104,8 +106,8 @@
 //!
 //! ## Sequential Writing with Offset Tracking
 //!
-//! ```rust,ignore
-//! use dotscope::utils::write_le_at;
+//! ```no_run
+//! use dotscope::io::write_le_at;
 //!
 //! let mut data = [0u8; 8];
 //! let mut offset = 0;
@@ -122,8 +124,9 @@
 //!
 //! ## Dynamic Size Reading/Writing
 //!
-//! ```rust,ignore
-//! use dotscope::utils::{read_le_at_dyn, write_le_at_dyn};
+//! ```no_run
+//! use dotscope::io::read_le_at_dyn;
+//! use dotscope::io::write_le_at_dyn;
 //!
 //! let mut data = [0u8; 6];
 //! let mut offset = 0;
@@ -186,8 +189,8 @@ fn io_oob() -> Error {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::utils::CilIO;
+/// ```no_run
+/// use dotscope::io::CilIO;
 ///
 /// // The trait is used internally by the reading functions
 /// let bytes = [0x01, 0x00, 0x00, 0x00];
@@ -489,8 +492,8 @@ impl CilIO for isize {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::utils::read_le;
+/// ```no_run
+/// use dotscope::io::read_le;
 ///
 /// let data = [0x01, 0x00, 0x00, 0x00]; // Little-endian u32: 1
 /// let value: u32 = read_le(&data)?;
@@ -522,8 +525,8 @@ pub fn read_le<T: CilIO>(data: &[u8]) -> Result<T> {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::utils::read_le_at;
+/// ```no_run
+/// use dotscope::io::read_le_at;
 ///
 /// let data = [0x01, 0x00, 0x02, 0x00]; // Two u16 values: 1, 2
 /// let mut offset = 0;
@@ -573,8 +576,8 @@ pub fn read_le_at<T: CilIO>(data: &[u8], offset: &mut usize) -> Result<T> {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::utils::read_le_at_dyn;
+/// ```no_run
+/// use dotscope::io::read_le_at_dyn;
 ///
 /// let data = [0x01, 0x00, 0x02, 0x00, 0x00, 0x00];
 /// let mut offset = 0;
@@ -621,8 +624,8 @@ pub fn read_le_at_dyn(data: &[u8], offset: &mut usize, is_large: bool) -> Result
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::utils::read_be;
+/// ```no_run
+/// use dotscope::io::read_be;
 ///
 /// let data = [0x00, 0x00, 0x00, 0x01]; // Big-endian u32: 1
 /// let value: u32 = read_be(&data)?;
@@ -655,8 +658,8 @@ pub fn read_be<T: CilIO>(data: &[u8]) -> Result<T> {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::utils::read_be_at;
+/// ```no_run
+/// use dotscope::io::read_be_at;
 ///
 /// let data = [0x00, 0x01, 0x00, 0x02]; // Two big-endian u16 values: 1, 2
 /// let mut offset = 0;
@@ -707,8 +710,8 @@ pub fn read_be_at<T: CilIO>(data: &[u8], offset: &mut usize) -> Result<T> {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::utils::read_be_at_dyn;
+/// ```no_run
+/// use dotscope::io::read_be_at_dyn;
 ///
 /// let data = [0x00, 0x01, 0x00, 0x00, 0x00, 0x02];
 /// let mut offset = 0;
@@ -755,8 +758,8 @@ pub fn read_be_at_dyn(data: &[u8], offset: &mut usize, is_large: bool) -> Result
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::utils::write_le;
+/// ```no_run
+/// use dotscope::io::write_le;
 ///
 /// let mut data = [0u8; 4];
 /// let value: u32 = 1;
@@ -790,8 +793,8 @@ pub fn write_le<T: CilIO>(data: &mut [u8], value: T) -> Result<()> {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::utils::write_le_at;
+/// ```no_run
+/// use dotscope::io::write_le_at;
 ///
 /// let mut data = [0u8; 4];
 /// let mut offset = 0;
@@ -841,8 +844,8 @@ pub fn write_le_at<T: CilIO>(data: &mut [u8], offset: &mut usize, value: T) -> R
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::utils::write_le_at_dyn;
+/// ```no_run
+/// use dotscope::io::write_le_at_dyn;
 ///
 /// let mut data = [0u8; 6];
 /// let mut offset = 0;
@@ -895,8 +898,8 @@ pub fn write_le_at_dyn(
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::utils::write_be;
+/// ```no_run
+/// use dotscope::io::write_be;
 ///
 /// let mut data = [0u8; 4];
 /// let value: u32 = 1;
@@ -931,8 +934,8 @@ pub fn write_be<T: CilIO>(data: &mut [u8], value: T) -> Result<()> {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::utils::write_be_at;
+/// ```no_run
+/// use dotscope::io::write_be_at;
 ///
 /// let mut data = [0u8; 4];
 /// let mut offset = 0;
@@ -983,8 +986,8 @@ pub fn write_be_at<T: CilIO>(data: &mut [u8], offset: &mut usize, value: T) -> R
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::utils::write_be_at_dyn;
+/// ```no_run
+/// use dotscope::io::write_be_at_dyn;
 ///
 /// let mut data = [0u8; 6];
 /// let mut offset = 0;
@@ -1043,8 +1046,8 @@ pub fn write_be_at_dyn(
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// # use dotscope::utils::write_compressed_uint;
+/// ```no_run
+/// # use dotscope::io::write_compressed_uint;
 /// let mut buffer = Vec::new();
 /// write_compressed_uint(127, &mut buffer);
 /// assert_eq!(buffer, vec![127]);
@@ -1086,8 +1089,8 @@ pub fn write_compressed_uint(value: u32, buffer: &mut Vec<u8>) {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// # use dotscope::utils::write_compressed_int;
+/// ```no_run
+/// # use dotscope::io::write_compressed_int;
 /// let mut buffer = Vec::new();
 /// write_compressed_int(3, &mut buffer)?;
 /// assert_eq!(buffer, vec![0x06]);
@@ -1095,6 +1098,7 @@ pub fn write_compressed_uint(value: u32, buffer: &mut Vec<u8>) {
 /// let mut buffer = Vec::new();
 /// write_compressed_int(-3, &mut buffer)?;
 /// assert_eq!(buffer, vec![0x7B]);
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[allow(clippy::cast_sign_loss)]
 pub fn write_compressed_int(value: i32, buffer: &mut Vec<u8>) -> Result<()> {
@@ -1140,8 +1144,8 @@ pub fn write_compressed_int(value: i32, buffer: &mut Vec<u8>) -> Result<()> {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// # use dotscope::utils::write_7bit_encoded_int;
+/// ```no_run
+/// # use dotscope::io::write_7bit_encoded_int;
 /// let mut buffer = Vec::new();
 /// write_7bit_encoded_int(127, &mut buffer);
 /// assert_eq!(buffer, vec![0x7F]);
@@ -1170,8 +1174,8 @@ pub fn write_7bit_encoded_int(mut value: u32, buffer: &mut Vec<u8>) {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// # use dotscope::utils::write_string_utf8;
+/// ```no_run
+/// # use dotscope::io::write_string_utf8;
 /// let mut buffer = Vec::new();
 /// write_string_utf8("Hello", &mut buffer);
 /// assert_eq!(buffer, b"Hello\0");
@@ -1193,8 +1197,8 @@ pub fn write_string_utf8(value: &str, buffer: &mut Vec<u8>) {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// # use dotscope::utils::write_prefixed_string_utf8;
+/// ```no_run
+/// # use dotscope::io::write_prefixed_string_utf8;
 /// let mut buffer = Vec::new();
 /// write_prefixed_string_utf8("Hello", &mut buffer);
 /// assert_eq!(buffer, vec![5, b'H', b'e', b'l', b'l', b'o']);
@@ -1218,8 +1222,8 @@ pub fn write_prefixed_string_utf8(value: &str, buffer: &mut Vec<u8>) {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// # use dotscope::utils::write_prefixed_string_utf16;
+/// ```no_run
+/// # use dotscope::io::write_prefixed_string_utf16;
 /// let mut buffer = Vec::new();
 /// write_prefixed_string_utf16("Hello", &mut buffer);
 /// // Length 10 bytes (5 UTF-16 chars), followed by "Hello" in UTF-16 LE
@@ -1288,8 +1292,8 @@ pub fn decode_utf16le(bytes: &[u8]) -> Option<String> {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::utils::write_string_at;
+/// ```no_run
+/// use dotscope::io::write_string_at;
 ///
 /// let mut buffer = [0u8; 10];
 /// let mut offset = 0;
@@ -1339,8 +1343,8 @@ pub fn write_string_at(data: &mut [u8], offset: &mut usize, value: &str) -> Resu
 /// * `Err(OutOfBounds)` - If there are insufficient bytes in the buffer
 ///
 /// # Examples
-/// ```rust,ignore
-/// use dotscope::utils::read_compressed_int;
+/// ```no_run
+/// use dotscope::io::read_compressed_int;
 ///
 /// let data = [0x7F, 0x80, 0x80, 0xC0, 0x00, 0x00, 0x40];
 /// let mut offset = 0;
@@ -1403,8 +1407,8 @@ pub fn read_compressed_int(data: &[u8], offset: &mut usize) -> Result<(usize, us
 /// * `Err(OutOfBounds)` - If there are insufficient bytes in the buffer
 ///
 /// # Examples
-/// ```rust,ignore
-/// use dotscope::utils::read_compressed_int_at;
+/// ```no_run
+/// use dotscope::io::read_compressed_int_at;
 ///
 /// let data = [0x7F, 0x80, 0x80];
 ///
@@ -1459,8 +1463,8 @@ pub fn read_packed_len(data: &[u8]) -> Option<(usize, usize)> {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::utils::read_compressed_uint;
+/// ```no_run
+/// use dotscope::io::read_compressed_uint;
 ///
 /// let data = [0x2A]; // Single byte: 42
 /// let mut offset = 0;
@@ -1489,8 +1493,8 @@ pub fn read_compressed_uint(data: &[u8], offset: &mut usize) -> Result<u32> {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::utils::read_compressed_uint_at;
+/// ```no_run
+/// use dotscope::io::read_compressed_uint_at;
 ///
 /// let data = [0x81, 0x2C]; // Two bytes: 300
 /// let value = read_compressed_uint_at(&data, 0)?;

@@ -63,7 +63,7 @@
 //!
 //! ## Simple Name-Based Hook
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::emulation::{Hook, HookManager, PreHookResult};
 //!
 //! let manager = HookManager::new();
@@ -80,7 +80,7 @@
 //!
 //! ## Signature-Based Hook with Bypass
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::emulation::{Hook, HookManager, PreHookResult};
 //! use dotscope::metadata::typesystem::CilFlavor;
 //!

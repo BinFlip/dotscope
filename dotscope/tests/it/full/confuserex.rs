@@ -22,10 +22,9 @@
 #![cfg(feature = "deobfuscation")]
 
 use dotscope::{
-    deobfuscation::{DeobfuscationEngine, EngineConfig},
     metadata::tables::{ManifestResourceRaw, TableId},
     testkit::{
-        fixture,
+        deobfuscated, fixture,
         framework::{
             assert_common_requirements, load_sample, print_summary, run_deobfuscation_test,
             ProcessMode, SampleSpec, TestResult, SEMANTIC_TEST_METHODS,
@@ -464,176 +463,199 @@ fn all_samples() -> Vec<SampleSpec<ExpectedProtections>> {
     ]
 }
 
-/// Main test that runs all samples through the comprehensive deobfuscation pipeline.
-#[test]
-#[cfg_attr(feature = "skip-expensive-tests", ignore)]
-fn test_all_confuserex_samples() {
-    let samples = all_samples();
-
-    // Load original.exe for semantic comparison
+/// Runs one sample through the deobfuscation pipeline and checks it against its description in
+/// [`all_samples`].
+fn check_sample(filename: &str) {
+    let sample = all_samples()
+        .into_iter()
+        .find(|sample| sample.filename == filename)
+        .unwrap_or_else(|| panic!("{filename} is not a ConfuserEx sample"));
     let original_asm =
-        Some(load_sample(SAMPLES_DIR, "original.exe").expect("the unprotected original loads"));
-    let mut results = Vec::new();
+        load_sample(SAMPLES_DIR, "original.exe").expect("the unprotected original loads");
+    let result = &run_deobfuscation_test(
+        &sample,
+        SAMPLES_DIR,
+        Some(&original_asm),
+        SEMANTIC_TEST_METHODS,
+        ProcessMode::Assembly,
+    );
 
-    for sample in &samples {
-        results.push(run_deobfuscation_test(
-            sample,
-            SAMPLES_DIR,
-            original_asm.as_ref(),
-            SEMANTIC_TEST_METHODS,
-            EngineConfig::default(),
-            ProcessMode::Assembly,
-        ));
+    print_confuserex_summary(std::slice::from_ref(result));
+
+    if result.sample.is_original {
+        return;
     }
 
-    print_confuserex_summary(&results);
+    let filename = result.sample.filename;
+    let expected = &result.sample.expected_protections;
 
-    // ASSERTIONS: Verify all protected samples passed
-    for result in &results {
-        if result.sample.is_original {
-            continue;
-        }
+    // Common assertions: core validity, semantic preservation, structural match, diagnostics
+    let semantic_threshold = match result.sample.verification_level {
+        VerificationLevel::Normal => 0.90,
+        VerificationLevel::Relaxed => 0.85,
+    };
+    assert_common_requirements(result, None, semantic_threshold, true);
 
-        let filename = result.sample.filename;
-        let expected = &result.sample.expected_protections;
+    // Detection assertions (engine found expected protections)
+    if expected.has_marker_attributes {
+        assert!(
+            result.detection.has_technique("confuserex.marker"),
+            "{}: markers not detected by engine",
+            filename
+        );
+    }
+    if expected.has_suppress_ildasm {
+        assert!(
+            result.detection.has_technique("generic.ildasm"),
+            "{}: suppress_ildasm not detected",
+            filename
+        );
+    }
+    if expected.has_decryptors {
+        assert!(
+            result.detection.has_technique("confuserex.constants"),
+            "{}: decryptors not detected",
+            filename
+        );
+    }
+    if expected.has_anti_debug {
+        assert!(
+            result.detection.has_technique("confuserex.debug"),
+            "{}: anti-debug not detected",
+            filename
+        );
+    }
+    if expected.has_anti_tamper {
+        assert!(
+            result.detection.has_technique("confuserex.tamper"),
+            "{}: anti-tamper not detected",
+            filename
+        );
+    }
+    if expected.has_resources {
+        assert!(
+            result.detection.has_technique("confuserex.resources"),
+            "{}: resources not detected",
+            filename
+        );
+    }
+    if expected.has_reference_proxy {
+        assert!(
+            result.detection.has_technique("confuserex.proxy"),
+            "{}: reference proxy not detected",
+            filename
+        );
+    }
+    if expected.has_anti_dump {
+        assert!(
+            result.detection.has_technique("confuserex.dump"),
+            "{}: anti-dump not detected",
+            filename
+        );
+    }
+    if expected.has_invalid_metadata {
+        assert!(
+            result.detection.has_technique("confuserex.metadata"),
+            "{}: invalid metadata not detected",
+            filename
+        );
+    }
 
-        // Common assertions: core validity, semantic preservation, structural match, diagnostics
-        let semantic_threshold = match result.sample.verification_level {
-            VerificationLevel::Normal => 0.90,
-            VerificationLevel::Relaxed => 0.85,
-        };
-        assert_common_requirements(result, None, semantic_threshold, true);
+    // Removal assertions (output should be clean)
+    if expected.has_marker_attributes {
+        assert!(
+            !result.post_detection.has_technique("confuserex.marker"),
+            "{}: markers should be removed",
+            filename
+        );
+    }
+    if expected.has_suppress_ildasm {
+        assert!(
+            !result.post_detection.has_technique("generic.ildasm"),
+            "{}: suppress_ildasm should be removed",
+            filename
+        );
+    }
+    if expected.has_anti_dump {
+        assert!(
+            !result.post_detection.has_technique("confuserex.dump"),
+            "{}: anti-dump should be removed",
+            filename
+        );
+    }
+    if expected.has_invalid_metadata {
+        assert!(
+            !result.post_detection.has_technique("confuserex.metadata"),
+            "{}: invalid metadata should be repaired",
+            filename
+        );
+    }
+    if expected.has_anti_tamper {
+        assert_eq!(
+            result
+                .post_detection
+                .technique_evidence_count("confuserex.tamper"),
+            0,
+            "{}: encrypted methods should be decrypted",
+            filename
+        );
+    }
 
-        // Detection assertions (engine found expected protections)
-        if expected.has_marker_attributes {
+    // Decryptor verification
+    if expected.has_decryptors {
+        if let Some(ref stats) = result.stats {
             assert!(
-                result.detection.has_technique("confuserex.marker"),
-                "{}: markers not detected by engine",
-                filename
+                stats.constants_folded > 0 || stats.strings_decrypted > 0,
+                "{}: Expected decryption activity (constants={} strings={})",
+                filename,
+                stats.constants_folded,
+                stats.strings_decrypted
             );
-        }
-        if expected.has_suppress_ildasm {
-            assert!(
-                result.detection.has_technique("generic.ildasm"),
-                "{}: suppress_ildasm not detected",
-                filename
-            );
-        }
-        if expected.has_decryptors {
-            assert!(
-                result.detection.has_technique("confuserex.constants"),
-                "{}: decryptors not detected",
-                filename
-            );
-        }
-        if expected.has_anti_debug {
-            assert!(
-                result.detection.has_technique("confuserex.debug"),
-                "{}: anti-debug not detected",
-                filename
-            );
-        }
-        if expected.has_anti_tamper {
-            assert!(
-                result.detection.has_technique("confuserex.tamper"),
-                "{}: anti-tamper not detected",
-                filename
-            );
-        }
-        if expected.has_resources {
-            assert!(
-                result.detection.has_technique("confuserex.resources"),
-                "{}: resources not detected",
-                filename
-            );
-        }
-        if expected.has_reference_proxy {
-            assert!(
-                result.detection.has_technique("confuserex.proxy"),
-                "{}: reference proxy not detected",
-                filename
-            );
-        }
-        if expected.has_anti_dump {
-            assert!(
-                result.detection.has_technique("confuserex.dump"),
-                "{}: anti-dump not detected",
-                filename
-            );
-        }
-        if expected.has_invalid_metadata {
-            assert!(
-                result.detection.has_technique("confuserex.metadata"),
-                "{}: invalid metadata not detected",
-                filename
-            );
-        }
-
-        // Removal assertions (output should be clean)
-        if expected.has_marker_attributes {
-            assert!(
-                !result.post_detection.has_technique("confuserex.marker"),
-                "{}: markers should be removed",
-                filename
-            );
-        }
-        if expected.has_suppress_ildasm {
-            assert!(
-                !result.post_detection.has_technique("generic.ildasm"),
-                "{}: suppress_ildasm should be removed",
-                filename
-            );
-        }
-        if expected.has_anti_dump {
-            assert!(
-                !result.post_detection.has_technique("confuserex.dump"),
-                "{}: anti-dump should be removed",
-                filename
-            );
-        }
-        if expected.has_invalid_metadata {
-            assert!(
-                !result.post_detection.has_technique("confuserex.metadata"),
-                "{}: invalid metadata should be repaired",
-                filename
-            );
-        }
-        if expected.has_anti_tamper {
-            assert_eq!(
-                result
-                    .post_detection
-                    .technique_evidence_count("confuserex.tamper"),
-                0,
-                "{}: encrypted methods should be decrypted",
-                filename
-            );
-        }
-
-        // Decryptor verification
-        if expected.has_decryptors {
-            if let Some(ref stats) = result.stats {
-                assert!(
-                    stats.constants_folded > 0 || stats.strings_decrypted > 0,
-                    "{}: Expected decryption activity (constants={} strings={})",
-                    filename,
-                    stats.constants_folded,
-                    stats.strings_decrypted
-                );
-            }
-        }
-
-        // Control flow verification
-        if expected.has_control_flow {
-            if let Some(ref stats) = result.stats {
-                assert!(
-                    stats.branches_simplified > 0,
-                    "{}: Expected branches to be simplified for control flow sample (got {})",
-                    filename,
-                    stats.branches_simplified
-                );
-            }
         }
     }
+
+    // Control flow verification
+    if expected.has_control_flow {
+        if let Some(ref stats) = result.stats {
+            assert!(
+                stats.branches_simplified > 0,
+                "{}: Expected branches to be simplified for control flow sample (got {})",
+                filename,
+                stats.branches_simplified
+            );
+        }
+    }
+}
+
+sample_tests! {
+    all_samples(), check_sample;
+    original => "original.exe",
+    minimal => "mkaring_minimal.exe",
+    normal => "mkaring_normal.exe",
+    constants => "mkaring_constants.exe",
+    controlflow => "mkaring_controlflow.exe",
+    resources => "mkaring_resources.exe",
+    maximum => "mkaring_maximum.exe",
+    antitamper => "mkaring_antitamper.exe",
+    constants_dyncyph => "mkaring_constants_dyncyph.exe",
+    constants_cfg => "mkaring_constants_cfg.exe",
+    controlflow_expression => "mkaring_controlflow_expression.exe",
+    constants_x86 => "mkaring_constants_x86.exe",
+    controlflow_x86 => "mkaring_controlflow_x86.exe",
+    constants_x86_controlflow => "mkaring_constants_x86_controlflow.exe",
+    constants_x86_controlflow_x86 => "mkaring_constants_x86_controlflow_x86.exe",
+    antitamper_controlflow => "mkaring_antitamper_controlflow.exe",
+    antitamper_constants_cfg => "mkaring_antitamper_constants_cfg.exe",
+    constants_cfg_controlflow => "mkaring_constants_cfg_controlflow.exe",
+    antidebug => "mkaring_antidebug.exe",
+    antidump => "mkaring_antidump.exe",
+    antiildasm => "mkaring_antiildasm.exe",
+    harden => "mkaring_harden.exe",
+    invalidmetadata => "mkaring_invalidmetadata.exe",
+    invalidmetadata_antitamper => "mkaring_invalidmetadata_antitamper.exe",
+    refproxy => "mkaring_refproxy.exe",
+    rename => "mkaring_rename.exe",
+    typescramble => "mkaring_typescramble.exe",
 }
 
 /// ConfuserEx-specific summary with detection and stats detail.
@@ -751,13 +773,12 @@ fn manifest_resource_order(assembly: &CilObject) -> Vec<String> {
 /// assembly's: the program lists its resources and sees the difference.
 #[test]
 fn restored_resources_keep_the_applications_order() {
-    let engine = DeobfuscationEngine::new(EngineConfig::default());
-    let (output, _) = engine
-        .process_file(fixture("packers/confuserex/1.6.0/mkaring_normal.exe"))
+    let (output, _) = deobfuscated("packers/confuserex/1.6.0/mkaring_normal.exe")
+        .as_ref()
         .unwrap();
     let original = CilObject::from_path(fixture("packers/confuserex/1.6.0/original.exe")).unwrap();
 
-    let restored = manifest_resource_order(&output);
+    let restored = manifest_resource_order(output);
     assert!(!restored.is_empty(), "the resources are restored");
     assert_eq!(restored, manifest_resource_order(&original));
 }
@@ -767,9 +788,9 @@ fn restored_resources_keep_the_applications_order() {
 /// their MethodSpecs still instantiates it.
 #[test]
 fn a_generic_method_called_through_a_method_spec_survives_cleanup() {
-    let path = fixture("packers/confuserex/1.6.0/mkaring_typescramble.exe");
-    let engine = DeobfuscationEngine::new(EngineConfig::default());
-    let (output, _) = engine.process_file(path).expect("deobfuscates");
+    let (output, _) = deobfuscated("packers/confuserex/1.6.0/mkaring_typescramble.exe")
+        .as_ref()
+        .expect("deobfuscates");
 
     let method_named = |name: &str| {
         output

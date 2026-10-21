@@ -77,7 +77,7 @@ use crate::{
         resources::Resources,
         tables::{
             AssemblyOsRc, AssemblyProcessorRc, AssemblyRc, AssemblyRefMap, DeclSecurityMap,
-            FileMap, MemberRefMap, MethodSpecMap, ModuleRc, ModuleRefMap,
+            FieldMap, FileMap, MemberRefMap, MethodSpecMap, ModuleRc, ModuleRefMap,
         },
         typesystem::TypeRegistry,
     },
@@ -160,6 +160,8 @@ pub(crate) struct CilObjectData {
     pub methods: MethodMap,
     /// Generic method instantiation specifications.
     pub method_specs: MethodSpecMap,
+    /// Field definitions, by token.
+    pub fields: FieldMap,
     /// Embedded resource management and access.
     pub resources: Resources,
 }
@@ -198,26 +200,7 @@ impl CilObjectData {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::loader::data::CilObjectData;
-    /// use dotscope::metadata::cilassemblyview::CilAssemblyView;
-    ///
-    /// # fn load_assembly_example() -> dotscope::Result<()> {
-    /// // Create CilAssemblyView first
-    /// let view = CilAssemblyView::from_path("example.dll")?;
-    ///
-    /// // Load single assembly without ProjectContext
-    /// let cil_data = CilObjectData::from_assembly_view(&view, None)?;
-    ///
-    /// // Or with ProjectContext for multi-assembly coordination
-    /// let project_context = ProjectContext::new(3)?; // for 3 assemblies
-    /// let cil_data = CilObjectData::from_assembly_view(&view, Some(&project_context))?;
-    ///
-    /// // Metadata is now ready for use
-    /// println!("Loaded {} types", cil_data.types.len());
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// The `examples::from_assembly_view_example` test in this module runs this example.
     ///
     /// # Thread Safety
     ///
@@ -249,6 +232,7 @@ impl CilObjectData {
             export_container: UnifiedExportContainer::new(),
             methods: SkipMap::default(),
             method_specs: SkipMap::default(),
+            fields: SkipMap::default(),
             resources: Resources::new(view.file().clone()),
         };
 
@@ -290,7 +274,7 @@ impl CilObjectData {
                 method_impl: SkipMap::default(),
                 method_semantics: SkipMap::default(),
                 method_spec: &cil_object.method_specs,
-                field: SkipMap::default(),
+                field: &cil_object.fields,
                 field_ptr: SkipMap::default(),
                 method_ptr: SkipMap::default(),
                 field_layout: SkipMap::default(),
@@ -385,4 +369,32 @@ fn load_native_tables(view: &CilAssemblyView) -> Result<(NativeImports, NativeEx
     };
 
     Ok((native_imports, native_exports))
+}
+
+#[cfg(test)]
+mod examples {
+    use super::*;
+    use crate::{metadata::tables::TableId, testkit::fixture, Result};
+
+    /// Loading runs every table loader; the types and methods of the file are then there.
+    #[test]
+    fn from_assembly_view_example() -> Result<()> {
+        // Create CilAssemblyView first
+        let view = CilAssemblyView::from_path(fixture("crafted_2.exe"))?;
+
+        // Load single assembly without ProjectContext
+        let cil_data = CilObjectData::from_assembly_view(&view, None, false)?;
+
+        // Metadata is now ready for use
+        assert!(cil_data.types.len() > 1);
+        let method_rows = view
+            .tables()
+            .expect("tables")
+            .table_row_count(TableId::MethodDef);
+        assert_eq!(
+            cil_data.methods.len(),
+            usize::try_from(method_rows).unwrap()
+        );
+        Ok(())
+    }
 }

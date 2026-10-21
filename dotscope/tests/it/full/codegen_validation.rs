@@ -44,8 +44,8 @@ use std::{
 
 use dotscope::{
     analysis::SsaFunction,
+    assembly::{decode_stream, Instruction},
     compiler::{validate_lift, CompilationResult, EventKind, SsaCodeGenerator},
-    deobfuscation::{DeobfuscationEngine, EngineConfig},
     metadata::{
         method::{ExceptionHandler, ExceptionHandlerFlags, Method},
         tables::{MethodDefRaw, TableDataOwned, TableId},
@@ -53,10 +53,11 @@ use dotscope::{
         validation::ValidationConfig,
     },
     testkit::{
+        engine,
         fixtures::samples_dir,
         tools::{require_tool, run_with_timeout, ToolKind},
     },
-    CilObject, MethodBodyBuilder,
+    CilAssembly, CilObject, MethodBodyBuilder, Parser,
 };
 
 /// Every `.dll` and `.exe` under `root`, recursively, sorted.
@@ -361,9 +362,64 @@ fn code_on_disk(assembly: &CilObject, method: &Method) -> Option<Vec<u8>> {
         .map(<[u8]>::to_vec)
 }
 
+/// The string a user string token names: one of `input`'s heap (`0x70`), or an appended one
+/// by the placeholder the generator gave it (`0xF0`), as the written heap holds it.
+fn string_named(input: &CilAssembly, written: &CilObject, token: u32) -> Option<String> {
+    let offset = match token >> 24 {
+        0x70 => {
+            let text = input
+                .view()
+                .userstrings()?
+                .get((token & 0x00FF_FFFF) as usize)
+                .ok()?;
+            return Some(text.to_string_lossy().to_string());
+        }
+        0xF0 => input
+            .changes()
+            .lookup_by_placeholder(0x8000_0000 | (token & 0x00FF_FFFF))?
+            .offset()?,
+        _ => return None,
+    };
+    let text = written.userstrings()?.get(offset as usize).ok()?;
+    Some(text.to_string_lossy().to_string())
+}
+
+/// Whether the code on disk is the generated code: the same instructions, with each `ldstr`
+/// loading the same string. The writer renumbers user string tokens when the heap moves, so
+/// their bytes may differ while the string is the same.
+fn same_code(input: &CilAssembly, written: &CilObject, on_disk: &[u8], generated: &[u8]) -> bool {
+    let decode = |code: &[u8]| decode_stream(&mut Parser::new(code), 0).ok();
+    let (Some(disk), Some(generated_code)) = (decode(on_disk), decode(generated)) else {
+        return on_disk == generated;
+    };
+    disk.len() == generated_code.len()
+        && disk.iter().zip(&generated_code).all(|(d, g)| {
+            let bytes = |code: &[u8], instr: &Instruction| {
+                code.get(instr.offset as usize..(instr.offset + instr.size) as usize)
+                    .map(<[u8]>::to_vec)
+            };
+            if d.mnemonic != g.mnemonic || d.offset != g.offset || d.size != g.size {
+                return false;
+            }
+            if d.mnemonic == "ldstr" {
+                let (Some(dt), Some(gt)) = (d.get_token_operand(), g.get_token_operand()) else {
+                    return false;
+                };
+                let on_disk_text = written
+                    .userstrings()
+                    .and_then(|heap| heap.get(dt.row() as usize).ok())
+                    .map(|text| text.to_string_lossy().to_string());
+                return on_disk_text.is_some()
+                    && on_disk_text == string_named(input, written, gt.value());
+            }
+            bytes(on_disk, d) == bytes(generated, g)
+        })
+}
+
 /// How a body on disk differs from the compilation it was written from, if it
 /// does.
 fn body_difference(
+    input: &CilAssembly,
     assembly: &CilObject,
     method: &Method,
     compiled: &CompilationResult,
@@ -371,7 +427,9 @@ fn body_difference(
     let Some(body) = method.body.get() else {
         return Some("the method has no body".to_string());
     };
-    if code_on_disk(assembly, method).as_deref() != Some(compiled.bytecode.as_slice()) {
+    let same = code_on_disk(assembly, method)
+        .is_some_and(|code| same_code(input, assembly, &code, &compiled.bytecode));
+    if !same {
         return Some("the code on disk is not the generated code".to_string());
     }
     // A tiny header implies a maximum stack of 8, enough for any body it
@@ -567,7 +625,7 @@ fn every_sample_recompiles_to_an_assembly_that_loads() {
                 continue;
             };
             let on_disk = entry.value();
-            if let Some(difference) = body_difference(&reloaded, on_disk, result) {
+            if let Some(difference) = body_difference(&cil, &reloaded, on_disk, result) {
                 findings.record("body differs on disk", name, method, &difference);
                 continue;
             }
@@ -652,7 +710,7 @@ fn every_regenerated_method_survives_the_default_pipeline() {
         return;
     }
     let findings = sweep(|name, _, assembly, findings| {
-        let engine = DeobfuscationEngine::new(EngineConfig::default());
+        let engine = engine();
         match engine.process_assembly(assembly) {
             Ok((_, result)) => {
                 findings.generated += result.events.count_kind(EventKind::CodeRegenerated);

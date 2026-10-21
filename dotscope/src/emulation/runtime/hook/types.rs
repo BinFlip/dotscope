@@ -107,7 +107,7 @@ impl Default for HookPriority {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::emulation::{HookContext, PreHookResult, EmulationThread};
 ///
 /// fn my_pre_hook(ctx: &HookContext, thread: &mut EmulationThread) -> PreHookResult {
@@ -292,7 +292,7 @@ impl<'a> HookContext<'a> {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::emulation::{PreHookResult, EmValue};
 ///
 /// // Continue to let the original method run
@@ -469,7 +469,7 @@ impl PreHookResult {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::emulation::{PostHookResult, EmValue};
 ///
 /// // Keep the original return value unchanged
@@ -507,7 +507,7 @@ pub enum PostHookResult {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::emulation::{PreHookFn, PreHookResult};
 /// use std::sync::Arc;
 ///
@@ -530,7 +530,7 @@ pub type PreHookFn =
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::emulation::{PostHookFn, PostHookResult};
 /// use std::sync::Arc;
 ///
@@ -553,7 +553,7 @@ pub type PostHookFn = Arc<
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::emulation::{HookManager, HookOutcome, EmValue};
 ///
 /// let outcome = manager.execute(...)?;
@@ -565,6 +565,7 @@ pub type PostHookFn = Arc<
 ///         // Hook handled the call, use this return value
 ///     }
 /// }
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
 /// [`HookManager::execute`]: crate::emulation::runtime::HookManager::execute

@@ -34,8 +34,9 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! use dotscope::emulation::thread::{EmulationThread, ThreadCallFrame};
+//! ```no_run
+//! use dotscope::emulation::EmulationThread;
+//! use dotscope::emulation::ThreadCallFrame;
 //!
 //! // Create a thread
 //! let mut thread = EmulationThread::new(thread_id, address_space, capture, assembly);
@@ -46,6 +47,7 @@
 //! // Push/pop values on evaluation stack
 //! thread.push(EmValue::I32(42))?;
 //! let value = thread.pop()?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 
 use std::{
@@ -574,7 +576,7 @@ impl ThreadCallFrame {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// // Create a new thread
 /// let thread = EmulationThread::new(
 ///     ThreadId::new(1),
@@ -1006,11 +1008,12 @@ impl EmulationThread {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// // For a method call like: Foo(arg1, arg2, arg3)
     /// // Stack before (top on right): [..., arg1, arg2, arg3]
     /// let args = thread.pop_args(3)?;
     /// // args = [arg1, arg2, arg3]
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn pop_args(&mut self, count: usize) -> Result<Vec<EmValue>> {
         let mut args = Vec::with_capacity(count);

@@ -147,8 +147,8 @@ impl PartialOrd for ScheduleEntry {
 ///
 /// # Example
 ///
-/// ```ignore
-/// use dotscope::emulation::thread::ThreadScheduler;
+/// ```no_run
+/// use dotscope::emulation::ThreadScheduler;
 ///
 /// // Create scheduler with 500 instructions per quantum
 /// let mut scheduler = ThreadScheduler::new(500);
@@ -215,7 +215,7 @@ impl ThreadScheduler {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// let scheduler = ThreadScheduler::new(1000);
     /// assert_eq!(scheduler.quantum(), 1000);
     /// ```
@@ -447,7 +447,7 @@ impl ThreadScheduler {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// while let Some(thread_id) = scheduler.select_next() {
     ///     // Execute one instruction for this thread
     ///     execute_instruction(&mut scheduler, thread_id);
@@ -502,7 +502,7 @@ impl ThreadScheduler {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// // Execute instruction
     /// execute_instruction(thread_id);
     ///
@@ -573,7 +573,7 @@ impl ThreadScheduler {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// // Wake all threads sleeping past instruction 1000
     /// scheduler.wake(WakeCondition::SleepElapsed { current_instruction: 1000 });
     ///
@@ -769,7 +769,7 @@ impl ThreadScheduler {
 ///
 /// # Usage
 ///
-/// ```ignore
+/// ```no_run
 /// // Wake threads waiting on a monitor
 /// scheduler.wake(WakeCondition::Monitor(object_ref));
 ///

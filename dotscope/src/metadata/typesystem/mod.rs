@@ -341,7 +341,7 @@ impl CilType {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use dotscope::metadata::typesystem::{CilType, CilTypeRef};
     /// use std::sync::{Arc, Weak};
     ///
@@ -699,7 +699,8 @@ impl CilType {
     /// 1. **ECMA-335 Interface flag** - Types with the Interface attribute are always interfaces
     /// 2. **System primitive types** - Well-known System namespace types get direct classification
     /// 3. **Inheritance chain analysis** - Types inheriting from ValueType, Enum, etc.
-    /// 4. **Attribute-based heuristics** - Layout flags, sealed/abstract combinations
+    /// 4. **Attribute-based heuristics** - Layout flags, sealed/abstract combinations, for a
+    ///    type with no definition here (a defined type's base decides, ECMA-335 II.13)
     /// 5. **Default** - Unclassified types default to Class
     ///
     /// # Returns
@@ -730,8 +731,10 @@ impl CilType {
                 "IntPtr" => return CilFlavor::I,
                 "UIntPtr" => return CilFlavor::U,
                 // Decimal is a special value type (not a primitive flavor)
-                // Special value types (base types themselves)
-                "Decimal" | "ValueType" | "Enum" => return CilFlavor::ValueType,
+                "Decimal" => return CilFlavor::ValueType,
+                // The bases of value types are classes themselves (ECMA-335 II.13): a
+                // `System.Enum` or `System.ValueType` is a reference to a boxed value
+                "ValueType" | "Enum" => return CilFlavor::Class,
                 // Well-known reference types
                 "Object" => return CilFlavor::Object,
                 "String" => return CilFlavor::String,
@@ -747,9 +750,16 @@ impl CilType {
             return inherited_flavor;
         }
 
-        // 4. Intelligent attribute-based classification
-        if let Some(attribute_flavor) = self.classify_by_attributes() {
-            return attribute_flavor;
+        // 4. Attribute-based guesses, for a type with no definition here to decide from. A
+        // type defined here is a value type exactly when it extends System.ValueType or
+        // System.Enum (ECMA-335 II.13), which its loader records before anything can ask
+        // (`mark_value_type`); guessing from its flags would make a sealed class with
+        // sequential layout, common in interop code, a value type whenever its base is not
+        // linked yet.
+        if !self.token.is_table(TableId::TypeDef) {
+            if let Some(attribute_flavor) = self.classify_by_attributes() {
+                return attribute_flavor;
+            }
         }
 
         // 5. Default classification for reference types
@@ -997,7 +1007,7 @@ impl CilType {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// if cil_type.is_public() {
     ///     println!("Type {} is publicly accessible", cil_type.name);
     /// }
@@ -1070,7 +1080,7 @@ impl CilType {
     ///
     /// This handles the weak-ref upgrade boilerplate automatically,
     /// replacing the common pattern:
-    /// ```rust,ignore
+    /// ```no_run
     /// for (_, method_ref) in type_info.methods.iter() {
     ///     if let Some(method) = method_ref.upgrade() { ... }
     /// }
@@ -1082,7 +1092,7 @@ impl CilType {
     /// Returns a composable query over fields defined in this type.
     ///
     /// This provides a fluent API mirroring [`query_methods()`](Self::query_methods):
-    /// ```rust,ignore
+    /// ```no_run
     /// let static_fields = type_info.query_fields().static_fields().find_all();
     /// let value_field = type_info.query_fields().instance_fields().name("value__").find_first();
     /// ```
@@ -1693,6 +1703,18 @@ impl fmt::Display for CilType {
 mod tests {
     use super::*;
     use crate::testkit::builders::CilTypeBuilder;
+
+    /// A type defined here is a value type only by its base (ECMA-335 II.13). A sealed class
+    /// with sequential layout, as interop code declares one, stays a class while its base is
+    /// not linked yet, instead of being guessed a value type from its flags.
+    #[test]
+    fn a_sealed_sequential_type_definition_is_not_guessed_a_value_type() {
+        let defined = CilTypeBuilder::simple_class("Mono.Unix.Native", "SockaddrIn")
+            .with_flags(TypeAttributes::SEALED | TypeAttributes::SEQUENTIAL_LAYOUT)
+            .with_computed_flavor()
+            .build();
+        assert_eq!(*defined.flavor(), CilFlavor::Class);
+    }
 
     /// Builds a type with a distinct token so the visited set can tell instances apart.
     fn typ(rid: u32, name: &str) -> CilTypeRc {

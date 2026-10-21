@@ -58,7 +58,7 @@
 //!
 //! - [Portable PDB v1.1](https://github.com/dotnet/corefx/blob/master/src/System.Reflection.Metadata/specs/PortablePdb-Metadata.md#customdebuginformation-table-0x37) - `CustomDebugInformation` table specification
 
-use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+use rayon::iter::IndexedParallelIterator;
 
 use crate::{
     metadata::{
@@ -66,6 +66,7 @@ use crate::{
         loader::{LoaderContext, MetadataLoader},
         tables::{CustomDebugInformationRaw, TableId},
     },
+    utils::TryForEachInOrder,
     Result,
 };
 
@@ -130,26 +131,29 @@ impl MetadataLoader for CustomDebugInformationLoader {
             return Ok(());
         };
 
-        table.par_iter().enumerate().try_for_each(|(index, row)| {
-            let Some(row) = context.handle_row(row, index)? else {
-                return Ok(());
-            };
-            let token_msg = || format!("custom debug info 0x{:08x}", row.token.value());
+        table
+            .par_iter()
+            .enumerate()
+            .try_for_each_in_order(|(index, row)| {
+                let Some(row) = context.handle_row(row, index)? else {
+                    return Ok(());
+                };
+                let token_msg = || format!("custom debug info 0x{:08x}", row.token.value());
 
-            let Some(custom_debug_info) = context.handle_result(
-                row.to_owned(|coded_index| context.get_ref(coded_index), guids, blobs),
-                DiagnosticCategory::Table,
-                token_msg,
-            )?
-            else {
-                return Ok(());
-            };
+                let Some(custom_debug_info) = context.handle_result(
+                    row.to_owned(|coded_index| context.get_ref(coded_index), guids, blobs),
+                    DiagnosticCategory::Table,
+                    token_msg,
+                )?
+                else {
+                    return Ok(());
+                };
 
-            context
-                .custom_debug_information
-                .insert(custom_debug_info.token, custom_debug_info);
-            Ok(())
-        })
+                context
+                    .custom_debug_information
+                    .insert(custom_debug_info.token, custom_debug_info);
+                Ok(())
+            })
     }
 
     /// Returns the table identifier for `CustomDebugInformation`

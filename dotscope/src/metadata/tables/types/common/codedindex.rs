@@ -452,7 +452,7 @@ impl CodedIndex {
     ///
     /// ## Example
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use crate::metadata::tables::{CodedIndex, CodedIndexType};
     ///
     /// // Create a null TypeDefOrRef (no base class)

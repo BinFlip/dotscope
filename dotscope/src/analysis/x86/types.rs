@@ -962,10 +962,11 @@ impl X86Instruction {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```no_run
 /// let decoded = x86_decode_single(bytes, 32, 0x1000, 0)?;
 /// println!("Instruction at 0x{:x}, {} bytes", decoded.offset, decoded.length);
 /// println!("Next instruction at 0x{:x}", decoded.end_offset());
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct X86DecodedInstruction {
@@ -1024,7 +1025,7 @@ pub enum X86PrologueKind {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```no_run
 /// let prologue = x86_detect_prologue(bytes, 32);
 /// if prologue.kind == X86PrologueKind::DynCipher {
 ///     println!("DynCipher function with {} args", prologue.arg_count);

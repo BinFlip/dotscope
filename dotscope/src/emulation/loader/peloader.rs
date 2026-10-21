@@ -21,9 +21,10 @@
 //!
 //! # Usage
 //!
-//! ```ignore
-//! use dotscope::emulation::loader::{PeLoader, PeLoaderConfig};
-//! use dotscope::emulation::memory::AddressSpace;
+//! ```no_run
+//! use dotscope::emulation::PeLoader;
+//! use dotscope::emulation::PeLoaderConfig;
+//! use dotscope::emulation::AddressSpace;
 //! use std::path::Path;
 //!
 //! // Load with default settings (uses PE's preferred base address)
@@ -36,6 +37,7 @@
 //!     .without_permissions();
 //! let loader = PeLoader::with_config(config);
 //! let image = loader.load_file(Path::new("target.dll"), &address_space)?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! # PE Format Support
@@ -87,8 +89,8 @@ mod reloc_type {
 ///
 /// # Example
 ///
-/// ```ignore
-/// use dotscope::emulation::loader::PeLoaderConfig;
+/// ```no_run
+/// use dotscope::emulation::PeLoaderConfig;
 ///
 /// // Custom configuration for debugging
 /// let config = PeLoaderConfig::new()
@@ -171,7 +173,7 @@ impl PeLoaderConfig {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// let config = PeLoaderConfig::new().with_base_address(0x10000000);
     /// assert_eq!(config.base_address, Some(0x10000000));
     /// ```
@@ -237,7 +239,7 @@ impl PeLoaderConfig {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// let image = loader.load_file(path, &address_space)?;
 ///
 /// println!("Image: {} loaded at 0x{:X}", image.name, image.base_address);
@@ -247,6 +249,7 @@ impl PeLoaderConfig {
 /// for section in &image.sections {
 ///     println!("  Section: {} at RVA 0x{:X}", section.name, section.virtual_address);
 /// }
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Clone, Debug)]
 pub struct LoadedImage {
@@ -323,7 +326,7 @@ impl LoadedImage {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// if let Some(entry) = image.entry_point_va() {
     ///     println!("Start execution at: 0x{:X}", entry);
     /// }
@@ -350,9 +353,10 @@ impl LoadedImage {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// let import_table_va = image.rva_to_va(import_table_rva);
     /// let data = address_space.read(import_table_va, size)?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
     pub fn rva_to_va(&self, rva: u32) -> u64 {
@@ -393,7 +397,7 @@ impl LoadedImage {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// if let Some(section) = image.section_for_rva(0x1000) {
     ///     println!("RVA 0x1000 is in section: {}", section.name);
     ///     if section.is_code {
@@ -423,7 +427,7 @@ impl LoadedImage {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// if image.is_dotnet() {
     ///     println!("{} is a .NET assembly", image.name);
     ///     println!("CLR header at RVA: 0x{:X}", image.clr_header_rva.unwrap());
@@ -454,7 +458,7 @@ impl LoadedImage {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// for section in &image.sections {
 ///     println!("{}: RVA=0x{:X}, Size=0x{:X}",
 ///         section.name,
@@ -550,8 +554,8 @@ pub struct LoadedSection {
 ///
 /// # Example
 ///
-/// ```ignore
-/// use dotscope::emulation::loader::PeLoader;
+/// ```no_run
+/// use dotscope::emulation::PeLoader;
 /// use std::path::Path;
 ///
 /// let loader = PeLoader::new();
@@ -561,6 +565,7 @@ pub struct LoadedSection {
 /// )?;
 ///
 /// println!("Loaded {} ({} sections)", image.name, image.sections.len());
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct PeLoader {
     /// Configuration controlling loading behavior.
@@ -579,7 +584,7 @@ impl PeLoader {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// let loader = PeLoader::new();
     /// ```
     #[must_use]
@@ -604,7 +609,7 @@ impl PeLoader {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// let config = PeLoaderConfig::new()
     ///     .with_base_address(0x10000000)
     ///     .without_permissions();
@@ -642,9 +647,10 @@ impl PeLoader {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// let pe_data = std::fs::read("program.exe")?;
     /// let image = loader.load(&pe_data, &address_space, "program.exe")?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn load(
         &self,
@@ -886,7 +892,7 @@ impl PeLoader {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// use std::path::Path;
     ///
     /// let loader = PeLoader::new();
@@ -898,6 +904,7 @@ impl PeLoader {
     /// println!("Loaded: {}", image.name);
     /// println!("Base: 0x{:X}", image.base_address);
     /// println!("Size: 0x{:X} bytes", image.size_of_image);
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn load_file(
         &self,

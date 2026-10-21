@@ -87,7 +87,7 @@ struct PipelineRun<'a> {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::deobfuscation::{DeobfuscationEngine, EngineConfig};
 ///
 /// let config = EngineConfig::default();
@@ -100,6 +100,7 @@ struct PipelineRun<'a> {
 /// // Or process a single method (consumes the assembly)
 /// let assembly = CilObject::from_path("obfuscated.dll")?;
 /// let (ssa, result) = engine.process_method(assembly, method_token)?;
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct DeobfuscationEngine {
     /// Configuration.

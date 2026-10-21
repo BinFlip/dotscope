@@ -506,7 +506,7 @@ impl RawOperationValidator {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use dotscope::metadata::tables::{TableDataOwned, TableId};
     ///
     /// // Compatible: TypeDef data for TypeDef table

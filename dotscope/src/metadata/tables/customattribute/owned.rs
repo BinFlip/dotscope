@@ -20,8 +20,8 @@
 //!
 //! # Usage Examples
 //!
-//! ```rust,ignore
-//! # use dotscope::metadata::tables::customattribute::CustomAttribute;
+//! ```no_run
+//! # use dotscope::metadata::tables::CustomAttribute;
 //! # fn example(attribute: &CustomAttribute) -> dotscope::Result<()> {
 //! // Apply the custom attribute to its parent element
 //! attribute.apply()?;
@@ -32,6 +32,7 @@
 //! println!("Named arguments: {:?}", attribute.value.named_args);
 //! # Ok(())
 //! # }
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! # Thread Safety

@@ -58,9 +58,11 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! use dotscope::emulation::loader::{PeLoader, DataLoader};
-//! use dotscope::emulation::memory::{AddressSpace, MemoryProtection};
+//! ```no_run
+//! use dotscope::emulation::PeLoader;
+//! use dotscope::emulation::DataLoader;
+//! use dotscope::emulation::AddressSpace;
+//! use dotscope::emulation::MemoryProtection;
 //!
 //! // Create an address space
 //! let address_space = AddressSpace::new();
@@ -81,6 +83,7 @@
 //!     "stack",
 //!     MemoryProtection::READ | MemoryProtection::WRITE,
 //! )?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 
 mod data;

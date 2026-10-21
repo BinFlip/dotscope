@@ -473,7 +473,7 @@ impl From<CilTypeRc> for CilTypeRef {
 ///
 /// ## Example
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::metadata::typesystem::CilTypeRefListIter;
 ///
 /// // Iterate over nested types

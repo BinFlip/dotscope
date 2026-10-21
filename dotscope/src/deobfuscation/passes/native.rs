@@ -14,7 +14,7 @@
 //!
 //! # Usage
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::deobfuscation::NativeMethodConversionPass;
 //!
 //! let mut converter = NativeMethodConversionPass::new();
@@ -22,6 +22,7 @@
 //!
 //! let stats = converter.run(&mut cil_assembly, file)?;
 //! println!("Converted {} methods", stats.converted);
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! # Limitations
@@ -69,7 +70,7 @@ pub struct ConversionStats {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::deobfuscation::NativeMethodConversionPass;
 ///
 /// // Create converter and register native methods to convert
@@ -82,6 +83,7 @@ pub struct ConversionStats {
 /// println!("Converted {}/{} methods",
 ///          stats.converted,
 ///          stats.converted + stats.failed);
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct NativeMethodConversionPass {
     /// Tokens of native methods to convert.

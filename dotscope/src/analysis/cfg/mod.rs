@@ -37,7 +37,7 @@
 //!
 //! ## Building a CFG from Basic Blocks
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::analysis::ControlFlowGraph;
 //! use dotscope::assembly::decode_blocks;
 //!
@@ -46,11 +46,12 @@
 //!
 //! println!("CFG has {} blocks", graph.block_count());
 //! println!("Entry block: {:?}", graph.entry());
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! ## Traversing the CFG
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::analysis::ControlFlowGraph;
 //!
 //! let graph = ControlFlowGraph::from_basic_blocks(blocks)?;
@@ -60,11 +61,12 @@
 //!     let block = graph.block(block_id).unwrap();
 //!     println!("Block {} at RVA 0x{:x}", block_id, block.basic_block.rva);
 //! }
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! ## Computing Dominators
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::analysis::ControlFlowGraph;
 //!
 //! let graph = ControlFlowGraph::from_basic_blocks(blocks)?;
@@ -77,6 +79,7 @@
 //!
 //! // Get dominance frontiers for SSA construction
 //! let frontiers = graph.dominance_frontiers();
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! # Thread Safety

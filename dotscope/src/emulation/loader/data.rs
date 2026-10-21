@@ -16,9 +16,10 @@
 //!
 //! # Usage
 //!
-//! ```ignore
-//! use dotscope::emulation::memory::{AddressSpace, MemoryProtection};
-//! use dotscope::emulation::loader::DataLoader;
+//! ```no_run
+//! use dotscope::emulation::AddressSpace;
+//! use dotscope::emulation::MemoryProtection;
+//! use dotscope::emulation::DataLoader;
 //!
 //! let address_space = AddressSpace::new();
 //!
@@ -37,6 +38,7 @@
 //!     vec![0u8; 0x1000],
 //!     "buffer",
 //! )?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! # Memory Protection
@@ -145,7 +147,7 @@ impl DataLoader {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// let info = DataLoader::map_at(
     ///     &address_space,
     ///     0x10000,
@@ -154,6 +156,7 @@ impl DataLoader {
     ///     MemoryProtection::READ | MemoryProtection::EXECUTE,
     /// )?;
     /// assert_eq!(info.base_address, 0x10000);
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn map_at(
         address_space: &AddressSpace,
@@ -203,7 +206,7 @@ impl DataLoader {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// let info = DataLoader::map(
     ///     &address_space,
     ///     &vec![0u8; 0x1000],
@@ -211,6 +214,7 @@ impl DataLoader {
     ///     MemoryProtection::READ | MemoryProtection::WRITE,
     /// )?;
     /// println!("Buffer mapped at: 0x{:X}", info.base_address);
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn map(
         address_space: &AddressSpace,
@@ -362,7 +366,7 @@ impl DataLoader {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// use std::path::Path;
     ///
     /// let info = DataLoader::map_file(
@@ -371,6 +375,7 @@ impl DataLoader {
     ///     0x50000,
     ///     MemoryProtection::READ,
     /// )?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn map_file(
         address_space: &AddressSpace,
@@ -414,7 +419,7 @@ impl DataLoader {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// // Create a 1MB stack region
     /// let stack_info = DataLoader::map_zeroed(
     ///     &address_space,
@@ -423,6 +428,7 @@ impl DataLoader {
     ///     "stack",
     ///     MemoryProtection::READ | MemoryProtection::WRITE,
     /// )?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn map_zeroed(
         address_space: &AddressSpace,

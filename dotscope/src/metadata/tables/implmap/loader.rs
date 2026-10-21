@@ -28,7 +28,7 @@
 //!
 //! # ECMA-335 Reference
 //! See ECMA-335, Partition II, §22.22 for the `ImplMap` table specification.
-use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+use rayon::iter::IndexedParallelIterator;
 
 use crate::{
     metadata::{
@@ -36,6 +36,7 @@ use crate::{
         loader::{LoaderContext, MetadataLoader},
         tables::{ImplMapRaw, TableId},
     },
+    utils::TryForEachInOrder,
     Result,
 };
 
@@ -67,38 +68,41 @@ impl MetadataLoader for ImplMapLoader {
             return Ok(());
         };
 
-        table.par_iter().enumerate().try_for_each(|(index, row)| {
-            let Some(row) = context.handle_row(row, index)? else {
-                return Ok(());
-            };
-            let token_msg = || format!("impl map 0x{:08x}", row.token.value());
+        table
+            .par_iter()
+            .enumerate()
+            .try_for_each_in_order(|(index, row)| {
+                let Some(row) = context.handle_row(row, index)? else {
+                    return Ok(());
+                };
+                let token_msg = || format!("impl map 0x{:08x}", row.token.value());
 
-            let Some(owned) = context.handle_result(
-                row.to_owned(
-                    |coded_index| context.get_ref(coded_index),
-                    strings,
-                    context.module_ref,
-                ),
-                DiagnosticCategory::Method,
-                token_msg,
-            )?
-            else {
-                return Ok(());
-            };
+                let Some(owned) = context.handle_result(
+                    row.to_owned(
+                        |coded_index| context.get_ref(coded_index),
+                        strings,
+                        context.module_ref,
+                    ),
+                    DiagnosticCategory::Method,
+                    token_msg,
+                )?
+                else {
+                    return Ok(());
+                };
 
-            context.handle_error(owned.apply(), DiagnosticCategory::Method, token_msg)?;
-            context.handle_error(
-                context.imports.add_method(
-                    owned.import_name.clone(),
-                    &owned.token,
-                    owned.member_forwarded.clone(),
-                    &owned.import_scope,
-                ),
-                DiagnosticCategory::Method,
-                token_msg,
-            )?;
-            Ok(())
-        })
+                context.handle_error(owned.apply(), DiagnosticCategory::Method, token_msg)?;
+                context.handle_error(
+                    context.imports.add_method(
+                        owned.import_name.clone(),
+                        &owned.token,
+                        owned.member_forwarded.clone(),
+                        &owned.import_scope,
+                    ),
+                    DiagnosticCategory::Method,
+                    token_msg,
+                )?;
+                Ok(())
+            })
     }
 
     /// Returns the table identifier for `ImplMap`.

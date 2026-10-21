@@ -24,12 +24,12 @@
 use std::sync::Arc;
 
 use dotscope::{
-    analysis::{CallGraph, SsaFunction},
+    analysis::{CallGraph, SsaFunction, SsaType},
     assembly::{decode_stream, Immediate, Instruction, InstructionAssembler, Operand},
     compiler::{DerivedStats, SsaCodeGenerator},
-    deobfuscation::{AnalysisContext, DeobfuscationEngine, EngineConfig},
+    deobfuscation::{AnalysisContext, EngineConfig},
     metadata::token::Token,
-    testkit::{build_cfg, build_ssa, fixture},
+    testkit::{build_cfg, build_ssa, engine, engine_with, fixture, TestTypeProvider},
     CilObject, Parser, Result,
 };
 
@@ -381,11 +381,11 @@ fn run_deobfuscation_test_with_config(
     let (original_bytecode, cfg) = build_cfg(assembler)?;
 
     // Step 2: Build SSA
-    let mut ssa = build_ssa(&cfg, num_args, num_locals)?;
+    let mut ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(num_args, num_locals))?;
 
     // Step 3: Run deobfuscation engine
     let _ctx = create_test_context();
-    let engine = DeobfuscationEngine::new(config);
+    let engine = engine_with(config);
     let _result = engine.process_ssa(test_assembly(), &mut ssa, Token::new(0x06000001))?;
 
     // Step 4: Generate output CIL
@@ -1444,9 +1444,9 @@ fn test_controlflow_conditional_preserved() -> Result<()> {
 
     // Build and run, verify structure is preserved
     let (original_bytecode, cfg) = build_cfg(asm)?;
-    let mut ssa = build_ssa(&cfg, 1, 0)?;
+    let mut ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(1, 0))?;
     let _ctx = create_test_context();
-    let engine = DeobfuscationEngine::default();
+    let engine = engine();
     let _result = engine.process_ssa(test_assembly(), &mut ssa, Token::new(0x06000001))?;
     let output_bytecode = generate_cil(&ssa)?;
     let output = decode_instructions(&output_bytecode)?;
@@ -1816,8 +1816,8 @@ fn test_branch_dynamic_condition() -> Result<()> {
 
     // Build and run
     let (_original_bytecode, cfg) = build_cfg(asm)?;
-    let mut ssa = build_ssa(&cfg, 1, 0)?;
-    let engine = DeobfuscationEngine::default();
+    let mut ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(1, 0))?;
+    let engine = engine();
     let _result = engine.process_ssa(test_assembly(), &mut ssa, Token::new(0x06000001))?;
     let output_bytecode = generate_cil(&ssa)?;
     let output = decode_instructions(&output_bytecode)?;
@@ -1966,8 +1966,8 @@ fn test_strength_mul_by_two() -> Result<()> {
 
     // Currently just verifies roundtrip - could be optimized to shl
     let (_original_bytecode, cfg) = build_cfg(asm)?;
-    let mut ssa = build_ssa(&cfg, 1, 0)?;
-    let engine = DeobfuscationEngine::default();
+    let mut ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(1, 0))?;
+    let engine = engine();
     let _result = engine.process_ssa(test_assembly(), &mut ssa, Token::new(0x06000001))?;
     let output_bytecode = generate_cil(&ssa)?;
     let output = decode_instructions(&output_bytecode)?;
@@ -1988,8 +1988,8 @@ fn test_strength_mul_by_four() -> Result<()> {
     asm.ldarg_0()?.ldc_i4_4()?.mul()?.ret()?;
 
     let (_original_bytecode, cfg) = build_cfg(asm)?;
-    let mut ssa = build_ssa(&cfg, 1, 0)?;
-    let engine = DeobfuscationEngine::default();
+    let mut ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(1, 0))?;
+    let engine = engine();
     let _result = engine.process_ssa(test_assembly(), &mut ssa, Token::new(0x06000001))?;
     let output_bytecode = generate_cil(&ssa)?;
     let output = decode_instructions(&output_bytecode)?;
@@ -2225,8 +2225,8 @@ fn test_algebraic_add_sub_cancel() -> Result<()> {
     asm.ldarg_0()?.ldarg_1()?.add()?.ldarg_1()?.sub()?.ret()?;
 
     let (_original_bytecode, cfg) = build_cfg(asm)?;
-    let mut ssa = build_ssa(&cfg, 2, 0)?;
-    let engine = DeobfuscationEngine::default();
+    let mut ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(2, 0))?;
+    let engine = engine();
     let _result = engine.process_ssa(test_assembly(), &mut ssa, Token::new(0x06000001))?;
     let output_bytecode = generate_cil(&ssa)?;
     let output = decode_instructions(&output_bytecode)?;
@@ -2246,8 +2246,8 @@ fn test_algebraic_xor_cancel() -> Result<()> {
     asm.ldarg_0()?.ldarg_1()?.xor()?.ldarg_1()?.xor()?.ret()?;
 
     let (_original_bytecode, cfg) = build_cfg(asm)?;
-    let mut ssa = build_ssa(&cfg, 2, 0)?;
-    let engine = DeobfuscationEngine::default();
+    let mut ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(2, 0))?;
+    let engine = engine();
     let _result = engine.process_ssa(test_assembly(), &mut ssa, Token::new(0x06000001))?;
     let output_bytecode = generate_cil(&ssa)?;
     let output = decode_instructions(&output_bytecode)?;
@@ -2379,8 +2379,8 @@ fn test_switch_dynamic_preserved() -> Result<()> {
         .ret()?;
 
     let (_original_bytecode, cfg) = build_cfg(asm)?;
-    let mut ssa = build_ssa(&cfg, 1, 0)?;
-    let engine = DeobfuscationEngine::default();
+    let mut ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(1, 0))?;
+    let engine = engine();
     let _result = engine.process_ssa(test_assembly(), &mut ssa, Token::new(0x06000001))?;
     let output_bytecode = generate_cil(&ssa)?;
     let output = decode_instructions(&output_bytecode)?;
@@ -2471,8 +2471,8 @@ fn test_strength_reduction_mul_by_1024() -> Result<()> {
     asm.ldarg_0()?.ldc_i4(1024)?.mul()?.ret()?;
 
     let (_original_bytecode, cfg) = build_cfg(asm)?;
-    let mut ssa = build_ssa(&cfg, 1, 0)?;
-    let engine = DeobfuscationEngine::default();
+    let mut ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(1, 0))?;
+    let engine = engine();
     let _result = engine.process_ssa(test_assembly(), &mut ssa, Token::new(0x06000001))?;
     let output_bytecode = generate_cil(&ssa)?;
     let output = decode_instructions(&output_bytecode)?;
@@ -3819,10 +3819,13 @@ fn test_fibonacci_loop_body_preserved() -> Result<()> {
     let (_original_bytecode, cfg) = build_cfg(asm)?;
 
     // Build SSA with 2 args (this + n) and 4 locals (a, b, i, temp)
-    let mut ssa = build_ssa(&cfg, 2, 4)?;
+    let mut ssa = build_ssa(
+        &cfg,
+        &TestTypeProvider::all_i32(2, 4).arg(0, SsaType::Object),
+    )?;
 
     // Run deobfuscation
-    let engine = DeobfuscationEngine::default();
+    let engine = engine();
     let _result = engine.process_ssa(test_assembly(), &mut ssa, Token::new(0x06000001))?;
 
     // Generate output CIL
@@ -3907,7 +3910,7 @@ fn test_aggressive_inlining_original_exe() {
         "Aggressive config should enable unused method removal"
     );
 
-    let engine = DeobfuscationEngine::new(config);
+    let engine = engine_with(config);
     let result = engine.process_file(fixture("packers/confuserex/1.6.0/original.exe"));
     assert!(result.is_ok(), "Deobfuscation should succeed");
 

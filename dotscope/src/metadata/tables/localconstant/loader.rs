@@ -4,7 +4,7 @@
 //! `LocalConstant` table data during metadata loading. The loader handles parallel
 //! processing and integration with the broader loader context.
 
-use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+use rayon::iter::IndexedParallelIterator;
 
 use crate::{
     metadata::{
@@ -12,6 +12,7 @@ use crate::{
         loader::{LoaderContext, MetadataLoader},
         tables::TableId,
     },
+    utils::TryForEachInOrder,
     Result,
 };
 
@@ -49,26 +50,29 @@ impl MetadataLoader for LocalConstantLoader {
             return Ok(());
         };
 
-        table.par_iter().enumerate().try_for_each(|(index, row)| {
-            let Some(row) = context.handle_row(row, index)? else {
-                return Ok(());
-            };
-            let token_msg = || format!("local constant 0x{:08x}", row.token.value());
+        table
+            .par_iter()
+            .enumerate()
+            .try_for_each_in_order(|(index, row)| {
+                let Some(row) = context.handle_row(row, index)? else {
+                    return Ok(());
+                };
+                let token_msg = || format!("local constant 0x{:08x}", row.token.value());
 
-            let Some(local_constant) = context.handle_result(
-                row.to_owned(strings, blobs),
-                DiagnosticCategory::Method,
-                token_msg,
-            )?
-            else {
-                return Ok(());
-            };
+                let Some(local_constant) = context.handle_result(
+                    row.to_owned(strings, blobs),
+                    DiagnosticCategory::Method,
+                    token_msg,
+                )?
+                else {
+                    return Ok(());
+                };
 
-            context
-                .local_constant
-                .insert(local_constant.token, local_constant);
-            Ok(())
-        })
+                context
+                    .local_constant
+                    .insert(local_constant.token, local_constant);
+                Ok(())
+            })
     }
 
     fn table_id(&self) -> Option<TableId> {

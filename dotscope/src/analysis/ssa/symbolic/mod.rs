@@ -65,7 +65,7 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::analysis::{SymbolicExpr, SymbolicOp, Z3Solver};
 //!
 //! // Build expression: (state XOR 0x12345678) % 13

@@ -121,11 +121,16 @@ impl Default for PassConfig {
 pub struct EmulationConfig {
     /// Maximum instructions for emulation per method.
     pub max_instructions: u64,
-    /// Emulation timeout per method.
+    /// Wall-clock limit on one method's emulation; zero for none.
+    ///
+    /// A wall-clock limit makes the result depend on how fast the machine runs: under load
+    /// an emulation stops earlier, and a value it would have decrypted is left encrypted.
+    /// [`max_instructions`](Self::max_instructions) bounds emulation deterministically.
     pub timeout: Duration,
     /// Tracing configuration for emulation debugging.
     pub tracing: Option<TracingConfig>,
-    /// Timeout for template pool warmup (Module.cctor + technique warmup).
+    /// Wall-clock limit on template pool warmup (Module.cctor + technique warmup); zero for
+    /// none.
     pub warmup_timeout: Duration,
     /// Number of retry passes for warmup methods with dependency chains.
     pub warmup_retry_passes: usize,
@@ -595,7 +600,7 @@ impl EngineConfig {
     /// # Arguments
     ///
     /// * `max_instructions` - Maximum instructions to execute per emulation.
-    /// * `timeout` - Maximum time to spend on emulation per method.
+    /// * `timeout` - Maximum wall-clock time to spend on emulation per method; zero for none.
     ///
     /// # Returns
     ///
@@ -711,7 +716,7 @@ impl EngineConfig {
     ///
     /// # Arguments
     ///
-    /// * `timeout` - Maximum time for warmup execution.
+    /// * `timeout` - Maximum wall-clock time for warmup execution; zero for none.
     ///
     /// # Returns
     ///

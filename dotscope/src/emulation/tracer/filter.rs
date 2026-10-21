@@ -20,7 +20,7 @@
 //!
 //! # Usage
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::emulation::{TraceFilter, MethodPattern};
 //!
 //! // Only trace a specific decryptor method

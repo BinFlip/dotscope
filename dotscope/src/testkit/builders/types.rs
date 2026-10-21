@@ -62,6 +62,17 @@ impl CilTypeBuilder {
         self
     }
 
+    pub fn with_flags(mut self, flags: TypeAttributes) -> Self {
+        self.flags = flags;
+        self
+    }
+
+    /// Leaves the flavor to the type's own computation from its flags and base.
+    pub fn with_computed_flavor(mut self) -> Self {
+        self.flavor = None;
+        self
+    }
+
     /// Create a simple class type
     pub fn simple_class(namespace: &str, name: &str) -> Self {
         Self::new()

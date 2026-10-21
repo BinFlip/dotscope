@@ -12,7 +12,7 @@
 //! Tests for modifying metadata heaps (strings, blobs, GUIDs, userstrings) and verifying
 //! that changes are correctly persisted through the write pipeline.
 
-use dotscope::{prelude::*, testkit::fixture};
+use dotscope::{metadata::tables::TableDataOwned, prelude::*, testkit::fixture};
 
 const TEST_ASSEMBLY_PATH: &str = "crafted_2.exe";
 
@@ -484,4 +484,81 @@ fn test_heap_replacement_with_subsequent_additions() -> Result<()> {
             Ok(())
         },
     )
+}
+
+/// The text the first `ldstr` of `method` loads in `assembly`.
+fn first_loaded_string(assembly: &CilObject, method: Token) -> String {
+    let token = assembly
+        .method(&method)
+        .expect("the method")
+        .instructions()
+        .find(|instr| instr.mnemonic == "ldstr")
+        .and_then(|instr| instr.get_token_operand())
+        .expect("an ldstr");
+    assembly
+        .userstrings()
+        .expect("#US")
+        .get(token.row() as usize)
+        .expect("the string")
+        .to_string_lossy()
+        .to_string()
+}
+
+/// A body a pass replaces keeps loading the strings it loaded. When an earlier user string
+/// shrinks, every later one moves; the replaced body's `ldstr` follows its string as the
+/// untouched bodies' do.
+#[test]
+fn a_replaced_body_follows_its_strings_when_the_heap_moves() -> Result<()> {
+    let path = fixture("packers/confuserex/1.6.0/original.exe");
+    let original = CilObject::from_path(&path)?;
+
+    // A tiny-header method without exception clauses that loads a string other than the
+    // first one, which is about to shrink.
+    let (method, rva, size) = original
+        .methods()
+        .iter()
+        .filter_map(|entry| {
+            let method = entry.value();
+            let body = method.body.get()?;
+            let first = method
+                .instructions()
+                .find(|instr| instr.mnemonic == "ldstr")?
+                .get_token_operand()?;
+            (!body.is_fat && body.exception_handlers.is_empty() && first.row() > 1).then(|| {
+                (
+                    method.token,
+                    method.rva.expect("a body"),
+                    body.size_header + body.size_code,
+                )
+            })
+        })
+        .next()
+        .expect("a method loading a string");
+    let expected = first_loaded_string(&original, method);
+
+    let mut assembly = CilAssembly::from_path(&path)?;
+    assembly.userstring_update(1, "")?;
+
+    // Replace the body with its own bytes, as a pass that rewrites it would store it.
+    let offset = original.file().rva_to_offset(rva as usize)?;
+    let body = original.file().data()[offset..offset + size].to_vec();
+    let placeholder = assembly.store_method_body(body);
+    let mut row = assembly
+        .view()
+        .tables()
+        .unwrap()
+        .table::<MethodDefRaw>()
+        .unwrap()
+        .get(method.row())?
+        .expect("the MethodDef row");
+    row.rva = placeholder;
+    assembly.table_row_update(
+        TableId::MethodDef,
+        method.row(),
+        TableDataOwned::MethodDef(row),
+    )?;
+
+    let written = CilObject::from_mem(assembly.to_memory()?)?;
+    assert_eq!(first_loaded_string(&written, method), expected);
+    Ok(())
 }

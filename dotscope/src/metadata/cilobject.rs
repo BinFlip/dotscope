@@ -188,8 +188,8 @@ use crate::{
         streams::{Blob, Guid, Strings, TablesHeader, UserStrings},
         tables::{
             member_ref_name_by_token, method_spec_name_by_token, AssemblyOsRc, AssemblyProcessorRc,
-            AssemblyRc, AssemblyRefMap, DeclSecurityMap, FileMap, MemberRefMap, MemberRefRc,
-            MethodSpecMap, MethodSpecRc, ModuleRc, ModuleRefMap,
+            AssemblyRc, AssemblyRefMap, DeclSecurityMap, FieldMap, FileMap, MemberRefMap,
+            MemberRefRc, MethodSpecMap, MethodSpecRc, ModuleRc, ModuleRefMap,
         },
         token::Token,
         typesystem::{CilTypeReference, TypeRegistry},
@@ -1486,6 +1486,26 @@ impl CilObject {
         &self.data.method_specs
     }
 
+    /// Returns the field definitions container, keyed by Field token (table 0x04).
+    ///
+    /// The same fields are reachable through their owning types' field lists; this map
+    /// finds one by token without searching the types.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::CilObject;
+    ///
+    /// let assembly = CilObject::from_path("tests/samples/mono_4.8/mscorlib.dll")?;
+    /// for entry in assembly.fields().iter().take(3) {
+    ///     println!("{}: {:?}", entry.value().name, entry.value().signature.base);
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn fields(&self) -> &FieldMap {
+        &self.data.fields
+    }
+
     /// Returns the method definition for the given token.
     ///
     /// Convenience accessor over [`methods()`](Self::methods) - looks up a
@@ -2053,5 +2073,31 @@ impl CilObject {
         let result = engine.execute_two_stage_validation(&self.assembly_view, None, Some(self))?;
 
         result.into_result()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{metadata::tables::TableId, testkit::get_testfile_crafted2};
+
+    /// Every Field row is in [`CilObject::fields`], and it is the same field its owning type
+    /// lists.
+    #[test]
+    fn every_field_is_found_by_its_token() {
+        let assembly = CilObject::from_path(get_testfile_crafted2()).unwrap();
+        let rows = assembly.tables().unwrap().table_row_count(TableId::Field);
+        assert!(rows > 0);
+        assert_eq!(assembly.fields().len(), rows as usize);
+
+        let mut owned = 0;
+        for entry in assembly.types().iter() {
+            for (_, field) in entry.value().fields.iter() {
+                let found = assembly.fields().get(&field.token).unwrap();
+                assert!(Arc::ptr_eq(found.value(), field), "{}", field.name);
+                owned += 1;
+            }
+        }
+        assert_eq!(owned, rows as usize);
     }
 }

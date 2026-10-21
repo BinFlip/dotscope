@@ -165,7 +165,7 @@ pub struct CfgInfo<'a> {
 ///
 /// # Example: ConfuserEx
 ///
-/// ```rust,ignore
+/// ```no_run
 /// impl StateMachineProvider for ConfuserExStateMachine {
 ///     fn applies_to_method(&self, method: Token) -> bool {
 ///         self.cfg_mode_methods.contains(&method)
@@ -704,7 +704,7 @@ impl StateMachineSemantics {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```no_run
 /// let semantics = Arc::new(StateMachineSemantics::confuserex_default());
 /// let mut state = StateMachineState::from_seed(0x12345678, semantics);
 ///

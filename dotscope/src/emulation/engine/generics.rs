@@ -22,7 +22,7 @@
 //!
 //! # Usage
 //!
-//! ```rust,ignore
+//! ```no_run
 //! let registry = GenericRegistry::new();
 //!
 //! let list_int = registry.get_or_create_type(list_token, vec![int_token]);

@@ -24,7 +24,7 @@
 //! - `ModuleRef` table contains invalid data
 //! - Token conflicts occur during storage
 
-use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+use rayon::iter::IndexedParallelIterator;
 
 use crate::{
     metadata::{
@@ -33,6 +33,7 @@ use crate::{
         tables::ModuleRefRaw,
     },
     prelude::TableId,
+    utils::TryForEachInOrder,
     Result,
 };
 
@@ -63,24 +64,27 @@ impl MetadataLoader for ModuleRefLoader {
             return Ok(());
         };
 
-        table.par_iter().enumerate().try_for_each(|(index, row)| {
-            let Some(row) = context.handle_row(row, index)? else {
-                return Ok(());
-            };
-            let token_msg = || format!("module ref 0x{:08x}", row.token.value());
+        table
+            .par_iter()
+            .enumerate()
+            .try_for_each_in_order(|(index, row)| {
+                let Some(row) = context.handle_row(row, index)? else {
+                    return Ok(());
+                };
+                let token_msg = || format!("module ref 0x{:08x}", row.token.value());
 
-            let Some(res) = context.handle_result(
-                row.to_owned(strings),
-                DiagnosticCategory::Table,
-                token_msg,
-            )?
-            else {
-                return Ok(());
-            };
+                let Some(res) = context.handle_result(
+                    row.to_owned(strings),
+                    DiagnosticCategory::Table,
+                    token_msg,
+                )?
+                else {
+                    return Ok(());
+                };
 
-            context.module_ref.insert(row.token, res.clone());
-            Ok(())
-        })
+                context.module_ref.insert(row.token, res.clone());
+                Ok(())
+            })
     }
 
     /// Returns the table identifier for `ModuleRef`.

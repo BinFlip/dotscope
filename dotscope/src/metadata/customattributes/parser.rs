@@ -116,7 +116,7 @@
 //! - **Memory Safety**: Comprehensive bounds checking and nesting depth limiting
 //! - **Error Handling**: Detailed error messages for debugging malformed data
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     file::parser::Parser,
@@ -150,11 +150,13 @@ const MAX_NESTING_DEPTH: usize = 1000;
 /// 1000 entries are cheap. This bounds real stack frames, where they are not.
 const MAX_ARGUMENT_RECURSION: usize = 64;
 
-/// Maximum number of named arguments in a custom attribute.
-///
-/// Custom attributes can have named properties/fields, but excessive counts indicate
-/// malformed data. 1024 is far beyond any reasonable use case.
-const MAX_NAMED_ARGS: u16 = 1024;
+/// The underlying type sizes an enum can have, `int`'s first as the usual one.
+const ENUM_SIZES: [usize; 4] = [4, 1, 2, 8];
+
+/// How many decodings [`CustomAttributeParser::parse_custom_attribute`] tries for a blob
+/// whose enums it cannot size. Each consumes at most the blob, and real blobs name one or two
+/// such enums, which need at most 16.
+const MAX_ENUM_SIZE_ATTEMPTS: usize = 256;
 
 /// Maximum array length in custom attribute arguments.
 ///
@@ -427,6 +429,11 @@ pub struct CustomAttributeParser<'a> {
     /// elsewhere and was never consulted here, so the recursion was unbounded
     /// over an attacker-supplied attribute blob.
     depth: usize,
+    /// The underlying type sizes the current decoding assumes for enums no loaded assembly
+    /// defines, by name.
+    enum_sizes: HashMap<String, usize>,
+    /// The enums of that kind the decodings met, in the order they met them.
+    unknown_enums: Vec<String>,
 }
 
 impl<'a> CustomAttributeParser<'a> {
@@ -437,18 +444,15 @@ impl<'a> CustomAttributeParser<'a> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::customattributes::parser::CustomAttributeParser;
-    ///
-    /// let blob_data = &[0x01, 0x00, 0x00, 0x00]; // Minimal custom attribute
-    /// let parser = CustomAttributeParser::new(blob_data);
-    /// ```
+    /// The `examples::new_example` test in this module runs this example.
     #[must_use]
     pub fn new(data: &'a [u8]) -> Self {
         Self {
             parser: Parser::new(data),
             type_registry: None,
             depth: 0,
+            enum_sizes: HashMap::new(),
+            unknown_enums: Vec::new(),
         }
     }
 
@@ -463,21 +467,15 @@ impl<'a> CustomAttributeParser<'a> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::customattributes::parser::CustomAttributeParser;
-    /// use std::sync::Arc;
-    ///
-    /// let blob_data = &[0x01, 0x00, 0x00, 0x00]; // Minimal custom attribute
-    /// let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
-    /// let type_registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
-    /// let parser = CustomAttributeParser::with_registry(blob_data, type_registry);
-    /// ```
+    /// The `examples::with_registry_example` test in this module runs this example.
     #[must_use]
     pub fn with_registry(data: &'a [u8], type_registry: Arc<TypeRegistry>) -> Self {
         Self {
             parser: Parser::new(data),
             type_registry: Some(type_registry),
             depth: 0,
+            enum_sizes: HashMap::new(),
+            unknown_enums: Vec::new(),
         }
     }
 
@@ -508,23 +506,64 @@ impl<'a> CustomAttributeParser<'a> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::customattributes::parser::CustomAttributeParser;
-    ///
-    /// # fn get_constructor_params() -> std::sync::Arc<boxcar::Vec<dotscope::metadata::tables::ParamRc>> { todo!() }
-    /// let blob_data = &[0x01, 0x00, 0x00, 0x00]; // Simple custom attribute
-    /// let mut parser = CustomAttributeParser::new(blob_data);
-    /// let params = get_constructor_params();
-    ///
-    /// let custom_attr = parser.parse_custom_attribute(&params)?;
-    /// println!("Parsed {} fixed args and {} named args",
-    ///          custom_attr.fixed_args.len(), custom_attr.named_args.len());
-    /// # Ok::<(), dotscope::Error>(())
-    /// ```
+    /// The `examples::parse_custom_attribute_example` test in this module runs this example.
     pub fn parse_custom_attribute(
         &mut self,
         params: &Arc<boxcar::Vec<ParamRc>>,
     ) -> Result<CustomAttributeValue> {
+        let first = self.decode(params);
+        if self.unknown_enums.is_empty() || (first.is_ok() && !self.parser.has_more_data()) {
+            return first;
+        }
+
+        // The blob does not say how wide an enum is, and no loaded assembly defines these.
+        // Only their true sizes end the blob where its last named argument ends, so try the
+        // other sizes, as many enums as the decodings meet, until a decoding does.
+        let mut attempts = 1;
+        let mut enums = self.unknown_enums.len();
+        let mut assignment: usize = 1;
+        while attempts < MAX_ENUM_SIZE_ATTEMPTS {
+            let combinations = u32::try_from(enums)
+                .ok()
+                .and_then(|count| ENUM_SIZES.len().checked_pow(count))
+                .unwrap_or(usize::MAX);
+            if assignment >= combinations {
+                break;
+            }
+            let mut digits = assignment;
+            self.enum_sizes.clear();
+            for name in &self.unknown_enums {
+                let size = digits
+                    .checked_rem(ENUM_SIZES.len())
+                    .and_then(|digit| ENUM_SIZES.get(digit))
+                    .copied()
+                    .unwrap_or(4);
+                self.enum_sizes.insert(name.clone(), size);
+                digits = digits.checked_div(ENUM_SIZES.len()).unwrap_or_default();
+            }
+            attempts = attempts.saturating_add(1);
+            assignment = assignment.saturating_add(1);
+
+            let decoded = self.decode(params);
+            if decoded.is_ok() && !self.parser.has_more_data() {
+                return decoded;
+            }
+            // A decoding that read further met enums the earlier ones did not reach: start
+            // over with those in the count.
+            if self.unknown_enums.len() > enums {
+                enums = self.unknown_enums.len();
+                assignment = 1;
+            }
+        }
+        first
+    }
+
+    /// One decoding of the blob from its start, under the enum sizes [`Self::enum_sizes`]
+    /// assumes.
+    fn decode(&mut self, params: &Arc<boxcar::Vec<ParamRc>>) -> Result<CustomAttributeValue> {
+        self.parser.seek(0)?;
+        self.depth = 0;
+
         // Check for the standard prolog (0x0001)
         let prolog = self.parser.read_le::<u16>()?;
         if prolog != 0x0001 {
@@ -541,15 +580,10 @@ impl<'a> CustomAttributeParser<'a> {
             && self.parser.len() >= self.parser.pos().saturating_add(2)
         {
             let num_named = self.parser.read_le::<u16>()?;
-            if num_named > MAX_NAMED_ARGS {
-                return Err(malformed_error!(
-                    "Custom attribute has too many named arguments: {} (max: {})",
-                    num_named,
-                    MAX_NAMED_ARGS
-                ));
-            }
 
-            let mut args = Vec::with_capacity(num_named as usize);
+            // Each named argument takes at least a byte, so what is left bounds the count.
+            let remaining = self.parser.len().saturating_sub(self.parser.pos());
+            let mut args = Vec::with_capacity(usize::from(num_named).min(remaining));
             for _ in 0..num_named {
                 if let Some(arg) = self.parse_named_argument()? {
                     args.push(arg);
@@ -643,9 +677,8 @@ impl<'a> CustomAttributeParser<'a> {
     }
 
     /// The size of the named enum's underlying type: the registry's answer when
-    /// it can resolve the enum, otherwise `int`'s, the usual underlying type of
-    /// an enum defined in an assembly that is not loaded.
-    fn enum_underlying_size(&self, type_name: &str) -> usize {
+    /// it can resolve the enum, otherwise [`Self::assumed_enum_size`].
+    fn enum_underlying_size(&mut self, type_name: &str) -> usize {
         if let Some(registry) = &self.type_registry {
             if let Some(resolved) = registry.resolve_type_global(type_name) {
                 if EnumUtils::is_enum_type(&resolved, Some(registry)) {
@@ -656,6 +689,18 @@ impl<'a> CustomAttributeParser<'a> {
                 return EnumUtils::get_enum_underlying_type_size_by_name(type_name, registry);
             }
         }
+        self.assumed_enum_size(type_name)
+    }
+
+    /// The underlying type size the current decoding assumes for an enum no loaded assembly
+    /// defines: `int`'s, the usual one, unless [`Self::parse_custom_attribute`] is trying
+    /// another. The enum is recorded so that it can.
+    fn assumed_enum_size(&mut self, type_name: &str) -> usize {
+        if let Some(&size) = self.enum_sizes.get(type_name) {
+            return size;
+        }
+        self.unknown_enums.push(type_name.to_string());
+        self.enum_sizes.insert(type_name.to_string(), 4);
         4
     }
 
@@ -728,7 +773,7 @@ impl<'a> CustomAttributeParser<'a> {
     /// - **Primitives**: Direct binary reading (bool, int, float, etc.)
     /// - **String**: Compressed length + UTF-8 data or null marker (0xFF)
     /// - **Class Types**: Special handling for System.Type, System.String, System.Object
-    /// - **`ValueType`**: Treated as enum with i32 underlying type
+    /// - **`ValueType`**: An enum, sized by its definition or, when no loaded assembly has it, by the blob
     /// - **Arrays**: Single-dimensional arrays with element type parsing
     /// - **Enum**: Heuristic detection with graceful fallback to Type parsing
     ///
@@ -923,9 +968,9 @@ impl<'a> CustomAttributeParser<'a> {
                     // TypeRef types (external references) often have CilFlavor::Class even
                     // when they're actually enums, because we lack the type definition to
                     // determine inheritance. For custom attributes, external types that
-                    // aren't System.Type/String/Object are typically enums. Assume int32
-                    // underlying type (the most common) to allow parsing to continue.
-                    self.parse_enum(type_name.to_string(), 4)
+                    // aren't System.Type/String/Object are enums, of a size the blob decides.
+                    let size = self.assumed_enum_size(&type_name);
+                    self.parse_enum(type_name.to_string(), size)
                 }
             }
             CilFlavor::ValueType => {
@@ -980,10 +1025,10 @@ impl<'a> CustomAttributeParser<'a> {
                     // Stage 3: an imported type whose defining assembly is not
                     // loaded, so its underlying type cannot be read. The only
                     // value types a custom attribute blob may hold beyond the
-                    // primitives are enums (ECMA-335 II.23.3), and int32 is
-                    // the usual underlying type: the assumption the `Class`
-                    // branch makes for the same unresolvable references.
-                    self.parse_enum(type_name.to_string(), 4)
+                    // primitives are enums (ECMA-335 II.23.3), of a size the
+                    // blob decides, as in the `Class` branch.
+                    let size = self.assumed_enum_size(&type_name);
+                    self.parse_enum(type_name.to_string(), size)
                 } else {
                     // Stage 4: a type defined here that is not an enum
                     Err(malformed_error!(
@@ -1534,10 +1579,14 @@ mod tests {
             token::Token,
             typesystem::{CilFlavor, CilPrimitiveKind, CilTypeRef, TypeBuilder, TypeRegistry},
         },
-        testkit::factories::metadata::customattributes::{
-            create_constructor_with_params, create_constructor_with_params_and_registry,
-            create_empty_constructor, get_test_type_registry,
+        testkit::{
+            factories::metadata::customattributes::{
+                create_constructor_with_params, create_constructor_with_params_and_registry,
+                create_empty_constructor, get_test_type_registry,
+            },
+            fixture,
         },
+        CilObject,
     };
 
     #[test]
@@ -2240,6 +2289,86 @@ mod tests {
     }
 
     #[test]
+    fn a_named_enum_no_assembly_defines_is_sized_by_the_blob() {
+        // `Mode` is an enum over `byte`: as an `int` its value would run past the blob.
+        let method = create_empty_constructor();
+        let mut blob = vec![0x01, 0x00, 0x01, 0x00, 0x54, 0x55];
+        blob.push(4);
+        blob.extend_from_slice(b"E.Ty");
+        blob.push(4);
+        blob.extend_from_slice(b"Mode");
+        blob.push(7);
+
+        let result = parse_custom_attribute_data(&blob, &method.params).unwrap();
+        match &result.named_args[0].value {
+            CustomAttributeArgument::Enum(type_name, value) => {
+                assert_eq!(type_name, "E.Ty");
+                assert!(matches!(**value, CustomAttributeArgument::U1(7)));
+            }
+            other => panic!("expected an enum, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn enums_of_different_sizes_are_sized_together() {
+        // `A` over `short`, then `B` over `long`: only those two sizes end the blob after `B`.
+        let method = create_empty_constructor();
+        let mut blob = vec![0x01, 0x00, 0x02, 0x00];
+        for (enum_name, property, value) in [
+            (&b"E.A"[..], &b"First"[..], &3u16.to_le_bytes()[..]),
+            (&b"E.B"[..], &b"Second"[..], &(-5i64).to_le_bytes()[..]),
+        ] {
+            blob.extend_from_slice(&[0x54, 0x55, u8::try_from(enum_name.len()).unwrap()]);
+            blob.extend_from_slice(enum_name);
+            blob.push(u8::try_from(property.len()).unwrap());
+            blob.extend_from_slice(property);
+            blob.extend_from_slice(value);
+        }
+
+        let result = parse_custom_attribute_data(&blob, &method.params).unwrap();
+        let values: Vec<_> = result.named_args.iter().map(|arg| &arg.value).collect();
+        assert!(matches!(
+            values[..],
+            [
+                CustomAttributeArgument::Enum(_, ref first),
+                CustomAttributeArgument::Enum(_, ref second),
+            ] if matches!(**first, CustomAttributeArgument::U2(3))
+                && matches!(**second, CustomAttributeArgument::I8(-5))
+        ));
+    }
+
+    #[test]
+    fn a_framework_attribute_over_an_imported_byte_enum_loads() {
+        // `SecurityRulesAttribute(SecurityRuleSet)`, where `SecurityRuleSet` is mscorlib's enum
+        // over `byte`, followed by `SkipVerificationInFullTrust = true`.
+        let assembly = CilObject::from_path(fixture("mono_4.8/System.dll")).unwrap();
+        let attributes = &assembly.assembly().unwrap().custom_attributes;
+        let rules = attributes
+            .iter()
+            .map(|(_, attribute)| attribute)
+            .find(|attribute| {
+                matches!(
+                    attribute.fixed_args.first(),
+                    Some(CustomAttributeArgument::Enum(name, _))
+                        if name == "System.Security.SecurityRuleSet"
+                )
+            })
+            .expect("System.dll declares its security rules");
+
+        assert!(matches!(
+            rules.fixed_args[..],
+            [CustomAttributeArgument::Enum(_, ref value)]
+                if matches!(**value, CustomAttributeArgument::U1(1))
+        ));
+        assert_eq!(rules.named_args.len(), 1);
+        assert_eq!(rules.named_args[0].name, "SkipVerificationInFullTrust");
+        assert!(matches!(
+            rules.named_args[0].value,
+            CustomAttributeArgument::Bool(true)
+        ));
+    }
+
+    #[test]
     fn test_parse_named_array_argument() {
         // FIELD, SZARRAY of I4, the name, then a length and the elements.
         let method = create_empty_constructor();
@@ -2316,5 +2445,58 @@ mod tests {
                 .to_string()
                 .contains("Unsupported named argument type: 0xFF"));
         }
+    }
+}
+
+#[cfg(test)]
+mod examples {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::{
+        metadata::{identity::AssemblyIdentity, typesystem::TypeRegistry},
+        Result,
+    };
+
+    /// The smallest attribute blob: the prolog and no named arguments.
+    const MINIMAL: &[u8] = &[0x01, 0x00, 0x00, 0x00];
+
+    #[test]
+    fn new_example() -> Result<()> {
+        let mut parser = CustomAttributeParser::new(MINIMAL);
+        let parsed = parser.parse_custom_attribute(&Arc::new(boxcar::Vec::new()))?;
+        assert!(parsed.fixed_args.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn with_registry_example() -> Result<()> {
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0")?;
+        let type_registry = Arc::new(TypeRegistry::new(test_identity)?);
+        let mut parser = CustomAttributeParser::with_registry(MINIMAL, type_registry);
+        let parsed = parser.parse_custom_attribute(&Arc::new(boxcar::Vec::new()))?;
+        assert!(parsed.named_args.is_empty());
+        Ok(())
+    }
+
+    /// A constructor without parameters, and one named argument: the field `Answer` of type
+    /// `int32` set to 42.
+    #[test]
+    fn parse_custom_attribute_example() -> Result<()> {
+        let blob_data = &[
+            0x01, 0x00, // prolog
+            0x01, 0x00, // one named argument
+            0x53, 0x08, // FIELD, int32
+            0x06, b'A', b'n', b's', b'w', b'e', b'r', // its name
+            0x2A, 0x00, 0x00, 0x00, // 42
+        ];
+        let mut parser = CustomAttributeParser::new(blob_data);
+        let params = Arc::new(boxcar::Vec::new());
+
+        let custom_attr = parser.parse_custom_attribute(&params)?;
+        assert!(custom_attr.fixed_args.is_empty());
+        assert_eq!(custom_attr.named_args.len(), 1);
+        assert_eq!(custom_attr.named_args[0].name, "Answer");
+        Ok(())
     }
 }

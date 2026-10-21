@@ -29,7 +29,7 @@
 //! # ECMA-335 Reference
 //! See ECMA-335, Partition II, §22.20 for the `GenericParam` table specification.
 
-use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+use rayon::iter::IndexedParallelIterator;
 
 use crate::{
     metadata::{
@@ -38,6 +38,7 @@ use crate::{
         tables::GenericParamRaw,
     },
     prelude::TableId,
+    utils::TryForEachInOrder,
     Result,
 };
 
@@ -88,7 +89,7 @@ impl MetadataLoader for GenericParamLoader {
         generics
             .par_iter()
             .enumerate()
-            .try_for_each(|(index, row)| {
+            .try_for_each_in_order(|(index, row)| {
                 let Some(row) = context.handle_row(row, index)? else {
                     return Ok(());
                 };

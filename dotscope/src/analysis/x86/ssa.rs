@@ -25,7 +25,7 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::analysis::{x86_decode_all, X86Function, X86ToSsaTranslator};
 //!
 //! // Decode x86 code
@@ -36,6 +36,7 @@
 //! // Translate to SSA
 //! let translator = X86ToSsaTranslator::new(&cfg);
 //! let ssa_function = translator.translate()?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 
 use std::collections::{BTreeMap, BTreeSet};

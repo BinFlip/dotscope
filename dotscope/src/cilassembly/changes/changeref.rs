@@ -16,7 +16,7 @@
 //!
 //! # Usage
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::prelude::*;
 //!
 //! let mut assembly = CilAssembly::new(view);
@@ -36,6 +36,7 @@
 //!
 //! // After write, query final locations
 //! let final_offset = string_ref.offset()?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! # Thread Safety
@@ -372,7 +373,7 @@ impl ChangeRef {
     ///
     /// # Usage
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// // For heap references (strings, blobs, guids, userstrings)
     /// let string_ref = assembly.string_add("MyClass")?;
     /// let name_field = string_ref.placeholder(); // Use in table row field
@@ -384,6 +385,7 @@ impl ChangeRef {
     /// // For userstring tokens in IL
     /// let us_ref = assembly.userstring_add("Hello")?;
     /// let ldstr_token = Token::new(0x70000000 | us_ref.placeholder());
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
     pub fn placeholder(&self) -> u32 {
@@ -430,7 +432,7 @@ impl ChangeRef {
     ///
     /// This is a convenience method that creates a complete Token with the
     /// correct table ID and placeholder row. Equivalent to:
-    /// ```rust,ignore
+    /// ```no_run
     /// Token::from_parts(table_id, change_ref.placeholder())
     /// ```
     ///
@@ -456,13 +458,14 @@ impl ChangeRef {
     ///
     /// # Usage
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// let change_ref = assembly.table_row_add(/* ... */)?;
     /// let coded_index = CodedIndex::new(
     ///     TableId::TypeDef,
     ///     change_ref.row(),  // Returns placeholder row
     ///     CodedIndexType::TypeDefOrRef,
     /// );
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
     pub fn row(&self) -> u32 {

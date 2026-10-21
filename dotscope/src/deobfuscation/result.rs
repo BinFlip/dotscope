@@ -18,7 +18,7 @@ use crate::{
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::deobfuscation::{DeobfuscationEngine, EngineConfig};
 ///
 /// let engine = DeobfuscationEngine::new(EngineConfig::default());
@@ -26,6 +26,7 @@ use crate::{
 ///
 /// println!("Events: {}", result.events.len());
 /// println!("Stats: {}", result.stats().summary());
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct DeobfuscationResult {

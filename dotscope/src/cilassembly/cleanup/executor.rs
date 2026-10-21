@@ -24,6 +24,7 @@ use crate::{
             utils::{is_cctor_method, list_range, try_remove},
             CleanupRequest, CleanupStats,
         },
+        modifications::TableModifications,
         CilAssembly,
     },
     metadata::{
@@ -67,16 +68,7 @@ use crate::{
 ///
 /// # Example
 ///
-/// ```rust,ignore
-/// use dotscope::cilassembly::cleanup::{CleanupRequest, execute_cleanup};
-///
-/// let mut request = CleanupRequest::new();
-/// request.add_type(protection_type_token);
-///
-/// let stats = execute_cleanup(&mut assembly, &request)?;
-/// println!("Removed {} types, {} methods",
-///     stats.get(TableId::TypeDef), stats.get(TableId::MethodDef));
-/// ```
+/// The `examples::execute_cleanup_example` test in this module runs this example.
 pub fn execute_cleanup(
     assembly: &mut CilAssembly,
     request: &CleanupRequest,
@@ -86,6 +78,9 @@ pub fn execute_cleanup(
     if request.is_empty() {
         return Ok(stats);
     }
+
+    // The rows deleted before cleanup, so the statistics count only what cleanup deletes
+    let deleted_before = deleted_rows_by_table(assembly);
 
     // Phase 1: Expand type deletions to include all members
     let (type_methods, type_fields) = expand_type_members(assembly, request);
@@ -427,7 +422,8 @@ pub fn execute_cleanup(
     // Phase 4: Remove dependent metadata and cascade references (if enabled)
     if request.remove_orphans() {
         let ctx = DeletionContext::new(&removed_types, &removed_methods, &removed_fields);
-        let orphan_stats = orphans::remove_parent_child_dependents(assembly, &ctx, &pre_refs);
+        let orphan_stats =
+            orphans::remove_parent_child_dependents(assembly, &ctx, &pre_refs, &body_tokens);
         stats.merge(&orphan_stats);
 
         let cascade_stats = orphans::cascade_reference_cleanup(assembly, &pre_refs, &body_tokens);
@@ -445,7 +441,29 @@ pub fn execute_cleanup(
     // Track excluded sections count
     stats.sections_excluded = request.excluded_sections().len();
 
+    // Several passes may delete the same row (an explicitly requested type is also empty, or
+    // nested in another deleted type); each row counts once.
+    let mut removals = deleted_rows_by_table(assembly);
+    for (table, count) in &mut removals {
+        *count = count.saturating_sub(deleted_before.get(table).copied().unwrap_or(0));
+    }
+    removals.retain(|_, count| *count > 0);
+    stats.set_removals(removals);
+
     Ok(stats)
+}
+
+/// The number of rows the pending changes delete, per table.
+fn deleted_rows_by_table(assembly: &CilAssembly) -> HashMap<TableId, usize> {
+    assembly
+        .changes()
+        .table_changes
+        .iter()
+        .filter_map(|(table, modifications)| match modifications {
+            TableModifications::Sparse { deleted_rows, .. } => Some((*table, deleted_rows.len())),
+            TableModifications::Replaced(_) => None,
+        })
+        .collect()
 }
 
 /// Adds the transitive enclosing chain of every nested type in `rids`.
@@ -889,5 +907,47 @@ mod tests {
         assert!(!request.is_empty());
         assert_eq!(request.types_len(), 1);
         assert_eq!(request.methods_len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod examples {
+    use super::*;
+    use crate::{
+        metadata::{token::Token, typesystem::CilTypeRc},
+        testkit::fixture,
+        CilObject, CleanupRequest, Result,
+    };
+
+    /// The type and the types nested in it, recursively.
+    fn with_nested(ty: &CilTypeRc) -> Vec<CilTypeRc> {
+        let mut all = vec![ty.clone()];
+        for (_, nested) in ty.nested_types.iter() {
+            if let Some(nested) = nested.upgrade() {
+                all.extend(with_nested(&nested));
+            }
+        }
+        all
+    }
+
+    /// Deleting a type deletes its methods and the types nested in it, and the statistics
+    /// say so.
+    #[test]
+    fn execute_cleanup_example() -> Result<()> {
+        let sample = fixture("packers/confuserex/1.6.0/original.exe");
+        let doomed = Token::new(0x0200_0002);
+        let object = CilObject::from_path(&sample)?;
+        let removed = with_nested(&object.types().get(&doomed).expect("the type"));
+        let methods: usize = removed.iter().map(|ty| ty.methods.count()).sum();
+        assert!(methods > 0);
+
+        let mut assembly = CilAssembly::from_path(&sample)?;
+        let mut request = CleanupRequest::new();
+        request.add_type(doomed);
+
+        let stats = execute_cleanup(&mut assembly, &request)?;
+        assert_eq!(stats.get(TableId::TypeDef), removed.len());
+        assert_eq!(stats.get(TableId::MethodDef), methods);
+        Ok(())
     }
 }

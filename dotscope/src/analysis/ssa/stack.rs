@@ -118,17 +118,7 @@ impl VariableState {
 ///
 /// # Usage
 ///
-/// ```rust,ignore
-/// use dotscope::analysis::StackSimulator;
-///
-/// let mut sim = StackSimulator::new(2, 3); // 2 args, 3 locals
-///
-/// // Simulate ldarg.0 (pushes 1)
-/// let result = sim.simulate_push(VariableOrigin::Argument(0));
-///
-/// // Simulate add (pops 2, pushes 1)
-/// let (uses, def) = sim.simulate_binary_op();
-/// ```
+/// The `examples::stack_simulator_example` test in this module runs this example.
 #[derive(Debug)]
 pub struct StackSimulator {
     /// The virtual evaluation stack.
@@ -1151,5 +1141,29 @@ mod tests {
         assert_eq!(r4.uses, vec![add_result]);
 
         assert!(sim.is_stack_empty());
+    }
+}
+
+#[cfg(test)]
+mod examples {
+    use super::*;
+    use crate::Result;
+
+    /// `ldarg.0`, a constant and `add`: the add pops both values, deepest first, and leaves
+    /// its result.
+    #[test]
+    fn stack_simulator_example() -> Result<()> {
+        let mut sim = StackSimulator::new(2, 3); // 2 args, 3 locals
+
+        let ldarg = sim.simulate_ldarg(0).expect("argument 0 exists");
+        assert!(ldarg.uses.is_empty());
+        let argument = ldarg.def.expect("ldarg pushes a value");
+        let (constant, _) = sim.simulate_push();
+
+        let add = sim.simulate_binary_op().expect("two operands on the stack");
+        assert_eq!(add.uses, vec![argument, constant]);
+        assert!(add.def.is_some());
+        assert_eq!(sim.stack_depth(), 1);
+        Ok(())
     }
 }

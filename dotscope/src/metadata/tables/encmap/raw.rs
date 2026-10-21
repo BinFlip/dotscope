@@ -18,8 +18,8 @@
 //!
 //! ## Usage Examples
 //!
-//! ```rust,ignore
-//! # use dotscope::metadata::tables::encmap::EncMapRaw;
+//! ```no_run
+//! # use dotscope::metadata::tables::EncMapRaw;
 //! # use dotscope::metadata::token::Token;
 //! # fn example(raw: EncMapRaw) -> dotscope::Result<()> {
 //! // Access original token information
@@ -113,12 +113,13 @@ impl EncMapRaw {
     /// This method currently cannot fail as `EncMap` entries are self-contained.
     ///
     /// ## Examples
-    /// ```rust,ignore
-    /// # use dotscope::metadata::tables::encmap::EncMapRaw;
+    /// ```no_run
+    /// # use dotscope::metadata::tables::EncMapRaw;
     /// # fn example(raw: EncMapRaw) -> dotscope::Result<()> {
     /// let owned = raw.to_owned()?;
     /// # Ok(())
     /// # }
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn to_owned(&self) -> Result<EncMapRc> {
         Ok(Arc::new(self.clone()))

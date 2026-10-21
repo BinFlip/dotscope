@@ -281,78 +281,75 @@ pub fn print_analysis(comparisons: &[LoadComparison], label: &str) {
 /// Run a full assembly compatibility test for all assemblies in the given sample directory.
 ///
 /// This is the main entry point shared by all runtime compatibility tests (mono, dotnet, etc.).
-/// It loads all `.dll` and `.exe` files in `samples_dir`, tests them with both `ProjectLoader`
-/// and `CilAssemblyView` in parallel, prints analysis, and asserts basic compatibility.
+/// Every `.dll` and `.exe` in `samples_dir` must load alone, as a `CilAssemblyView`, and the
+/// whole set must load as one project through `ProjectLoader`, each assembly once with its
+/// references resolved within the set. These are runtime assemblies the CLR loads, so any
+/// failure is a dotscope defect.
+///
+/// Loading each assembly as a project of its own would load its whole dependency closure
+/// every time, most of the framework for most of them: memory then grows with the number of
+/// loads running at once, about 10 GB each, and the same assemblies load hundreds of times.
+///
+/// # Panics
+///
+/// When `samples_dir` holds no assemblies, or any assembly fails either load; the message
+/// names each failure.
 pub fn run_assembly_compatibility_test(samples_dir: &Path, label: &str) {
-    let assemblies = find_assemblies(samples_dir);
-    if assemblies.is_empty() {
-        println!("No assemblies found in {}", samples_dir.display());
-        return;
+    let mut assemblies = find_assemblies(samples_dir);
+    assemblies.sort();
+    assert!(
+        !assemblies.is_empty(),
+        "no assemblies in {}",
+        samples_dir.display()
+    );
+
+    let mut failures: Vec<String> = assemblies
+        .par_iter()
+        .filter_map(|path| {
+            let result = try_load_with_cilassemblyview(path);
+            (!result.success).then(|| {
+                format!(
+                    "{} (CilAssemblyView): {}",
+                    path.display(),
+                    result.error_type.as_deref().unwrap_or("failed")
+                )
+            })
+        })
+        .collect();
+
+    let (primary, dependencies) = assemblies.split_first().expect("not empty");
+    let project = dependencies
+        .iter()
+        .fold(
+            ProjectLoader::new().primary_file(primary),
+            |loader, path| loader.and_then(|loader| loader.with_dependency(path)),
+        )
+        .and_then(|loader| loader.with_search_path(samples_dir))
+        .and_then(|loader| loader.build());
+    match project {
+        Ok(result) => {
+            failures.extend(
+                result
+                    .failed_loads
+                    .iter()
+                    .map(|(path, error)| format!("{path} (ProjectLoader): {error}")),
+            );
+            if result.success_count() != assemblies.len() {
+                failures.push(format!(
+                    "the project loaded {} of {} assemblies",
+                    result.success_count(),
+                    assemblies.len()
+                ));
+            }
+        }
+        Err(e) => failures.push(format!("the project failed to load: {e}")),
     }
 
-    println!("Found {} {} assemblies to test", assemblies.len(), label);
-
-    // Create a dedicated thread pool for the test to avoid nested rayon deadlock
-    // (ProjectLoader internally uses rayon for parallel assembly loading)
-    let num_test_threads = (rayon::current_num_threads() / 2).max(1);
-    println!(
-        "Loading assemblies in parallel across {} test threads...",
-        num_test_threads
-    );
-
-    let test_pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(num_test_threads)
-        .build()
-        .expect("Failed to create test thread pool");
-
-    // Use dedicated rayon pool for parallel processing
-    let comparisons: Vec<LoadComparison> = test_pool.install(|| {
-        assemblies
-            .par_iter()
-            .map(|assembly_path| {
-                let file_name = assembly_path
-                    .file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .to_string();
-
-                println!("Testing: {}", file_name);
-
-                let cilproject_result = try_load_with_cilproject(assembly_path);
-                let cilassemblyview_result = try_load_with_cilassemblyview(assembly_path);
-
-                let file_size = assembly_path.metadata().map(|m| m.len()).unwrap_or(0);
-
-                LoadComparison {
-                    file_name,
-                    file_size,
-                    cilproject_result,
-                    cilassemblyview_result,
-                }
-            })
-            .collect()
-    });
-
-    print_analysis(&comparisons, label);
-
-    // Assertions for the test
-    let total_count = comparisons.len();
-    let success_count = comparisons
-        .iter()
-        .filter(|c| c.cilproject_result.success || c.cilassemblyview_result.success)
-        .count();
-
-    // At least one approach should work for most assemblies
     assert!(
-        success_count > total_count / 2,
-        "Less than 50% of assemblies could be loaded with either approach"
-    );
-
-    // At least some assemblies should be parseable
-    assert!(success_count > 0, "No assemblies could be loaded at all");
-
-    println!(
-        "\n{} compatibility test completed: {}/{} assemblies can be loaded",
-        label, success_count, total_count
+        failures.is_empty(),
+        "{label}: {} problems over {} assemblies:\n{}",
+        failures.len(),
+        assemblies.len(),
+        failures.join("\n")
     );
 }

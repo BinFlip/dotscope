@@ -37,7 +37,7 @@
 //!
 //! # Usage
 //!
-//! ```rust,ignore
+//! ```no_run
 //! let resolver = DispatchResolver::new();
 //! let concrete = resolver.resolve(declared_method, runtime_type, &context);
 //! // concrete == declared_method if no override exists

@@ -31,9 +31,10 @@ use crate::{emulation::engine::EmulationError, Result};
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```no_run
 /// let ptr = mem.alloc(256)?;
 /// mem.write(ptr.address(), &[1, 2, 3, 4])?;
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct UnmanagedRef(u64);
@@ -111,7 +112,7 @@ impl InternalRegion {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::emulation::UnmanagedMemory;
 ///
 /// let mut mem = UnmanagedMemory::new(1024 * 1024);
@@ -125,6 +126,7 @@ impl InternalRegion {
 /// // Copy between regions
 /// let dest = mem.alloc(128)?;
 /// mem.memcpy(dest.address(), ptr.address(), 128)?;
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Clone, Debug)]
 pub struct UnmanagedMemory {

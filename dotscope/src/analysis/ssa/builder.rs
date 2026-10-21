@@ -12,7 +12,7 @@
 //! The builder uses a closure-based API where all blocks are defined within
 //! a single expression, making the CFG structure visually clear:
 //!
-//! ```rust,ignore
+//! ```no_run
 //! let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
 //!     let cond = f.arg(0, SsaType::I32);
 //!
@@ -45,7 +45,7 @@ use crate::analysis::ssa::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::analysis::SsaFunctionBuilder;
 ///
 /// // Simple function: return arg0 + arg1

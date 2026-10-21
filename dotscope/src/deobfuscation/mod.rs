@@ -85,7 +85,7 @@
 //!
 //! # Usage
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::deobfuscation::{DeobfuscationEngine, EngineConfig};
 //!
 //! let config = EngineConfig::default();
@@ -93,6 +93,7 @@
 //!
 //! let (deobfuscated, result) = engine.process_file("obfuscated.dll")?;
 //! println!("{}", result.summary());
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 
 mod cleanup;
@@ -141,9 +142,8 @@ pub(crate) use template::EmulationTemplatePool;
 #[cfg(test)]
 mod tests {
     use crate::{
-        deobfuscation::{DeobfuscationEngine, EngineConfig},
         metadata::validation::ValidationConfig,
-        testkit::fixture,
+        testkit::{engine, fixture},
         CilObject,
     };
 
@@ -151,7 +151,7 @@ mod tests {
     fn test_process_file_api() -> crate::Result<()> {
         let path = fixture("packers/confuserex/1.6.0/original.exe");
 
-        let engine = DeobfuscationEngine::new(EngineConfig::default());
+        let engine = engine();
         let (deobfuscated, result) = engine.process_file(path)?;
 
         assert!(deobfuscated.module().is_some());
@@ -167,7 +167,7 @@ mod tests {
 
         let assembly = CilObject::from_path_with_validation(path, ValidationConfig::analysis())?;
 
-        let engine = DeobfuscationEngine::new(EngineConfig::default());
+        let engine = engine();
         let (deobfuscated, result) = engine.process_assembly(assembly)?;
 
         assert!(deobfuscated.module().is_some());
@@ -181,7 +181,7 @@ mod tests {
         let path = fixture("packers/confuserex/1.6.0/original.exe");
         let bytes = std::fs::read(path)?;
 
-        let engine = DeobfuscationEngine::new(EngineConfig::default());
+        let engine = engine();
         let (deobfuscated, result) = engine.process_bytes(bytes)?;
 
         assert!(deobfuscated.module().is_some());

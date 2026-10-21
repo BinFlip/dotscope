@@ -4,7 +4,7 @@
 //! `LocalVariable` table data during metadata loading. The loader handles parallel
 //! processing and integration with the broader loader context.
 
-use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+use rayon::iter::IndexedParallelIterator;
 
 use crate::{
     metadata::{
@@ -12,6 +12,7 @@ use crate::{
         loader::{LoaderContext, MetadataLoader},
         tables::TableId,
     },
+    utils::TryForEachInOrder,
     Result,
 };
 
@@ -47,26 +48,29 @@ impl MetadataLoader for LocalVariableLoader {
             return Ok(());
         };
 
-        table.par_iter().enumerate().try_for_each(|(index, row)| {
-            let Some(row) = context.handle_row(row, index)? else {
-                return Ok(());
-            };
-            let token_msg = || format!("local variable 0x{:08x}", row.token.value());
+        table
+            .par_iter()
+            .enumerate()
+            .try_for_each_in_order(|(index, row)| {
+                let Some(row) = context.handle_row(row, index)? else {
+                    return Ok(());
+                };
+                let token_msg = || format!("local variable 0x{:08x}", row.token.value());
 
-            let Some(local_variable) = context.handle_result(
-                row.to_owned(strings),
-                DiagnosticCategory::Method,
-                token_msg,
-            )?
-            else {
-                return Ok(());
-            };
+                let Some(local_variable) = context.handle_result(
+                    row.to_owned(strings),
+                    DiagnosticCategory::Method,
+                    token_msg,
+                )?
+                else {
+                    return Ok(());
+                };
 
-            context
-                .local_variable
-                .insert(local_variable.token, local_variable);
-            Ok(())
-        })
+                context
+                    .local_variable
+                    .insert(local_variable.token, local_variable);
+                Ok(())
+            })
     }
 
     fn table_id(&self) -> Option<TableId> {

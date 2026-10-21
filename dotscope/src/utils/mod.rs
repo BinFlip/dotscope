@@ -24,8 +24,9 @@
 //!
 //! ## Compressed Integer Encoding
 //!
-//! ```rust,ignore
-//! use dotscope::utils::compression::{write_compressed_uint, compressed_uint_size};
+//! ```no_run
+//! use dotscope::io::write_compressed_uint;
+//! use dotscope::io::compressed_uint_size;
 //!
 //! let mut buffer = Vec::new();
 //! write_compressed_uint(300, &mut buffer);
@@ -34,12 +35,7 @@
 //!
 //! ## Memory Alignment
 //!
-//! ```rust,ignore
-//! use dotscope::utils::alignment::{align_to_4_bytes, align_to};
-//!
-//! assert_eq!(align_to_4_bytes(17), 20);
-//! assert_eq!(align_to(1000, 512), 1024);
-//! ```
+//! The `examples::module_example` test in this module runs this example.
 
 mod alignment;
 #[cfg(feature = "emulation")]
@@ -57,6 +53,7 @@ mod lazylist;
 #[cfg(feature = "emulation")]
 mod lebytes;
 mod math;
+mod parallel;
 mod rowlist;
 mod synchronization;
 mod text;
@@ -116,9 +113,23 @@ pub use lebytes::LeBytes;
 #[cfg(feature = "emulation")]
 pub use math::to_i32_saturating;
 pub use math::to_u32;
+pub(crate) use parallel::TryForEachInOrder;
 pub use rowlist::RowList;
 #[allow(unused_imports)]
 pub use rowlist::RowListIter;
 pub use synchronization::FailFastBarrier;
 pub(crate) use text::truncate_chars;
 pub use visitedmap::VisitedMap;
+
+#[cfg(test)]
+mod examples {
+    use super::*;
+    use crate::{utils::alignment::align_to_4_bytes, Result};
+
+    #[test]
+    fn module_example() -> Result<()> {
+        assert_eq!(align_to_4_bytes(17), 20);
+        assert_eq!(align_to(1000, 512), 1024);
+        Ok(())
+    }
+}

@@ -53,7 +53,7 @@ use crate::emulation::{tokens, HeapRef, ManagedHeap};
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::emulation::{FakeObjects, ManagedHeap};
 ///
 /// let heap = ManagedHeap::new(64 * 1024 * 1024);

@@ -18,21 +18,7 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
-//! use dotscope::cilassembly::CleanupRequest;
-//! use dotscope::deobfuscation::cleanup::execute_cleanup;
-//! use dotscope::deobfuscation::DerivedStats;
-//!
-//! let mut request = CleanupRequest::new();
-//! request.add_type(some_type_token);
-//! request.add_method(some_method_token);
-//! request.add_field(some_field_token);
-//!
-//! let assembly = execute_cleanup(assembly, Some(request), &ctx)?;
-//! // Statistics are derived from the event log
-//! let stats = DerivedStats::from_log(&ctx.events);
-//! println!("{}", stats.summary());
-//! ```
+//! The `examples::module_example` test in this module runs this example.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -1278,5 +1264,54 @@ mod tests {
         assert!(is_special_name("set_Item"));
         assert!(is_special_name("add_Click"));
         assert!(is_special_name("remove_Changed"));
+    }
+}
+
+#[cfg(test)]
+mod examples {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::{
+        analysis::CallGraph,
+        compiler::DerivedStats,
+        metadata::tables::{CustomAttributeRaw, TableId},
+        testkit::fixture,
+        CleanupRequest, Result,
+    };
+
+    fn attribute_count(assembly: &CilObject) -> u32 {
+        assembly
+            .tables()
+            .map_or(0, |tables| tables.table_row_count(TableId::CustomAttribute))
+    }
+
+    /// Removing an assembly-level attribute: the output has one attribute fewer, and the event
+    /// log the statistics derive from records the removal.
+    #[test]
+    fn module_example() -> Result<()> {
+        let assembly = CilObject::from_path(fixture("packers/confuserex/1.6.0/original.exe"))?;
+        let before = attribute_count(&assembly);
+        let attribute = assembly
+            .tables()
+            .and_then(|tables| tables.table::<CustomAttributeRaw>())
+            .and_then(|table| {
+                table
+                    .iter()
+                    .filter_map(std::result::Result::ok)
+                    .find(|row| row.parent.token.is_table(TableId::Assembly))
+            })
+            .expect("an assembly-level attribute")
+            .token;
+        let ctx = AnalysisContext::new(Arc::new(CallGraph::new()));
+
+        let mut request = CleanupRequest::new();
+        request.add_attribute(attribute);
+        let assembly = execute_cleanup(assembly, Some(request), &ctx)?;
+
+        assert_eq!(attribute_count(&assembly), before - 1);
+        // Statistics are derived from the event log
+        assert!(DerivedStats::from_log(&ctx.events).artifacts_removed >= 1);
+        Ok(())
     }
 }

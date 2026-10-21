@@ -29,7 +29,7 @@ use crate::metadata::{method::MethodRc, token::Token};
 ///
 /// # Usage Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// // Example C# async method:
 /// // public async Task<int> CalculateAsync() { ... }
 /// //

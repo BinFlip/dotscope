@@ -49,7 +49,7 @@
 //!
 //! # Usage
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::emulation::{
 //!     ProcessBuilder, TracingConfig, TraceFilter, CallTreeBuilder,
 //! };
@@ -65,6 +65,7 @@
 //!     .with_tracing(TracingConfig::full_trace("trace.log"))
 //!     .with_trace_listener(Box::new(CallTreeBuilder::new()))
 //!     .build()?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 
 mod calltree;

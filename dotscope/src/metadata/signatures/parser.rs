@@ -1258,20 +1258,10 @@ impl<'a> SignatureParser<'a> {
     /// logic of parsing fixed parameters and optional varargs separated by SENTINEL.
     pub fn parse_method_signature(&mut self) -> Result<SignatureMethod> {
         let convention_byte = self.parser.read_le::<u8>()?;
-
-        // Extract the calling convention kind from the low 4 bits (mask 0x0F)
-        // ECMA-335 II.23.2.1: The low 4 bits encode the calling convention
-        let calling_convention_kind = convention_byte & CALLING_CONVENTION::KIND_MASK;
+        let mut convention = SignatureMethod::default();
+        convention.set_calling_convention(convention_byte)?;
 
         let mut method = SignatureMethod {
-            has_this: convention_byte & CALLING_CONVENTION::HASTHIS != 0,
-            explicit_this: convention_byte & CALLING_CONVENTION::EXPLICITTHIS != 0,
-            default: calling_convention_kind == CALLING_CONVENTION::DEFAULT,
-            vararg: calling_convention_kind == CALLING_CONVENTION::VARARG,
-            cdecl: calling_convention_kind == CALLING_CONVENTION::C,
-            stdcall: calling_convention_kind == CALLING_CONVENTION::STDCALL,
-            thiscall: calling_convention_kind == CALLING_CONVENTION::THISCALL,
-            fastcall: calling_convention_kind == CALLING_CONVENTION::FASTCALL,
             param_count_generic: if convention_byte & CALLING_CONVENTION::GENERIC != 0 {
                 let gen_count = self.parser.read_compressed_uint()?;
                 if gen_count > MAX_GENERIC_ARGS {
@@ -1299,6 +1289,7 @@ impl<'a> SignatureParser<'a> {
             return_type: self.parse_param()?,
             params: Vec::new(),
             varargs: Vec::new(),
+            ..convention
         };
 
         // Parse fixed parameters and varargs using the helper method
@@ -2278,7 +2269,9 @@ impl<'a> SignatureParser<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{prelude::Token, Error, ParseFailure};
+    use crate::{
+        metadata::signatures::encode_field_signature, prelude::Token, Error, ParseFailure,
+    };
 
     #[test]
     fn test_parse_primitive_types() {
@@ -2651,8 +2644,16 @@ mod tests {
 
     #[test]
     fn test_error_handling() {
-        // Test invalid method signature format
+        // Test invalid method signature format: kind 0x0F is no method signature kind
         let mut parser = SignatureParser::new(&[0xFF, 0x01]);
+        let error = parser.parse_method_signature().unwrap_err();
+        assert!(
+            error.to_string().contains("calling convention 0xFF"),
+            "{error}"
+        );
+
+        // Test truncated method signature: a parameter count with no return type after it
+        let mut parser = SignatureParser::new(&[0x00, 0x01]);
         assert!(matches!(
             parser.parse_method_signature(),
             Err(Error::Parse(ParseFailure::OutOfBounds { .. }))
@@ -2661,6 +2662,35 @@ mod tests {
         // Test invalid field signature format
         let mut parser = SignatureParser::new(&[0x07, 0x08]); // Should be 0x06 for FIELD
         assert!(parser.parse_field_signature().is_err());
+    }
+
+    #[test]
+    fn an_unmanaged_function_pointer_keeps_its_calling_convention() {
+        // FIELD, FNPTR of `delegate* unmanaged[Cdecl]<int, void>`: UNMANAGED, one
+        // parameter, a void return with modopt(CallConvCdecl), then int.
+        let blob = [0x06, 0x1B, 0x09, 0x01, 0x20, 0x09, 0x01, 0x08];
+        let field = SignatureParser::new(&blob).parse_field_signature().unwrap();
+        let TypeSignature::FnPtr(method) = &field.base else {
+            panic!("expected a function pointer, got {:?}", field.base);
+        };
+        assert!(method.unmanaged && !method.default);
+        assert_eq!(method.calling_convention(), CALLING_CONVENTION::UNMANAGED);
+        assert_eq!(encode_field_signature(&field).unwrap(), blob);
+    }
+
+    #[test]
+    fn a_method_signature_kind_no_method_has_is_refused() {
+        for kind in [0x06, 0x07, 0x08, 0x0A, 0x0B, 0x0F] {
+            let blob = [kind, 0x00, 0x01];
+            let mut parser = SignatureParser::new(&blob);
+            assert!(parser.parse_method_signature().is_err(), "kind {kind:#04x}");
+        }
+        for kind in [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x09] {
+            let blob = [kind, 0x00, 0x01];
+            let mut parser = SignatureParser::new(&blob);
+            let method = parser.parse_method_signature().unwrap();
+            assert_eq!(method.calling_convention(), kind);
+        }
     }
 
     /// A long run of `PTR` bytes in a field signature is refused, not recursed.

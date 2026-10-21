@@ -144,6 +144,8 @@ pub struct TestCapabilities {
     pub ildasm_path: Option<std::path::PathBuf>,
     /// Whether Mono's metadata verifier, `peverify`, is installed
     pub peverify: bool,
+    /// Whether Mono is installed: it runs .NET Framework executables, which `dotnet` does not
+    pub mono: bool,
     /// Architectures that can be compiled AND executed
     pub supported_architectures: Vec<Architecture>,
 }
@@ -181,6 +183,7 @@ impl TestCapabilities {
             disassembler,
             ildasm_path,
             peverify: Self::command_exists("peverify", &["--help"]),
+            mono: available_runtimes.contains(&Runtime::Mono),
             supported_architectures,
         }
     }
@@ -191,6 +194,7 @@ impl TestCapabilities {
             ToolKind::Toolchain => self.can_test(),
             ToolKind::Disassembler => self.can_disassemble(),
             ToolKind::Verifier => self.peverify,
+            ToolKind::Mono => self.mono,
         }
     }
 
@@ -269,11 +273,12 @@ impl TestCapabilities {
             .collect();
 
         format!(
-            "Compiler: {}, Runtime: {}, Disassembler: {}, peverify: {}, Architectures: [{}]",
+            "Compiler: {}, Runtime: {}, Disassembler: {}, peverify: {}, mono: {}, Architectures: [{}]",
             compiler_str,
             runtime_str,
             disasm_str,
             if self.peverify { "yes" } else { "no" },
+            if self.mono { "yes" } else { "no" },
             archs.join(", ")
         )
     }

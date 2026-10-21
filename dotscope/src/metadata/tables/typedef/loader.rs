@@ -50,7 +50,7 @@
 //! - [`crate::metadata::tables::TypeDefRaw`] - Raw table entry structure
 //! - [`crate::metadata::typesystem::CilType`] - Type system integration
 
-use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+use rayon::iter::IndexedParallelIterator;
 
 use crate::{
     metadata::{
@@ -59,6 +59,7 @@ use crate::{
         tables::{TableId, TypeDefRaw, TypeRefRaw},
         typesystem::CilTypeReference,
     },
+    utils::TryForEachInOrder,
     Result,
 };
 
@@ -132,63 +133,72 @@ impl MetadataLoader for TypeDefLoader {
             .get()
             .map(|assembly| CilTypeReference::Assembly(assembly.clone()));
 
-        table.par_iter().enumerate().try_for_each(|(index, row)| {
-            let Some(row) = context.handle_row(row, index)? else {
-                return Ok(());
-            };
-            let token_msg = || format!("type 0x{:08x}", row.token.value());
+        table
+            .par_iter()
+            .enumerate()
+            .try_for_each_in_order(|(index, row)| {
+                let Some(row) = context.handle_row(row, index)? else {
+                    return Ok(());
+                };
+                let token_msg = || format!("type 0x{:08x}", row.token.value());
 
-            let Some(type_def) = context.handle_result(
-                row.to_owned(
-                    |coded_index| context.get_ref(coded_index),
-                    strings,
-                    &context.field,
-                    &context.field_ptr,
-                    context.method_def,
-                    &context.method_ptr,
-                    table,
-                    false, // Skip base type resolution - handled by InheritanceResolver
-                    current_assembly_ref.clone(),
-                ),
-                DiagnosticCategory::Type,
-                token_msg,
-            )?
-            else {
-                return Ok(());
-            };
+                let Some(type_def) = context.handle_result(
+                    row.to_owned(
+                        |coded_index| context.get_ref(coded_index),
+                        strings,
+                        context.field,
+                        &context.field_ptr,
+                        context.method_def,
+                        &context.method_ptr,
+                        table,
+                        false, // Skip base type resolution - handled by InheritanceResolver
+                        current_assembly_ref.clone(),
+                    ),
+                    DiagnosticCategory::Type,
+                    token_msg,
+                )?
+                else {
+                    return Ok(());
+                };
 
-            // A value type derives directly from `System.ValueType` or
-            // `System.Enum` (ECMA-335 II.13). The base is linked later, by the
-            // inheritance resolver, and a flavor computed before then would be
-            // a class for good; the `extends` row's name settles it now.
-            let names = |namespace: u32, name: u32| {
-                (
-                    strings.get(namespace as usize).ok(),
-                    strings.get(name as usize).ok(),
-                )
-            };
-            let base_name = match row.extends.tag {
-                TableId::TypeRef => header
-                    .table::<TypeRefRaw>()
-                    .and_then(|refs| refs.get(row.extends.row).ok().flatten())
-                    .map(|base| names(base.type_namespace, base.type_name)),
-                TableId::TypeDef => table
-                    .get(row.extends.row)
-                    .ok()
-                    .flatten()
-                    .map(|base| names(base.type_namespace, base.type_name)),
-                _ => None,
-            };
-            if matches!(
-                base_name,
-                Some((Some("System"), Some("ValueType" | "Enum")))
-            ) {
-                type_def.mark_value_type();
-            }
+                // A value type derives directly from `System.ValueType` or
+                // `System.Enum` (ECMA-335 II.13). The base is linked later, by the
+                // inheritance resolver, and a flavor computed before then would be
+                // a class for good; the `extends` row's name settles it now.
+                let names = |namespace: u32, name: u32| {
+                    (
+                        strings.get(namespace as usize).ok(),
+                        strings.get(name as usize).ok(),
+                    )
+                };
+                let base_name = match row.extends.tag {
+                    TableId::TypeRef => header
+                        .table::<TypeRefRaw>()
+                        .and_then(|refs| refs.get(row.extends.row).ok().flatten())
+                        .map(|base| names(base.type_namespace, base.type_name)),
+                    TableId::TypeDef => table
+                        .get(row.extends.row)
+                        .ok()
+                        .flatten()
+                        .map(|base| names(base.type_namespace, base.type_name)),
+                    _ => None,
+                };
+                // A value type extends System.ValueType or System.Enum, except System.Enum
+                // itself, which extends System.ValueType and is a class (ECMA-335 II.13)
+                let is_enum_itself =
+                    names(row.type_namespace, row.type_name) == (Some("System"), Some("Enum"));
+                if !is_enum_itself
+                    && matches!(
+                        base_name,
+                        Some((Some("System"), Some("ValueType" | "Enum")))
+                    )
+                {
+                    type_def.mark_value_type();
+                }
 
-            context.types.insert(&type_def);
-            Ok(())
-        })
+                context.types.insert(&type_def);
+                Ok(())
+            })
     }
 
     /// Returns the table identifier for the `TypeDef` table.

@@ -461,6 +461,7 @@ impl InterfaceBuilder {
                 stdcall: false,
                 thiscall: false,
                 fastcall: false,
+                unmanaged: false,
                 param_count_generic: 0,
                 param_count: u32::try_from(method_def.parameters.len())
                     .map_err(|_| malformed_error!("Method parameter count exceeds u32 range"))?,
@@ -503,6 +504,7 @@ impl InterfaceBuilder {
                     stdcall: false,
                     thiscall: false,
                     fastcall: false,
+                    unmanaged: false,
                     param_count_generic: 0,
                     param_count: 0,
                     return_type: SignatureParameter {
@@ -544,6 +546,7 @@ impl InterfaceBuilder {
                     stdcall: false,
                     thiscall: false,
                     fastcall: false,
+                    unmanaged: false,
                     param_count_generic: 0,
                     param_count: 1,
                     return_type: SignatureParameter {

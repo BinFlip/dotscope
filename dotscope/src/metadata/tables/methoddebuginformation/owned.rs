@@ -63,8 +63,8 @@ use crate::metadata::{sequencepoints::SequencePoints, token::Token};
 ///
 /// # Usage Patterns
 ///
-/// ```rust,ignore
-/// use dotscope::metadata::tables::methoddebuginformation::owned::MethodDebugInformation;
+/// ```no_run
+/// use dotscope::metadata::tables::MethodDebugInformation;
 ///
 /// # fn process_debug_info(debug_info: &MethodDebugInformation) {
 /// // Access document reference

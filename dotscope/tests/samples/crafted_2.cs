@@ -1,8 +1,4 @@
-//! This is the crafted.exe source-code
-//!  
-
-/*
-Requires .NET Core 3.0
+// Source of crafted_2.exe. Requires .NET Core 3.0.
 
 using System;
 using System.Collections;
@@ -436,4 +432,3 @@ public ref struct RefStruct
         Data = data;
     }
 }
-*/

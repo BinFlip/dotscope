@@ -304,7 +304,7 @@ pub mod VARIANT_TYPE {
 /// ```
 ///
 /// Complex scenarios may include additional type information:
-/// ```rust,ignore
+/// ```no_run
 /// // Array marshalling with element type
 /// let descriptor = MarshallingInfo {
 ///     primary_type: NativeType::Array { /* ... */ },

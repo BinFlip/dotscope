@@ -108,8 +108,8 @@ use crate::{
 ///
 /// # Usage Patterns
 ///
-/// ```rust,ignore
-/// use dotscope::metadata::tables::methodsemantics::raw::MethodSemanticsRaw;
+/// ```no_run
+/// use dotscope::metadata::tables::MethodSemanticsRaw;
 /// use dotscope::metadata::tables::MethodSemanticsAttributes;
 ///
 /// # fn process_semantic_entry(raw_entry: &MethodSemanticsRaw) {

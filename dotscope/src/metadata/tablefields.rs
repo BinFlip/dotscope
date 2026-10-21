@@ -41,7 +41,7 @@
 //!
 //! # Usage Examples
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::metadata::tablefields::{get_heap_fields, HeapType};
 //! use dotscope::metadata::tables::TableId;
 //!

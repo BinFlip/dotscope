@@ -39,8 +39,9 @@
 //!
 //! # Usage
 //!
-//! ```rust,ignore
-//! use dotscope::cilassembly::{CilAssembly, cleanup::CleanupRequest};
+//! ```no_run
+//! use dotscope::CilAssembly;
+//! use dotscope::CleanupRequest;
 //!
 //! let mut assembly = CilAssembly::new(view);
 //!
@@ -56,6 +57,7 @@
 //!
 //! // Generate assembly (cleanup is applied)
 //! assembly.write_to_file("output.exe")?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! # What Gets Cleaned Up

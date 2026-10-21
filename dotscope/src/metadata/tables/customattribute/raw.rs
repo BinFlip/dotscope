@@ -26,8 +26,8 @@
 //!
 //! # Usage Examples
 //!
-//! ```rust,ignore
-//! # use dotscope::metadata::tables::customattribute::CustomAttributeRaw;
+//! ```no_run
+//! # use dotscope::metadata::tables::CustomAttributeRaw;
 //! # use dotscope::metadata::streams::Blob;
 //! # fn example(raw: CustomAttributeRaw, blob: &Blob) -> dotscope::Result<()> {
 //! // Convert to owned representation with resolved references
@@ -37,6 +37,7 @@
 //! owned.apply()?;
 //! # Ok(())
 //! # }
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! # Error Handling

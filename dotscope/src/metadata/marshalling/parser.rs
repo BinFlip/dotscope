@@ -108,7 +108,7 @@ pub fn parse_marshalling_descriptor(data: &[u8]) -> Result<MarshallingInfo> {
 ///
 /// # Usage Pattern
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::metadata::marshalling::MarshallingParser;
 ///
 /// let descriptor_bytes = &[/* marshalling descriptor data */];
@@ -119,6 +119,7 @@ pub fn parse_marshalling_descriptor(data: &[u8]) -> Result<MarshallingInfo> {
 ///
 /// // Or parse complete descriptor
 /// let descriptor = parser.parse_descriptor()?;
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
 /// # Safety

@@ -4,7 +4,7 @@
 //! ``LocalScope`` table data during metadata loading. The loader handles parallel
 //! processing and integration with the broader loader context.
 
-use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+use rayon::iter::IndexedParallelIterator;
 
 use crate::{
     metadata::{
@@ -12,6 +12,7 @@ use crate::{
         loader::{LoaderContext, MetadataLoader},
         tables::TableId,
     },
+    utils::TryForEachInOrder,
     Result,
 };
 
@@ -49,30 +50,33 @@ impl MetadataLoader for LocalScopeLoader {
             return Ok(());
         };
 
-        table.par_iter().enumerate().try_for_each(|(index, row)| {
-            let Some(row) = context.handle_row(row, index)? else {
-                return Ok(());
-            };
-            let token_msg = || format!("local scope 0x{:08x}", row.token.value());
+        table
+            .par_iter()
+            .enumerate()
+            .try_for_each_in_order(|(index, row)| {
+                let Some(row) = context.handle_row(row, index)? else {
+                    return Ok(());
+                };
+                let token_msg = || format!("local scope 0x{:08x}", row.token.value());
 
-            let Some(local_scope) = context.handle_result(
-                row.to_owned(
-                    context.method_def,
-                    &context.import_scope,
-                    &context.local_variable,
-                    &context.local_constant,
-                    table,
-                ),
-                DiagnosticCategory::Method,
-                token_msg,
-            )?
-            else {
-                return Ok(());
-            };
+                let Some(local_scope) = context.handle_result(
+                    row.to_owned(
+                        context.method_def,
+                        &context.import_scope,
+                        &context.local_variable,
+                        &context.local_constant,
+                        table,
+                    ),
+                    DiagnosticCategory::Method,
+                    token_msg,
+                )?
+                else {
+                    return Ok(());
+                };
 
-            context.local_scope.insert(local_scope.token, local_scope);
-            Ok(())
-        })
+                context.local_scope.insert(local_scope.token, local_scope);
+                Ok(())
+            })
     }
 
     fn table_id(&self) -> Option<TableId> {

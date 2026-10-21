@@ -63,6 +63,7 @@ ecb = "0.2.0"
 dashmap = "6.2.1"
 crossbeam-skiplist = "0.1.3"
 rayon = "1.12.0"
+toml = { version = "0.9.12", optional = true }
 rustc-hash = "2.1.3"
 smallvec = "1.15"
 boxcar = "0.2.14"
@@ -136,11 +137,7 @@ smart-rename = ["deobfuscation", "dep:mistralrs", "dep:tokio"]
 
 # Test support (`dotscope::testkit`) for the crate's own integration tests: builders,
 # factories, fixtures and the sample harness. Unstable: not part of the semver surface.
-testkit = []
-
-# Skip expensive validation tests that use ProjectLoader with dependency resolution.
-# These tests are slow on CI runners with limited cores/IO. Use this feature on slow runners (e.g., macOS/Windows CI).
-skip-expensive-tests = []
+testkit = ["dep:toml"]
 
 [[example]]
 name = "deobfuscate"

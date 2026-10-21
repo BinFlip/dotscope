@@ -1,769 +1,496 @@
-//! Signature blob token remapping for metadata generation.
+//! Renumbering the type tokens inside signature blobs.
 //!
-//! This module provides functionality to remap TypeDef, TypeRef, and TypeSpec
-//! tokens embedded within signature blobs. When any of those rows are deleted
-//! and RIDs shift, the tokens in signatures (StandAloneSig, MethodSig,
-//! FieldSig, etc.) become stale and must be updated to reference the correct
-//! new RIDs. `ELEMENT_TYPE_CLASS` and `ELEMENT_TYPE_VALUETYPE` operands are
-//! `TypeDefOrRefOrSpecEncoded` (ECMA-335 §II.23.2.8), so the embedded token's
-//! table can be any of TypeDef (0x02), TypeRef (0x01), or TypeSpec (0x1B).
+//! A signature names types by token (`TypeDefOrRefOrSpecEncoded`, ECMA-335 II.23.2.8), so when
+//! a write deletes TypeDef, TypeRef or TypeSpec rows and the rows after them shift, the tokens
+//! in signatures must follow, and a token naming a deleted row is a dangling reference like any
+//! other.
 //!
-//! # Design
+//! What a blob holds is known only from the column that references it: the heap itself is
+//! untyped, and a custom attribute value or a constant can read as a signature. So only the
+//! blobs a signature column references are renumbered, each parsed as that column's kind
+//! ([`signature_blobs`]), through the same [`TokenRemap`] the instruction operands use.
 //!
-//! This module leverages the existing signature parsing and encoding infrastructure:
-//! 1. Parse the signature blob using `parse_*_signature()` functions
-//! 2. Walk the parsed structure and remap TypeDef/TypeRef tokens
-//! 3. Re-encode using `encode_*_signature()` functions
-//!
-//! This approach is more robust than manual byte manipulation because it uses
-//! the same parsing/encoding logic that the rest of the codebase uses.
+//! A blob that a signature column and a non-signature column both reference would need two
+//! renderings; compilers share a blob only between identical contents, and a signature with
+//! type tokens is not byte-identical to an attribute value or a constant in practice, so this
+//! case is not handled.
 
 use std::collections::HashMap;
 
 use crate::{
+    cilassembly::{
+        modifications::TableModifications, operation::Operation, writer::remapper::TokenRemap,
+        CilAssembly,
+    },
     metadata::{
         signatures::{
             encode_field_signature, encode_local_var_signature, encode_method_signature,
-            encode_property_signature, encode_typespec_signature, parse_field_signature,
-            parse_local_var_signature, parse_method_signature, parse_property_signature,
-            parse_type_spec_signature, CustomModifier, SignatureArray, SignatureField,
-            SignatureLocalVariable, SignatureLocalVariables, SignatureMethod, SignatureParameter,
-            SignaturePointer, SignatureProperty, SignatureSzArray, SignatureTypeSpec,
-            TypeSignature, CALLING_CONVENTION, SIGNATURE_HEADER,
+            encode_method_spec_signature, encode_property_signature, encode_typespec_signature,
+            parse_field_signature, parse_local_var_signature, parse_method_signature,
+            parse_method_spec_signature, parse_property_signature, parse_type_spec_signature,
+            SIGNATURE_HEADER,
+        },
+        tables::{
+            skip_unreadable, FieldRaw, MemberRefRaw, MethodDefRaw, MethodSpecRaw, PropertyRaw,
+            StandAloneSigRaw, TableDataOwned, TableId, TypeSpecRaw,
         },
         token::Token,
     },
-    Error, Result,
+    Referrer, Result,
 };
 
-/// Remaps TypeDef, TypeRef, and TypeSpec tokens in a signature blob.
+/// The kind of signature a blob holds, by the column that references it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignatureKind {
+    /// `MethodDef.Signature`: a method signature.
+    Method,
+    /// `Field.Signature`: a field signature.
+    Field,
+    /// `MemberRef.Signature`: a field signature (`FIELD` header) or a method signature.
+    MemberRef,
+    /// `StandAloneSig.Signature`: a local variable list (`LOCAL_SIG` header) or, for a `calli`,
+    /// a method signature.
+    StandAlone,
+    /// `Property.Type`: a property signature.
+    Property,
+    /// `TypeSpec.Signature`: a type specification.
+    TypeSpec,
+    /// `MethodSpec.Instantiation`: the type arguments of a generic method instantiation.
+    MethodSpec,
+}
+
+/// A signature blob: its kind, and a column that references it, for the error naming a
+/// dangling token in it.
+#[derive(Debug, Clone, Copy)]
+pub struct SignatureBlob {
+    /// What the blob holds.
+    pub kind: SignatureKind,
+    /// A column referencing the blob.
+    pub referrer: Referrer,
+}
+
+/// The blobs the signature columns of `assembly` reference, keyed as the blob heap writer
+/// meets them: by heap offset for the input's blobs, by placeholder for appended ones.
 ///
-/// This function parses the signature blob, finds all embedded
-/// TypeDefOrRefOrSpec-encoded tokens, and remaps them using the provided
-/// RID mappings. The signature is then re-encoded with the updated tokens.
-///
-/// # Arguments
-///
-/// * `signature` - The original signature blob bytes
-/// * `typedef_remap` - Mapping from old TypeDef RIDs to new RIDs
-/// * `typeref_remap` - Mapping from old TypeRef RIDs to new RIDs
-/// * `typespec_remap` - Mapping from old TypeSpec RIDs to new RIDs
-///
-/// # Returns
-///
-/// A new `Vec<u8>` containing the remapped signature, or `None` if the signature
-/// contains no references that need remapping.
+/// Covers the input's surviving rows and every surviving row the pending changes insert or
+/// update.
+#[must_use]
+pub fn signature_blobs(assembly: &CilAssembly) -> HashMap<u32, SignatureBlob> {
+    let mut blobs = HashMap::new();
+    let mut record = |index: u32, kind: SignatureKind, row: Token, column: &'static str| {
+        if index != 0 {
+            blobs.insert(
+                index,
+                SignatureBlob {
+                    kind,
+                    referrer: Referrer::Column { row, column },
+                },
+            );
+        }
+    };
+
+    let view = assembly.view();
+    if let Some(tables) = view.tables() {
+        let live = |table: TableId, rid: u32| !assembly.changes().is_row_deleted(table, rid);
+        if let Some(table) = tables.table::<MethodDefRaw>() {
+            for row in table.iter().filter_map(skip_unreadable) {
+                if live(TableId::MethodDef, row.rid) {
+                    record(row.signature, SignatureKind::Method, row.token, "Signature");
+                }
+            }
+        }
+        if let Some(table) = tables.table::<FieldRaw>() {
+            for row in table.iter().filter_map(skip_unreadable) {
+                if live(TableId::Field, row.rid) {
+                    record(row.signature, SignatureKind::Field, row.token, "Signature");
+                }
+            }
+        }
+        if let Some(table) = tables.table::<MemberRefRaw>() {
+            for row in table.iter().filter_map(skip_unreadable) {
+                if live(TableId::MemberRef, row.rid) {
+                    record(
+                        row.signature,
+                        SignatureKind::MemberRef,
+                        row.token,
+                        "Signature",
+                    );
+                }
+            }
+        }
+        if let Some(table) = tables.table::<StandAloneSigRaw>() {
+            for row in table.iter().filter_map(skip_unreadable) {
+                if live(TableId::StandAloneSig, row.rid) {
+                    record(
+                        row.signature,
+                        SignatureKind::StandAlone,
+                        row.token,
+                        "Signature",
+                    );
+                }
+            }
+        }
+        if let Some(table) = tables.table::<PropertyRaw>() {
+            for row in table.iter().filter_map(skip_unreadable) {
+                if live(TableId::Property, row.rid) {
+                    record(row.signature, SignatureKind::Property, row.token, "Type");
+                }
+            }
+        }
+        if let Some(table) = tables.table::<TypeSpecRaw>() {
+            for row in table.iter().filter_map(skip_unreadable) {
+                if live(TableId::TypeSpec, row.rid) {
+                    record(
+                        row.signature,
+                        SignatureKind::TypeSpec,
+                        row.token,
+                        "Signature",
+                    );
+                }
+            }
+        }
+        if let Some(table) = tables.table::<MethodSpecRaw>() {
+            for row in table.iter().filter_map(skip_unreadable) {
+                if live(TableId::MethodSpec, row.rid) {
+                    record(
+                        row.instantiation,
+                        SignatureKind::MethodSpec,
+                        row.token,
+                        "Instantiation",
+                    );
+                }
+            }
+        }
+    }
+
+    for table_id in [
+        TableId::MethodDef,
+        TableId::Field,
+        TableId::MemberRef,
+        TableId::StandAloneSig,
+        TableId::Property,
+        TableId::TypeSpec,
+        TableId::MethodSpec,
+    ] {
+        let rows: Vec<(u32, &TableDataOwned)> =
+            match assembly.changes().get_table_modifications(table_id) {
+                Some(TableModifications::Sparse { operations, .. }) => operations
+                    .iter()
+                    .filter_map(|op| match &op.operation {
+                        // A row a later operation deletes references nothing.
+                        Operation::Insert(rid, data) | Operation::Update(rid, data)
+                            if !assembly.changes().is_row_deleted(table_id, *rid) =>
+                        {
+                            Some((*rid, data))
+                        }
+                        _ => None,
+                    })
+                    .collect(),
+                Some(TableModifications::Replaced(rows)) => (1u32..).zip(rows).collect(),
+                None => Vec::new(),
+            };
+        for (rid, data) in rows {
+            let row = Token::from_parts(table_id, rid);
+            match data {
+                TableDataOwned::MethodDef(r) => {
+                    record(r.signature, SignatureKind::Method, row, "Signature");
+                }
+                TableDataOwned::Field(r) => {
+                    record(r.signature, SignatureKind::Field, row, "Signature");
+                }
+                TableDataOwned::MemberRef(r) => {
+                    record(r.signature, SignatureKind::MemberRef, row, "Signature");
+                }
+                TableDataOwned::StandAloneSig(r) => {
+                    record(r.signature, SignatureKind::StandAlone, row, "Signature");
+                }
+                TableDataOwned::Property(r) => {
+                    record(r.signature, SignatureKind::Property, row, "Type");
+                }
+                TableDataOwned::TypeSpec(r) => {
+                    record(r.signature, SignatureKind::TypeSpec, row, "Signature");
+                }
+                TableDataOwned::MethodSpec(r) => {
+                    record(
+                        r.instantiation,
+                        SignatureKind::MethodSpec,
+                        row,
+                        "Instantiation",
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
+    blobs
+}
+
+/// What the blob heap writer needs to renumber signatures: which blobs are signatures, and
+/// how the write renumbers tokens.
+pub struct SignatureRemap<'a> {
+    /// The signature blobs, from [`signature_blobs`].
+    pub blobs: &'a HashMap<u32, SignatureBlob>,
+    /// How the write renumbers tokens.
+    pub tokens: &'a TokenRemap,
+}
+
+impl SignatureRemap<'_> {
+    /// The blob at `index` with its type tokens renumbered, or `None` when it is not a
+    /// signature or nothing in it changes. A signature that does not parse as its kind is kept
+    /// as it is.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::Error::DanglingReference`] when the signature names a deleted row, under
+    /// [`DanglingPolicy::Error`](crate::cilassembly::writer::DanglingPolicy::Error), and an
+    /// encoding error for a signature that cannot be written back.
+    pub fn remap(&self, index: u32, blob: &[u8]) -> Result<Option<Vec<u8>>> {
+        if self.tokens.is_empty() {
+            return Ok(None);
+        }
+        let Some(signature) = self.blobs.get(&index) else {
+            return Ok(None);
+        };
+        remap_signature_tokens(blob, signature.kind, self.tokens, signature.referrer)
+    }
+}
+
+/// `signature`, read as `kind`, with every type token renumbered by `tokens`; `None` when it
+/// does not parse as `kind` or nothing in it changes.
 ///
 /// # Errors
 ///
-/// Returns an error if the signature is malformed and cannot be parsed.
+/// [`crate::Error::DanglingReference`] naming `referrer` when a token names a deleted row,
+/// under [`DanglingPolicy::Error`](crate::cilassembly::writer::DanglingPolicy::Error), and an
+/// encoding error for a signature that cannot be written back.
 pub fn remap_signature_tokens(
     signature: &[u8],
-    typedef_remap: &HashMap<u32, u32>,
-    typeref_remap: &HashMap<u32, u32>,
-    typespec_remap: &HashMap<u32, u32>,
+    kind: SignatureKind,
+    tokens: &TokenRemap,
+    referrer: Referrer,
 ) -> Result<Option<Vec<u8>>> {
-    if signature.is_empty()
-        || (typedef_remap.is_empty() && typeref_remap.is_empty() && typespec_remap.is_empty())
-    {
-        return Ok(None);
-    }
-
-    // Determine signature type from header byte
-    let header = *signature
-        .first()
-        .ok_or_else(|| Error::LayoutFailed("Cannot remap signature: empty buffer".to_string()))?;
-
-    // Check for signature type markers
-    if header == SIGNATURE_HEADER::LOCAL_SIG {
-        // LocalVarSig
-        let mut parsed = parse_local_var_signature(signature)?;
-        if remap_local_var_signature(&mut parsed, typedef_remap, typeref_remap, typespec_remap) {
-            return Ok(Some(encode_local_var_signature(&parsed)?));
+    let mut changed = false;
+    let mut renumber = |token: &mut Token| -> Result<()> {
+        let new = tokens.remap(referrer, token.value())?;
+        if new != token.value() {
+            *token = Token::new(new);
+            changed = true;
         }
-    } else if header == SIGNATURE_HEADER::FIELD {
-        // FieldSig
-        let mut parsed = parse_field_signature(signature)?;
-        if remap_field_signature(&mut parsed, typedef_remap, typeref_remap, typespec_remap) {
-            return Ok(Some(encode_field_signature(&parsed)?));
-        }
-    } else if (header & 0x0F) == SIGNATURE_HEADER::PROPERTY
-        || header == SIGNATURE_HEADER::PROPERTY
-        || header == (SIGNATURE_HEADER::PROPERTY | CALLING_CONVENTION::HASTHIS)
-    {
-        // PropertySig (0x08 or 0x28 with HASTHIS)
-        let mut parsed = parse_property_signature(signature)?;
-        if remap_property_signature(&mut parsed, typedef_remap, typeref_remap, typespec_remap) {
-            return Ok(Some(encode_property_signature(&parsed)?));
-        }
-    } else if header == 0x0A {
-        // MethodSpec - GENERICINST header
-        // MethodSpec signatures are type argument lists, handled via TypeSpec path
-        // For now, try parsing as TypeSpec since they're similar
-        if let Ok(mut parsed) = parse_type_spec_signature(signature) {
-            if remap_type_spec_signature(&mut parsed, typedef_remap, typeref_remap, typespec_remap)
-            {
-                return Ok(Some(encode_typespec_signature(&parsed)?));
-            }
-        }
-    } else {
-        // Try as MethodSig (calling convention in low bits)
-        // Method signatures start with calling convention flags
-        let calling_convention = header & 0x0F;
-        if calling_convention <= 0x05 || (header & CALLING_CONVENTION::GENERIC) != 0 {
-            if let Ok(mut parsed) = parse_method_signature(signature) {
-                if remap_method_signature(&mut parsed, typedef_remap, typeref_remap, typespec_remap)
-                {
-                    return Ok(Some(encode_method_signature(&parsed)?));
-                }
-                // If parsing succeeded but no remapping needed
+        Ok(())
+    };
+    let header = signature.first().copied();
+    // A signature that does not parse as its kind is kept as it is.
+    let encoded = match (kind, header) {
+        (SignatureKind::Field, _) | (SignatureKind::MemberRef, Some(SIGNATURE_HEADER::FIELD)) => {
+            let Ok(mut parsed) = parse_field_signature(signature) else {
                 return Ok(None);
-            }
+            };
+            parsed.for_each_type_token_mut(&mut renumber)?;
+            encode_field_signature(&parsed)
         }
-
-        // Fall back to TypeSpec parsing for complex types
-        if let Ok(mut parsed) = parse_type_spec_signature(signature) {
-            if remap_type_spec_signature(&mut parsed, typedef_remap, typeref_remap, typespec_remap)
-            {
-                return Ok(Some(encode_typespec_signature(&parsed)?));
-            }
+        (SignatureKind::StandAlone, Some(SIGNATURE_HEADER::LOCAL_SIG)) => {
+            let Ok(mut parsed) = parse_local_var_signature(signature) else {
+                return Ok(None);
+            };
+            parsed.for_each_type_token_mut(&mut renumber)?;
+            encode_local_var_signature(&parsed)
         }
+        (SignatureKind::Method | SignatureKind::MemberRef | SignatureKind::StandAlone, _) => {
+            let Ok(mut parsed) = parse_method_signature(signature) else {
+                return Ok(None);
+            };
+            parsed.for_each_type_token_mut(&mut renumber)?;
+            encode_method_signature(&parsed)
+        }
+        (SignatureKind::Property, _) => {
+            let Ok(mut parsed) = parse_property_signature(signature) else {
+                return Ok(None);
+            };
+            parsed.for_each_type_token_mut(&mut renumber)?;
+            encode_property_signature(&parsed)
+        }
+        (SignatureKind::TypeSpec, _) => {
+            let Ok(mut parsed) = parse_type_spec_signature(signature) else {
+                return Ok(None);
+            };
+            parsed.for_each_type_token_mut(&mut renumber)?;
+            encode_typespec_signature(&parsed)
+        }
+        (SignatureKind::MethodSpec, _) => {
+            let Ok(mut parsed) = parse_method_spec_signature(signature) else {
+                return Ok(None);
+            };
+            parsed.for_each_type_token_mut(&mut renumber)?;
+            encode_method_spec_signature(&parsed)
+        }
+    };
+    if changed {
+        Ok(Some(encoded?))
+    } else {
+        Ok(None)
     }
-
-    Ok(None)
-}
-
-/// Remaps tokens in a local variable signature.
-/// Returns true if any tokens were remapped.
-fn remap_local_var_signature(
-    sig: &mut SignatureLocalVariables,
-    typedef_remap: &HashMap<u32, u32>,
-    typeref_remap: &HashMap<u32, u32>,
-    typespec_remap: &HashMap<u32, u32>,
-) -> bool {
-    let mut modified = false;
-    for local in &mut sig.locals {
-        if remap_local_variable(local, typedef_remap, typeref_remap, typespec_remap) {
-            modified = true;
-        }
-    }
-    modified
-}
-
-/// Remaps tokens in a single local variable.
-fn remap_local_variable(
-    local: &mut SignatureLocalVariable,
-    typedef_remap: &HashMap<u32, u32>,
-    typeref_remap: &HashMap<u32, u32>,
-    typespec_remap: &HashMap<u32, u32>,
-) -> bool {
-    let mut modified = false;
-    for modifier in &mut local.modifiers {
-        if remap_custom_modifier(modifier, typedef_remap, typeref_remap, typespec_remap) {
-            modified = true;
-        }
-    }
-    if remap_type_signature(
-        &mut local.base,
-        typedef_remap,
-        typeref_remap,
-        typespec_remap,
-    ) {
-        modified = true;
-    }
-    modified
-}
-
-/// Remaps tokens in a field signature.
-fn remap_field_signature(
-    sig: &mut SignatureField,
-    typedef_remap: &HashMap<u32, u32>,
-    typeref_remap: &HashMap<u32, u32>,
-    typespec_remap: &HashMap<u32, u32>,
-) -> bool {
-    let mut modified = false;
-    for modifier in &mut sig.modifiers {
-        if remap_custom_modifier(modifier, typedef_remap, typeref_remap, typespec_remap) {
-            modified = true;
-        }
-    }
-    if remap_type_signature(&mut sig.base, typedef_remap, typeref_remap, typespec_remap) {
-        modified = true;
-    }
-    modified
-}
-
-/// Remaps tokens in a property signature.
-fn remap_property_signature(
-    sig: &mut SignatureProperty,
-    typedef_remap: &HashMap<u32, u32>,
-    typeref_remap: &HashMap<u32, u32>,
-    typespec_remap: &HashMap<u32, u32>,
-) -> bool {
-    let mut modified = false;
-    for modifier in &mut sig.modifiers {
-        if remap_custom_modifier(modifier, typedef_remap, typeref_remap, typespec_remap) {
-            modified = true;
-        }
-    }
-    if remap_type_signature(&mut sig.base, typedef_remap, typeref_remap, typespec_remap) {
-        modified = true;
-    }
-    for param in &mut sig.params {
-        if remap_parameter(param, typedef_remap, typeref_remap, typespec_remap) {
-            modified = true;
-        }
-    }
-    modified
-}
-
-/// Remaps tokens in a method signature.
-fn remap_method_signature(
-    sig: &mut SignatureMethod,
-    typedef_remap: &HashMap<u32, u32>,
-    typeref_remap: &HashMap<u32, u32>,
-    typespec_remap: &HashMap<u32, u32>,
-) -> bool {
-    let mut modified = false;
-    if remap_parameter(
-        &mut sig.return_type,
-        typedef_remap,
-        typeref_remap,
-        typespec_remap,
-    ) {
-        modified = true;
-    }
-    for param in &mut sig.params {
-        if remap_parameter(param, typedef_remap, typeref_remap, typespec_remap) {
-            modified = true;
-        }
-    }
-    modified
-}
-
-/// Remaps tokens in a type spec signature.
-fn remap_type_spec_signature(
-    sig: &mut SignatureTypeSpec,
-    typedef_remap: &HashMap<u32, u32>,
-    typeref_remap: &HashMap<u32, u32>,
-    typespec_remap: &HashMap<u32, u32>,
-) -> bool {
-    remap_type_signature(&mut sig.base, typedef_remap, typeref_remap, typespec_remap)
-}
-
-/// Remaps tokens in a parameter.
-fn remap_parameter(
-    param: &mut SignatureParameter,
-    typedef_remap: &HashMap<u32, u32>,
-    typeref_remap: &HashMap<u32, u32>,
-    typespec_remap: &HashMap<u32, u32>,
-) -> bool {
-    let mut modified = false;
-    for modifier in &mut param.modifiers {
-        if remap_custom_modifier(modifier, typedef_remap, typeref_remap, typespec_remap) {
-            modified = true;
-        }
-    }
-    if remap_type_signature(
-        &mut param.base,
-        typedef_remap,
-        typeref_remap,
-        typespec_remap,
-    ) {
-        modified = true;
-    }
-    modified
-}
-
-/// Remaps tokens in a custom modifier.
-fn remap_custom_modifier(
-    modifier: &mut CustomModifier,
-    typedef_remap: &HashMap<u32, u32>,
-    typeref_remap: &HashMap<u32, u32>,
-    typespec_remap: &HashMap<u32, u32>,
-) -> bool {
-    remap_token(
-        &mut modifier.modifier_type,
-        typedef_remap,
-        typeref_remap,
-        typespec_remap,
-    )
-}
-
-/// Remaps tokens in a type signature recursively.
-fn remap_type_signature(
-    sig: &mut TypeSignature,
-    typedef_remap: &HashMap<u32, u32>,
-    typeref_remap: &HashMap<u32, u32>,
-    typespec_remap: &HashMap<u32, u32>,
-) -> bool {
-    match sig {
-        // Types with embedded tokens
-        TypeSignature::Class(token) | TypeSignature::ValueType(token) => {
-            remap_token(token, typedef_remap, typeref_remap, typespec_remap)
-        }
-
-        // Recursive types
-        TypeSignature::SzArray(arr) => {
-            remap_szarray(arr, typedef_remap, typeref_remap, typespec_remap)
-        }
-        TypeSignature::Array(arr) => remap_array(arr, typedef_remap, typeref_remap, typespec_remap),
-        TypeSignature::Ptr(ptr) => remap_pointer(ptr, typedef_remap, typeref_remap, typespec_remap),
-        TypeSignature::ByRef(inner) | TypeSignature::Pinned(inner) => {
-            remap_type_signature(inner, typedef_remap, typeref_remap, typespec_remap)
-        }
-
-        // Generic instantiation - base type + type arguments
-        TypeSignature::GenericInst(base, args) => {
-            let mut modified =
-                remap_type_signature(base, typedef_remap, typeref_remap, typespec_remap);
-            for arg in args {
-                if remap_type_signature(arg, typedef_remap, typeref_remap, typespec_remap) {
-                    modified = true;
-                }
-            }
-            modified
-        }
-
-        // Custom modifiers (just contain modifier tokens, no nested type)
-        TypeSignature::ModifiedRequired(modifiers) | TypeSignature::ModifiedOptional(modifiers) => {
-            let mut modified = false;
-            for modifier in modifiers {
-                if remap_custom_modifier(modifier, typedef_remap, typeref_remap, typespec_remap) {
-                    modified = true;
-                }
-            }
-            modified
-        }
-
-        // Function pointer - method signature embedded
-        TypeSignature::FnPtr(method_sig) => {
-            remap_method_signature(method_sig, typedef_remap, typeref_remap, typespec_remap)
-        }
-
-        // Primitive and simple types - no tokens to remap
-        TypeSignature::Void
-        | TypeSignature::Boolean
-        | TypeSignature::Char
-        | TypeSignature::I1
-        | TypeSignature::U1
-        | TypeSignature::I2
-        | TypeSignature::U2
-        | TypeSignature::I4
-        | TypeSignature::U4
-        | TypeSignature::I8
-        | TypeSignature::U8
-        | TypeSignature::R4
-        | TypeSignature::R8
-        | TypeSignature::I
-        | TypeSignature::U
-        | TypeSignature::String
-        | TypeSignature::Object
-        | TypeSignature::TypedByRef
-        | TypeSignature::GenericParamType(_)
-        | TypeSignature::GenericParamMethod(_)
-        | TypeSignature::Sentinel
-        | TypeSignature::Internal
-        | TypeSignature::Unknown
-        | TypeSignature::Type
-        | TypeSignature::Boxed
-        | TypeSignature::Field
-        | TypeSignature::Modifier
-        | TypeSignature::Reserved => false,
-    }
-}
-
-/// Remaps tokens in an szarray.
-fn remap_szarray(
-    arr: &mut SignatureSzArray,
-    typedef_remap: &HashMap<u32, u32>,
-    typeref_remap: &HashMap<u32, u32>,
-    typespec_remap: &HashMap<u32, u32>,
-) -> bool {
-    let mut modified = false;
-    for modifier in &mut arr.modifiers {
-        if remap_custom_modifier(modifier, typedef_remap, typeref_remap, typespec_remap) {
-            modified = true;
-        }
-    }
-    if remap_type_signature(&mut arr.base, typedef_remap, typeref_remap, typespec_remap) {
-        modified = true;
-    }
-    modified
-}
-
-/// Remaps tokens in an array.
-fn remap_array(
-    arr: &mut SignatureArray,
-    typedef_remap: &HashMap<u32, u32>,
-    typeref_remap: &HashMap<u32, u32>,
-    typespec_remap: &HashMap<u32, u32>,
-) -> bool {
-    remap_type_signature(&mut arr.base, typedef_remap, typeref_remap, typespec_remap)
-}
-
-/// Remaps tokens in a pointer.
-fn remap_pointer(
-    ptr: &mut SignaturePointer,
-    typedef_remap: &HashMap<u32, u32>,
-    typeref_remap: &HashMap<u32, u32>,
-    typespec_remap: &HashMap<u32, u32>,
-) -> bool {
-    let mut modified = false;
-    for modifier in &mut ptr.modifiers {
-        if remap_custom_modifier(modifier, typedef_remap, typeref_remap, typespec_remap) {
-            modified = true;
-        }
-    }
-    if remap_type_signature(&mut ptr.base, typedef_remap, typeref_remap, typespec_remap) {
-        modified = true;
-    }
-    modified
-}
-
-/// Remaps a single token if it's a TypeDef, TypeRef, or TypeSpec that needs
-/// remapping. Returns true if the token was modified.
-fn remap_token(
-    token: &mut Token,
-    typedef_remap: &HashMap<u32, u32>,
-    typeref_remap: &HashMap<u32, u32>,
-    typespec_remap: &HashMap<u32, u32>,
-) -> bool {
-    const TYPEREF_TABLE: u8 = 0x01;
-    const TYPEDEF_TABLE: u8 = 0x02;
-    const TYPESPEC_TABLE: u8 = 0x1B;
-
-    let table = token.table();
-    let rid = token.row();
-
-    if table == TYPEDEF_TABLE {
-        if let Some(&new_rid) = typedef_remap.get(&rid) {
-            *token = Token::new(u32::from(TYPEDEF_TABLE) << 24 | new_rid);
-            return true;
-        }
-    } else if table == TYPEREF_TABLE {
-        if let Some(&new_rid) = typeref_remap.get(&rid) {
-            *token = Token::new(u32::from(TYPEREF_TABLE) << 24 | new_rid);
-            return true;
-        }
-    } else if table == TYPESPEC_TABLE {
-        if let Some(&new_rid) = typespec_remap.get(&rid) {
-            *token = Token::new(u32::from(TYPESPEC_TABLE) << 24 | new_rid);
-            return true;
-        }
-    }
-    false
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{cilassembly::writer::DanglingPolicy, Error};
 
-    #[test]
-    fn test_remap_token_typedef() {
-        let mut typedef_remap = HashMap::new();
-        typedef_remap.insert(5, 3);
-        let typeref_remap = HashMap::new();
-        let typespec_remap = HashMap::new();
+    const REFERRER: Referrer = Referrer::Column {
+        row: Token::new(0x0600_0001),
+        column: "Signature",
+    };
 
-        // TypeDef token with RID 5
-        let mut token = Token::new(0x02000005);
-        assert!(remap_token(
-            &mut token,
-            &typedef_remap,
-            &typeref_remap,
-            &typespec_remap,
-        ));
-        assert_eq!(token.value(), 0x02000003);
-    }
-
-    #[test]
-    fn test_remap_token_typeref() {
-        let typedef_remap = HashMap::new();
-        let mut typeref_remap = HashMap::new();
-        typeref_remap.insert(5, 3);
-        let typespec_remap = HashMap::new();
-
-        // TypeRef token with RID 5
-        let mut token = Token::new(0x01000005);
-        assert!(remap_token(
-            &mut token,
-            &typedef_remap,
-            &typeref_remap,
-            &typespec_remap,
-        ));
-        assert_eq!(token.value(), 0x01000003);
-    }
-
-    #[test]
-    fn test_remap_token_typespec() {
-        // Verifies the TypeSpec branch added for the SuppressIldasm /
-        // .NET Reactor full-protection roundtrip fix. Without this,
-        // `LocalVarSig` blobs that encode `class TypeSpec(N)` are left
-        // pointing at the pre-shift RID and break strict-mode reload.
-        let typedef_remap = HashMap::new();
-        let typeref_remap = HashMap::new();
-        let mut typespec_remap = HashMap::new();
-        typespec_remap.insert(3, 1);
-
-        let mut token = Token::new(0x1B000003);
-        assert!(remap_token(
-            &mut token,
-            &typedef_remap,
-            &typeref_remap,
-            &typespec_remap,
-        ));
-        assert_eq!(token.value(), 0x1B000001);
-    }
-
-    #[test]
-    fn test_remap_token_no_match() {
-        let typedef_remap = HashMap::new();
-        let typeref_remap = HashMap::new();
-        let typespec_remap = HashMap::new();
-
-        // TypeRef token with RID 5, but no mapping
-        let mut token = Token::new(0x01000005);
-        assert!(!remap_token(
-            &mut token,
-            &typedef_remap,
-            &typeref_remap,
-            &typespec_remap,
-        ));
-        assert_eq!(token.value(), 0x01000005);
-    }
-
-    #[test]
-    fn test_remap_local_var_signature_typedef() {
-        // Create a LocalVarSig with a CLASS local referencing TypeDef RID 5
-        let mut sig = SignatureLocalVariables {
-            locals: vec![SignatureLocalVariable {
-                modifiers: vec![],
-                is_pinned: false,
-                is_byref: false,
-                base: TypeSignature::Class(Token::new(0x02000005)),
-            }],
-        };
-
-        let mut typedef_remap = HashMap::new();
-        typedef_remap.insert(5, 3);
-        let typeref_remap = HashMap::new();
-        let typespec_remap = HashMap::new();
-
-        assert!(remap_local_var_signature(
-            &mut sig,
-            &typedef_remap,
-            &typeref_remap,
-            &typespec_remap,
-        ));
-
-        // Verify the token was remapped
-        if let TypeSignature::Class(token) = &sig.locals[0].base {
-            assert_eq!(token.row(), 3);
-        } else {
-            panic!("Expected Class type signature");
-        }
-    }
-
-    #[test]
-    fn test_remap_local_var_signature_typeref() {
-        // Create a LocalVarSig with a CLASS local referencing TypeRef RID 10
-        let mut sig = SignatureLocalVariables {
-            locals: vec![SignatureLocalVariable {
-                modifiers: vec![],
-                is_pinned: false,
-                is_byref: false,
-                base: TypeSignature::Class(Token::new(0x0100000A)),
-            }],
-        };
-
-        let typedef_remap = HashMap::new();
-        let mut typeref_remap = HashMap::new();
-        typeref_remap.insert(10, 5);
-        let typespec_remap = HashMap::new();
-
-        assert!(remap_local_var_signature(
-            &mut sig,
-            &typedef_remap,
-            &typeref_remap,
-            &typespec_remap,
-        ));
-
-        // Verify the token was remapped
-        if let TypeSignature::Class(token) = &sig.locals[0].base {
-            assert_eq!(token.table(), 0x01); // Still TypeRef
-            assert_eq!(token.row(), 5);
-        } else {
-            panic!("Expected Class type signature");
-        }
-    }
-
-    #[test]
-    fn test_remap_local_var_signature_typespec() {
-        // Regression test for the .NET Reactor full-protection failure
-        // where `class TypeSpec(3)` in a `LocalVarSig` was silently kept
-        // pointing at the pre-shift RID.
-        let mut sig = SignatureLocalVariables {
-            locals: vec![SignatureLocalVariable {
-                modifiers: vec![],
-                is_pinned: false,
-                is_byref: false,
-                base: TypeSignature::Class(Token::new(0x1B000003)),
-            }],
-        };
-
-        let typedef_remap = HashMap::new();
-        let typeref_remap = HashMap::new();
-        let mut typespec_remap = HashMap::new();
-        typespec_remap.insert(3, 1);
-
-        assert!(remap_local_var_signature(
-            &mut sig,
-            &typedef_remap,
-            &typeref_remap,
-            &typespec_remap,
-        ));
-
-        if let TypeSignature::Class(token) = &sig.locals[0].base {
-            assert_eq!(token.table(), 0x1B);
-            assert_eq!(token.row(), 1);
-        } else {
-            panic!("Expected Class type signature");
-        }
-    }
-
-    #[test]
-    fn test_remap_generic_inst() {
-        // Create a GenericInst<TypeDef 5, I4>
-        let mut sig = TypeSignature::GenericInst(
-            Box::new(TypeSignature::Class(Token::new(0x02000005))),
-            vec![TypeSignature::I4],
-        );
-
-        let mut typedef_remap = HashMap::new();
-        typedef_remap.insert(5, 2);
-        let typeref_remap = HashMap::new();
-        let typespec_remap = HashMap::new();
-
-        assert!(remap_type_signature(
-            &mut sig,
-            &typedef_remap,
-            &typeref_remap,
-            &typespec_remap,
-        ));
-
-        if let TypeSignature::GenericInst(base, _) = &sig {
-            if let TypeSignature::Class(token) = base.as_ref() {
-                assert_eq!(token.row(), 2);
-            } else {
-                panic!("Expected Class type signature in GenericInst");
-            }
-        } else {
-            panic!("Expected GenericInst type signature");
-        }
-    }
-
-    #[test]
-    fn test_remap_generic_inst_with_typeref_arg() {
-        // Create a GenericInst<TypeDef 5, TypeRef 10>
-        let mut sig = TypeSignature::GenericInst(
-            Box::new(TypeSignature::Class(Token::new(0x02000005))),
-            vec![TypeSignature::Class(Token::new(0x0100000A))],
-        );
-
-        let mut typedef_remap = HashMap::new();
-        typedef_remap.insert(5, 2);
-        let mut typeref_remap = HashMap::new();
-        typeref_remap.insert(10, 7);
-        let typespec_remap = HashMap::new();
-
-        assert!(remap_type_signature(
-            &mut sig,
-            &typedef_remap,
-            &typeref_remap,
-            &typespec_remap,
-        ));
-
-        if let TypeSignature::GenericInst(base, args) = &sig {
-            if let TypeSignature::Class(token) = base.as_ref() {
-                assert_eq!(token.table(), 0x02);
-                assert_eq!(token.row(), 2);
-            } else {
-                panic!("Expected Class type signature in GenericInst");
-            }
-            if let TypeSignature::Class(token) = &args[0] {
-                assert_eq!(token.table(), 0x01);
-                assert_eq!(token.row(), 7);
-            } else {
-                panic!("Expected Class type signature in GenericInst arg");
-            }
-        } else {
-            panic!("Expected GenericInst type signature");
-        }
-    }
-
-    #[test]
-    fn test_remap_nested_array() {
-        // Create SzArray<Class<TypeDef 10>>
-        let mut sig = TypeSignature::SzArray(SignatureSzArray {
-            modifiers: vec![],
-            base: Box::new(TypeSignature::Class(Token::new(0x0200000A))),
-        });
-
-        let mut typedef_remap = HashMap::new();
-        typedef_remap.insert(10, 3);
-        let typeref_remap = HashMap::new();
-        let typespec_remap = HashMap::new();
-
-        assert!(remap_type_signature(
-            &mut sig,
-            &typedef_remap,
-            &typeref_remap,
-            &typespec_remap,
-        ));
-
-        if let TypeSignature::SzArray(arr) = &sig {
-            if let TypeSignature::Class(token) = arr.base.as_ref() {
-                assert_eq!(token.row(), 3);
-            } else {
-                panic!("Expected Class in SzArray");
-            }
-        } else {
-            panic!("Expected SzArray");
-        }
-    }
-
-    #[test]
-    fn test_no_remap_needed() {
-        // Create a LocalVarSig with only primitive types
-        let mut sig = SignatureLocalVariables {
-            locals: vec![
-                SignatureLocalVariable {
-                    modifiers: vec![],
-                    is_pinned: false,
-                    is_byref: false,
-                    base: TypeSignature::I4,
-                },
-                SignatureLocalVariable {
-                    modifiers: vec![],
-                    is_pinned: false,
-                    is_byref: false,
-                    base: TypeSignature::String,
-                },
+    /// TypeRef 5 becomes 3, TypeDef 4 becomes 2, TypeSpec 2 becomes 1; TypeRef 9 is deleted.
+    fn tokens(dangling: DanglingPolicy) -> TokenRemap {
+        TokenRemap::for_tests(
+            &[
+                (0x0100_0005, 0x0100_0003),
+                (0x0200_0004, 0x0200_0002),
+                (0x1B00_0002, 0x1B00_0001),
             ],
+            &[0x0100_0009],
+            dangling,
+        )
+    }
+
+    fn remapped(signature: &[u8], kind: SignatureKind) -> Option<Vec<u8>> {
+        remap_signature_tokens(signature, kind, &tokens(DanglingPolicy::Error), REFERRER).unwrap()
+    }
+
+    /// Each kind of signature has its tokens renumbered, read as its column says.
+    #[test]
+    fn every_kind_of_signature_is_renumbered() {
+        // CLASS TypeRef 5 is 0x12 0x15; TypeRef 3 is 0x12 0x0D.
+        assert_eq!(
+            remapped(&[0x00, 0x00, 0x12, 0x15], SignatureKind::Method),
+            Some(vec![0x00, 0x00, 0x12, 0x0D])
+        );
+        assert_eq!(
+            remapped(&[0x06, 0x12, 0x15], SignatureKind::Field),
+            Some(vec![0x06, 0x12, 0x0D])
+        );
+        assert_eq!(
+            remapped(&[0x06, 0x12, 0x15], SignatureKind::MemberRef),
+            Some(vec![0x06, 0x12, 0x0D])
+        );
+        assert_eq!(
+            remapped(&[0x20, 0x00, 0x12, 0x15], SignatureKind::MemberRef),
+            Some(vec![0x20, 0x00, 0x12, 0x0D])
+        );
+        assert_eq!(
+            remapped(&[0x07, 0x01, 0x12, 0x15], SignatureKind::StandAlone),
+            Some(vec![0x07, 0x01, 0x12, 0x0D])
+        );
+        // A calli signature: DEFAULT, no parameters, returning CLASS TypeRef 5.
+        assert_eq!(
+            remapped(&[0x00, 0x00, 0x12, 0x15], SignatureKind::StandAlone),
+            Some(vec![0x00, 0x00, 0x12, 0x0D])
+        );
+        assert_eq!(
+            remapped(&[0x28, 0x00, 0x12, 0x15], SignatureKind::Property),
+            Some(vec![0x28, 0x00, 0x12, 0x0D])
+        );
+        // GENERICINST CLASS TypeDef 4 <CLASS TypeSpec 2>; TypeDef 4 is 0x10, TypeSpec 2 is 0x0A.
+        assert_eq!(
+            remapped(
+                &[0x15, 0x12, 0x10, 0x01, 0x12, 0x0A],
+                SignatureKind::TypeSpec
+            ),
+            Some(vec![0x15, 0x12, 0x08, 0x01, 0x12, 0x06])
+        );
+        assert_eq!(
+            remapped(&[0x0A, 0x01, 0x12, 0x15], SignatureKind::MethodSpec),
+            Some(vec![0x0A, 0x01, 0x12, 0x0D])
+        );
+    }
+
+    /// The extra arguments of a vararg call site and a TypeSpec's custom modifiers are
+    /// signature tokens too.
+    #[test]
+    fn varargs_and_type_spec_modifiers_are_renumbered() {
+        // VARARG, one fixed and one extra parameter: void (I4, SENTINEL, CLASS TypeRef 5)
+        assert_eq!(
+            remapped(
+                &[0x05, 0x02, 0x01, 0x08, 0x41, 0x12, 0x15],
+                SignatureKind::MemberRef
+            ),
+            Some(vec![0x05, 0x02, 0x01, 0x08, 0x41, 0x12, 0x0D])
+        );
+        // CMOD_OPT TypeRef 5, then I4
+        assert_eq!(
+            remapped(&[0x20, 0x15, 0x08], SignatureKind::TypeSpec),
+            Some(vec![0x20, 0x0D, 0x08])
+        );
+    }
+
+    /// A signature naming a deleted row is a dangling reference naming its column; under the
+    /// null policy the token becomes the null token of its table.
+    #[test]
+    fn a_deleted_type_in_a_signature_is_a_dangling_reference() {
+        // CLASS TypeRef 9 is 0x12 0x25.
+        let signature = [0x06, 0x12, 0x25];
+        let error = remap_signature_tokens(
+            &signature,
+            SignatureKind::Field,
+            &tokens(DanglingPolicy::Error),
+            REFERRER,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                Error::DanglingReference { referrer, target }
+                    if referrer == REFERRER && target == Token::new(0x0100_0009)
+            ),
+            "{error}"
+        );
+        assert_eq!(
+            remap_signature_tokens(
+                &signature,
+                SignatureKind::Field,
+                &tokens(DanglingPolicy::Null),
+                REFERRER
+            )
+            .unwrap(),
+            Some(vec![0x06, 0x12, 0x01])
+        );
+    }
+
+    /// Nothing to renumber, or bytes that are not the kind their column says, leave the blob
+    /// as it is.
+    #[test]
+    fn an_unchanged_or_unreadable_signature_is_kept() {
+        assert_eq!(remapped(&[0x06, 0x08], SignatureKind::Field), None);
+        assert_eq!(remapped(&[0x06, 0x12, 0x11], SignatureKind::Field), None);
+        assert_eq!(remapped(&[0xFF, 0xFF], SignatureKind::Method), None);
+    }
+
+    /// Only blobs a signature column references are touched: an attribute value that reads
+    /// as a method signature (`01 00 11 4D...`: C calling convention, no parameters, returning
+    /// VALUETYPE TypeRef 19) is not one.
+    #[test]
+    fn a_blob_no_signature_column_references_is_untouched() {
+        let tokens =
+            TokenRemap::for_tests(&[(0x0100_0013, 0x0100_0010)], &[], DanglingPolicy::Error);
+        let mut blobs = HashMap::new();
+        blobs.insert(
+            0x40,
+            SignatureBlob {
+                kind: SignatureKind::Field,
+                referrer: REFERRER,
+            },
+        );
+        let remap = SignatureRemap {
+            blobs: &blobs,
+            tokens: &tokens,
         };
-
-        let mut typedef_remap = HashMap::new();
-        typedef_remap.insert(5, 3);
-        let typeref_remap = HashMap::new();
-        let typespec_remap = HashMap::new();
-
-        // No TypeDef tokens, so no remapping should happen
-        assert!(!remap_local_var_signature(
-            &mut sig,
-            &typedef_remap,
-            &typeref_remap,
-            &typespec_remap,
-        ));
+        let attribute_value = [0x01, 0x00, 0x11, 0x4D, 0x65, 0x74, 0x61, 0x00, 0x00];
+        assert_eq!(remap.remap(0x10, &attribute_value).unwrap(), None);
+        assert_eq!(
+            remap.remap(0x40, &[0x06, 0x11, 0x4D]).unwrap(),
+            Some(vec![0x06, 0x11, 0x41])
+        );
     }
 }

@@ -25,7 +25,7 @@
 //! These functions:
 //! 1. Iterate through source data without copying
 //! 2. Apply deletions, modifications, and appends
-//! 3. Deduplicate by content hash
+//! 3. Deduplicate by content (the entries themselves, never a hash of them)
 //! 4. Write directly to output
 //! 5. Return (bytes_written, remapping) for table patching
 //!
@@ -49,7 +49,10 @@ pub use streaming::{
 };
 
 use crate::{
-    cilassembly::{changes::AssemblyChanges, writer::context::WriteContext},
+    cilassembly::{
+        changes::AssemblyChanges,
+        writer::{context::WriteContext, signatures::SignatureRemap},
+    },
     CilAssemblyView, Result,
 };
 
@@ -211,9 +214,10 @@ pub fn precompute_heap_offsets(
     let blob_result = compute_blob_heap_offsets(
         blob_data,
         &changes.blob_heap_changes,
-        &ctx.typedef_rid_remap,
-        &ctx.typeref_rid_remap,
-        &ctx.typespec_rid_remap,
+        &SignatureRemap {
+            blobs: &ctx.signature_blobs,
+            tokens: &ctx.tokens,
+        },
     )?;
     let guid_result = compute_guid_heap_offsets(guid_data, &changes.guid_heap_changes)?;
     let us_result = compute_userstring_heap_offsets(us_data, &changes.userstring_heap_changes)?;

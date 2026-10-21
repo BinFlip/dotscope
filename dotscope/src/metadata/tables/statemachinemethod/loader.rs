@@ -5,7 +5,7 @@
 //! The loader follows the established `MetadataLoader` pattern for consistent parallel
 //! processing and efficient memory utilization.
 
-use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+use rayon::iter::IndexedParallelIterator;
 
 use crate::{
     metadata::{
@@ -13,6 +13,7 @@ use crate::{
         loader::{LoaderContext, MetadataLoader},
         tables::{StateMachineMethodRaw, TableId},
     },
+    utils::TryForEachInOrder,
     Result,
 };
 
@@ -55,26 +56,29 @@ impl MetadataLoader for StateMachineMethodLoader {
             return Ok(());
         };
 
-        table.par_iter().enumerate().try_for_each(|(index, row)| {
-            let Some(row) = context.handle_row(row, index)? else {
-                return Ok(());
-            };
-            let token_msg = || format!("state machine method 0x{:08x}", row.token.value());
+        table
+            .par_iter()
+            .enumerate()
+            .try_for_each_in_order(|(index, row)| {
+                let Some(row) = context.handle_row(row, index)? else {
+                    return Ok(());
+                };
+                let token_msg = || format!("state machine method 0x{:08x}", row.token.value());
 
-            let Some(state_machine_method) = context.handle_result(
-                row.to_owned(context.method_def),
-                DiagnosticCategory::Method,
-                token_msg,
-            )?
-            else {
-                return Ok(());
-            };
+                let Some(state_machine_method) = context.handle_result(
+                    row.to_owned(context.method_def),
+                    DiagnosticCategory::Method,
+                    token_msg,
+                )?
+                else {
+                    return Ok(());
+                };
 
-            context
-                .state_machine_method
-                .insert(state_machine_method.token, state_machine_method);
-            Ok(())
-        })
+                context
+                    .state_machine_method
+                    .insert(state_machine_method.token, state_machine_method);
+                Ok(())
+            })
     }
 
     fn table_id(&self) -> Option<TableId> {

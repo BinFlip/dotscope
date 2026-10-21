@@ -197,6 +197,7 @@ impl MethodSignatureBuilder {
                 stdcall: false,
                 thiscall: false,
                 fastcall: false,
+                unmanaged: false,
                 param_count_generic: 0,
                 param_count: 0,
                 return_type: SignatureParameter {

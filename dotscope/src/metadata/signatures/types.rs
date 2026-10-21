@@ -149,10 +149,12 @@
 
 use crate::{
     metadata::{
+        signatures::CALLING_CONVENTION,
         token::Token,
         typesystem::{ArrayDimensions, CilPrimitive, CilPrimitiveKind},
     },
     prelude::PointerSize,
+    Result,
 };
 
 /// Represents a custom modifier with its required/optional flag and type reference.
@@ -183,7 +185,7 @@ use crate::{
 ///     modifier_type: Token::new(0x01000002), // Reference to IsVolatile type
 /// };
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CustomModifier {
     /// Whether this is a required modifier (modreq) or optional modifier (modopt).
     /// - `true`: Required modifier (ELEMENT_TYPE_CMOD_REQD = 0x1F)
@@ -1961,6 +1963,20 @@ impl SignatureParameter {
         modifier_tokens(&self.modifiers, out);
         self.base.type_tokens(out);
     }
+
+    /// Calls `visit` on every type token [`type_tokens`](Self::type_tokens) reports, in
+    /// place, so a writer can renumber them.
+    ///
+    /// # Errors
+    ///
+    /// The first error `visit` returns.
+    pub(crate) fn for_each_type_token_mut(
+        &mut self,
+        visit: &mut impl FnMut(&mut Token) -> Result<()>,
+    ) -> Result<()> {
+        modifier_tokens_mut(&mut self.modifiers, visit)?;
+        self.base.for_each_type_token_mut(visit)
+    }
 }
 
 /// Method signature with calling conventions, parameters, and return types.
@@ -2263,6 +2279,11 @@ pub struct SignatureMethod {
     /// - Optimized library interfaces
     /// - Performance-critical P/Invoke scenarios
     pub fastcall: bool,
+    /// Whether this method uses the unmanaged calling convention (`0x09`).
+    ///
+    /// The encoding of C# `delegate* unmanaged`: the platform's default unmanaged
+    /// convention, or the one the return type's `CallConv*` modifiers name.
+    pub unmanaged: bool,
     /// Number of generic type parameters this method declares.
     ///
     /// When non-zero, indicates that this is a generic method with the specified
@@ -2377,6 +2398,66 @@ pub struct SignatureMethod {
 }
 
 impl SignatureMethod {
+    /// The signature's first byte (ECMA-335 II.23.2.1-3): the calling convention kind in the
+    /// low four bits, then `GENERIC` when the method declares generic parameters, `HASTHIS`
+    /// and `EXPLICITTHIS`.
+    #[must_use]
+    pub fn calling_convention(&self) -> u8 {
+        let mut byte = if self.vararg {
+            CALLING_CONVENTION::VARARG
+        } else if self.unmanaged {
+            CALLING_CONVENTION::UNMANAGED
+        } else if self.fastcall {
+            CALLING_CONVENTION::FASTCALL
+        } else if self.thiscall {
+            CALLING_CONVENTION::THISCALL
+        } else if self.stdcall {
+            CALLING_CONVENTION::STDCALL
+        } else if self.cdecl {
+            CALLING_CONVENTION::C
+        } else {
+            CALLING_CONVENTION::DEFAULT
+        };
+        if self.has_this {
+            byte |= CALLING_CONVENTION::HASTHIS;
+        }
+        if self.explicit_this {
+            byte |= CALLING_CONVENTION::EXPLICITTHIS;
+        }
+        if self.param_count_generic > 0 {
+            byte |= CALLING_CONVENTION::GENERIC;
+        }
+        byte
+    }
+
+    /// Sets the calling convention kind, `HASTHIS` and `EXPLICITTHIS` from a signature's
+    /// first byte. `GENERIC` is left to the generic parameter count that follows it.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::Error::Parse`] when the kind is none a method signature can have: `0x06` to
+    /// `0x08` and `0x0A` introduce field, local and property signatures and method
+    /// instantiations, and `0x0B` to `0x0F` are undefined.
+    pub fn set_calling_convention(&mut self, byte: u8) -> Result<()> {
+        let kind = byte & CALLING_CONVENTION::KIND_MASK;
+        if !matches!(kind, 0x00..=0x05 | CALLING_CONVENTION::UNMANAGED) {
+            return Err(malformed_error!(
+                "Method signature calling convention 0x{:02X} names no method signature kind",
+                byte
+            ));
+        }
+        self.has_this = byte & CALLING_CONVENTION::HASTHIS != 0;
+        self.explicit_this = byte & CALLING_CONVENTION::EXPLICITTHIS != 0;
+        self.default = kind == CALLING_CONVENTION::DEFAULT;
+        self.cdecl = kind == CALLING_CONVENTION::C;
+        self.stdcall = kind == CALLING_CONVENTION::STDCALL;
+        self.thiscall = kind == CALLING_CONVENTION::THISCALL;
+        self.fastcall = kind == CALLING_CONVENTION::FASTCALL;
+        self.vararg = kind == CALLING_CONVENTION::VARARG;
+        self.unmanaged = kind == CALLING_CONVENTION::UNMANAGED;
+        Ok(())
+    }
+
     /// Adds every type this method signature names to `out`: its return type's, its
     /// parameters' and its varargs' (see [`SignatureParameter::type_tokens`]).
     pub fn type_tokens(&self, out: &mut impl Extend<Token>) {
@@ -2386,6 +2467,25 @@ impl SignatureMethod {
         {
             param.type_tokens(out);
         }
+    }
+
+    /// Calls `visit` on every type token [`type_tokens`](Self::type_tokens) reports, in
+    /// place, so a writer can renumber them.
+    ///
+    /// # Errors
+    ///
+    /// The first error `visit` returns.
+    pub(crate) fn for_each_type_token_mut(
+        &mut self,
+        visit: &mut impl FnMut(&mut Token) -> Result<()>,
+    ) -> Result<()> {
+        for param in std::iter::once(&mut self.return_type)
+            .chain(&mut self.params)
+            .chain(&mut self.varargs)
+        {
+            param.for_each_type_token_mut(visit)?;
+        }
+        Ok(())
     }
 
     /// Returns `true` when `other` takes the same parameters as this signature.
@@ -2601,6 +2701,20 @@ impl SignatureField {
     pub fn type_tokens(&self, out: &mut impl Extend<Token>) {
         modifier_tokens(&self.modifiers, out);
         self.base.type_tokens(out);
+    }
+
+    /// Calls `visit` on every type token [`type_tokens`](Self::type_tokens) reports, in
+    /// place, so a writer can renumber them.
+    ///
+    /// # Errors
+    ///
+    /// The first error `visit` returns.
+    pub(crate) fn for_each_type_token_mut(
+        &mut self,
+        visit: &mut impl FnMut(&mut Token) -> Result<()>,
+    ) -> Result<()> {
+        modifier_tokens_mut(&mut self.modifiers, visit)?;
+        self.base.for_each_type_token_mut(visit)
     }
 }
 
@@ -2827,6 +2941,24 @@ impl SignatureProperty {
             param.type_tokens(out);
         }
     }
+
+    /// Calls `visit` on every type token [`type_tokens`](Self::type_tokens) reports, in
+    /// place, so a writer can renumber them.
+    ///
+    /// # Errors
+    ///
+    /// The first error `visit` returns.
+    pub(crate) fn for_each_type_token_mut(
+        &mut self,
+        visit: &mut impl FnMut(&mut Token) -> Result<()>,
+    ) -> Result<()> {
+        modifier_tokens_mut(&mut self.modifiers, visit)?;
+        self.base.for_each_type_token_mut(visit)?;
+        for param in &mut self.params {
+            param.for_each_type_token_mut(visit)?;
+        }
+        Ok(())
+    }
 }
 
 /// Local variable signature collection for method bodies.
@@ -2949,6 +3081,22 @@ impl SignatureLocalVariables {
         for local in &self.locals {
             local.type_tokens(out);
         }
+    }
+
+    /// Calls `visit` on every type token [`type_tokens`](Self::type_tokens) reports, in
+    /// place, so a writer can renumber them.
+    ///
+    /// # Errors
+    ///
+    /// The first error `visit` returns.
+    pub(crate) fn for_each_type_token_mut(
+        &mut self,
+        visit: &mut impl FnMut(&mut Token) -> Result<()>,
+    ) -> Result<()> {
+        for local in &mut self.locals {
+            local.for_each_type_token_mut(visit)?;
+        }
+        Ok(())
     }
 }
 
@@ -3159,6 +3307,20 @@ impl SignatureLocalVariable {
         modifier_tokens(&self.modifiers, out);
         self.base.type_tokens(out);
     }
+
+    /// Calls `visit` on every type token [`type_tokens`](Self::type_tokens) reports, in
+    /// place, so a writer can renumber them.
+    ///
+    /// # Errors
+    ///
+    /// The first error `visit` returns.
+    pub(crate) fn for_each_type_token_mut(
+        &mut self,
+        visit: &mut impl FnMut(&mut Token) -> Result<()>,
+    ) -> Result<()> {
+        modifier_tokens_mut(&mut self.modifiers, visit)?;
+        self.base.for_each_type_token_mut(visit)
+    }
 }
 
 /// Type specification signature for complex and generic types.
@@ -3300,6 +3462,20 @@ impl SignatureTypeSpec {
     pub fn type_tokens(&self, out: &mut impl Extend<Token>) {
         modifier_tokens(&self.modifiers, out);
         self.base.type_tokens(out);
+    }
+
+    /// Calls `visit` on every type token [`type_tokens`](Self::type_tokens) reports, in
+    /// place, so a writer can renumber them.
+    ///
+    /// # Errors
+    ///
+    /// The first error `visit` returns.
+    pub(crate) fn for_each_type_token_mut(
+        &mut self,
+        visit: &mut impl FnMut(&mut Token) -> Result<()>,
+    ) -> Result<()> {
+        modifier_tokens_mut(&mut self.modifiers, visit)?;
+        self.base.for_each_type_token_mut(visit)
     }
 }
 
@@ -3464,6 +3640,32 @@ pub struct SignatureMethodSpec {
     pub generic_args: Vec<TypeSignature>,
 }
 
+impl SignatureMethodSpec {
+    /// Adds every type the type arguments name to `out`, as
+    /// [`TypeSignature::type_tokens`] reports them.
+    pub fn type_tokens(&self, out: &mut impl Extend<Token>) {
+        for argument in &self.generic_args {
+            argument.type_tokens(out);
+        }
+    }
+
+    /// Calls `visit` on every type token [`type_tokens`](Self::type_tokens) reports, in
+    /// place, so a writer can renumber them.
+    ///
+    /// # Errors
+    ///
+    /// The first error `visit` returns.
+    pub(crate) fn for_each_type_token_mut(
+        &mut self,
+        visit: &mut impl FnMut(&mut Token) -> Result<()>,
+    ) -> Result<()> {
+        for argument in &mut self.generic_args {
+            argument.for_each_type_token_mut(visit)?;
+        }
+        Ok(())
+    }
+}
+
 impl Drop for TypeSignature {
     /// Tears the signature down iteratively rather than letting drop glue recurse.
     ///
@@ -3526,6 +3728,19 @@ fn names_a_type(token: Token) -> bool {
     matches!(token.table(), 0x01 | 0x02 | 0x1B)
 }
 
+/// Calls `visit` on each type token `modifiers` name, in place.
+fn modifier_tokens_mut(
+    modifiers: &mut [CustomModifier],
+    visit: &mut impl FnMut(&mut Token) -> Result<()>,
+) -> Result<()> {
+    for modifier in modifiers {
+        if names_a_type(modifier.modifier_type) {
+            visit(&mut modifier.modifier_type)?;
+        }
+    }
+    Ok(())
+}
+
 /// Adds the types `modifiers` name to `out`.
 fn modifier_tokens(modifiers: &[CustomModifier], out: &mut impl Extend<Token>) {
     out.extend(
@@ -3577,6 +3792,50 @@ impl TypeSignature {
             | TypeSignature::ModifiedOptional(modifiers) => modifier_tokens(modifiers, out),
             _ => {}
         }
+    }
+
+    /// Calls `visit` on every type token [`type_tokens`](Self::type_tokens) reports, in
+    /// place, so a writer can renumber them.
+    ///
+    /// # Errors
+    ///
+    /// The first error `visit` returns.
+    pub(crate) fn for_each_type_token_mut(
+        &mut self,
+        visit: &mut impl FnMut(&mut Token) -> Result<()>,
+    ) -> Result<()> {
+        match self {
+            TypeSignature::Class(token) | TypeSignature::ValueType(token) => {
+                if names_a_type(*token) {
+                    visit(token)?;
+                }
+            }
+            TypeSignature::GenericInst(base, args) => {
+                base.for_each_type_token_mut(visit)?;
+                for arg in args {
+                    arg.for_each_type_token_mut(visit)?;
+                }
+            }
+            TypeSignature::SzArray(arr) => {
+                modifier_tokens_mut(&mut arr.modifiers, visit)?;
+                arr.base.for_each_type_token_mut(visit)?;
+            }
+            TypeSignature::Array(arr) => arr.base.for_each_type_token_mut(visit)?,
+            TypeSignature::Ptr(ptr) => {
+                modifier_tokens_mut(&mut ptr.modifiers, visit)?;
+                ptr.base.for_each_type_token_mut(visit)?;
+            }
+            TypeSignature::ByRef(inner) | TypeSignature::Pinned(inner) => {
+                inner.for_each_type_token_mut(visit)?;
+            }
+            TypeSignature::FnPtr(method) => method.for_each_type_token_mut(visit)?,
+            TypeSignature::ModifiedRequired(modifiers)
+            | TypeSignature::ModifiedOptional(modifiers) => {
+                modifier_tokens_mut(modifiers, visit)?;
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     /// Check if a constant primitive value is compatible with this type signature

@@ -231,7 +231,7 @@ impl<'a> ImportsParser<'a> {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::metadata::importscope::parse_imports_blob;
 ///
 /// let blob_data = &[0x01, 0x05, 0x54, 0x65, 0x73, 0x74, 0x73]; // ImportNamespace "Tests"
@@ -241,6 +241,7 @@ impl<'a> ImportsParser<'a> {
 /// if let ImportDeclaration::ImportNamespace { namespace } = &imports.declarations[0] {
 ///     assert_eq!(namespace, "Tests");
 /// }
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
 /// # Thread Safety

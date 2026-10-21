@@ -87,7 +87,7 @@ use crate::{
 ///
 /// The remapper is built from `AssemblyChanges` before writing tables:
 ///
-/// ```rust,ignore
+/// ```no_run
 /// let remapper = RidRemapper::from_changes(&changes, &original_counts);
 /// ```
 ///
@@ -95,8 +95,9 @@ use crate::{
 ///
 /// During table serialization, call `remap_references` on each row:
 ///
-/// ```rust,ignore
+/// ```no_run
 /// row.remap_references(&remapper)?;
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug, Default)]
 pub struct RidRemapper {
@@ -487,6 +488,16 @@ pub struct TokenRemap {
 }
 
 impl TokenRemap {
+    /// A remap that renumbers `map`'s tokens and deletes `deleted`'s rows, for tests.
+    #[cfg(test)]
+    pub(crate) fn for_tests(map: &[(u32, u32)], deleted: &[u32], dangling: DanglingPolicy) -> Self {
+        Self {
+            map: map.iter().copied().collect(),
+            deleted: deleted.iter().copied().collect(),
+            dangling,
+        }
+    }
+
     /// Records that `old` is written as `new`, overriding the deletion shift.
     pub fn insert(&mut self, old: u32, new: u32) {
         self.map.insert(old, new);

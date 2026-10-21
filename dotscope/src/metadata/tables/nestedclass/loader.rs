@@ -27,7 +27,7 @@
 //! - Circular nesting relationships are detected
 //! - Token conflicts occur during storage
 //!
-use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+use rayon::iter::IndexedParallelIterator;
 
 use crate::{
     metadata::{
@@ -36,6 +36,7 @@ use crate::{
         tables::NestedClassRaw,
     },
     prelude::TableId,
+    utils::TryForEachInOrder,
     Result,
 };
 
@@ -71,7 +72,7 @@ impl MetadataLoader for NestedClassLoader {
         table
             .par_iter()
             .enumerate()
-            .try_for_each(|(index, row)| -> Result<()> {
+            .try_for_each_in_order(|(index, row)| -> Result<()> {
                 let Some(row) = context.handle_row(row, index)? else {
                     return Ok(());
                 };

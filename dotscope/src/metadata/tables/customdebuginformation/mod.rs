@@ -51,8 +51,8 @@
 //!
 //! # Usage Examples
 //!
-//! ```rust,ignore
-//! # use dotscope::metadata::tables::customdebuginformation::CustomDebugInformation;
+//! ```no_run
+//! # use dotscope::metadata::tables::CustomDebugInformation;
 //! # use dotscope::metadata::token::Token;
 //! # fn example(custom_info: &CustomDebugInformation) -> dotscope::Result<()> {
 //! // Access custom debug information for a method

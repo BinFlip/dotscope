@@ -294,8 +294,8 @@ pub use crate::deobfuscation::AnalysisContext;
 pub use crate::deobfuscation::DecryptionPass;
 /// Control-flow unflattening outside the pass pipeline.
 ///
-/// [`CffDetector`](crate::deobfuscation::CffDetector) finds flattening dispatchers in an
-/// SSA function; [`unflatten`](crate::deobfuscation::unflatten) rewires them.
+/// [`CffDetector`] finds flattening dispatchers in an
+/// SSA function; [`unflatten`] rewires them.
 #[cfg(feature = "deobfuscation")]
 pub use crate::deobfuscation::{unflatten, CffDetector, Dispatcher, UnflattenConfig};
 /// Technique-based obfuscation detection and attribution.
@@ -383,7 +383,7 @@ pub use crate::file::pe::{
 pub use crate::formatting::{FormatterOptions, IlFormatter};
 /// Binary codecs for blobs and heaps.
 ///
-/// The [`CilIO`](crate::io::CilIO) trait behind the endian readers and writers, and
+/// The [`CilIO`] trait behind the endian readers and writers, and
 /// the ECMA-335 compressed integer codecs; the rest of [`crate::io`] is one path
 /// away.
 pub use crate::io::{
@@ -893,7 +893,7 @@ pub use crate::Result;
 pub use crate::ValidationConfig;
 /// Repair of PE and CLR headers that packers corrupt.
 ///
-/// [`File`](crate::File) applies these repairs when it loads; [`repair_pe`](crate::repair_pe)
+/// [`File`] applies these repairs when it loads; [`repair_pe`]
 /// applies them to bytes in place, for writing a repaired file back out.
 pub use crate::{repair_pe, RepairAction, RepairResult};
 /// Assembly validation pipeline components.

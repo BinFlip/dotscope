@@ -214,7 +214,7 @@ pub(crate) fn is_special_name(name: &str) -> bool {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```no_run
 /// use crate::deobfuscation::utils::build_call_site_counts;
 ///
 /// let candidates: Vec<Token> = collect_decryptor_candidates(&assembly);

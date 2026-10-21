@@ -97,8 +97,8 @@ use crate::{
 ///
 /// # Usage Patterns
 ///
-/// ```rust,ignore
-/// use dotscope::metadata::tables::methoddebuginformation::raw::MethodDebugInformationRaw;
+/// ```no_run
+/// use dotscope::metadata::tables::MethodDebugInformationRaw;
 /// use dotscope::metadata::streams::Blob;
 ///
 /// # fn process_debug_entry(raw_entry: &MethodDebugInformationRaw, blobs: &Blob) -> dotscope::Result<()> {
@@ -117,6 +117,7 @@ use crate::{
 /// let owned = raw_entry.to_owned(blobs)?;
 /// # Ok(())
 /// # }
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
 /// # Thread Safety
@@ -173,7 +174,7 @@ impl MethodDebugInformationRaw {
     /// - `sequence_points`: Resolved to `Option<Vec<u8>>` (None if index is 0)
     ///
     /// # Examples
-    /// ```rust,ignore
+    /// ```no_run
     /// # use dotscope::metadata::tables::MethodDebugInformationRaw;
     /// # use dotscope::metadata::streams::{Strings, Blob, Guid};
     /// # fn example(raw: &MethodDebugInformationRaw, strings: &Strings, blobs: &Blob, guids: &Guid) -> dotscope::Result<()> {
@@ -181,6 +182,7 @@ impl MethodDebugInformationRaw {
     /// println!("Method debug info: {:?}", method_debug_info.document);
     /// # Ok(())
     /// # }
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     ///
     /// # Errors

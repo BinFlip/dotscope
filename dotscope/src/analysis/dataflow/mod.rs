@@ -45,37 +45,10 @@ impl DataFlowCfg for ControlFlowGraph<'_> {
 mod tests {
     use super::*;
     use crate::{
-        analysis::{cfg::ControlFlowGraph, ssa::SsaConverter, SsaFunction},
-        assembly::{decode_blocks, InstructionAssembler},
+        assembly::InstructionAssembler,
         metadata::typesystem::PointerSize,
-        testkit::TestTypeProvider,
+        testkit::{build_cfg, build_ssa, TestTypeProvider},
     };
-
-    /// Helper to build CFG from assembled bytecode.
-    fn build_cfg(assembler: InstructionAssembler) -> ControlFlowGraph<'static> {
-        let (bytecode, _max_stack, _) = assembler.finish().expect("Failed to assemble bytecode");
-        let blocks =
-            decode_blocks(&bytecode, 0, 0x1000, Some(bytecode.len())).expect("Failed to decode");
-        ControlFlowGraph::from_basic_blocks(blocks).expect("Failed to build CFG")
-    }
-
-    /// Helper to build SSA from assembled bytecode.
-    fn build_ssa(
-        assembler: InstructionAssembler,
-        num_args: usize,
-        num_locals: usize,
-    ) -> (SsaFunction, ControlFlowGraph<'static>) {
-        let cfg = build_cfg(assembler);
-        let ssa = SsaConverter::build(
-            &cfg,
-            num_args,
-            num_locals,
-            &TestTypeProvider::new(num_args, num_locals),
-            Vec::new(),
-        )
-        .expect("SSA construction failed");
-        (ssa, cfg)
-    }
 
     #[test]
     fn test_reaching_defs_simple_function() {
@@ -90,7 +63,8 @@ mod tests {
             .ret()
             .unwrap();
 
-        let (ssa, cfg) = build_ssa(asm, 2, 0);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(2, 0)).expect("SSA construction");
 
         let analysis = ReachingDefinitions::new(&ssa);
         let solver = DataFlowSolver::new(analysis);
@@ -116,7 +90,8 @@ mod tests {
             .ret()
             .unwrap();
 
-        let (ssa, cfg) = build_ssa(asm, 1, 1);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(1, 1)).expect("SSA construction");
 
         let analysis = ReachingDefinitions::new(&ssa);
         let solver = DataFlowSolver::new(analysis);
@@ -156,7 +131,8 @@ mod tests {
             .ret()
             .unwrap();
 
-        let (ssa, cfg) = build_ssa(asm, 1, 1);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(1, 1)).expect("SSA construction");
 
         let analysis = ReachingDefinitions::new(&ssa);
         let solver = DataFlowSolver::new(analysis);
@@ -183,7 +159,8 @@ mod tests {
             .ret()
             .unwrap();
 
-        let (ssa, cfg) = build_ssa(asm, 2, 0);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(2, 0)).expect("SSA construction");
 
         let analysis = LiveVariables::new(&ssa);
         let solver = DataFlowSolver::new(analysis);
@@ -215,7 +192,8 @@ mod tests {
             .ret()
             .unwrap();
 
-        let (ssa, cfg) = build_ssa(asm, 1, 1);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(1, 1)).expect("SSA construction");
 
         let analysis = LiveVariables::new(&ssa);
         let solver = DataFlowSolver::new(analysis);
@@ -259,7 +237,8 @@ mod tests {
             .ret()
             .unwrap();
 
-        let (ssa, cfg) = build_ssa(asm, 0, 1);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(0, 1)).expect("SSA construction");
 
         let analysis = LiveVariables::new(&ssa);
         let solver = DataFlowSolver::new(analysis);
@@ -291,7 +270,8 @@ mod tests {
             .ret()
             .unwrap();
 
-        let (ssa, cfg) = build_ssa(asm, 0, 0);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(0, 0)).expect("SSA construction");
 
         let mut sccp = ConstantPropagation::new(PointerSize::Bit64);
         let results = sccp.analyze(&ssa, &cfg);
@@ -334,7 +314,8 @@ mod tests {
             .ret()
             .unwrap();
 
-        let (ssa, cfg) = build_ssa(asm, 0, 1);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(0, 1)).expect("SSA construction");
 
         let mut sccp = ConstantPropagation::new(PointerSize::Bit64);
         let results = sccp.analyze(&ssa, &cfg);
@@ -375,7 +356,8 @@ mod tests {
             .ret()
             .unwrap();
 
-        let (ssa, cfg) = build_ssa(asm, 1, 1);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(1, 1)).expect("SSA construction");
 
         let mut sccp = ConstantPropagation::new(PointerSize::Bit64);
         let results = sccp.analyze(&ssa, &cfg);
@@ -445,7 +427,8 @@ mod tests {
             .ret()
             .unwrap();
 
-        let (ssa, cfg) = build_ssa(asm, 0, 2);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(0, 2)).expect("SSA construction");
 
         // Test that reaching definitions converges
         let rd_analysis = ReachingDefinitions::new(&ssa);
@@ -465,7 +448,8 @@ mod tests {
         let mut asm = InstructionAssembler::new();
         asm.ldarg_0().unwrap().ret().unwrap();
 
-        let (ssa, cfg) = build_ssa(asm, 1, 0);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(1, 0)).expect("SSA construction");
 
         let analysis = ReachingDefinitions::new(&ssa);
         let solver = DataFlowSolver::new(analysis);

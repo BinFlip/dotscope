@@ -699,13 +699,13 @@ impl TableId {
 /// # Usage Examples
 ///
 /// For table row size calculation:
-/// ```rust,ignore
+/// ```no_run
 /// use crate::metadata::tables::dispatch_table_type;
 /// dispatch_table_type!(table_id, |RawType| RawType::row_size(table_info))
 /// ```
 ///
 /// For table writing operations:
-/// ```rust,ignore
+/// ```no_run
 /// use crate::metadata::tables::dispatch_table_type;
 /// dispatch_table_type!(table_id, |RawType| {
 ///     if let Some(table) = self.tables_header.table::<RawType>() {
@@ -717,7 +717,7 @@ impl TableId {
 /// ```
 ///
 /// For generic table operations:
-/// ```rust,ignore
+/// ```no_run
 /// use crate::metadata::tables::dispatch_table_type;
 /// dispatch_table_type!(table_id, |RawType| {
 ///     // Any operation that needs to work with the concrete Raw type

@@ -57,6 +57,7 @@ use crate::{
             output::Output,
             relocations::{generate_relocations, RelocationConfig},
             remapper::{RemapReferences, RidRemapper},
+            signatures::{signature_blobs, SignatureRemap},
         },
         CilAssembly, Operation, TableModifications,
     },
@@ -325,14 +326,14 @@ impl RowFixups {
 ///
 /// The generator supports configuration options via [`GeneratorConfig`]:
 ///
-/// ```rust,ignore
+/// ```no_run
 /// let generator = PeGenerator::new(&assembly)
 ///     .with_config(GeneratorConfig::default());
 /// ```
 ///
 /// Or using the builder pattern:
 ///
-/// ```rust,ignore
+/// ```no_run
 /// let generator = PeGenerator::with_config(
 ///     &assembly,
 ///     GeneratorConfig::new()
@@ -459,17 +460,7 @@ impl<'a> PeGenerator<'a> {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// use dotscope::cilassembly::{CilAssembly, PeGenerator};
-    ///
-    /// let assembly = CilAssembly::new(view);
-    /// // ... modify assembly ...
-    ///
-    /// let generator = PeGenerator::new(&assembly);
-    /// let pe_bytes = generator.generate_to_memory()?;
-    ///
-    /// // Use pe_bytes for further processing
-    /// ```
+    /// The `examples::to_memory_example` test in this module runs this example.
     pub fn to_memory(&self) -> Result<Vec<u8>> {
         // Estimate file size for initial allocation
         let estimated_size = self.estimate_file_size()?;
@@ -555,25 +546,9 @@ impl<'a> PeGenerator<'a> {
                 RidRemapper::from_changes(changes, &original_counts, self.config.dangling);
             if !remapper.is_empty() {
                 ctx.tokens = remapper.token_remap();
-                // Store TypeDef RID remapping for signature blob processing. It holds
-                // surviving rows only, so a signature naming a deleted type is not
-                // retargeted to another one.
-                if let Some(typedef_remap) = remapper.surviving_remap(TableId::TypeDef) {
-                    ctx.typedef_rid_remap = typedef_remap;
-                }
-                // Store TypeRef RID remapping for signature blob processing
-                // When orphaned TypeRefs are removed, signature blobs must also be updated
-                if let Some(typeref_remap) = remapper.surviving_remap(TableId::TypeRef) {
-                    ctx.typeref_rid_remap = typeref_remap;
-                }
-                // Store TypeSpec RID remapping for signature blob processing.
-                // `ELEMENT_TYPE_CLASS` / `ELEMENT_TYPE_VALUETYPE` operands are
-                // `TypeDefOrRefOrSpecEncoded`, so a `LocalVarSig` (or any other
-                // signature) can carry a TypeSpec token that needs to follow
-                // the row shift when neighbouring TypeSpecs are deleted.
-                if let Some(typespec_remap) = remapper.surviving_remap(TableId::TypeSpec) {
-                    ctx.typespec_rid_remap = typespec_remap;
-                }
+                // The blobs signature columns reference, whose type tokens follow the rows
+                // the remap renumbers.
+                ctx.signature_blobs = signature_blobs(self.assembly);
             }
 
             // Build StandAloneSig deduplication mapping
@@ -1391,11 +1366,14 @@ impl<'a> PeGenerator<'a> {
             let Some(&owner) = owners.get(&placeholder_rva) else {
                 continue;
             };
+            // A stored body's `ldstr` operands name strings by their input offsets (new
+            // strings carry placeholders instead), so they move with the heap as the input
+            // bodies' do.
             let rebuilt = rebuild_method_body(
                 body_bytes,
                 owner,
                 &ctx.tokens,
-                &HashMap::new(),
+                &ctx.heap_remapping.userstrings,
                 Some(changes),
             )?;
 
@@ -2080,9 +2058,10 @@ impl<'a> PeGenerator<'a> {
             ctx.blob_heap_offset,
             blob_data,
             &changes.blob_heap_changes,
-            &ctx.typedef_rid_remap,
-            &ctx.typeref_rid_remap,
-            &ctx.typespec_rid_remap,
+            &SignatureRemap {
+                blobs: &ctx.signature_blobs,
+                tokens: &ctx.tokens,
+            },
         )?;
         ctx.blob_heap_size = blob_result.bytes_written;
         ctx.heap_remapping.blobs = blob_result.remapping;
@@ -3749,5 +3728,35 @@ mod tests {
             file_bytes, memory_bytes,
             "File and memory generation should produce identical bytes"
         );
+    }
+}
+
+#[cfg(test)]
+mod examples {
+    use super::*;
+    use crate::{testkit::fixture, CilAssemblyView, Result};
+
+    /// An assembly written to memory loads back with the same methods.
+    #[test]
+    fn to_memory_example() -> Result<()> {
+        let assembly = CilAssembly::from_path(fixture("crafted_2.exe"))?;
+        // ... modify assembly ...
+
+        let pe_bytes = PeGenerator::new(&assembly).to_memory()?;
+
+        let original = assembly
+            .view()
+            .tables()
+            .expect("tables")
+            .table_row_count(TableId::MethodDef);
+        let written = CilAssemblyView::from_mem(pe_bytes)?;
+        assert_eq!(
+            written
+                .tables()
+                .expect("tables")
+                .table_row_count(TableId::MethodDef),
+            original
+        );
+        Ok(())
     }
 }

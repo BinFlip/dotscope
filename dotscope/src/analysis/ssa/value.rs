@@ -168,8 +168,8 @@ mod tests {
 
         assert_eq!(a.ceq(&b), Some(ConstValue::False));
         assert_eq!(a.ceq(&c), Some(ConstValue::True));
-        assert_eq!(a.clt(&b), Some(ConstValue::False));
-        assert_eq!(b.clt(&a), Some(ConstValue::True));
+        assert_eq!(a.clt(&b, PointerSize::Bit64), Some(ConstValue::False));
+        assert_eq!(b.clt(&a, PointerSize::Bit64), Some(ConstValue::True));
     }
 
     #[test]
@@ -569,23 +569,23 @@ mod tests {
     fn test_const_cgt() {
         let a = ConstValue::I32(10);
         let b = ConstValue::I32(5);
-        assert_eq!(a.cgt(&b), Some(ConstValue::True));
-        assert_eq!(b.cgt(&a), Some(ConstValue::False));
-        assert_eq!(a.cgt(&a), Some(ConstValue::False)); // Equal means not greater
+        assert_eq!(a.cgt(&b, PointerSize::Bit64), Some(ConstValue::True));
+        assert_eq!(b.cgt(&a, PointerSize::Bit64), Some(ConstValue::False));
+        assert_eq!(a.cgt(&a, PointerSize::Bit64), Some(ConstValue::False)); // Equal means not greater
     }
 
     #[test]
     fn test_const_cgt_i64() {
         let a = ConstValue::I64(1000);
         let b = ConstValue::I64(500);
-        assert_eq!(a.cgt(&b), Some(ConstValue::True));
+        assert_eq!(a.cgt(&b, PointerSize::Bit64), Some(ConstValue::True));
     }
 
     #[test]
     fn test_const_clt_negative() {
         let a = ConstValue::I32(-10);
         let b = ConstValue::I32(5);
-        assert_eq!(a.clt(&b), Some(ConstValue::True)); // -10 < 5
+        assert_eq!(a.clt(&b, PointerSize::Bit64), Some(ConstValue::True)); // -10 < 5
     }
 
     #[test]
@@ -605,8 +605,8 @@ mod tests {
     fn test_const_float_comparison() {
         let a = ConstValue::F64(std::f64::consts::PI);
         let b = ConstValue::F64(std::f64::consts::E);
-        assert_eq!(a.cgt(&b), Some(ConstValue::True));
-        assert_eq!(a.clt(&b), Some(ConstValue::False));
+        assert_eq!(a.cgt(&b, PointerSize::Bit64), Some(ConstValue::True));
+        assert_eq!(a.clt(&b, PointerSize::Bit64), Some(ConstValue::False));
         assert_eq!(a.ceq(&a), Some(ConstValue::True));
     }
 

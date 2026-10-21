@@ -15,7 +15,7 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```no_run
 //! let mut ctx = WriteContext::new(assembly, output)?;
 //!
 //! // Write all content - ctx tracks positions
@@ -26,6 +26,7 @@
 //! // Apply fixups and finalize
 //! ctx.apply_fixups()?;
 //! ctx.finalize()?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 
 use std::collections::{HashMap, HashSet};
@@ -33,7 +34,9 @@ use std::collections::{HashMap, HashSet};
 use crate::{
     cilassembly::{
         changes::AssemblyChanges,
-        writer::{heaps::HeapRemapping, output::Output, remapper::TokenRemap},
+        writer::{
+            heaps::HeapRemapping, output::Output, remapper::TokenRemap, signatures::SignatureBlob,
+        },
         CilAssembly,
     },
     file::pe::{OptionalHeader, SectionTable},
@@ -318,24 +321,9 @@ pub struct WriteContext<'a> {
     /// types, the entry point) are renumbered once rows are deleted or deduplicated.
     pub tokens: TokenRemap,
 
-    /// TypeDef RID remapping for signature blob processing. When TypeDef rows are
-    /// deleted, RIDs shift. Signature blobs contain TypeDefOrRef encoded tokens
-    /// that must be updated with the new TypeDef RIDs.
-    pub typedef_rid_remap: HashMap<u32, u32>,
-
-    /// TypeRef RID remapping for signature blob processing. When TypeRef rows are
-    /// deleted, RIDs shift. Signature blobs contain TypeDefOrRef encoded tokens
-    /// that must be updated with the new TypeRef RIDs.
-    pub typeref_rid_remap: HashMap<u32, u32>,
-
-    /// TypeSpec RID remapping for signature blob processing. The
-    /// `TypeDefOrRefOrSpecEncoded` operand of `ELEMENT_TYPE_CLASS` /
-    /// `ELEMENT_TYPE_VALUETYPE` can reference TypeSpec rows in addition
-    /// to TypeDef / TypeRef. Without this remap, signatures (notably the
-    /// `LocalVarSig` blob in StandAloneSig) keep pointing at the old
-    /// TypeSpec RID after surrounding rows are deleted, breaking strict
-    /// reload of the regenerated assembly.
-    pub typespec_rid_remap: HashMap<u32, u32>,
+    /// The blobs signature columns reference, by the index the blob heap writer meets them
+    /// at; their type tokens are renumbered with [`tokens`](Self::tokens).
+    pub signature_blobs: HashMap<u32, SignatureBlob>,
 
     /// StandAloneSig RIDs to skip during table writing (duplicates).
     /// When multiple StandAloneSig entries have identical blob content,
@@ -518,9 +506,7 @@ impl<'a> WriteContext<'a> {
             resource_offset_remap: HashMap::new(),
             heap_remapping: HeapRemapping::default(),
             tokens: TokenRemap::default(),
-            typedef_rid_remap: HashMap::new(),
-            typeref_rid_remap: HashMap::new(),
-            typespec_rid_remap: HashMap::new(),
+            signature_blobs: HashMap::new(),
             standalonesig_skip: HashSet::new(),
 
             entry_point_token,

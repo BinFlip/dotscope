@@ -100,7 +100,7 @@ enum LoopAction {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::emulation::{EmulationController, EmValue, ProcessBuilder};
 /// use dotscope::CilObject;
 /// use std::sync::Arc;
@@ -112,6 +112,7 @@ enum LoopAction {
 ///
 /// // Use process.execute_method() instead of controller directly
 /// let result = process.execute_method(method_token, vec![EmValue::I32(42)])?;
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct EmulationController {
     /// Shared process environment (address space, runtime, capture, config, etc.).
@@ -2904,7 +2905,10 @@ mod tests {
     use super::*;
     use crate::{
         emulation::{engine::typeops, process::UnknownMethodBehavior},
-        testkit::{emulation::create_test_thread, fixture},
+        testkit::{
+            emulation::{create_test_thread, emulation_config},
+            fixture,
+        },
         CilObject,
     };
 
@@ -2923,7 +2927,7 @@ mod tests {
             address_space,
             runtime,
             Arc::new(CaptureContext::default()),
-            Arc::new(EmulationConfig::default()),
+            Arc::new(emulation_config()),
             None,
             fake_objects,
             Arc::new(VirtualFs::new()),

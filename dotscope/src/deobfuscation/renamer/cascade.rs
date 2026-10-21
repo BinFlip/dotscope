@@ -1158,9 +1158,7 @@ mod tests {
     use crate::{
         deobfuscation::{
             renamer::{
-                cascade::{
-                    build_param_owner_map, generate_phase_label_from_context, CascadeRenamer,
-                },
+                cascade::{generate_phase_label_from_context, CascadeRenamer},
                 context::{IdentifierKind, OpcodeProfile, PhaseInfo, RenameContext},
                 features, phases, prompt,
                 providers::SimpleProvider,
@@ -1169,12 +1167,11 @@ mod tests {
             utils::{is_obfuscated_name, is_special_name},
         },
         metadata::{
-            tables::{FieldRaw, MethodDefRaw, ParamRaw, TableId, TypeDefRaw},
+            tables::{MethodDefRaw, ParamRaw, TableId},
             token::Token,
             validation::ValidationConfig,
         },
         testkit::{fixture, helpers::load_sample},
-        utils::truncate_chars,
         CilObject,
     };
 
@@ -1997,519 +1994,64 @@ mod tests {
         );
     }
 
-    /// Comprehensive diagnostic dump of the entire renamer cascade on a clean,
-    /// unobfuscated assembly. Prints every method's SSA features, phase
-    /// decomposition, anchors, call-site skeletons, and the full RenameContext
-    /// that `build_method_context()` produces.
-    ///
-    /// Run with: `cargo test --release -p dotscope --lib cascade::tests::test_diagnostic_context_dump -- --ignored --nocapture`
+    /// The cascade on a clean, unobfuscated assembly: every method with a body gets SSA, a
+    /// method's context holds what its body does, and since no name is obfuscated nothing is
+    /// renamed.
     #[test]
-    #[ignore]
-    fn test_diagnostic_context_dump() {
-        const ORIGINAL_SAMPLE: &str = "packers/bitmono/0.39.0/original.exe";
+    fn a_clean_assembly_is_analysed_and_left_unrenamed() {
+        let assembly = load_sample("packers/bitmono/0.39.0/original.exe");
 
-        let assembly = load_sample(ORIGINAL_SAMPLE);
-
-        eprintln!("========================================================================");
-        eprintln!("  DIAGNOSTIC CONTEXT DUMP — original.exe (clean, unobfuscated)");
-        eprintln!("========================================================================");
-
-        // 1. Enumerate ALL types, methods, fields, params in metadata
-        let tables = assembly.tables().expect("assembly should have tables");
-        let strings = assembly.strings().expect("assembly should have strings");
-
-        eprintln!("\n--- METADATA INVENTORY ---");
-
-        if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
-            eprintln!("\nTypeDef table: {} rows", typedef_table.row_count);
-            for rid in 1..=typedef_table.row_count {
-                if let Some(td) = typedef_table.get(rid).ok().flatten() {
-                    let name = strings.get(td.type_name as usize).unwrap_or("?");
-                    let ns = strings.get(td.type_namespace as usize).unwrap_or("");
-                    let obf = is_obfuscated_name(name);
-                    let special = is_special_name(name);
-                    eprintln!(
-                        "  TypeDef RID={rid:3} token=0x{:08X} name={ns}.{name} obfuscated={obf} special={special}",
-                        0x0200_0000 | rid
-                    );
-                }
-            }
-        }
-
-        if let Some(methoddef_table) = tables.table::<MethodDefRaw>() {
-            eprintln!("\nMethodDef table: {} rows", methoddef_table.row_count);
-            for rid in 1..=methoddef_table.row_count {
-                if let Some(md) = methoddef_table.get(rid).ok().flatten() {
-                    let name = strings.get(md.name as usize).unwrap_or("?");
-                    let obf = is_obfuscated_name(name);
-                    let special = is_special_name(name);
-                    let method_token = Token::new(0x0600_0000 | rid);
-                    let has_cfg = assembly
-                        .method(&method_token)
-                        .ok()
-                        .map(|m| m.cfg().is_some())
-                        .unwrap_or(false);
-                    eprintln!(
-                        "  MethodDef RID={rid:3} token=0x{:08X} name={name} obfuscated={obf} special={special} has_cfg={has_cfg}",
-                        method_token.value()
-                    );
-                }
-            }
-        }
-
-        if let Some(field_table) = tables.table::<FieldRaw>() {
-            eprintln!("\nField table: {} rows", field_table.row_count);
-            for rid in 1..=field_table.row_count {
-                if let Some(f) = field_table.get(rid).ok().flatten() {
-                    let name = strings.get(f.name as usize).unwrap_or("?");
-                    let obf = is_obfuscated_name(name);
-                    eprintln!(
-                        "  Field RID={rid:3} token=0x{:08X} name={name} obfuscated={obf}",
-                        0x0400_0000 | rid
-                    );
-                }
-            }
-        }
-
-        if let Some(param_table) = tables.table::<ParamRaw>() {
-            eprintln!("\nParam table: {} rows", param_table.row_count);
-            for rid in 1..=param_table.row_count {
-                if let Some(p) = param_table.get(rid).ok().flatten() {
-                    let name = strings.get(p.name as usize).unwrap_or("?");
-                    let obf = is_obfuscated_name(name);
-                    eprintln!(
-                        "  Param RID={rid:3} sequence={} name={name} obfuscated={obf}",
-                        p.sequence
-                    );
-                }
-            }
-        }
-
-        // 2. Build infrastructure (SSA + call graph) via CascadeRenamer
         let provider = SimpleProvider::new();
         let fallback = SimpleProvider::new();
-        let config = SmartRenameConfig::default();
-        let mut cascade = CascadeRenamer::new(&assembly, &provider, &fallback, config.clone());
+        let mut cascade = CascadeRenamer::new(
+            &assembly,
+            &provider,
+            &fallback,
+            SmartRenameConfig::default(),
+        );
         cascade.build_infrastructure();
         cascade.extract_anchors();
         cascade.collect_caller_contexts();
         cascade.decompose_and_label_phases();
 
-        eprintln!("\n--- SSA INFRASTRUCTURE ---");
-        eprintln!(
-            "Total methods: {}, Methods with SSA: {}",
-            assembly.methods().len(),
-            cascade.ssa_cache.len()
+        for entry in assembly.methods().iter() {
+            let method = entry.value();
+            if method.body.get().is_some() {
+                assert!(
+                    cascade.ssa_cache.contains_key(entry.key()),
+                    "{} has a body but no SSA",
+                    method.name
+                );
+            }
+        }
+
+        let say_hello = assembly
+            .methods()
+            .iter()
+            .find(|e| e.value().name == "SayHello")
+            .map(|e| *e.key())
+            .expect("original.exe has SayHello");
+        let context = cascade.build_method_context(say_hello);
+        assert!(
+            context
+                .call_targets
+                .iter()
+                .any(|target| target.contains("WriteLine")),
+            "SayHello writes to the console: {:?}",
+            context.call_targets
         );
 
-        // List methods WITHOUT SSA (and why)
-        eprintln!("\nMethods WITHOUT SSA:");
-        if let Some(methoddef_table) = tables.table::<MethodDefRaw>() {
-            for rid in 1..=methoddef_table.row_count {
-                let method_token = Token::new(0x0600_0000 | rid);
-                if cascade.ssa_cache.contains_key(&method_token) {
-                    continue;
-                }
-                let name = methoddef_table
-                    .get(rid)
-                    .ok()
-                    .flatten()
-                    .and_then(|md| strings.get(md.name as usize).ok())
-                    .unwrap_or("?");
-                let method = assembly.method(&method_token).ok();
-                let has_cfg = method.as_ref().map(|m| m.cfg().is_some()).unwrap_or(false);
-                let has_body = method
-                    .as_ref()
-                    .map(|m| m.body.get().is_some())
-                    .unwrap_or(false);
-                let reason = if !has_body {
-                    "no body (abstract/native/extern)"
-                } else if !has_cfg {
-                    "no CFG (IL parse failed?)"
-                } else {
-                    "SSA construction failed"
-                };
-                eprintln!(
-                    "  0x{:08X} {name} -- reason: {reason}",
-                    method_token.value()
-                );
-            }
-        }
-
-        // 3. For EACH method with SSA: dump all extracted features
-        eprintln!("\n========================================================================");
-        eprintln!("  PER-METHOD SSA FEATURE EXTRACTION");
-        eprintln!("========================================================================");
-
-        let methoddef_table = tables.table::<MethodDefRaw>().unwrap();
-        let mut method_tokens_with_ssa: Vec<(Token, String)> = Vec::new();
-
-        for rid in 1..=methoddef_table.row_count {
-            let method_token = Token::new(0x0600_0000 | rid);
-            let Some(ssa) = cascade.ssa_cache.get(&method_token) else {
-                continue;
-            };
-            let name = methoddef_table
-                .get(rid)
-                .ok()
-                .flatten()
-                .and_then(|md| strings.get(md.name as usize).ok())
-                .unwrap_or("?")
-                .to_string();
-
-            method_tokens_with_ssa.push((method_token, name.clone()));
-
-            eprintln!(
-                "\n---------- Method: {name} (0x{:08X}) ----------",
-                method_token.value()
-            );
-            eprintln!(
-                "  Blocks: {}, Instructions: {}",
-                ssa.blocks().len(),
-                ssa.instruction_count()
-            );
-
-            // Call targets
-            let call_targets = features::collect_call_targets(ssa, &assembly);
-            eprintln!("  Call targets ({}):", call_targets.len());
-            for t in &call_targets {
-                eprintln!("    - {t}");
-            }
-
-            // String literals
-            let string_lits = features::collect_string_literals(ssa, &assembly);
-            eprintln!("  String literals ({}):", string_lits.len());
-            for s in &string_lits {
-                let display = if s.chars().count() > 60 {
-                    format!("{}...", truncate_chars(s, 57))
-                } else {
-                    s.clone()
-                };
-                eprintln!("    - \"{display}\"");
-            }
-
-            // Field accesses
-            let field_accesses = features::collect_field_accesses(ssa, &assembly);
-            eprintln!("  Field accesses ({}):", field_accesses.len());
-            for f in &field_accesses {
-                eprintln!("    - {f}");
-            }
-
-            // Opcode profile
-            let profile = features::build_opcode_profile(ssa);
-            eprintln!(
-                "  Opcode profile: calls={} strings={} field_io={} bitwise={} arithmetic={} array={} comparison={} conversion={}",
-                profile.calls, profile.strings, profile.field_io,
-                profile.bitwise, profile.arithmetic, profile.array,
-                profile.comparison, profile.conversion
-            );
-
-            // Anchors
-            let anchors = features::extract_anchors(ssa, &assembly);
-            eprintln!("  Anchors ({}):", anchors.len());
-            for a in &anchors {
-                eprintln!("    - {} arg_pos={:?}", a.method_name, a.argument_position);
-            }
-
-            // Phase decomposition (with threshold=0 to force full decomposition)
-            let phases_full = phases::decompose_method(ssa, &assembly, 0);
-            eprintln!(
-                "  Phase decomposition (threshold=0, {} phases):",
-                phases_full.len()
-            );
-            for (i, phase) in phases_full.iter().enumerate() {
-                eprintln!(
-                    "    Phase {}: structure={:?} label={:?}",
-                    i, phase.structure, phase.label
-                );
-                if !phase.call_targets.is_empty() {
-                    eprintln!("      calls: {:?}", phase.call_targets);
-                }
-                if let Some(ref prof) = phase.opcode_profile {
-                    eprintln!(
-                        "      ops: calls={} strings={} field_io={} bitwise={} arith={} array={} cmp={} conv={}",
-                        prof.calls, prof.strings, prof.field_io,
-                        prof.bitwise, prof.arithmetic, prof.array,
-                        prof.comparison, prof.conversion
-                    );
-                }
-            }
-
-            // Phase decomposition (with default threshold for comparison)
-            let phases_default =
-                phases::decompose_method(ssa, &assembly, config.small_method_threshold);
-            eprintln!(
-                "  Phase decomposition (threshold={}, {} phases):",
-                config.small_method_threshold,
-                phases_default.len()
-            );
-            for (i, phase) in phases_default.iter().enumerate() {
-                eprintln!(
-                    "    Phase {}: structure={:?} calls={:?}",
-                    i, phase.structure, phase.call_targets
-                );
-            }
-
-            // Call-site skeleton (for small methods)
-            if ssa.instruction_count() <= config.small_method_threshold {
-                let skeleton = phases::build_call_site_skeleton(ssa, &assembly);
-                eprintln!("  Call-site skeleton (small method):");
-                if let Some(ref sk) = skeleton {
-                    for line in sk.lines() {
-                        eprintln!("    {line}");
-                    }
-                } else {
-                    eprintln!("    (none)");
-                }
-            } else {
-                eprintln!(
-                    "  Call-site skeleton: N/A (large method, {} instructions)",
-                    ssa.instruction_count()
-                );
-            }
-        }
-
-        // 4. build_method_context() for each method
-        eprintln!("\n========================================================================");
-        eprintln!("  FULL RENAME CONTEXT (build_method_context)");
-        eprintln!("========================================================================");
-
-        for (token, name) in &method_tokens_with_ssa {
-            let ctx = cascade.build_method_context(*token);
-            eprintln!("\n--- {name} (0x{:08X}) ---", token.value());
-            eprintln!("  kind: {:?}", ctx.kind);
-            eprintln!("  dotnet_type (return): {:?}", ctx.dotnet_type);
-            eprintln!("  parameters:");
-            for (i, p) in ctx.parameters.iter().enumerate() {
-                eprintln!(
-                    "    [{i}] type={} known_name={:?}",
-                    p.dotnet_type, p.known_name
-                );
-            }
-            eprintln!("  base_class: {:?}", ctx.base_class);
-            eprintln!("  interfaces: {:?}", ctx.interfaces);
-            eprintln!("  parent_type: {:?}", ctx.parent_type);
-            eprintln!("  siblings: {:?}", ctx.siblings);
-            eprintln!("  call_targets: {:?}", ctx.call_targets);
-            eprintln!("  string_literals: {:?}", ctx.string_literals);
-            eprintln!("  field_accesses: {:?}", ctx.field_accesses);
-            eprintln!("  api_calls ({}):", ctx.api_calls.len());
-            for a in &ctx.api_calls {
-                eprintln!("    {} arg={:?}", a.method_name, a.argument_position);
-            }
-            eprintln!(
-                "  call_site_skeleton: {}",
-                if ctx.call_site_skeleton.is_some() {
-                    "present"
-                } else {
-                    "none"
-                }
-            );
-            if let Some(ref sk) = ctx.call_site_skeleton {
-                for line in sk.lines() {
-                    eprintln!("    | {line}");
-                }
-            }
-            eprintln!("  phase_narrative ({} phases):", ctx.phase_narrative.len());
-            for (i, ph) in ctx.phase_narrative.iter().enumerate() {
-                eprintln!(
-                    "    Phase {i}: label={:?} structure={:?} calls={:?}",
-                    ph.label, ph.structure, ph.call_targets
-                );
-            }
-            eprintln!("  caller_context ({}):", ctx.caller_context.len());
-            for ci in &ctx.caller_context {
-                eprintln!(
-                    "    caller={:?} strings={:?} return_usage={:?}",
-                    ci.caller_name, ci.nearby_strings, ci.return_usage
-                );
-            }
-        }
-
-        // 5. Build param contexts
-        eprintln!("\n========================================================================");
-        eprintln!("  PARAMETER CONTEXTS");
-        eprintln!("========================================================================");
-
-        if let Some(param_table) = tables.table::<ParamRaw>() {
-            let param_owners = build_param_owner_map(methoddef_table, param_table.row_count);
-
-            for rid in 1..=param_table.row_count {
-                let Some(param) = param_table.get(rid).ok().flatten() else {
-                    continue;
-                };
-                let name = strings.get(param.name as usize).unwrap_or("?");
-                let owner_rid = param_owners.get(&rid).copied();
-                let owner_name = owner_rid
-                    .and_then(|r| methoddef_table.get(r).ok().flatten())
-                    .and_then(|md| strings.get(md.name as usize).ok())
-                    .unwrap_or("?");
-
-                let ctx = cascade.build_param_context(rid, param.sequence, &param_owners);
-                eprintln!(
-                    "\n  Param RID={rid} name={name} seq={} owner={owner_name} (0x{:08X})",
-                    param.sequence,
-                    owner_rid.map(|r| 0x0600_0000 | r).unwrap_or(0)
-                );
-                eprintln!("    dotnet_type: {:?}", ctx.dotnet_type);
-                eprintln!("    parent_type: {:?}", ctx.parent_type);
-                eprintln!("    call_targets: {:?}", ctx.call_targets);
-                eprintln!("    api_calls ({}):", ctx.api_calls.len());
-                for a in &ctx.api_calls {
-                    eprintln!("      {} arg={:?}", a.method_name, a.argument_position);
-                }
-                eprintln!("    siblings: {:?}", ctx.siblings);
-            }
-        }
-
-        // 6. Build field contexts
-        eprintln!("\n========================================================================");
-        eprintln!("  FIELD CONTEXTS");
-        eprintln!("========================================================================");
-
-        if let Some(field_table) = tables.table::<FieldRaw>() {
-            for rid in 1..=field_table.row_count {
-                let Some(f) = field_table.get(rid).ok().flatten() else {
-                    continue;
-                };
-                let name = strings.get(f.name as usize).unwrap_or("?");
-                let field_token = Token::new(0x0400_0000 | rid);
-                let ctx = cascade.build_field_context(field_token);
-                eprintln!(
-                    "\n  Field RID={rid} token=0x{:08X} name={name}",
-                    field_token.value()
-                );
-                eprintln!("    dotnet_type: {:?}", ctx.dotnet_type);
-                eprintln!("    siblings: {:?}", ctx.siblings);
-                eprintln!("    api_calls ({}):", ctx.api_calls.len());
-                for a in &ctx.api_calls {
-                    eprintln!("      {} arg={:?}", a.method_name, a.argument_position);
-                }
-            }
-        }
-
-        // 7. Build type contexts
-        eprintln!("\n========================================================================");
-        eprintln!("  TYPE CONTEXTS");
-        eprintln!("========================================================================");
-
-        if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
-            for rid in 1..=typedef_table.row_count {
-                if rid == 1 {
-                    continue; // skip <Module>
-                }
-                let Some(td) = typedef_table.get(rid).ok().flatten() else {
-                    continue;
-                };
-                let name = strings.get(td.type_name as usize).unwrap_or("?");
-                let ns = strings.get(td.type_namespace as usize).unwrap_or("");
-                let type_token = Token::new(0x0200_0000 | rid);
-                let ctx = cascade.build_type_context(type_token);
-                eprintln!(
-                    "\n  Type RID={rid} token=0x{:08X} name={ns}.{name}",
-                    type_token.value()
-                );
-                eprintln!("    base_class: {:?}", ctx.base_class);
-                eprintln!("    interfaces: {:?}", ctx.interfaces);
-                eprintln!("    siblings (members): {:?}", ctx.siblings);
-            }
-        }
-
-        // 8. Run full cascade and dump entries
-        eprintln!("\n========================================================================");
-        eprintln!("  FULL CASCADE EXECUTION");
-        eprintln!("========================================================================");
-
-        let provider2 = SimpleProvider::new();
-        let fallback2 = SimpleProvider::new();
-        let config2 = SmartRenameConfig::default();
-        let cascade2 = CascadeRenamer::new(&assembly, &provider2, &fallback2, config2);
-        let entries = cascade2.execute().unwrap();
-
-        eprintln!("Total rename entries: {}", entries.len());
-        for entry in &entries {
-            eprintln!(
-                "  {:?} RID={} string_idx={} -> {:?}",
-                entry.table_id, entry.rid, entry.string_index, entry.new_name
-            );
-        }
-
-        if entries.is_empty() {
-            eprintln!("  (No entries -- clean assembly has no obfuscated names, as expected)");
-        }
-
-        // 9. Call graph analysis
-        eprintln!("\n========================================================================");
-        eprintln!("  CALL GRAPH ANALYSIS");
-        eprintln!("========================================================================");
-
-        if let Some(ref cg) = cascade.call_graph {
-            let topo = cg.topological_order();
-            eprintln!("Topological order ({} nodes):", topo.len());
-            for (i, token) in topo.iter().enumerate() {
-                let name = assembly
-                    .method(token)
-                    .ok()
-                    .map(|m| m.name.clone())
-                    .or_else(|| assembly.resolve_method_name(*token))
-                    .unwrap_or_else(|| format!("0x{:08X}", token.value()));
-                eprintln!("  [{i:3}] 0x{:08X} {name}", token.value());
-            }
-        } else {
-            eprintln!("  (No call graph available)");
-        }
-
-        // 10. Summary statistics
-        eprintln!("\n========================================================================");
-        eprintln!("  SUMMARY");
-        eprintln!("========================================================================");
-
-        let total_methods = if let Some(t) = tables.table::<MethodDefRaw>() {
-            t.row_count
-        } else {
-            0
-        };
-        let methods_with_ssa = cascade.ssa_cache.len();
-        let methods_with_anchors = cascade.anchors.len();
-        let methods_with_phases = cascade.phase_narratives.len();
-
-        let methods_with_callers = cascade.caller_contexts.len();
-
-        eprintln!("Methods total:         {total_methods}");
-        eprintln!("Methods with SSA:      {methods_with_ssa}");
-        eprintln!("Methods with anchors:  {methods_with_anchors}");
-        eprintln!("Methods with phases:   {methods_with_phases}");
-        eprintln!("Methods with callers:  {methods_with_callers}");
-
-        let mut methods_with_calls = 0u32;
-        let mut methods_with_strings = 0u32;
-        let mut methods_with_fields = 0u32;
-        let mut methods_with_skeleton = 0u32;
-
-        for (token, _) in &method_tokens_with_ssa {
-            let ctx = cascade.build_method_context(*token);
-            if !ctx.call_targets.is_empty() {
-                methods_with_calls += 1;
-            }
-            if !ctx.string_literals.is_empty() {
-                methods_with_strings += 1;
-            }
-            if !ctx.field_accesses.is_empty() {
-                methods_with_fields += 1;
-            }
-            if ctx.call_site_skeleton.is_some() {
-                methods_with_skeleton += 1;
-            }
-        }
-
-        eprintln!("Methods with call targets:      {methods_with_calls}");
-        eprintln!("Methods with string literals:    {methods_with_strings}");
-        eprintln!("Methods with field accesses:     {methods_with_fields}");
-        eprintln!("Methods with call-site skeleton: {methods_with_skeleton}");
-        eprintln!("Rename entries produced:         {}", entries.len());
-
-        eprintln!("\n========================================================================");
-        eprintln!("  DIAGNOSTIC DUMP COMPLETE");
-        eprintln!("========================================================================");
+        let renames = CascadeRenamer::new(
+            &assembly,
+            &provider,
+            &fallback,
+            SmartRenameConfig::default(),
+        )
+        .execute()
+        .expect("the cascade runs");
+        assert!(
+            renames.is_empty(),
+            "nothing is obfuscated, so nothing is renamed: {renames:?}"
+        );
     }
 }

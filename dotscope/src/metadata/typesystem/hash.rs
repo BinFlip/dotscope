@@ -15,8 +15,8 @@
 //!
 //! # Example Usage
 //!
-//! ```rust,ignore
-//! use dotscope::metadata::typesystem::hash::TypeSignatureHash;
+//! ```no_run
+//! use dotscope::metadata::typesystem::TypeSignatureHash;
 //! use dotscope::metadata::typesystem::{CilFlavor, TypeSource};
 //!
 //! let hash = TypeSignatureHash::new()

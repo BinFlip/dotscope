@@ -14,7 +14,7 @@
 //!
 //! # Usage
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::{repair_pe, RepairResult};
 //!
 //! let mut bytes = std::fs::read("corrupted.exe")?;
@@ -26,6 +26,7 @@
 //!         println!("  {:?}", repair);
 //!     }
 //! }
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 
 use cowfile::CowFile;

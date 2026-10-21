@@ -307,7 +307,7 @@ impl AnalysisTestRunner {
         };
 
         // Build CFG and SSA
-        let (cfg, ssa) = match build_analysis(&method, Some(&assembly)) {
+        let (cfg, ssa) = match build_analysis(&method, &assembly) {
             Ok(result) => result,
             Err(e) => return AnalysisTestResult::run_failed(test_case.name, e),
         };

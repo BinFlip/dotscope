@@ -450,11 +450,12 @@ impl Cor20Header {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use dotscope::metadata::cor20header::Cor20Header;
     ///
     /// let header = Cor20Header { /* ... */ };
     /// header.write_to(&mut writer)?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn write_to<W: Write>(&self, writer: &mut W) -> Result<()> {
         // cb (size) - always 72

@@ -20,9 +20,10 @@
 //!
 //! ## Basic Type Parsing
 //!
-//! ```ignore
-//! use dotscope::metadata::resources::types::{ResourceType, RESOURCE_MAGIC};
-//! use dotscope::file::parser::Parser;
+//! ```no_run
+//! use dotscope::metadata::resources::ResourceType;
+//! use dotscope::metadata::resources::RESOURCE_MAGIC;
+//! use dotscope::Parser;
 //!
 //! // Parse a resource file header
 //! let mut parser = Parser::new(&data);
@@ -39,13 +40,14 @@
 //!     ResourceType::ByteArray(bytes) => println!("Found byte array: {} bytes", bytes.len()),
 //!     _ => println!("Found other type"),
 //! }
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! ## Type Name Resolution
 //!
-//! ```ignore
-//! use dotscope::metadata::resources::types::ResourceType;
-//! use dotscope::file::parser::Parser;
+//! ```no_run
+//! use dotscope::metadata::resources::ResourceType;
+//! use dotscope::Parser;
 //!
 //! let mut parser = Parser::new(&data);
 //!
@@ -54,6 +56,7 @@
 //! if let ResourceType::String(s) = resource_type {
 //!     println!("Parsed string from type name: {}", s);
 //! }
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! # Thread Safety
@@ -82,9 +85,9 @@ use crate::{file::parser::Parser, utils::compressed_uint_size, Error::TypeError,
 ///
 /// # Examples
 ///
-/// ```ignore
-/// use dotscope::metadata::resources::types::ResourceType;
-/// use dotscope::file::parser::Parser;
+/// ```no_run
+/// use dotscope::metadata::resources::ResourceType;
+/// use dotscope::Parser;
 ///
 /// // Parse different resource types
 /// let mut parser = Parser::new(&data);
@@ -106,6 +109,7 @@ use crate::{file::parser::Parser, utils::compressed_uint_size, Error::TypeError,
 /// if let ResourceType::ByteArray(bytes) = bytes_resource {
 ///     println!("Byte array: {} bytes", bytes.len());
 /// }
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
 /// # Thread Safety
@@ -515,9 +519,9 @@ impl ResourceType {
     ///
     /// # Examples
     ///
-    /// ```ignore
-    /// use dotscope::metadata::resources::types::ResourceType;
-    /// use dotscope::file::parser::Parser;
+    /// ```no_run
+    /// use dotscope::metadata::resources::ResourceType;
+    /// use dotscope::Parser;
     ///
     /// let mut parser = Parser::new(&data);
     ///
@@ -532,6 +536,7 @@ impl ResourceType {
     /// if let ResourceType::Int32(value) = int_type {
     ///     println!("Found integer: {}", value);
     /// }
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     ///
     /// # Errors
@@ -689,9 +694,9 @@ impl ResourceType {
     ///
     /// # Examples
     ///
-    /// ```ignore
-    /// use dotscope::metadata::resources::types::ResourceType;
-    /// use dotscope::file::parser::Parser;
+    /// ```no_run
+    /// use dotscope::metadata::resources::ResourceType;
+    /// use dotscope::Parser;
     ///
     /// let mut parser = Parser::new(&data);
     ///
@@ -710,6 +715,7 @@ impl ResourceType {
     /// if let ResourceType::ByteArray(bytes) = bytes_resource {
     ///     println!("Byte array: {} bytes", bytes.len());
     /// }
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     ///
     /// # Errors
@@ -783,7 +789,7 @@ pub struct ResourceEntry {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```no_run
 /// use dotscope::metadata::resources::parse_dotnet_resource_ref;
 ///
 /// let resource_data = std::fs::read("MyApp.resources")?;
@@ -884,7 +890,7 @@ pub enum ResourceTypeRef<'a> {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```no_run
 /// use dotscope::metadata::resources::Resource;
 ///
 /// let resource_data = std::fs::read("MyApp.resources")?;
@@ -950,9 +956,9 @@ impl<'a> ResourceTypeRef<'a> {
     ///
     /// # Examples
     ///
-    /// ```ignore
-    /// use dotscope::metadata::resources::types::ResourceTypeRef;
-    /// use dotscope::file::parser::Parser;
+    /// ```no_run
+    /// use dotscope::metadata::resources::ResourceTypeRef;
+    /// use dotscope::Parser;
     ///
     /// let data = b"\x05hello"; // Type byte 0x01, length 5, "hello"
     /// let mut parser = Parser::new(data);
@@ -970,6 +976,7 @@ impl<'a> ResourceTypeRef<'a> {
     /// if let ResourceTypeRef::ByteArray(bytes) = bytes_type {
     ///     println!("Found {} bytes (no copy!)", bytes.len());
     /// }
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     ///
     /// # Errors
@@ -1115,9 +1122,9 @@ impl<'a> ResourceTypeRef<'a> {
     ///
     /// # Examples
     ///
-    /// ```ignore
-    /// use dotscope::metadata::resources::types::ResourceTypeRef;
-    /// use dotscope::file::parser::Parser;
+    /// ```no_run
+    /// use dotscope::metadata::resources::ResourceTypeRef;
+    /// use dotscope::Parser;
     ///
     /// let data = b"\x05hello";
     /// let mut parser = Parser::new(data);
@@ -1127,6 +1134,7 @@ impl<'a> ResourceTypeRef<'a> {
     /// if let ResourceTypeRef::String(s) = string_resource {
     ///     println!("String resource: {}", s); // No allocation
     /// }
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     ///
     /// # Errors

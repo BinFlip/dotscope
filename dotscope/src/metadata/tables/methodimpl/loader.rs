@@ -73,7 +73,7 @@
 //! - Partition II, §22.27 for the `MethodImpl` table specification
 //! - Table ID: 0x19
 //! - Purpose: Define method implementation mappings for interface and virtual method resolution
-use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+use rayon::iter::IndexedParallelIterator;
 
 use crate::{
     metadata::{
@@ -82,6 +82,7 @@ use crate::{
         tables::MethodImplRaw,
     },
     prelude::TableId,
+    utils::TryForEachInOrder,
     Result,
 };
 
@@ -151,25 +152,28 @@ impl MetadataLoader for MethodImplLoader {
             return Ok(());
         };
 
-        table.par_iter().enumerate().try_for_each(|(index, row)| {
-            let Some(row) = context.handle_row(row, index)? else {
-                return Ok(());
-            };
-            let token_msg = || format!("method impl 0x{:08x}", row.token.value());
+        table
+            .par_iter()
+            .enumerate()
+            .try_for_each_in_order(|(index, row)| {
+                let Some(row) = context.handle_row(row, index)? else {
+                    return Ok(());
+                };
+                let token_msg = || format!("method impl 0x{:08x}", row.token.value());
 
-            let Some(owned) = context.handle_result(
-                row.to_owned(|coded_index| context.get_ref(coded_index), context.types),
-                DiagnosticCategory::Method,
-                token_msg,
-            )?
-            else {
-                return Ok(());
-            };
+                let Some(owned) = context.handle_result(
+                    row.to_owned(|coded_index| context.get_ref(coded_index), context.types),
+                    DiagnosticCategory::Method,
+                    token_msg,
+                )?
+                else {
+                    return Ok(());
+                };
 
-            context.handle_error(owned.apply(), DiagnosticCategory::Method, token_msg)?;
-            context.method_impl.insert(row.token, owned);
-            Ok(())
-        })
+                context.handle_error(owned.apply(), DiagnosticCategory::Method, token_msg)?;
+                context.method_impl.insert(row.token, owned);
+                Ok(())
+            })
     }
 
     /// Returns the table identifier for `MethodImpl`.

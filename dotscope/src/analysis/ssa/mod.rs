@@ -49,7 +49,7 @@
 //!
 //! # Usage
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::analysis::{ControlFlowGraph, SsaConverter};
 //! use dotscope::assembly::decode_blocks;
 //!
@@ -66,6 +66,7 @@
 //!         println!("Phi: {:?} = phi({:?})", phi.result(), phi.operands());
 //!     }
 //! }
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! # References

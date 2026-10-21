@@ -61,26 +61,25 @@
 //! 4. **Conflict resolution**: Handle naming conflicts through precedence rules
 //!
 //! # Usage Example
-//! ```rust,ignore
-//! # use dotscope::metadata::loader::LoaderContext;
-//! # fn example(context: &LoaderContext) -> dotscope::Result<()> {
-//! // Access import scopes through the loader context
-//! let import_scopes = &context.import_scopes;
+//! ```no_run
+//! use dotscope::{
+//!     metadata::tables::{ImportScopeBuilder, ImportScopeRaw},
+//!     CilAssembly, CilAssemblyView,
+//! };
 //!
-//! // Get a specific import scope by token
-//! if let Some(scope) = import_scopes.get(&1) {
-//!     println!("Import scope parent: {:?}", scope.parent);
-//!     println!("Import declarations: {} bytes", scope.imports.len());
-//!     
-//!     // Walk up the scope hierarchy
-//!     let mut current = Some(scope.clone());
-//!     while let Some(scope) = current {
-//!         println!("Processing scope imports...");
-//!         current = scope.parent.and_then(|token| import_scopes.get(&token));
+//! // Add a root scope (no parent) with an empty import blob
+//! let mut assembly = CilAssembly::from_path("app.dll")?;
+//! ImportScopeBuilder::new().parent(0).imports(&[]).build(&mut assembly)?;
+//!
+//! // Read the scopes of the written assembly
+//! let view = CilAssemblyView::from_mem(assembly.to_memory()?)?;
+//! if let Some(scopes) = view.tables().and_then(|t| t.table::<ImportScopeRaw>()) {
+//!     for scope in scopes.iter().filter_map(Result::ok) {
+//!         // A parent of 0 is a root scope; `imports` indexes the #Blob heap
+//!         println!("scope {}: parent {}, imports blob {}", scope.rid, scope.parent, scope.imports);
 //!     }
 //! }
-//! # Ok(())
-//! # }
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! # ECMA-335 Reference

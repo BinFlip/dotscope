@@ -464,7 +464,7 @@ pub mod assembly;
 ///
 /// # Usage Example
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::analysis::{ControlFlowGraph, SsaConverter};
 /// use dotscope::assembly::decode_blocks;
 ///
@@ -479,6 +479,7 @@ pub mod assembly;
 /// for loop_info in cfg.loops() {
 ///     println!("Loop at block {:?}, depth {}", loop_info.header, loop_info.depth);
 /// }
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 pub mod analysis;
 
@@ -531,16 +532,16 @@ pub mod analysis;
 ///
 /// # Usage Example
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::deobfuscation::{DeobfuscationEngine, EngineConfig};
-/// use dotscope::CilObject;
 ///
-/// let mut assembly = CilObject::from_path(std::path::Path::new("obfuscated.exe"))?;
 /// let config = EngineConfig::default();
 /// let engine = DeobfuscationEngine::new(config);
 ///
-/// let result = engine.process_file(&mut assembly)?;
+/// let (deobfuscated, result) = engine.process_file("obfuscated.exe")?;
 /// println!("{}", result.summary());
+/// println!("{} methods remain", deobfuscated.methods().len());
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[cfg(feature = "deobfuscation")]
 pub mod deobfuscation;
@@ -861,7 +862,7 @@ pub mod metadata;
 ///
 /// ## New ProjectLoader API (Recommended)
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::project::ProjectLoader;
 ///
 /// // Single assembly loading
@@ -884,11 +885,12 @@ pub mod metadata;
 ///     .build()?;
 ///
 /// println!("Loaded {} assemblies", result.success_count());
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
 /// ## Legacy CilProject API
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::project::CilProject;
 /// use dotscope::CilObject;
 /// use std::path::Path;
@@ -896,6 +898,7 @@ pub mod metadata;
 /// let project = CilProject::new();
 /// let assembly = CilObject::from_path(Path::new("MyApp.exe"))?;
 /// project.add_assembly(assembly, true)?;
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 pub mod project;
 

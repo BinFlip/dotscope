@@ -159,7 +159,7 @@ fn insert_sorted(bucket: &mut Vec<HookEntry>, entry: HookEntry) {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::emulation::{HookManager, Hook, HookPriority, PreHookResult, EmValue};
 ///
 /// let manager = HookManager::new();
@@ -180,6 +180,7 @@ fn insert_sorted(bucket: &mut Vec<HookEntry>, entry: HookEntry) {
 /// )?;
 ///
 /// // When "Decrypt" is called, "high-priority" matches first
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct HookManager {
     /// Full match index: namespace → type → method → entries.
@@ -235,9 +236,10 @@ impl HookManager {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// let manager = HookManager::new();
     /// manager.register(Hook::new("my-hook").match_method_name("Test"))?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn register(&self, hook: Hook) -> Result<()> {
         let route = extract_route(&hook);
@@ -349,7 +351,7 @@ impl HookManager {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use dotscope::emulation::{HookContext, HookOutcome};
     ///
     /// let context = HookContext::new(
@@ -366,6 +368,7 @@ impl HookManager {
     ///     HookOutcome::NoMatch => { /* execute normally */ }
     ///     HookOutcome::Handled(value) => { /* use value */ }
     /// }
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn execute<F>(
         &self,

@@ -4,15 +4,20 @@
 //! for creating test assemblies with various inheritance validation scenarios.
 
 use crate::{
-    metadata::tables::{
-        CodedIndex, CodedIndexType, MethodDefBuilder, TableId, TypeAttributes, TypeDefBuilder,
+    metadata::{
+        signatures::TypeSignature,
+        tables::{
+            CodedIndex, CodedIndexType, InterfaceImplBuilder, MethodDefBuilder, TableId,
+            TypeAttributes, TypeDefBuilder, TypeSpecBuilder,
+        },
     },
     testkit::{
         create_test_assembly,
         factories::validation::type_circularity::build_deep_inheritance_chain,
-        get_testfile_mscorlib, Expect, TestAssembly, MSCORLIB_OBJECT_TYPEDEF,
+        get_testfile_mscorlib, Expect, TestAssembly, MSCORLIB_OBJECT_CTOR_RVA,
+        MSCORLIB_OBJECT_TYPEDEF,
     },
-    Result,
+    CilAssembly, Result,
 };
 
 /// Test factory for OwnedInheritanceValidator following the golden pattern.
@@ -23,13 +28,10 @@ use crate::{
 ///
 /// # Test Coverage
 ///
-/// 1. **Clean Assembly** - Valid inheritance hierarchy (should pass)
-/// 2. **Circular Inheritance** - Type A inherits from Type B which inherits from Type A
-/// 3. **Sealed Type Inheritance** - Type inheriting from a sealed non-System type
-/// 4. **Interface Inheritance Violation** - Class inheriting from interface (not implementing)
-/// 5. **Accessibility Violation** - Public type inheriting from internal/private type
-/// 6. **Abstract/Concrete Rule Violation** - Interface that is not marked as abstract
-/// 7. **Method Inheritance Violation** - Concrete type with abstract methods
+/// The numbered comments in the body name each case: a clean assembly, the runtime's refusals
+/// (sealed and interface bases, interfaces with a base, implementing a class, concrete
+/// interfaces, abstract methods on concrete types, overriding a final method, too deep a
+/// chain) and shapes it accepts that a stricter reading would not.
 ///
 /// This follows the same pattern as raw validators: create corrupted raw assemblies
 /// that when loaded by CilObject produce the inheritance violations that the owned
@@ -50,7 +52,7 @@ pub fn owned_inheritance_validator_file_factory() -> Result<Vec<TestAssembly>> {
     // 3. NEGATIVE: Interface inheritance violation
     assemblies.push(create_assembly_with_interface_inheritance_violation()?);
 
-    // 4. NEGATIVE: Accessibility violation
+    // 4. ACCEPTED: A public type extending an internal one (a C# rule, not the runtime's)
     assemblies.push(create_assembly_with_accessibility_violation()?);
 
     // 5. NEGATIVE: Abstract/concrete violation
@@ -61,6 +63,27 @@ pub fn owned_inheritance_validator_file_factory() -> Result<Vec<TestAssembly>> {
 
     // 7. NEGATIVE: An inheritance chain past the depth limit
     assemblies.push(create_assembly_with_deep_inheritance_chain()?);
+
+    // 8. NEGATIVE: A method overriding a final one
+    assemblies.push(create_assembly_overriding_a_final_method()?);
+
+    // 9. ACCEPTED: A newslot method beside a final one of the same signature
+    assemblies.push(create_assembly_with_newslot_beside_a_final_method()?);
+
+    // 10. ACCEPTED: A multi-dimensional array of a sealed type
+    assemblies.push(create_assembly_with_an_array_of_a_sealed_type()?);
+
+    // 11. NEGATIVE: An interface extending System.Object
+    assemblies.push(create_assembly_with_an_interface_extending_object()?);
+
+    // 12. NEGATIVE: An interface extending another interface
+    assemblies.push(create_assembly_with_an_interface_extending_an_interface()?);
+
+    // 13. ACCEPTED: A public type implementing an internal interface
+    assemblies.push(create_assembly_with_a_public_type_implementing_an_internal_interface()?);
+
+    // 14. NEGATIVE: A type implementing a class
+    assemblies.push(create_assembly_implementing_a_class()?);
 
     Ok(assemblies)
 }
@@ -141,40 +164,34 @@ pub fn create_assembly_with_interface_inheritance_violation() -> Result<TestAsse
     )
 }
 
-/// Creates an assembly with accessibility violation.
+/// Creates an assembly with a public type extending an internal type of the same assembly.
 ///
-/// This creates a raw assembly containing a public type that inherits from an internal type,
-/// which violates accessibility constraints in ECMA-335.
-///
-/// Originally from: `src/metadata/validation/validators/owned/types/inheritance.rs`
+/// C# refuses this (CS0060), the runtime does not: the base only has to be accessible from
+/// the derived type, and an internal type is accessible throughout its assembly.
 pub fn create_assembly_with_accessibility_violation() -> Result<TestAssembly> {
-    create_test_assembly(
-        get_testfile_mscorlib,
-        Expect::fail("Type 'PublicDerivedType' cannot inherit from less accessible base type 'InternalBaseType'"),
-        |assembly| {
-            let internal_base_token = TypeDefBuilder::new()
-                .name("InternalBaseType")
-                .namespace("Test.Accessibility")
-                .flags(TypeAttributes::CLASS | TypeAttributes::NOT_PUBLIC) // Internal visibility
-                .build(assembly)?;
+    create_test_assembly(get_testfile_mscorlib, Expect::Pass, |assembly| {
+        let internal_base_token = TypeDefBuilder::new()
+            .name("InternalBaseType")
+            .namespace("Test.Accessibility")
+            .flags(TypeAttributes::CLASS | TypeAttributes::NOT_PUBLIC) // Internal visibility
+            .build(assembly)?;
 
-            TypeDefBuilder::new()
-                .name("PublicDerivedType")
-                .namespace("Test.Accessibility")
-                .flags(TypeAttributes::CLASS | TypeAttributes::PUBLIC) // Public visibility
-                .extends(CodedIndex::new(
-                    TableId::TypeDef,
-                    internal_base_token
-                        .token()
-                        .expect("TypeDef token should be resolved")
-                        .row(),
-                    CodedIndexType::TypeDefOrRef,
-                ))
-                .build(assembly)?;
+        TypeDefBuilder::new()
+            .name("PublicDerivedType")
+            .namespace("Test.Accessibility")
+            .flags(TypeAttributes::CLASS | TypeAttributes::PUBLIC) // Public visibility
+            .extends(CodedIndex::new(
+                TableId::TypeDef,
+                internal_base_token
+                    .token()
+                    .expect("TypeDef token should be resolved")
+                    .row(),
+                CodedIndexType::TypeDefOrRef,
+            ))
+            .build(assembly)?;
 
-            Ok(())
-        },
-    )
+        Ok(())
+    })
 }
 
 /// Creates an assembly with abstract/concrete rule violation.
@@ -235,5 +252,220 @@ pub fn create_assembly_with_deep_inheritance_chain() -> Result<TestAssembly> {
         get_testfile_mscorlib,
         Expect::fail("Inheritance chain depth exceeds maximum nesting depth limit of 64"),
         |assembly| build_deep_inheritance_chain(assembly, 80),
+    )
+}
+
+/// Builds `DisposableBase` with `public virtual final newslot Dispose()`, the shape C# gives a
+/// method that implements an interface implicitly, and `DisposableDerived` extending it with a
+/// `Dispose()` of the same signature and `derived_flags`.
+fn build_final_dispose_pair(assembly: &mut CilAssembly, derived_flags: u32) -> Result<()> {
+    // HASTHIS, no parameters, VOID
+    let signature = [0x20, 0x00, 0x01];
+    let base = TypeDefBuilder::new()
+        .name("DisposableBase")
+        .namespace("Test.Overrides")
+        .flags(TypeAttributes::CLASS | TypeAttributes::PUBLIC)
+        .extends(CodedIndex::new(
+            TableId::TypeDef,
+            MSCORLIB_OBJECT_TYPEDEF,
+            CodedIndexType::TypeDefOrRef,
+        ))
+        .build(assembly)?;
+    MethodDefBuilder::new()
+        .name("Dispose")
+        .flags(0x01E6) // Public, Final, Virtual, HideBySig, NewSlot
+        .impl_flags(0x0000)
+        .signature(&signature)
+        .rva(MSCORLIB_OBJECT_CTOR_RVA)
+        .build(assembly)?;
+    TypeDefBuilder::new()
+        .name("DisposableDerived")
+        .namespace("Test.Overrides")
+        .flags(TypeAttributes::CLASS | TypeAttributes::PUBLIC)
+        .extends(CodedIndex::new(
+            TableId::TypeDef,
+            base.token()
+                .expect("TypeDef token should be resolved")
+                .row(),
+            CodedIndexType::TypeDefOrRef,
+        ))
+        .build(assembly)?;
+    MethodDefBuilder::new()
+        .name("Dispose")
+        .flags(derived_flags)
+        .impl_flags(0x0000)
+        .signature(&signature)
+        .rva(MSCORLIB_OBJECT_CTOR_RVA)
+        .build(assembly)?;
+    Ok(())
+}
+
+/// Creates an assembly whose `DisposableDerived::Dispose` overrides the final
+/// `DisposableBase::Dispose` (ECMA-335 II.10.3.2), which the runtime refuses.
+pub fn create_assembly_overriding_a_final_method() -> Result<TestAssembly> {
+    create_test_assembly(
+        get_testfile_mscorlib,
+        Expect::fail("Cannot override final method 'Dispose'"),
+        |assembly| build_final_dispose_pair(assembly, 0x00C6), // Public, Virtual, HideBySig
+    )
+}
+
+/// Creates an assembly whose `DisposableDerived::Dispose` is `newslot` beside the final
+/// `DisposableBase::Dispose`: it takes a new vtable slot and overrides nothing (ECMA-335
+/// II.10.3.1). A class implementing an interface again beside a base that did looks like this.
+pub fn create_assembly_with_newslot_beside_a_final_method() -> Result<TestAssembly> {
+    create_test_assembly(get_testfile_mscorlib, Expect::Pass, |assembly| {
+        build_final_dispose_pair(assembly, 0x01E6) // Public, Final, Virtual, HideBySig, NewSlot
+    })
+}
+
+/// Creates an assembly with a sealed class and a `SealedElement[,]` TypeSpec. An array is not
+/// a subtype of its element type: only a TypeDef extends anything, so the sealed rule does not
+/// apply (Microsoft.VisualBasic.Core's `VType[,]` once read as extending the sealed `VType`).
+pub fn create_assembly_with_an_array_of_a_sealed_type() -> Result<TestAssembly> {
+    create_test_assembly(get_testfile_mscorlib, Expect::Pass, |assembly| {
+        let element = TypeDefBuilder::new()
+            .name("SealedElement")
+            .namespace("Test.Arrays")
+            .flags(TypeAttributes::CLASS | TypeAttributes::PUBLIC | TypeAttributes::SEALED)
+            .extends(CodedIndex::new(
+                TableId::TypeDef,
+                MSCORLIB_OBJECT_TYPEDEF,
+                CodedIndexType::TypeDefOrRef,
+            ))
+            .build(assembly)?;
+        let element = element.token().expect("TypeDef token should be resolved");
+        TypeSpecBuilder::new()
+            .multi_dimensional_array(TypeSignature::Class(element), 2)
+            .build(assembly)?;
+        Ok(())
+    })
+}
+
+/// Creates an assembly with an interface whose `Extends` is `System.Object`. An interface's
+/// `Extends` must be null (ECMA-335 II.22.37), and CoreCLR refuses any other value, `System.Object`
+/// included.
+pub fn create_assembly_with_an_interface_extending_object() -> Result<TestAssembly> {
+    create_test_assembly(
+        get_testfile_mscorlib,
+        Expect::fail("Interface 'IExtendsObject' cannot have a base type"),
+        |assembly| {
+            TypeDefBuilder::new()
+                .name("IExtendsObject")
+                .namespace("Test.Interfaces")
+                .flags(
+                    TypeAttributes::INTERFACE | TypeAttributes::ABSTRACT | TypeAttributes::PUBLIC,
+                )
+                .extends(CodedIndex::new(
+                    TableId::TypeDef,
+                    MSCORLIB_OBJECT_TYPEDEF,
+                    CodedIndexType::TypeDefOrRef,
+                ))
+                .build(assembly)?;
+            Ok(())
+        },
+    )
+}
+
+/// Creates an assembly with an interface whose `Extends` names another interface. Interfaces
+/// inherit through InterfaceImpl rows, never `Extends`.
+pub fn create_assembly_with_an_interface_extending_an_interface() -> Result<TestAssembly> {
+    create_test_assembly(
+        get_testfile_mscorlib,
+        Expect::fail("Interface 'IDerived' cannot have a base type"),
+        |assembly| {
+            let base = TypeDefBuilder::new()
+                .name("IBase")
+                .namespace("Test.Interfaces")
+                .flags(
+                    TypeAttributes::INTERFACE | TypeAttributes::ABSTRACT | TypeAttributes::PUBLIC,
+                )
+                .build(assembly)?;
+            TypeDefBuilder::new()
+                .name("IDerived")
+                .namespace("Test.Interfaces")
+                .flags(
+                    TypeAttributes::INTERFACE | TypeAttributes::ABSTRACT | TypeAttributes::PUBLIC,
+                )
+                .extends(CodedIndex::new(
+                    TableId::TypeDef,
+                    base.token()
+                        .expect("TypeDef token should be resolved")
+                        .row(),
+                    CodedIndexType::TypeDefOrRef,
+                ))
+                .build(assembly)?;
+            Ok(())
+        },
+    )
+}
+
+/// Builds `Implementer` in `Test.Interfaces`, implementing a new type `Implemented` with the
+/// given flags.
+fn build_interface_implementation(
+    assembly: &mut CilAssembly,
+    implementer_flags: TypeAttributes,
+    implemented_flags: TypeAttributes,
+) -> Result<()> {
+    let implemented = TypeDefBuilder::new()
+        .name("Implemented")
+        .namespace("Test.Interfaces")
+        .flags(implemented_flags)
+        .build(assembly)?;
+    let implementer = TypeDefBuilder::new()
+        .name("Implementer")
+        .namespace("Test.Interfaces")
+        .flags(implementer_flags)
+        .extends(CodedIndex::new(
+            TableId::TypeDef,
+            MSCORLIB_OBJECT_TYPEDEF,
+            CodedIndexType::TypeDefOrRef,
+        ))
+        .build(assembly)?;
+    InterfaceImplBuilder::new()
+        .class(
+            implementer
+                .token()
+                .expect("TypeDef token should be resolved")
+                .row(),
+        )
+        .interface(CodedIndex::new(
+            TableId::TypeDef,
+            implemented
+                .token()
+                .expect("TypeDef token should be resolved")
+                .row(),
+            CodedIndexType::TypeDefOrRef,
+        ))
+        .build(assembly)?;
+    Ok(())
+}
+
+/// Creates an assembly with a public class implementing an internal interface of the same
+/// assembly, which both C# and the runtime allow.
+pub fn create_assembly_with_a_public_type_implementing_an_internal_interface(
+) -> Result<TestAssembly> {
+    create_test_assembly(get_testfile_mscorlib, Expect::Pass, |assembly| {
+        build_interface_implementation(
+            assembly,
+            TypeAttributes::CLASS | TypeAttributes::PUBLIC,
+            TypeAttributes::INTERFACE | TypeAttributes::ABSTRACT | TypeAttributes::NOT_PUBLIC,
+        )
+    })
+}
+
+/// Creates an assembly with a class whose InterfaceImpl row names another class, which the
+/// runtime refuses to load.
+pub fn create_assembly_implementing_a_class() -> Result<TestAssembly> {
+    create_test_assembly(
+        get_testfile_mscorlib,
+        Expect::fail("Type 'Implementer' tries to implement non-interface type 'Implemented'"),
+        |assembly| {
+            build_interface_implementation(
+                assembly,
+                TypeAttributes::CLASS | TypeAttributes::PUBLIC,
+                TypeAttributes::CLASS | TypeAttributes::PUBLIC,
+            )
+        },
     )
 }

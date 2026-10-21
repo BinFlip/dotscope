@@ -20,8 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The writer never retargets a reference to a row it deletes.** It used to point such a
   reference at the next surviving row; now the write fails with `Error::DanglingReference`,
   or writes a null reference under `GeneratorConfig::with_dangling(DanglingPolicy::Null)`.
+- Every documentation example is real code that compiles: examples that were `ignore`d and
+  had drifted from the API (nonexistent methods such as `parse_from_pe`, wrong paths and
+  arguments) are rewritten, and examples of crate-private items run as unit tests.
 - Output is deterministic: methods are emitted in token order and array data fields are named
-  by interning order.
+  by interning order. A load that fails names the first failing row or body in token order,
+  not whichever thread failed first.
 - Strength reduction is analyssa's `StrengthReductionPass`, and sort order is validated
   (`ValidationConfig::enable_sort_order_validation`).
 - **BREAKING**: `SsaCodeGenerator::compile` is all or nothing: a refused method leaves the
@@ -37,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING**: A branch's operand is its target (`Operand::Target(rva)`). Lists that rows
   attach to are `utils::RowList`s in table order. `Resources` is keyed by ManifestResource
   token.
+- **BREAKING**: `SignatureMethod` gains `unmanaged` and `calling_convention` /
+  `set_calling_convention`, and a method signature whose calling convention names no method
+  signature kind is refused. `FnPtrSig` carries its return and parameter modifiers.
 - **BREAKING**: Signed compressed integers follow ECMA-335 (rotated two's complement):
   `utils::write_compressed_int` returns `Result`, `ArrayDimensions::lower_bound` is
   `Option<i32>`, and `InstructionEncoder::emit_call` takes a `u16` argument count.
@@ -48,8 +55,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `Root::stream`, `Root::tables_stream` and `Root::unread_streams`: the stream the runtime
   reads for each name, and the ones it ignores.
-- `Param::from_signature`, and `type_tokens` on the signature types: every TypeDef, TypeRef
-  and TypeSpec a signature names, custom modifiers included.
+- `Param::from_signature`, and `type_tokens` on the signature types (generic method
+  instantiations included): every TypeDef, TypeRef and TypeSpec a signature names, custom
+  modifiers included. `encode_method_spec_signature` writes a generic method instantiation.
+- `CilObject::fields`: every field definition by token.
+- `metadata::exports::ExportForwarder`, the type `NativeExports::forwarders` returns.
 - `dotscope::io`: the binary codecs (compressed integers, endian readers and writers, 7-bit
   lengths, prefixed strings), with the compressed-integer codecs in the prelude.
 - Translation validation of every generated body (`compiler::validate_lift`) and ECMA-335
@@ -69,6 +79,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `analysis::conv_op_for_target`: analyssa's `SsaOp::conversion_between` builds the same
   conversion.
+- The `skip-expensive-tests` feature: the test tiers select tests instead.
 
 ### Fixed
 
@@ -81,9 +92,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Array signatures no longer misparse the types after them (3,392 corpus methods now lift),
   and lower bounds are signed.
 - Custom attribute arguments are read by the constructor's signature, not its Param rows,
-  enums by their underlying type, and named arguments in ECMA-335 order.
-- Imported structs are value types, a type's flavor no longer depends on loader timing, and
-  core library types come from the scope `System.Object` is imported from.
+  enums by their underlying type, and named arguments in ECMA-335 order. An enum no loaded
+  assembly defines takes the size that ends the blob, not `int`'s: mscorlib's byte-sized
+  `SecurityRuleSet` kept 72 Mono framework assemblies from loading. The cap of 1024 named
+  arguments is gone.
+- Imported structs are value types, a type's flavor no longer depends on loader timing, a
+  sealed class with sequential or explicit layout is no longer taken for a value type,
+  `System.ValueType` and `System.Enum` themselves are classes, and core library types come
+  from the scope `System.Object` is imported from.
 - In a project, each assembly's registry lists only its own types: sources were keyed by the
   Assembly row token, which is `0x20000001` in every assembly.
 - Token resolution picks by signature; a body shared by several methods is decoded once;
@@ -93,27 +109,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Validators accept what the runtime loads: Retargetable and WinRT references, SHA384 and
   SHA512, sealed classes with a large explicit layout, static virtual interface members,
-  generic parameters that allow ref structs, and `UnsafeAccessor` methods.
+  generic parameters that allow ref structs, `UnsafeAccessor` methods, a `newslot` method
+  beside a final one of the same signature, arrays of sealed types, static fields in
+  interfaces, and public types extending internal types or implementing internal interfaces.
+  Every Mono 4.8 and .NET 10 runtime assembly now loads as one project; six were refused
+  before. An overload is no longer taken for an override: overrides match by signature, so a
+  class that seals one overload of a method (Roslyn's `SemanticModel`) loads.
 - Rules that never fired check what they name: ownership and dependency checks that skipped
   every type the assembly defines, unresolved types, inheritance depth, concrete types with
   abstract methods, method signatures past the blob heap, and change sets whose field list
-  starts past the Field table.
+  starts past the Field table. An interface with any base type is refused, as CoreCLR does.
 
 #### Write path and cleanup
 
 - The writer sorts the tables the format requires sorted and writes field data of any size.
+- A delete made right after an insert of the same row could lose to it: table operations were
+  stamped with wall-clock microseconds, which repeat within a tick. `TableOperation::new` now
+  takes a process-wide logical timestamp, unique and increasing in creation order.
 - Table builders start a new row's field, method, parameter and scope lists at the next row
   instead of claiming rows of other entries.
 - Cleanup keeps what surviving metadata still names: types named only through custom
   modifiers, the virtual methods filling vtable slots, and methods and fields named through
   MethodSpec and MemberRef tokens. It removes protection methods with their call sites, and
   `<Module>` members with Assembly access become Public rather than Private.
+  `CleanupStats` counts each deleted row once; a row two passes removed was counted twice.
+- Every column that can name a TypeRef, TypeSpec, MemberRef, ModuleRef, AssemblyRef or File
+  keeps that row through cleanup, as do the signatures of `calli` call sites and generic method
+  instantiations and the code of exception filters. MemberRefs a MethodImpl names, event types,
+  the ModuleRef of a global function reference, and the AssemblyRefs of type forwarders and
+  external resources were removed, failing the write or dropping the forwarders.
+- After rows are deleted, only blobs a signature column references are renumbered, each read
+  as its column's kind. Every blob was tried as a signature before, so an attribute value or
+  constant that happened to parse as one was rewritten and truncated, and generic method
+  instantiations were never renumbered. A signature naming a deleted type is now a dangling
+  reference like any other.
+- A method body a pass replaces keeps loading the strings it loaded: its `ldstr` operands
+  follow the user string heap when it moves, as the untouched bodies' do. They kept their
+  input offsets, so a decrypted body read whatever string moved into its string's place.
+- The user string heap is written as it was read: `ldstr ""` keeps an entry of its own instead
+  of pointing at the zero-length entry at offset 0, strings holding unpaired surrogates are
+  no longer rewritten through UTF-8 (and merged), and the terminal byte follows ECMA-335.
+  Heaps deduplicate by content, where a 64-bit hash of it could merge two entries.
+- Signatures encode back to what they were read from: vararg call sites keep their extra
+  arguments, local variables and type specifications their custom modifiers, and function
+  pointer signatures their parameters' modifiers and by-reference flags, their generic flag
+  and their calling convention, the unmanaged one (`delegate* unmanaged`) among them, which
+  was written back as managed. A `calli` through an unmanaged pointer resolves its signature.
 
 #### Analysis and code generation
 
 - Arithmetic is typed by ECMA-335's binary numeric table; `.locals init` locals read zero;
   handler exception objects and generic instantiation members are typed; x86 stubs that read
-  a register after a branch merge translate.
+  a register after a branch merge translate. Function pointers, `ref` parameters, returns and
+  locals, a value type's `this`, and the value its own constructor builds are typed as what
+  they are: every method of the corpus now lifts to SSA the verifier accepts.
 - Constant folding respects operand width and kind and no longer sign-extends in
   `conv.u8`/`conv.u`; pure-call folding needs a `Pure` or `ReadOnly` callee; inlining
   remaps every definition and use.
@@ -122,11 +171,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exception regions are laid out contiguously without silently dropping a clause.
 - A call through a MethodSpec or MemberRef naming a method of the assembly is a call of that
   method in both call graphs.
+- Field types resolve by token instead of searching every type, and translation validation
+  no longer grows quadratic in a method's locals: lifting, regenerating and validating the
+  packer samples takes about a third of the time.
 
 #### Deobfuscation
 
 - Passes remove only instructions nothing reads, and a failing pass rolls its method back
   (`EventKind::PassFailed`) instead of failing the assembly.
+- `DeobfuscationEngine::process_ssa` ran with the default configuration instead of the
+  engine's.
 - Every technique with a byte transform declares it, so cleanup withholds what a failed
   transform's technique would remove.
 - BitMono: embedded method tokens resolve by signature, so DotNetHook reversal no longer
@@ -143,7 +197,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reached through `testkit::fixture` and listed with its hash and license in
   `tests/samples/MANIFEST.toml`), a sample that fails to load, a missing .NET tool under
   `DOTSCOPE_REQUIRE_TOOLS=1` (set in CI), and a validator case that fails for another reason
-  than the rule it tests.
+  than the rule it tests. Every corpus assembly must load and every method lift
+  (`full::corpus`), and a fixture malformed by design names in the manifest the error it must
+  be refused with. Analysis tests verify the SSA `Method::ssa` builds, `this` and
+  exception handlers included, rather than the harness's own copy.
+- No test's result depends on how busy the machine is: tests run emulation without wall-clock
+  limits and order threads without sleeps. Tests run in tiers (`cargo test-quick`,
+  `cargo test-full`, `make test-oracle`) with one integration test binary, and the Mono and
+  .NET 10 corpus tests, ignored before, require every assembly to load. Every packer sample
+  is its own test, and each sample is deobfuscated once per run however many tests check it.
 
 ## [0.9.1] - 2026-09-05
 

@@ -210,12 +210,7 @@ impl<'a> Decoder<'a> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// # use dotscope::assembly::decoder::Decoder;
-    /// # let mut decoder = todo!(); // Decoder instance
-    /// let blocks = decoder.blocks();
-    /// println!("Decoded {} basic blocks", blocks.len());
-    /// ```
+    /// The `examples::blocks_example` test in this module runs this example.
     ///
     /// # Thread Safety
     ///
@@ -235,7 +230,7 @@ impl<'a> Decoder<'a> {
     /// This method is primarily used internally by [`crate::assembly::decode_method`] to efficiently
     /// transfer decoded blocks to the [`crate::metadata::method::Method`]'s `OnceLock<Vec<BasicBlock>>` field:
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// // Internal usage pattern
     /// let blocks = decoder.into_blocks();
     /// method.blocks.set(blocks);
@@ -2185,5 +2180,26 @@ mod tests {
             !leave_block.successors.is_empty(),
             "Block ending with leave.s should have successors"
         );
+    }
+}
+
+#[cfg(test)]
+mod examples {
+    use super::*;
+    use crate::{utils::VisitedMap, Parser, Result};
+
+    /// `nop; ret` decodes to one block of two instructions.
+    #[test]
+    fn blocks_example() -> Result<()> {
+        let code = [0x00, 0x2A];
+        let mut parser = Parser::new(&code);
+        let mut decoder = Decoder::new(&mut parser, 0, 0x1000, None, VisitedMap::new(2), 2)?;
+        decoder.decode_blocks()?;
+
+        let blocks = decoder.blocks();
+        assert_eq!(blocks.len(), 1);
+        let mnemonics: Vec<_> = blocks[0].instructions.iter().map(|i| i.mnemonic).collect();
+        assert_eq!(mnemonics, ["nop", "ret"]);
+        Ok(())
     }
 }

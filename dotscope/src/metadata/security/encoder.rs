@@ -68,29 +68,32 @@
 //!
 //! ## Compressed Binary Encoding
 //!
-//! ```rust,ignore
+//! ```no_run
 //! let compressed_bytes = encode_permission_set(
 //!     &permissions,
 //!     PermissionSetFormat::BinaryCompressed
 //! )?;
 //! // Result: Smaller binary representation with compression
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! ## XML Format Encoding
 //!
-//! ```rust,ignore
+//! ```no_run
 //! let xml_bytes = encode_permission_set(&permissions, PermissionSetFormat::Xml)?;
 //! let xml_string = String::from_utf8(xml_bytes)?;
 //! // Result: "<PermissionSet>...</PermissionSet>"
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! ## Advanced Encoder Usage
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::metadata::security::PermissionSetEncoder;
 //!
 //! let mut encoder = PermissionSetEncoder::new();
 //! let bytes = encoder.encode_permission_set(&permissions, PermissionSetFormat::BinaryCompressed)?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! # Error Handling
@@ -188,9 +191,10 @@ use crate::{
 /// ```
 ///
 /// ## XML Format Encoding
-/// ```rust,ignore
+/// ```no_run
 /// let xml_bytes = encode_permission_set(&permissions, PermissionSetFormat::Xml)?;
 /// // Result: b"<PermissionSet>...</PermissionSet>"
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 pub fn encode_permission_set(
     permissions: &[Permission],
@@ -217,12 +221,13 @@ pub fn encode_permission_set(
 ///
 /// # Usage Pattern
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::metadata::security::{PermissionSetEncoder, Permission, PermissionSetFormat};
 ///
 /// let permissions = vec![/* ... */];
 /// let mut encoder = PermissionSetEncoder::new();
 /// let bytes = encoder.encode_permission_set(&permissions, PermissionSetFormat::BinaryLegacy)?;
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
 /// # Binary Format Structure

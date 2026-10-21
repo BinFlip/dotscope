@@ -35,8 +35,8 @@
 //! The [`SyncState`] struct is the central coordinator for all synchronization
 //! primitives. It should be shared across all threads in an emulation session.
 //!
-//! ```ignore
-//! use dotscope::emulation::thread::SyncState;
+//! ```no_run
+//! use dotscope::emulation::SyncState;
 //!
 //! let mut sync = SyncState::new();
 //!
@@ -45,6 +45,7 @@
 //!     // Critical section
 //!     sync.monitor_exit(obj_ref, thread_id)?;
 //! }
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 
 use std::collections::{HashMap, VecDeque};
@@ -63,7 +64,7 @@ use crate::emulation::{HeapRef, ThreadId};
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// // Create a manual reset event, initially not signaled
 /// let event = EventState::manual_reset(false);
 ///
@@ -130,7 +131,7 @@ impl EventState {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// let mut monitor = MonitorState::default();
 /// let thread_id = ThreadId::new(1);
 ///
@@ -145,6 +146,7 @@ impl EventState {
 /// // Must exit twice to fully release
 /// monitor.exit(thread_id)?; // recursion_count = 1
 /// monitor.exit(thread_id)?; // recursion_count = 0, released
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Clone, Debug, Default)]
 pub struct MonitorState {
@@ -356,7 +358,7 @@ impl MutexState {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// // Create a semaphore allowing 3 concurrent accesses
 /// let mut sem = SemaphoreState::new(3, 3);
 ///
@@ -369,6 +371,7 @@ impl MutexState {
 /// // Release one slot
 /// sem.release(1)?; // count = 1
 /// assert!(sem.try_acquire()); // count = 0
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Clone, Debug)]
 pub struct SemaphoreState {
@@ -388,7 +391,7 @@ impl SemaphoreState {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// // Pool of 5 resources, all initially available
     /// let sem = SemaphoreState::new(5, 5);
     ///
@@ -525,7 +528,7 @@ impl std::error::Error for SyncError {}
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// let mut sync = SyncState::new();
 ///
 /// // Monitor operations
@@ -537,6 +540,7 @@ impl std::error::Error for SyncError {}
 /// // Event operations
 /// sync.event_create(event_obj, true, false); // ManualResetEvent
 /// let threads_to_wake = sync.event_set(event_obj);
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug, Default)]
 pub struct SyncState {

@@ -1214,12 +1214,12 @@ fn is_assembly_load_reflection_shim(
 #[cfg(test)]
 mod tests {
 
-    use std::{env, path::PathBuf, sync::Arc};
+    use std::sync::Arc;
 
     use super::*;
     use crate::{
-        emulation::{EmulationOutcome, ProcessBuilder, TracingConfig},
-        testkit::load_sample,
+        emulation::EmulationOutcome,
+        testkit::{emulation::process_builder, load_sample},
     };
 
     #[test]
@@ -1298,51 +1298,25 @@ mod tests {
         );
     }
 
-    /// Targeted decryption probe: drives just the resource-decryption path
-    /// without the full deobfuscation pipeline. Exits with diagnostic
-    /// output we can iterate on.
-    ///
-    /// Set the `NR_TRACE` env var to a path to also capture a per-method
-    /// JSONL trace at that location.
+    /// The resource decrypter, emulated on its own, yields the protected program's resources:
+    /// the assembly it hands to `Assembly.Load` holds every resource of the unprotected build,
+    /// byte for byte.
     #[test]
-    #[ignore]
-    fn test_emulate_resource_decryption() {
-        let _ = env_logger::builder()
-            .filter_level(log::LevelFilter::Debug)
-            .is_test(true)
-            .try_init();
-
+    fn emulating_the_decrypter_yields_the_original_resources() {
         let assembly = load_sample("packers/netreactor/7.5.0/reactor_resources.exe");
         let detection = NetReactorResources.detect(&assembly);
         assert!(detection.is_detected(), "detection should fire");
         let findings = detection.findings::<ResourceFindings>().unwrap();
-        eprintln!(
-            "Detected: decrypter=0x{:08X}, lazy_init=0x{:08X}, handler=0x{:08X}, \
-             ctor=0x{:08X}, shims={:?}",
-            findings.decrypter_method_token.value(),
-            findings.lazy_init_token.value(),
-            findings.handler_method_token.value(),
-            findings.resolver_ctor_token.value(),
-            findings
-                .assembly_load_shim_tokens
-                .iter()
-                .map(|t| format!("0x{:08X}", t.value()))
-                .collect::<Vec<_>>()
-        );
 
         let cilobject = Arc::new(assembly);
-        let trace_path = env::var("NR_TRACE").ok().map(PathBuf::from);
-
-        let mut builder = ProcessBuilder::new()
+        let mut builder = process_builder()
             .assembly_arc(Arc::clone(&cilobject))
-            .name("nr-resources-probe")
+            .name("nr-resources")
             .with_max_instructions(80_000_000)
             .with_max_call_depth(300)
-            .with_timeout_ms(180_000)
             .capture_assemblies();
-
-        // Hook the resolver's reflective Assembly.Load shims so we capture
-        // the byte[] regardless of what shape it arrives in.
+        // Hook the resolver's reflective Assembly.Load shims so the byte[] is captured
+        // whatever shape it arrives in.
         if !findings.assembly_load_shim_tokens.is_empty() {
             let shim_set: HashSet<Token> =
                 findings.assembly_load_shim_tokens.iter().copied().collect();
@@ -1353,50 +1327,32 @@ mod tests {
                 asm_typeref,
             ));
         }
-
-        if let Some(path) = trace_path {
-            eprintln!("Tracing calls to {}", path.display());
-            let tracing = TracingConfig {
-                trace_calls: true,
-                trace_exceptions: true,
-                output_path: Some(path),
-                context_prefix: Some("nr-resources-probe".to_string()),
-                ..TracingConfig::default()
-            };
-            builder = builder.with_tracing(tracing);
-        }
-
         let process = builder.build().expect("process build");
 
-        let target = findings.decrypter_method_token;
-        eprintln!("=== Executing decrypter 0x{:08X} ===", target.value());
-        let outcome = process.execute_method(target, vec![]);
-        match outcome {
-            Ok(EmulationOutcome::Completed { instructions, .. }) => {
-                eprintln!(
-                    "  Completed in {} instructions; captured assemblies = {}",
-                    instructions,
-                    process.capture().assembly_count()
-                );
-            }
-            Ok(EmulationOutcome::UnhandledException {
-                instructions,
-                exception,
-                ..
-            }) => {
-                eprintln!(
-                    "  Threw after {instructions}: {exception:?}; captured = {}",
-                    process.capture().assembly_count()
-                );
-            }
-            Ok(other) => eprintln!("  Other outcome: {other}"),
-            Err(e) => eprintln!("  Error: {e}"),
-        }
-        for (i, asm) in process.capture().assemblies().iter().enumerate() {
-            eprintln!(
-                "    captured[{i}] = {} bytes, name={:?}",
-                asm.data.len(),
-                asm.name
+        let outcome = process
+            .execute_method(findings.decrypter_method_token, vec![])
+            .expect("the decrypter runs");
+        assert!(
+            matches!(outcome, EmulationOutcome::Completed { .. }),
+            "the decrypter completes: {outcome}"
+        );
+        let captured = process.capture().assemblies();
+        assert_eq!(captured.len(), 1, "one resource assembly is loaded");
+        let resources = CilObject::from_mem(captured[0].data.clone()).expect("it parses");
+
+        let original = load_sample("packers/netreactor/7.5.0/original.exe");
+        assert!(!original.resources().is_empty());
+        for entry in original.resources().iter() {
+            let expected = entry.value();
+            let found = resources
+                .resources()
+                .get(&expected.name)
+                .unwrap_or_else(|| panic!("{} is missing", expected.name));
+            assert_eq!(
+                resources.resources().get_data(&found),
+                original.resources().get_data(expected),
+                "{} differs",
+                expected.name
             );
         }
     }

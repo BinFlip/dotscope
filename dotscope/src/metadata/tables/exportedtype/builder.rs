@@ -430,7 +430,7 @@ impl ExportedTypeBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;

@@ -17,7 +17,7 @@
 //! Multiple matchers can be added to a single hook. All matchers must match for
 //! the hook to be applied (AND semantics).
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::emulation::{Hook, HookPriority};
 //! use dotscope::metadata::typesystem::CilFlavor;
 //!
@@ -427,7 +427,7 @@ impl HookMatcher for SignatureMatcher {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::emulation::RuntimeMatcher;
 ///
 /// // Match methods where first argument is a byte[] starting with LZMA header
@@ -455,7 +455,7 @@ impl RuntimeMatcher {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use dotscope::emulation::RuntimeMatcher;
     ///
     /// let matcher = RuntimeMatcher::new("has-three-args", |ctx, _thread| {

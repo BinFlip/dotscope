@@ -35,8 +35,8 @@
 //! with the emulation engine. Data is captured automatically as the emulated
 //! code executes.
 //!
-//! ```ignore
-//! use dotscope::emulation::capture::CaptureContext;
+//! ```no_run
+//! use dotscope::emulation::CaptureContext;
 //!
 //! // Create a capture context (captures everything by default)
 //! let ctx = CaptureContext::new();
@@ -63,9 +63,9 @@
 //!
 //! Capture behavior can be controlled via [`CaptureConfig`](crate::emulation::process::CaptureConfig):
 //!
-//! ```ignore
-//! use dotscope::emulation::capture::CaptureContext;
-//! use dotscope::emulation::process::CaptureConfig;
+//! ```no_run
+//! use dotscope::emulation::CaptureContext;
+//! use dotscope::emulation::CaptureConfig;
 //!
 //! // Only capture assemblies (minimal overhead)
 //! let ctx = CaptureContext::assemblies_only();

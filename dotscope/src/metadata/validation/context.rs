@@ -689,7 +689,7 @@ impl OwnedValidationContext<'_> {
     ///
     /// # Usage
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// let mapping = context.method_type_mapping();
     /// let type_addr = Arc::as_ptr(&some_type) as usize;
     /// for &method_addr in mapping.get_type_methods(type_addr) {

@@ -35,10 +35,9 @@
 
 use dotscope::{
     assembly::Operand,
-    deobfuscation::{DeobfuscationEngine, EngineConfig},
     metadata::validation::ValidationConfig,
     testkit::{
-        fixture,
+        deobfuscated, fixture,
         framework::{
             load_sample, print_summary, run_deobfuscation_test, ProcessMode, SampleSpec,
             SEMANTIC_TEST_METHODS,
@@ -389,47 +388,38 @@ fn test_netreactor_samples_loadable() {
     eprintln!("\n.NET Reactor: {loaded} loaded");
 }
 
-/// Main test that runs all .NET Reactor samples through the deobfuscation pipeline.
-///
-/// Currently a stub — will be expanded as detection and deobfuscation techniques
-/// are implemented. The test gracefully handles missing samples and missing
-/// detection support.
-#[test]
-#[cfg_attr(feature = "skip-expensive-tests", ignore)]
-fn test_all_netreactor_samples() {
-    let samples = all_samples();
+/// Runs one .NET Reactor sample through the deobfuscation pipeline and checks it against its
+/// description in [`all_samples`].
+fn check_sample(filename: &str) {
+    let sample = all_samples()
+        .into_iter()
+        .find(|sample| sample.filename == filename)
+        .unwrap_or_else(|| panic!("{filename} is not a .NET Reactor sample"));
 
-    let original_asm =
-        Some(load_sample(SAMPLES_DIR, "original.exe").expect("the unprotected original loads"));
-
-    let mut results = Vec::new();
-
-    for sample in &samples {
-        let path = fixture(&format!("{}/{}", SAMPLES_DIR, sample.filename));
-
-        if sample.expected_protections.has_native_exe {
-            // Not supported yet (see `test_netreactor_samples_loadable`): deobfuscation refuses
-            // it rather than writing anything.
-            let refused = DeobfuscationEngine::new(EngineConfig::default()).process_file(&path);
-            assert!(
-                matches!(refused, Err(Error::NotSupported)),
-                "{}: a native EXE wrapper is refused as not supported",
-                sample.filename
-            );
-            continue;
-        }
-
-        results.push(run_deobfuscation_test(
-            sample,
-            SAMPLES_DIR,
-            original_asm.as_ref(),
-            SEMANTIC_TEST_METHODS,
-            EngineConfig::default(),
-            ProcessMode::Assembly,
-        ));
+    if sample.expected_protections.has_native_exe {
+        // Not supported yet (see `test_netreactor_samples_loadable`): deobfuscation refuses
+        // it rather than writing anything.
+        assert!(
+            matches!(
+                deobfuscated(&format!("{SAMPLES_DIR}/{filename}")),
+                Err(Error::NotSupported)
+            ),
+            "{filename}: a native EXE wrapper is refused as not supported",
+        );
+        return;
     }
 
-    print_summary(&results, "NET REACTOR", |result| {
+    let original_asm =
+        load_sample(SAMPLES_DIR, "original.exe").expect("the unprotected original loads");
+    let result = &run_deobfuscation_test(
+        &sample,
+        SAMPLES_DIR,
+        Some(&original_asm),
+        SEMANTIC_TEST_METHODS,
+        ProcessMode::Assembly,
+    );
+
+    print_summary(std::slice::from_ref(result), "NET REACTOR", |result| {
         if !result.sample.is_original {
             eprintln!(
                 "       Detection: confidence={:.0}% techniques=[{}]",
@@ -439,61 +429,80 @@ fn test_all_netreactor_samples() {
         }
     });
 
-    // ASSERTIONS — expand as detection techniques are implemented
-    for result in &results {
-        if result.sample.is_original {
-            assert!(
-                result.detection.confidence() < 0.5,
-                "{}: Unprotected original should not be detected as .NET Reactor (confidence: {:.0}%)",
-                result.sample.filename,
-                result.detection.confidence() * 100.0
-            );
-            continue;
-        }
-
-        // The contract cleanup must satisfy is structural validity, not a survival ratio.
-        // An assembly that fails validation has had something deleted out from under a
-        // reference that still names it, which is over-cleanup by definition. A ratio only
-        // correlates with that loosely — samples have been observed at 82% survival and
-        // still invalid, and it says nothing about *which* methods went.
+    if result.sample.is_original {
         assert!(
-            result.success,
-            "{}: deobfuscation did not complete: {}",
+            result.detection.confidence() < 0.5,
+            "{}: Unprotected original should not be detected as .NET Reactor (confidence: {:.0}%)",
             result.sample.filename,
-            result.error.as_deref().unwrap_or("unknown error")
+            result.detection.confidence() * 100.0
         );
-        assert!(
-            result.assembly_valid,
-            "{}: deobfuscated output failed validation: {}",
-            result.sample.filename,
-            result.error.as_deref().unwrap_or("no error recorded")
-        );
-        assert!(
-            result.roundtrip_ok,
-            "{}: deobfuscated output does not round-trip: {}",
-            result.sample.filename,
-            result.error.as_deref().unwrap_or("no error recorded")
-        );
-
-        // Coarse backstop, and only that. Validity catches deletions that leave a dangling
-        // reference; it cannot catch deleting code nothing statically references — a VM
-        // handler reached only through computed dispatch, say. Those samples are kept for
-        // later analysis, so losing their real code silently is the failure this guards.
-        if result.sample.expected_protections.has_virtualization {
-            assert!(
-                result.methods_after * 2 > result.methods_before,
-                "{}: cleanup removed {} of {} methods — the VM runtime is still \
-                 referenced by the virtualized method stubs and must survive",
-                result.sample.filename,
-                result.methods_before.saturating_sub(result.methods_after),
-                result.methods_before
-            );
-        }
-
-        // Once detection is implemented, add assertions here:
-        // - Verify correct technique detection per sample
-        // - Verify semantic preservation
+        return;
     }
+
+    // The contract cleanup must satisfy is structural validity, not a survival ratio.
+    // An assembly that fails validation has had something deleted out from under a
+    // reference that still names it, which is over-cleanup by definition. A ratio only
+    // correlates with that loosely: samples have been observed at 82% survival and
+    // still invalid, and it says nothing about *which* methods went.
+    assert!(
+        result.success,
+        "{}: deobfuscation did not complete: {}",
+        result.sample.filename,
+        result.error.as_deref().unwrap_or("unknown error")
+    );
+    assert!(
+        result.assembly_valid,
+        "{}: deobfuscated output failed validation: {}",
+        result.sample.filename,
+        result.error.as_deref().unwrap_or("no error recorded")
+    );
+    assert!(
+        result.roundtrip_ok,
+        "{}: deobfuscated output does not round-trip: {}",
+        result.sample.filename,
+        result.error.as_deref().unwrap_or("no error recorded")
+    );
+
+    // Coarse backstop, and only that. Validity catches deletions that leave a dangling
+    // reference; it cannot catch deleting code nothing statically references (a VM
+    // handler reached only through computed dispatch, say). Those samples are kept for
+    // later analysis, so losing their real code silently is the failure this guards.
+    if result.sample.expected_protections.has_virtualization {
+        assert!(
+            result.methods_after * 2 > result.methods_before,
+            "{}: cleanup removed {} of {} methods; the VM runtime is still \
+             referenced by the virtualized method stubs and must survive",
+            result.sample.filename,
+            result.methods_before.saturating_sub(result.methods_after),
+            result.methods_before
+        );
+    }
+
+    // Once detection is implemented, add assertions here:
+    // - Verify correct technique detection per sample
+    // - Verify semantic preservation
+}
+
+sample_tests! {
+    all_samples(), check_sample;
+    original => "original.exe",
+    necrobit => "reactor_necrobit.exe",
+    strings => "reactor_strings.exe",
+    controlflow => "reactor_controlflow.exe",
+    controlflow_max => "reactor_controlflow_max.exe",
+    resources => "reactor_resources.exe",
+    antitamp => "reactor_antitamp.exe",
+    obfuscation => "reactor_obfuscation.exe",
+    suppressildasm => "reactor_suppressildasm.exe",
+    necrobit_strings => "reactor_necrobit_strings.exe",
+    necrobit_strings_cff => "reactor_necrobit_strings_cff.exe",
+    antistrong => "reactor_antistrong.exe",
+    prejit => "reactor_prejit.exe",
+    compression => "reactor_compression.exe",
+    full => "reactor_full.exe",
+    nativeexe => "reactor_nativeexe.exe",
+    virtualization => "reactor_virtualization.exe",
+    virtualization_full => "reactor_virtualization_full.exe",
 }
 
 /// The methods whose code loads a string containing `needle`.
@@ -523,12 +532,12 @@ fn methods_loading(assembly: &CilObject, needle: &str) -> Vec<String> {
 /// code calling it is the reason the check has to go, not a reason to keep it.
 #[test]
 fn the_trial_check_is_removed_with_its_call_sites() {
-    let sample = fixture(&format!("{SAMPLES_DIR}/reactor_strings.exe"));
-    let engine = DeobfuscationEngine::new(EngineConfig::default());
-    let (output, _) = engine.process_file(&sample).unwrap();
+    let (output, _) = deobfuscated(&format!("{SAMPLES_DIR}/reactor_strings.exe"))
+        .as_ref()
+        .unwrap();
 
     assert_eq!(
-        methods_loading(&output, "unregistered version"),
+        methods_loading(output, "unregistered version"),
         Vec::<String>::new()
     );
 }
@@ -540,9 +549,9 @@ fn the_trial_check_is_removed_with_its_call_sites() {
 /// their own names and the encrypted containers go.
 #[test]
 fn fully_protected_resources_are_restored() {
-    let sample = fixture(&format!("{SAMPLES_DIR}/reactor_full.exe"));
-    let engine = DeobfuscationEngine::new(EngineConfig::default());
-    let (output, _) = engine.process_file(&sample).unwrap();
+    let (output, _) = deobfuscated(&format!("{SAMPLES_DIR}/reactor_full.exe"))
+        .as_ref()
+        .unwrap();
 
     let names: Vec<String> = output
         .resources()

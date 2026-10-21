@@ -34,7 +34,7 @@
 //! - [`crate::metadata::tables::StandAloneSigRaw`] - Raw table entry structure
 //! - [`crate::metadata::tables::StandAloneSig`] - Owned table entry type
 
-use rayon::iter::{ParallelBridge, ParallelIterator};
+use rayon::iter::IntoParallelIterator;
 
 use crate::{
     assembly::DecodedBodies,
@@ -45,6 +45,7 @@ use crate::{
         tables::StandAloneSigRaw,
     },
     prelude::TableId,
+    utils::TryForEachInOrder,
     Result,
 };
 
@@ -92,7 +93,9 @@ impl MetadataLoader for StandAloneSigLoader {
             .meta
             .and_then(TablesHeader::table::<StandAloneSigRaw>);
 
-        context.method_def.iter().par_bridge().try_for_each(|row| {
+        // In token order, so that of several bodies that fail, the error names the first
+        let methods: Vec<_> = context.method_def.iter().collect();
+        methods.into_par_iter().try_for_each_in_order(|row| {
             let method = row.value();
             let token_msg = || format!("method body 0x{:08x}", method.token.value());
 

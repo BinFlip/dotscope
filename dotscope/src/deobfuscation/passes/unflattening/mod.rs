@@ -468,16 +468,16 @@ mod tests {
 
     use crate::{
         analysis::{
-            ControlFlowGraph, PhiNode, PhiOperand, SsaBlock, SsaConverter, SsaFunction,
-            SsaInstruction, SsaOp, SsaVarId, VariableOrigin,
+            PhiNode, PhiOperand, SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaType, SsaVarId,
+            VariableOrigin,
         },
-        assembly::{decode_blocks, InstructionAssembler},
+        assembly::InstructionAssembler,
         deobfuscation::{
             passes::unflattening::{detection::CffDetector, dispatcher::Dispatcher},
-            DeobfuscationEngine, EngineConfig,
+            DetectionWeights, EngineConfig,
         },
         metadata::token::Token,
-        testkit::{fixture, TestTypeProvider},
+        testkit::{build_cfg, build_ssa, engine, engine_with, fixture, TestTypeProvider},
         CilObject,
     };
 
@@ -539,28 +539,6 @@ mod tests {
         assert_eq!(candidate.block, 1);
     }
 
-    /// Build CFG from assembled bytecode.
-    fn build_cfg(assembler: InstructionAssembler) -> crate::Result<ControlFlowGraph<'static>> {
-        let (bytecode, _max_stack, _) = assembler.finish()?;
-        let blocks = decode_blocks(&bytecode, 0, 0x1000, Some(bytecode.len()))?;
-        ControlFlowGraph::from_basic_blocks(blocks)
-    }
-
-    /// Build SSA from a control flow graph.
-    fn build_ssa(
-        cfg: &ControlFlowGraph<'_>,
-        num_args: usize,
-        num_locals: usize,
-    ) -> crate::Result<SsaFunction> {
-        SsaConverter::build(
-            cfg,
-            num_args,
-            num_locals,
-            &TestTypeProvider::new(num_args, num_locals),
-            Vec::new(),
-        )
-    }
-
     /// Check if SSA has a switch instruction (indicates CFF dispatcher).
     fn has_switch(ssa: &SsaFunction) -> bool {
         for block in ssa.blocks() {
@@ -590,19 +568,86 @@ mod tests {
     ///
     /// This uses `DeobfuscationEngine::process_ssa` to run all passes
     /// including unflattening and DCE in the proper order.
-    fn run_full_deobfuscation(ssa: &mut SsaFunction) -> crate::Result<()> {
-        // Use LazyLock to load the assembly only once across all tests
-        static TEST_ASSEMBLY: LazyLock<Arc<CilObject>> = LazyLock::new(|| {
-            Arc::new(
-                CilObject::from_path(fixture("crafted_2.exe"))
-                    .expect("Failed to load test assembly"),
-            )
-        });
+    /// The assembly SSA built here is processed against, loaded once.
+    static TEST_ASSEMBLY: LazyLock<Arc<CilObject>> = LazyLock::new(|| {
+        Arc::new(
+            CilObject::from_path(fixture("crafted_2.exe")).expect("Failed to load test assembly"),
+        )
+    });
 
-        let config = EngineConfig::default();
-        let engine = DeobfuscationEngine::new(config);
+    fn run_full_deobfuscation(ssa: &mut SsaFunction) -> crate::Result<()> {
         let token = Token::new(0x06000001); // Synthetic method token
-        engine.process_ssa(&TEST_ASSEMBLY, ssa, token)?;
+        engine().process_ssa(&TEST_ASSEMBLY, ssa, token)?;
+        Ok(())
+    }
+
+    /// The flattened method of [`test_unflatten_simple_cff_pattern`]: a dispatcher computing
+    /// `(state ^ 0) % 3` and switching over three cases that store 1, 2 and 3 in local 0.
+    fn simple_cff() -> crate::Result<SsaFunction> {
+        let mut asm = InstructionAssembler::new();
+        asm
+            // Entry block: push initial state (0), go to dispatcher
+            .ldc_i4(0)? // state = 0 -> case 0
+            .br("dispatcher")?
+            // Dispatcher block
+            .label("dispatcher")?
+            .dup()? // duplicate state for switch
+            .stloc_s(2)? // save to local 2
+            .ldc_i4(0)? // XOR key = 0 (identity)
+            .xor()?
+            .ldc_i4(3)? // MOD 3
+            .rem_un()?
+            .switch(&["case0", "case1", "case2"])?
+            .br("exit")? // default -> exit
+            // Case 0: set local0 = 1, state = 1, jump back
+            .label("case0")?
+            .ldc_i4(1)?
+            .stloc_0()?
+            .ldc_i4(1)? // next state = 1 -> case 1
+            .br("dispatcher")?
+            // Case 1: set local0 = 2, state = 2, jump back
+            .label("case1")?
+            .ldc_i4(2)?
+            .stloc_0()?
+            .ldc_i4(2)? // next state = 2 -> case 2
+            .br("dispatcher")?
+            // Case 2: set local0 = 3, go to exit
+            .label("case2")?
+            .ldc_i4(3)?
+            .stloc_0()?
+            .br("exit")?
+            // Exit
+            .label("exit")?
+            .ret()?;
+
+        let (_, cfg) = build_cfg(asm)?;
+        build_ssa(&cfg, &TestTypeProvider::all_i32(0, 3))
+    }
+
+    /// `process_ssa` detects flattening by the engine's configuration: with every detection
+    /// weight at zero no dispatcher reaches the confidence threshold, so the switch stays.
+    #[test]
+    fn process_ssa_detects_flattening_by_the_engine_s_configuration() -> crate::Result<()> {
+        let mut ssa = simple_cff()?;
+        let mut config = EngineConfig::default();
+        config.unflattening.confidence_weights = DetectionWeights {
+            case_count_base: 0.0,
+            case_count_bonus: 0.0,
+            state_variable: 0.0,
+            state_update_coverage: 0.0,
+            predecessor_ratio: 0.0,
+            back_edge_ratio: 0.0,
+            exit_blocks: 0.0,
+            switch_bonus: 0.0,
+            modulo_bonus: 0.0,
+            dominance_ratio: 0.0,
+            method_coverage: 0.0,
+        };
+        engine_with(config).process_ssa(&TEST_ASSEMBLY, &mut ssa, Token::new(0x0600_0001))?;
+        assert!(
+            has_switch(&ssa),
+            "no dispatcher is detected, so none is removed:\n{ssa}"
+        );
         Ok(())
     }
 
@@ -643,44 +688,7 @@ mod tests {
         // This means: state 0 -> case 0, state 1 -> case 1, state 2 -> case 2
         // After unflattening, the flow should be: case0 -> case1 -> case2 -> exit
 
-        let mut asm = InstructionAssembler::new();
-        asm
-            // Entry block: push initial state (0), go to dispatcher
-            .ldc_i4(0)? // state = 0 -> case 0
-            .br("dispatcher")?
-            // Dispatcher block
-            .label("dispatcher")?
-            .dup()? // duplicate state for switch
-            .stloc_s(2)? // save to local 2
-            .ldc_i4(0)? // XOR key = 0 (identity)
-            .xor()?
-            .ldc_i4(3)? // MOD 3
-            .rem_un()?
-            .switch(&["case0", "case1", "case2"])?
-            .br("exit")? // default -> exit
-            // Case 0: set local0 = 1, state = 1, jump back
-            .label("case0")?
-            .ldc_i4(1)?
-            .stloc_0()?
-            .ldc_i4(1)? // next state = 1 -> case 1
-            .br("dispatcher")?
-            // Case 1: set local0 = 2, state = 2, jump back
-            .label("case1")?
-            .ldc_i4(2)?
-            .stloc_0()?
-            .ldc_i4(2)? // next state = 2 -> case 2
-            .br("dispatcher")?
-            // Case 2: set local0 = 3, go to exit
-            .label("case2")?
-            .ldc_i4(3)?
-            .stloc_0()?
-            .br("exit")?
-            // Exit
-            .label("exit")?
-            .ret()?;
-
-        let cfg = build_cfg(asm)?;
-        let mut ssa = build_ssa(&cfg, 0, 3)?; // 0 args, 3 locals (local0, local1, local2)
+        let mut ssa = simple_cff()?;
 
         // Verify dispatcher is detected
         assert!(has_switch(&ssa), "Should have switch before unflattening");
@@ -841,8 +849,12 @@ mod tests {
             .label("exit")?
             .ret()?;
 
-        let cfg = build_cfg(asm)?;
-        let mut ssa = build_ssa(&cfg, 2, 3)?; // 2 args (this + iterations), 3 locals
+        let (_, cfg) = build_cfg(asm)?;
+        // args: this, iterations
+        let mut ssa = build_ssa(
+            &cfg,
+            &TestTypeProvider::all_i32(2, 3).arg(0, SsaType::Object),
+        )?;
 
         // Verify initial state - should have 1 CFF dispatcher switch
         assert!(has_switch(&ssa), "Should have switch before unflattening");
@@ -1070,8 +1082,12 @@ mod tests {
             .label("done")?
             .ret()?;
 
-        let cfg = build_cfg(asm)?;
-        let mut ssa = build_ssa(&cfg, 2, 2)?; // 2 args (this + value), 2 locals
+        let (_, cfg) = build_cfg(asm)?;
+        // args: this, value
+        let mut ssa = build_ssa(
+            &cfg,
+            &TestTypeProvider::all_i32(2, 2).arg(0, SsaType::Object),
+        )?;
 
         // Verify initial state - should have 1 CFF dispatcher switch
         assert!(has_switch(&ssa), "Should have switch before unflattening");
@@ -1242,8 +1258,12 @@ mod tests {
             .label("done")?
             .ret()?;
 
-        let cfg = build_cfg(asm)?;
-        let mut ssa = build_ssa(&cfg, 2, 2)?; // 2 args (this + choice), 2 locals
+        let (_, cfg) = build_cfg(asm)?;
+        // args: this, choice
+        let mut ssa = build_ssa(
+            &cfg,
+            &TestTypeProvider::all_i32(2, 2).arg(0, SsaType::Object),
+        )?;
 
         // This method has 2 switches: user's original switch + CFF dispatcher
         assert!(has_switch(&ssa), "Should have switch before unflattening");
@@ -1356,9 +1376,9 @@ mod tests {
         // Exit
         asm.label("exit")?.ret()?;
 
-        let cfg = build_cfg(asm)?;
+        let (_, cfg) = build_cfg(asm)?;
         // 0 args, 5 locals (local0..local4, local4 is state)
-        let ssa = build_ssa(&cfg, 0, 5)?;
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(0, 5))?;
 
         // Verify detection finds the dispatcher with initial_state = 10
         let mut detector = CffDetector::new(&ssa);

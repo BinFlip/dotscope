@@ -22,7 +22,7 @@
 //! # Reference
 //! - [ECMA-335 II.22.14](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `ExportedType` table specification
 
-use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+use rayon::iter::IndexedParallelIterator;
 
 use crate::{
     metadata::{
@@ -31,6 +31,7 @@ use crate::{
         tables::ExportedTypeRaw,
     },
     prelude::TableId,
+    utils::TryForEachInOrder,
     Result,
 };
 
@@ -75,7 +76,7 @@ impl MetadataLoader for ExportedTypeLoader {
         table
             .par_iter()
             .enumerate()
-            .try_for_each(|(index, row)| -> Result<()> {
+            .try_for_each_in_order(|(index, row)| -> Result<()> {
                 let Some(row) = context.handle_row(row, index)? else {
                     return Ok(());
                 };
@@ -99,26 +100,29 @@ impl MetadataLoader for ExportedTypeLoader {
             })?;
 
         // Second pass: resolve implementations
-        table.par_iter().enumerate().try_for_each(|(index, row)| {
-            let Some(row) = context.handle_row(row, index)? else {
-                return Ok(());
-            };
-            let token_msg = || format!("exported type impl 0x{:08x}", row.token.value());
+        table
+            .par_iter()
+            .enumerate()
+            .try_for_each_in_order(|(index, row)| {
+                let Some(row) = context.handle_row(row, index)? else {
+                    return Ok(());
+                };
+                let token_msg = || format!("exported type impl 0x{:08x}", row.token.value());
 
-            if let Some(implementation) =
-                row.resolve_implementation(|coded_index| context.get_ref(coded_index))
-            {
-                if let Some(exported_type_entry) = context.exported_type.get(&row.token) {
-                    let exported_type = exported_type_entry.value();
-                    context.handle_error(
-                        exported_type.set_implementation(implementation),
-                        DiagnosticCategory::Type,
-                        token_msg,
-                    )?;
+                if let Some(implementation) =
+                    row.resolve_implementation(|coded_index| context.get_ref(coded_index))
+                {
+                    if let Some(exported_type_entry) = context.exported_type.get(&row.token) {
+                        let exported_type = exported_type_entry.value();
+                        context.handle_error(
+                            exported_type.set_implementation(implementation),
+                            DiagnosticCategory::Type,
+                            token_msg,
+                        )?;
+                    }
                 }
-            }
-            Ok(())
-        })
+                Ok(())
+            })
     }
 
     /// Returns the table identifier for `ExportedType` table

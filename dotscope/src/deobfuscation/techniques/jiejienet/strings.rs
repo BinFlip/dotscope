@@ -386,8 +386,8 @@ mod tests {
     use super::*;
     use crate::{
         deobfuscation::techniques::Technique,
-        emulation::{EmValue, EmulationOutcome, ProcessBuilder},
-        testkit::helpers::load_sample,
+        emulation::{EmValue, EmulationOutcome},
+        testkit::{emulation::process_builder, helpers::load_sample},
     };
 
     #[test]
@@ -494,7 +494,7 @@ mod tests {
 
         // Create emulation process with the assembly
         let asm_arc = Arc::new(asm);
-        let mut process = ProcessBuilder::new()
+        let mut process = process_builder()
             .assembly_arc(Arc::clone(&asm_arc))
             .for_analysis()
             .with_max_instructions(1_000_000)

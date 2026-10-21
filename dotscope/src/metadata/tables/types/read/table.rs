@@ -52,8 +52,9 @@ use crate::{
 /// ## Examples
 ///
 /// ### Basic Usage
-/// ```rust,ignore
-/// # use dotscope::metadata::tables::types::{MetadataTable, RowReadable};
+/// ```no_run
+/// # use dotscope::metadata::tables::MetadataTable;
+/// # use dotscope::metadata::tables::RowReadable;
 /// # use dotscope::metadata::tables::TableInfoRef;
 /// # struct MyRow { id: u32 }
 /// # impl RowReadable for MyRow {
@@ -76,11 +77,13 @@ use crate::{
 /// }
 /// # Ok(())
 /// # }
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
 /// ### Parallel Processing
-/// ```rust,ignore
-/// # use dotscope::metadata::tables::types::{MetadataTable, RowReadable};
+/// ```no_run
+/// # use dotscope::metadata::tables::MetadataTable;
+/// # use dotscope::metadata::tables::RowReadable;
 /// # use dotscope::metadata::tables::TableInfoRef;
 /// # use rayon::prelude::*;
 /// # struct MyRow { id: u32 }
@@ -104,6 +107,7 @@ use crate::{
 /// })?;
 /// # Ok(())
 /// # }
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct MetadataTable<'a, T> {
     /// Reference to the raw table data bytes

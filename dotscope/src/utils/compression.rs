@@ -17,7 +17,7 @@
 //!
 //! # Examples
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::io::{compressed_uint_size, write_compressed_uint};
 //!
 //! let mut buffer = Vec::new();
@@ -67,8 +67,8 @@ const TWO_BYTE_MAX: u32 = 0x3FFF;
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::utils::compression::compressed_uint_size;
+/// ```no_run
+/// use dotscope::io::compressed_uint_size;
 ///
 /// assert_eq!(compressed_uint_size(42), 1);
 /// assert_eq!(compressed_uint_size(300), 2);

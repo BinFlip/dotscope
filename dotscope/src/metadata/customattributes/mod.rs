@@ -146,7 +146,7 @@ mod tests {
     /// the pattern matching and equality check for any argument variant.
     ///
     /// # Usage
-    /// ```ignore
+    /// ```no_run
     /// assert_arg_eq!(parsed, original, I4, "context message");
     /// ```
     macro_rules! assert_arg_eq {

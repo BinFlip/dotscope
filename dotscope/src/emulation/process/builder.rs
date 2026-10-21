@@ -66,13 +66,14 @@
 //!
 //! Register custom method stubs for BCL methods:
 //!
-//! ```rust,ignore
+//! ```no_run
 //! # use dotscope::emulation::ProcessBuilder;
 //! let process = ProcessBuilder::new()
 //!     .assembly(assembly)
 //!     .stub(signature, my_custom_stub)
 //!     .no_default_stubs() // Optionally disable built-in stubs
 //!     .build()?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 
 use std::{path::Path, sync::Arc};

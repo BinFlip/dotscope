@@ -109,7 +109,7 @@
 //!
 //! ## Type System Exploration
 //!
-//! ```ignore
+//! ```no_run
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!

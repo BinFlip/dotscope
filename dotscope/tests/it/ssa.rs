@@ -21,15 +21,15 @@ use std::collections::BTreeSet;
 
 use dotscope::{
     analysis::{
-        ConstValue, SsaExceptionHandlerCilExt, SsaFunction, SsaOp, SsaVarId, SymbolicEvaluator,
-        SymbolicExpr,
+        ConstValue, SsaExceptionHandlerCilExt, SsaFunction, SsaOp, SsaType, SsaVarId,
+        SymbolicEvaluator, SymbolicExpr,
     },
     assembly::{Immediate, InstructionAssembler, Operand},
     metadata::{
-        method::ExceptionHandlerFlags, token::Token, typesystem::PointerSize,
-        validation::ValidationConfig,
+        method::ExceptionHandlerFlags, signatures::CALLING_CONVENTION, token::Token,
+        typesystem::PointerSize, validation::ValidationConfig,
     },
-    testkit::{build_cfg, build_ssa, build_ssa_with_handlers, fixture},
+    testkit::{build_cfg, build_ssa, build_ssa_with_handlers, fixture, TestTypeProvider},
     CilObject, Result,
 };
 use rustc_hash::FxHashMap;
@@ -41,7 +41,7 @@ fn ssa_from_asm(
     num_locals: usize,
 ) -> Result<SsaFunction> {
     let (_bytecode, cfg) = build_cfg(assembler)?;
-    build_ssa(&cfg, num_args, num_locals)
+    build_ssa(&cfg, &TestTypeProvider::all_i32(num_args, num_locals))
 }
 
 /// Get the SSA variable ID for argument N (version 0).
@@ -2096,7 +2096,7 @@ fn test_ssa_exception_handler_preservation() -> Result<()> {
         .ret()?;
 
     let (bytecode, _max_stack, handlers) = asm.finish()?;
-    let ssa = build_ssa_with_handlers(&bytecode, &handlers, 1, 0)?;
+    let ssa = build_ssa_with_handlers(&bytecode, &handlers, &TestTypeProvider::all_i32(1, 0))?;
 
     // Verify exception handlers are preserved
     assert!(
@@ -2152,7 +2152,7 @@ fn test_ssa_finally_handler() -> Result<()> {
         .ret()?;
 
     let (bytecode, _max_stack, handlers) = asm.finish()?;
-    let ssa = build_ssa_with_handlers(&bytecode, &handlers, 1, 0)?;
+    let ssa = build_ssa_with_handlers(&bytecode, &handlers, &TestTypeProvider::all_i32(1, 0))?;
 
     assert!(ssa.has_exception_handlers());
     let eh = &ssa.exception_handlers()[0];
@@ -2207,7 +2207,7 @@ fn test_ssa_nested_exception_handlers() -> Result<()> {
         .ret()?;
 
     let (bytecode, _max_stack, handlers) = asm.finish()?;
-    let ssa = build_ssa_with_handlers(&bytecode, &handlers, 1, 0)?;
+    let ssa = build_ssa_with_handlers(&bytecode, &handlers, &TestTypeProvider::all_i32(1, 0))?;
 
     assert_eq!(ssa.exception_handlers().len(), 2);
 
@@ -2587,7 +2587,7 @@ fn finally_reads_the_local_its_try_wrote() -> Result<()> {
         .ret()?;
 
     let (bytecode, _max_stack, handlers) = asm.finish()?;
-    let ssa = build_ssa_with_handlers(&bytecode, &handlers, 0, 1)?;
+    let ssa = build_ssa_with_handlers(&bytecode, &handlers, &TestTypeProvider::all_i32(0, 1))?;
 
     // The handler's phi for the local, and what a throw may bring to it.
     let exceptional: Vec<SsaVarId> = ssa
@@ -2640,4 +2640,143 @@ fn finally_reads_the_local_its_try_wrote() -> Result<()> {
     );
 
     Ok(())
+}
+
+/// The SSA of the method `token` names in the corpus assembly at `path`.
+fn lift(path: &str, token: u32) -> SsaFunction {
+    let assembly = CilObject::from_path(fixture(path)).unwrap();
+    let method = assembly.methods().get(&Token::new(token)).unwrap();
+    let ssa = method.value().ssa(&assembly);
+    ssa.unwrap_or_else(|error| panic!("{path} {token:#010x}: {error}"))
+}
+
+/// The type of argument `index` on entry.
+fn arg_type(ssa: &SsaFunction, index: u16) -> SsaType {
+    ssa.variable(arg_var_id(ssa, index))
+        .unwrap()
+        .var_type()
+        .clone()
+}
+
+/// A function pointer is a value of its own type, its calling convention kept: here
+/// `FSEventStreamCreate`'s callback, a `delegate* unmanaged`, and a static of that type that
+/// `TryOpenMsQuic` merges with another.
+#[test]
+fn function_pointers_are_typed() {
+    let ssa = lift("dotnet_10.0/System.IO.FileSystem.Watcher.dll", 0x0600_0017);
+    match arg_type(&ssa, 1) {
+        SsaType::FnPtr(signature) => {
+            assert_eq!(signature.call_conv, CALLING_CONVENTION::UNMANAGED);
+            assert_eq!(signature.params.len(), 6);
+        }
+        other => panic!("the callback is typed {other:?}"),
+    }
+    lift("dotnet_10.0/System.Net.Quic.dll", 0x0600_0110);
+}
+
+/// A value type's constructor called through `newobj` leaves the value, not a reference to
+/// an object: `SqlMoney + SqlMoney` merges one with a `SqlMoney` field's value.
+#[test]
+fn a_value_type_built_by_its_own_constructor_is_a_value() {
+    let ssa = lift("dotnet_10.0/System.Data.Common.dll", 0x0600_11AD);
+    let money = arg_type(&ssa, 0);
+    assert!(matches!(money, SsaType::ValueType(_)));
+    // `new SqlMoney(long, int)` is the body's only constructor call on `SqlMoney`; the other
+    // builds the `OverflowException`.
+    let built: Vec<SsaType> = ssa
+        .blocks()
+        .iter()
+        .flat_map(|block| block.instructions())
+        .filter_map(|instruction| match instruction.op() {
+            SsaOp::NewObj { dest, .. } => ssa.variable(*dest).map(|v| v.var_type().clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(built.contains(&money), "newobj results: {built:?}");
+}
+
+/// `this` in a value type's instance method is a managed pointer to the value.
+#[test]
+fn this_in_a_value_type_is_a_managed_pointer() {
+    // `SqlMoney.CompareTo(SqlMoney)`, an instance method of a struct
+    let assembly = CilObject::from_path(fixture("dotnet_10.0/System.Data.Common.dll")).unwrap();
+    let method = assembly
+        .methods()
+        .iter()
+        .map(|entry| entry.value().clone())
+        .find(|method| {
+            method.name == "CompareTo"
+                && method.signature.has_this
+                && method
+                    .declaring_type_rc()
+                    .is_some_and(|owner| owner.name == "SqlMoney")
+        })
+        .unwrap();
+    let ssa = method.ssa(&assembly).unwrap();
+    assert!(matches!(
+        arg_type(&ssa, 0),
+        SsaType::ByRef(inner) if matches!(*inner, SsaType::ValueType(_))
+    ));
+}
+
+/// `ref` parameters and `ref` returns are managed pointers: `AwaitOnCompleted(ref TAwaiter,
+/// ref TStateMachine)` and `SequenceCompareTo`, whose `Unsafe.Add` returns `ref T`.
+#[test]
+fn ref_parameters_and_returns_are_managed_pointers() {
+    let ssa = lift("dotnet_10.0/System.Private.CoreLib.dll", 0x0600_7E93);
+    assert!(matches!(arg_type(&ssa, 0), SsaType::ByRef(_)));
+    assert!(matches!(arg_type(&ssa, 1), SsaType::ByRef(_)));
+    lift("dotnet_10.0/System.Private.CoreLib.dll", 0x0600_1D9F);
+    lift("mono_4.5/mscorlib.dll", 0x0600_66D6);
+}
+
+/// A `calli` through an unmanaged function pointer finds its signature: COM's
+/// `QueryInterface` calls through the vtable's `delegate* unmanaged`.
+#[test]
+fn an_unmanaged_calli_site_resolves() {
+    lift("dotnet_10.0/System.Private.CoreLib.dll", 0x0600_7844);
+}
+
+/// `System.ValueType` and `System.Enum` are classes, though what derives from them is not:
+/// `this` in `Enum.HasFlag` is a reference, and `HasFlag`'s argument a reference too.
+#[test]
+fn the_bases_of_value_types_are_classes() {
+    let assembly = CilObject::from_path(fixture("dotnet_10.0/System.Private.CoreLib.dll")).unwrap();
+    let has_flag = assembly
+        .methods()
+        .iter()
+        .map(|entry| entry.value().clone())
+        .find(|method| {
+            method.name == "HasFlag"
+                && method
+                    .declaring_type_rc()
+                    .is_some_and(|owner| owner.fullname().as_ref() == "System.Enum")
+        })
+        .unwrap();
+    let ssa = has_flag.ssa(&assembly).unwrap();
+    assert!(
+        matches!(arg_type(&ssa, 0), SsaType::Class(_)),
+        "{:?}",
+        arg_type(&ssa, 0)
+    );
+    assert!(
+        matches!(arg_type(&ssa, 1), SsaType::Class(_)),
+        "{:?}",
+        arg_type(&ssa, 1)
+    );
+
+    let flavor = |name: &str| {
+        assembly
+            .types()
+            .iter()
+            .find(|entry| entry.value().fullname().as_ref() == name)
+            .unwrap()
+            .value()
+            .flavor()
+            .clone()
+    };
+    assert!(!flavor("System.ValueType").is_value_type());
+    assert!(!flavor("System.Enum").is_value_type());
+    assert!(flavor("System.DayOfWeek").is_value_type());
+    assert!(flavor("System.DateTime").is_value_type());
 }

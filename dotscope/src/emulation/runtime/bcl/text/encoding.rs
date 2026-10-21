@@ -75,7 +75,7 @@
 //! All `GetString` methods automatically capture decoded strings through
 //! the [`CaptureContext`] for analysis:
 //!
-//! ```ignore
+//! ```no_run
 //! // When Encoding.UTF8.GetString(bytes) is called:
 //! // 1. Decode bytes to string
 //! // 2. Capture string with source location info

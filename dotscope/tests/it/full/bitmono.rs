@@ -24,13 +24,13 @@
 use std::{collections::HashSet, sync::Arc};
 
 use dotscope::{
-    deobfuscation::{DeobfuscationEngine, DeobfuscationResult, EngineConfig},
+    deobfuscation::DeobfuscationResult,
     metadata::{
         tables::{AssemblyRefRaw, TypeRefRaw},
         validation::ValidationConfig,
     },
     testkit::{
-        fixture,
+        deobfuscated, engine, fixture,
         framework::{
             assert_common_requirements, load_sample, print_summary, run_deobfuscation_test,
             ProcessMode, SampleSpec, TestResult, SEMANTIC_TEST_METHODS,
@@ -356,177 +356,217 @@ fn all_samples(version: &str) -> Vec<SampleSpec<ExpectedProtections>> {
 }
 
 /// Main test that runs all BitMono samples through the comprehensive deobfuscation pipeline.
-#[test]
-fn test_all_bitmono_samples() {
-    for version in VERSIONS {
-        let dir = samples_dir(version);
-        let dir = dir.as_str();
-        eprintln!("=== BitMono {version} ===");
-        let samples = all_samples(version);
+/// Runs one sample of a BitMono version through the deobfuscation pipeline and checks it
+/// against its description in [`all_samples`].
+fn check_sample(version: &str, filename: &str) {
+    let dir = samples_dir(version);
+    let dir = dir.as_str();
+    let sample = all_samples(version)
+        .into_iter()
+        .find(|sample| sample.filename == filename)
+        .unwrap_or_else(|| panic!("{filename} is not a BitMono {version} sample"));
 
-        // Load original.exe for semantic comparison
-        let original_asm =
-            Some(load_sample(dir, "original.exe").expect("the unprotected original loads"));
+    // Load original.exe for semantic comparison
+    let original_asm = load_sample(dir, "original.exe").expect("the unprotected original loads");
+    let result = &run_deobfuscation_test(
+        &sample,
+        dir,
+        Some(&original_asm),
+        SEMANTIC_TEST_METHODS,
+        ProcessMode::File,
+    );
 
-        let mut results = Vec::new();
+    print_bitmono_summary(std::slice::from_ref(result));
 
-        for sample in &samples {
-            results.push(run_deobfuscation_test(
-                sample,
-                dir,
-                original_asm.as_ref(),
-                SEMANTIC_TEST_METHODS,
-                EngineConfig::default(),
-                ProcessMode::File,
-            ));
-        }
+    if result.sample.is_original {
+        // Original should NOT be detected as BitMono
+        let score = result.detection.supporting_matched;
+        assert!(
+            score < 20,
+            "{}: Unprotected original should not be detected as BitMono (score: {})",
+            result.sample.filename,
+            score
+        );
+        return;
+    }
 
-        print_bitmono_summary(&results);
+    let filename = result.sample.filename;
+    let expected = &result.sample.expected_protections;
 
-        // ASSERTIONS: Verify all protected samples
-        for result in &results {
-            if result.sample.is_original {
-                // Original should NOT be detected as BitMono
-                let score = result.detection.supporting_matched;
-                assert!(
-                    score < 20,
-                    "{}: Unprotected original should not be detected as BitMono (score: {})",
-                    result.sample.filename,
-                    score
-                );
-                continue;
-            }
+    // Common assertions: core validity, semantic preservation, structural match, diagnostics
+    let semantic_threshold = match result.sample.verification_level {
+        VerificationLevel::Normal => 0.90,
+        VerificationLevel::Relaxed => 0.85,
+    };
+    assert_common_requirements(result, None, semantic_threshold, true);
 
-            let filename = result.sample.filename;
-            let expected = &result.sample.expected_protections;
+    // Detection assertions
+    let has_attributed_protections = expected.has_pe_corruption
+        || expected.has_clr_header_corruption
+        || expected.has_data_directory_inflation
+        || expected.has_string_encryption
+        || expected.has_call_to_calli
+        || expected.has_dotnethook
+        || expected.has_unmanaged_string
+        || expected.has_anti_debug
+        || expected.has_junk_prefix
+        || expected.has_billion_nops
+        || expected.has_local_variable_encoding;
 
-            // Common assertions: core validity, semantic preservation, structural match, diagnostics
-            let semantic_threshold = match result.sample.verification_level {
-                VerificationLevel::Normal => 0.90,
-                VerificationLevel::Relaxed => 0.85,
-            };
-            assert_common_requirements(result, None, semantic_threshold, true);
+    if has_attributed_protections {
+        let score = if result.detection.obfuscator_name.is_some() {
+            100
+        } else {
+            0
+        };
+        assert!(
+            score >= 20,
+            "{}: Detection score too low for protected sample (score: {}, expected >= 20)",
+            filename,
+            score
+        );
+    }
 
-            // Detection assertions
-            let has_attributed_protections = expected.has_pe_corruption
-                || expected.has_clr_header_corruption
-                || expected.has_data_directory_inflation
-                || expected.has_string_encryption
-                || expected.has_call_to_calli
-                || expected.has_dotnethook
-                || expected.has_unmanaged_string
-                || expected.has_anti_debug
-                || expected.has_junk_prefix
-                || expected.has_billion_nops
-                || expected.has_local_variable_encoding;
+    if expected.has_suppress_ildasm {
+        assert!(
+            result.detection.has_technique("generic.ildasm"),
+            "{}: SuppressIldasm not detected",
+            filename
+        );
+    }
 
-            if has_attributed_protections {
-                let score = if result.detection.obfuscator_name.is_some() {
-                    100
-                } else {
-                    0
-                };
-                assert!(
-                    score >= 20,
-                    "{}: Detection score too low for protected sample (score: {}, expected >= 20)",
-                    filename,
-                    score
-                );
-            }
+    if expected.has_anti_de4dot {
+        assert!(
+            result.detection.has_technique("generic.decompiler"),
+            "{}: AntiDe4dot fake attributes not detected",
+            filename
+        );
+    }
 
-            if expected.has_suppress_ildasm {
-                assert!(
-                    result.detection.has_technique("generic.ildasm"),
-                    "{}: SuppressIldasm not detected",
-                    filename
-                );
-            }
+    if expected.has_string_encryption {
+        assert!(
+            result.detection.has_technique("bitmono.strings"),
+            "{}: String encryption decryptor not detected",
+            filename
+        );
+    }
 
-            if expected.has_anti_de4dot {
-                assert!(
-                    result.detection.has_technique("generic.decompiler"),
-                    "{}: AntiDe4dot fake attributes not detected",
-                    filename
-                );
-            }
+    if expected.has_anti_debug {
+        assert!(
+            result.detection.has_technique("bitmono.debug"),
+            "{}: AntiDebugBreakpoints not detected",
+            filename
+        );
+    }
 
-            if expected.has_string_encryption {
-                assert!(
-                    result.detection.has_technique("bitmono.strings"),
-                    "{}: String encryption decryptor not detected",
-                    filename
-                );
-            }
+    if expected.has_dotnethook {
+        assert!(
+            result.detection.has_technique("bitmono.hooks"),
+            "{}: DotNetHook infrastructure type not detected",
+            filename
+        );
+    }
 
-            if expected.has_anti_debug {
-                assert!(
-                    result.detection.has_technique("bitmono.debug"),
-                    "{}: AntiDebugBreakpoints not detected",
-                    filename
-                );
-            }
+    if expected.has_local_variable_encoding {
+        assert!(
+            result.detection.has_technique("bitmono.locals"),
+            "{}: LocalVariableEncoding not detected",
+            filename
+        );
+        assert!(
+            !result.post_detection.has_technique("bitmono.locals"),
+            "{}: LocalVariableEncoding should be removed after deobfuscation",
+            filename
+        );
+    }
 
-            if expected.has_dotnethook {
-                assert!(
-                    result.detection.has_technique("bitmono.hooks"),
-                    "{}: DotNetHook infrastructure type not detected",
-                    filename
-                );
-            }
+    // Removal assertions
+    if expected.has_suppress_ildasm {
+        assert!(
+            !result.post_detection.has_technique("generic.ildasm"),
+            "{}: SuppressIldasm should be removed after deobfuscation",
+            filename
+        );
+    }
 
-            if expected.has_local_variable_encoding {
-                assert!(
-                    result.detection.has_technique("bitmono.locals"),
-                    "{}: LocalVariableEncoding not detected",
-                    filename
-                );
-                assert!(
-                    !result.post_detection.has_technique("bitmono.locals"),
-                    "{}: LocalVariableEncoding should be removed after deobfuscation",
-                    filename
-                );
-            }
+    if expected.has_anti_de4dot {
+        assert!(
+            !result.post_detection.has_technique("generic.decompiler"),
+            "{}: AntiDe4dot fake attributes should be removed (remaining: {})",
+            filename,
+            result
+                .post_detection
+                .technique_evidence_count("generic.decompiler")
+        );
+    }
 
-            // Removal assertions
-            if expected.has_suppress_ildasm {
-                assert!(
-                    !result.post_detection.has_technique("generic.ildasm"),
-                    "{}: SuppressIldasm should be removed after deobfuscation",
-                    filename
-                );
-            }
+    if expected.has_string_encryption {
+        assert!(
+            !result.post_detection.has_technique("bitmono.strings"),
+            "{}: String decryptor methods should be removed (remaining: {})",
+            filename,
+            result
+                .post_detection
+                .technique_evidence_count("bitmono.strings")
+        );
+    }
 
-            if expected.has_anti_de4dot {
-                assert!(
-                    !result.post_detection.has_technique("generic.decompiler"),
-                    "{}: AntiDe4dot fake attributes should be removed (remaining: {})",
-                    filename,
-                    result
-                        .post_detection
-                        .technique_evidence_count("generic.decompiler")
-                );
-            }
+    // Post-deobfuscation should have low/zero detection score
+    let post_score = result.post_detection.supporting_matched;
+    assert!(
+        post_score < 20,
+        "{}: Post-deobfuscation detection score should be below threshold (score: {})",
+        filename,
+        post_score
+    );
+}
 
-            if expected.has_string_encryption {
-                assert!(
-                    !result.post_detection.has_technique("bitmono.strings"),
-                    "{}: String decryptor methods should be removed (remaining: {})",
-                    filename,
-                    result
-                        .post_detection
-                        .technique_evidence_count("bitmono.strings")
-                );
-            }
+mod v0_39_0 {
+    use super::*;
 
-            // Post-deobfuscation should have low/zero detection score
-            let post_score = result.post_detection.supporting_matched;
-            assert!(
-                post_score < 20,
-                "{}: Post-deobfuscation detection score should be below threshold (score: {})",
-                filename,
-                post_score
-            );
-        }
+    sample_tests! {
+        all_samples("0.39.0"), |file| check_sample("0.39.0", file);
+        original => "original.exe",
+        bitdotnet => "bitmono_bitdotnet.exe",
+        bitdecompiler => "bitmono_bitdecompiler.exe",
+        packer => "bitmono_packer.exe",
+        pe_combined => "bitmono_pe_combined.exe",
+        strings => "bitmono_strings.exe",
+        calltocalli => "bitmono_calltocalli.exe",
+        dotnethook => "bitmono_dotnethook.exe",
+        unmanagedstring => "bitmono_unmanagedstring.exe",
+        antidebug => "bitmono_antidebug.exe",
+        junk => "bitmono_junk.exe",
+        antide4dot => "bitmono_antide4dot.exe",
+        renamer => "bitmono_renamer.exe",
+        combined => "bitmono_combined.exe",
+        maximum_il => "bitmono_maximum_il.exe",
+        maximum => "bitmono_maximum.exe",
+    }
+}
+
+mod v0_45_0 {
+    use super::*;
+
+    sample_tests! {
+        all_samples("0.45.0"), |file| check_sample("0.45.0", file);
+        original => "original.exe",
+        bitdotnet => "bitmono_bitdotnet.exe",
+        bitdecompiler => "bitmono_bitdecompiler.exe",
+        packer => "bitmono_packer.exe",
+        pe_combined => "bitmono_pe_combined.exe",
+        strings => "bitmono_strings.exe",
+        calltocalli => "bitmono_calltocalli.exe",
+        dotnethook => "bitmono_dotnethook.exe",
+        unmanagedstring => "bitmono_unmanagedstring.exe",
+        antidebug => "bitmono_antidebug.exe",
+        junk => "bitmono_junk.exe",
+        antide4dot => "bitmono_antide4dot.exe",
+        renamer => "bitmono_renamer.exe",
+        combined => "bitmono_combined.exe",
+        maximum_il => "bitmono_maximum_il.exe",
+        maximum => "bitmono_maximum.exe",
+        localvariableencoding => "bitmono_localvariableencoding.exe",
     }
 }
 
@@ -580,7 +620,7 @@ fn test_bitmono_no_false_positives_on_confuserex() {
             CilObject::from_path_with_validation(fixture(path), ValidationConfig::analysis())
                 .unwrap_or_else(|_| panic!("Failed to load {}", path));
 
-        let engine = DeobfuscationEngine::default();
+        let engine = engine();
         let det = engine.detect(&assembly);
         let is_bitmono = det
             .attribution
@@ -605,7 +645,7 @@ fn test_bitmono_no_false_positives_on_obfuscar() {
             CilObject::from_path_with_validation(fixture(path), ValidationConfig::analysis())
                 .unwrap_or_else(|_| panic!("Failed to load {}", path));
 
-        let engine = DeobfuscationEngine::default();
+        let engine = engine();
         let det = engine.detect(&assembly);
         let is_bitmono = det
             .attribution
@@ -651,7 +691,7 @@ fn test_bitmono_detection_scoring() {
                 CilObject::from_path_with_validation(&path, ValidationConfig::analysis())
                     .unwrap_or_else(|e| panic!("Failed to load {}: {}", filename, e));
 
-            let engine = DeobfuscationEngine::default();
+            let engine = engine();
             let det = engine.detect(&assembly);
             let score = det.attribution.as_ref().map_or(0, |a| a.supporting_matched);
 
@@ -689,17 +729,12 @@ fn run_pe_protection_test(
     filename: &str,
     semantic_threshold: f64,
 ) -> (
-    CilObject,
-    DeobfuscationResult,
+    &'static CilObject,
+    &'static DeobfuscationResult,
     Option<SemanticVerificationResult>,
 ) {
-    let path = fixture(&format!("{dir}/{}", filename));
-
-    let config = EngineConfig::default();
-    let engine = DeobfuscationEngine::new(config);
-
-    let (output, deob_result) = engine
-        .process_file(&path)
+    let (output, deob_result) = deobfuscated(&format!("{dir}/{filename}"))
+        .as_ref()
         .unwrap_or_else(|e| panic!("{}: deobfuscation failed: {}", filename, e));
 
     assert!(
@@ -767,7 +802,7 @@ fn run_detection_test(dir: &str, filename: &str) -> DeobfuscationResult {
     let assembly = CilObject::from_path_with_validation(&path, ValidationConfig::analysis())
         .unwrap_or_else(|e| panic!("Failed to load {}: {}", filename, e));
 
-    let engine = DeobfuscationEngine::default();
+    let engine = engine();
     engine.detect(&assembly)
 }
 
@@ -1007,13 +1042,8 @@ fn test_protection_renamer_cleanup() {
         let dir = samples_dir(version);
         let dir = dir.as_str();
         eprintln!("=== BitMono {version} ===");
-        let path = fixture(&format!("{dir}/bitmono_renamer.exe"));
-
-        let config = EngineConfig::default();
-        let engine = DeobfuscationEngine::new(config);
-
-        let (output, _) = engine
-            .process_file(&path)
+        let (output, _) = deobfuscated(&format!("{dir}/bitmono_renamer.exe"))
+            .as_ref()
             .unwrap_or_else(|e| panic!("Deobfuscation failed: {}", e));
 
         let mut space_types = Vec::new();
@@ -1068,8 +1098,6 @@ fn test_dotnethook_call_targets() {
 }
 
 fn test_dotnethook_call_targets_for_sample(dir: &str, sample: &str) {
-    let path = fixture(&format!("{dir}/{}", sample));
-
     let original_path = fixture(&format!("{dir}/original.exe"));
     let original =
         CilObject::from_path_with_validation(&original_path, ValidationConfig::analysis())
@@ -1081,10 +1109,8 @@ fn test_dotnethook_call_targets_for_sample(dir: &str, sample: &str) {
     dump_call_targets(&original, "SayHello", "ORIGINAL");
     dump_call_targets(&original, "SayGoodbye", "ORIGINAL");
 
-    let config = EngineConfig::default();
-    let engine = DeobfuscationEngine::new(config);
-    let (output, _result) = engine
-        .process_file(&path)
+    let (output, _result) = deobfuscated(&format!("{dir}/{sample}"))
+        .as_ref()
         .unwrap_or_else(|e| panic!("Deobfuscation failed for {}: {}", sample, e));
 
     eprintln!("\n[DEOBFUSCATED] All methods and call targets:");
@@ -1124,20 +1150,20 @@ fn test_dotnethook_call_targets_for_sample(dir: &str, sample: &str) {
         }
     }
 
-    dump_call_targets(&output, "SayHello", "DEOBFUSCATED");
-    dump_call_targets(&output, "SayGoodbye", "DEOBFUSCATED");
+    dump_call_targets(output, "SayHello", "DEOBFUSCATED");
+    dump_call_targets(output, "SayGoodbye", "DEOBFUSCATED");
 
-    let say_hello_targets = get_call_target_names(&output, "SayHello");
-    let say_goodbye_targets = get_call_target_names(&output, "SayGoodbye");
+    let say_hello_targets = get_call_target_names(output, "SayHello");
+    let say_goodbye_targets = get_call_target_names(output, "SayGoodbye");
 
     eprintln!("SayHello calls: {:?}", say_hello_targets);
     eprintln!("SayGoodbye calls: {:?}", say_goodbye_targets);
 
-    let hello_methoddef_calls: Vec<_> = get_call_target_tokens(&output, "SayHello")
+    let hello_methoddef_calls: Vec<_> = get_call_target_tokens(output, "SayHello")
         .into_iter()
         .filter(|t| t.table() == 0x06)
         .collect();
-    let goodbye_methoddef_calls: Vec<_> = get_call_target_tokens(&output, "SayGoodbye")
+    let goodbye_methoddef_calls: Vec<_> = get_call_target_tokens(output, "SayGoodbye")
         .into_iter()
         .filter(|t| t.table() == 0x06)
         .collect();
@@ -1145,8 +1171,8 @@ fn test_dotnethook_call_targets_for_sample(dir: &str, sample: &str) {
     eprintln!("SayHello MethodDef calls: {:?}", hello_methoddef_calls);
     eprintln!("SayGoodbye MethodDef calls: {:?}", goodbye_methoddef_calls);
 
-    let say_hello_token = find_method_token(&output, "SayHello");
-    let say_goodbye_token = find_method_token(&output, "SayGoodbye");
+    let say_hello_token = find_method_token(output, "SayHello");
+    let say_goodbye_token = find_method_token(output, "SayGoodbye");
 
     if let Some(hello_tok) = say_hello_token {
         assert!(
@@ -1320,9 +1346,7 @@ fn test_no_obfuscator_metadata_survives() {
             "bitmono_maximum.exe",
             "bitmono_maximum_il.exe",
         ] {
-            let path = fixture(&format!("{dir}/{}", sample));
-            let engine = DeobfuscationEngine::new(EngineConfig::default());
-            let (output, _) = engine.process_file(&path).unwrap();
+            let (output, _) = deobfuscated(&format!("{dir}/{sample}")).as_ref().unwrap();
 
             let bytes = output.file().data();
             let reloaded =
@@ -1391,16 +1415,15 @@ fn arithmetic_by_method(assembly: &CilObject) -> std::collections::BTreeMap<Stri
 #[test]
 fn local_variable_encoding_leaves_the_original_arithmetic() {
     let dir = samples_dir("0.45.0");
-    let engine = DeobfuscationEngine::new(EngineConfig::default());
-    let (original, _) = engine
-        .process_file(fixture(&format!("{dir}/original.exe")))
+    let (original, _) = deobfuscated(&format!("{dir}/original.exe"))
+        .as_ref()
         .unwrap();
-    let (output, _) = engine
-        .process_file(fixture(&format!("{dir}/bitmono_localvariableencoding.exe")))
+    let (output, _) = deobfuscated(&format!("{dir}/bitmono_localvariableencoding.exe"))
+        .as_ref()
         .unwrap();
 
-    let expected = arithmetic_by_method(&original);
-    let restored = arithmetic_by_method(&output);
+    let expected = arithmetic_by_method(original);
+    let restored = arithmetic_by_method(output);
     for (method, count) in &expected {
         if let Some(found) = restored.get(method) {
             assert_eq!(found, count, "{method}");

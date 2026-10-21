@@ -30,6 +30,8 @@ pub enum ToolKind {
     Disassembler,
     /// Mono's metadata verifier, `peverify`.
     Verifier,
+    /// Mono, which runs .NET Framework executables such as the packer samples.
+    Mono,
 }
 
 impl fmt::Display for ToolKind {
@@ -38,6 +40,7 @@ impl fmt::Display for ToolKind {
             ToolKind::Toolchain => "a C# compiler and runtime",
             ToolKind::Disassembler => "an IL disassembler",
             ToolKind::Verifier => "Mono's peverify",
+            ToolKind::Mono => "Mono",
         })
     }
 }

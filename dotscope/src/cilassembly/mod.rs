@@ -2237,6 +2237,7 @@ mod tests {
                 stdcall: false,
                 thiscall: false,
                 fastcall: false,
+                unmanaged: false,
                 param_count_generic: 0,
                 param_count: 1, // One string parameter
                 return_type: SignatureParameter {

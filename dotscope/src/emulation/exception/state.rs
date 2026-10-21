@@ -186,7 +186,7 @@ pub struct PendingFinally {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// let mut state = ThreadExceptionState::new();
 ///
 /// // Exception thrown

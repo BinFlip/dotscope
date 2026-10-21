@@ -24,19 +24,26 @@
 //!
 //! # Usage
 //!
-//! ```rust,ignore
-//! # use dotscope::metadata::loader::LoaderContext;
-//! # fn example(context: &LoaderContext) -> dotscope::Result<()> {
-//! // Access state machine mappings through the loader context
-//! let state_machines = &context.state_machine_methods;
+//! ```no_run
+//! use dotscope::{
+//!     metadata::tables::{StateMachineMethodBuilder, StateMachineMethodRaw},
+//!     CilAssembly, CilAssemblyView,
+//! };
 //!
-//! // Get a specific mapping by RID
-//! if let Some(mapping) = state_machines.get(&1) {
-//!     println!("MoveNext method: {:?}", mapping.move_next_method);
-//!     println!("Original kickoff method: {:?}", mapping.kickoff_method);
+//! // An async method (MethodDef 1) whose state machine's MoveNext is MethodDef 2
+//! let mut assembly = CilAssembly::from_path("app.dll")?;
+//! StateMachineMethodBuilder::new()
+//!     .move_next_method(2)
+//!     .kickoff_method(1)
+//!     .build(&mut assembly)?;
+//!
+//! let view = CilAssemblyView::from_mem(assembly.to_memory()?)?;
+//! if let Some(mappings) = view.tables().and_then(|t| t.table::<StateMachineMethodRaw>()) {
+//!     for mapping in mappings.iter().filter_map(Result::ok) {
+//!         println!("MoveNext {} runs kickoff {}", mapping.move_next_method, mapping.kickoff_method);
+//!     }
 //! }
-//! # Ok(())
-//! # }
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! # References

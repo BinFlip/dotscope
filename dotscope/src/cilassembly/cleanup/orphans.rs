@@ -25,7 +25,8 @@ use crate::{
             references::{
                 collect_referenced_standalonesig_rids,
                 collect_typerefs_from_deleted_memberref_sigs, remove_unreferenced_memberrefs,
-                remove_unreferenced_typerefs, remove_unreferenced_typespecs, PreDeletionRefs,
+                remove_unreferenced_typerefs, remove_unreferenced_typespecs, rows_of,
+                scan_metadata_keepers, PreDeletionRefs,
             },
             utils::{list_range, remove_candidates_not_alive, try_remove},
             CleanupStats,
@@ -637,21 +638,21 @@ pub(super) fn remove_orphan_properties(
 
 /// Removes orphaned StandAloneSig entries using cascade-from-deleted semantics.
 ///
-/// Only considers StandAloneSig RIDs that were referenced by methods being deleted
-/// (collected in `PreDeletionRefs.standalonesig_rids`). Of those candidates, only
-/// removes entries no longer referenced by any surviving method body.
+/// Of the `candidates`, removes the entries no surviving method body uses, through its
+/// header's local variable signature or a `calli` operand among `body_tokens`.
 ///
 /// This preserves pre-existing orphaned StandAloneSigs that may be used via
 /// reflection or dynamic code generation.
 pub(super) fn remove_orphan_standalonesigs(
     assembly: &mut CilAssembly,
     candidates: &BTreeSet<u32>,
+    body_tokens: &HashSet<Token>,
 ) -> usize {
     if candidates.is_empty() {
         return 0;
     }
 
-    let alive = collect_referenced_standalonesig_rids(assembly);
+    let alive = collect_referenced_standalonesig_rids(assembly, body_tokens);
 
     let mut removed: usize = 0;
     for &rid in candidates.iter().rev() {
@@ -666,10 +667,10 @@ pub(super) fn remove_orphan_standalonesigs(
 /// Removes cascade-candidate `ModuleRef` entries that are no longer referenced.
 ///
 /// Only removes ModuleRef entries that are in the `candidates` set AND are not
-/// referenced by any surviving `ImplMap` entry or `TypeRef` resolution scope.
+/// referenced by any surviving `ImplMap`, `MemberRef` class or `TypeRef` resolution scope.
 ///
-/// Must be called **after** `remove_orphan_implmap` and `remove_unreferenced_typerefs`
-/// to ensure cascaded deletions are accounted for.
+/// Must be called **after** `remove_orphan_implmap`, `remove_unreferenced_memberrefs` and
+/// `remove_unreferenced_typerefs` to ensure cascaded deletions are accounted for.
 pub(super) fn remove_orphan_modulerefs(
     assembly: &mut CilAssembly,
     candidates: &BTreeSet<u32>,
@@ -679,42 +680,8 @@ pub(super) fn remove_orphan_modulerefs(
     }
 
     // Collect ModuleRef RIDs still referenced by surviving ImplMap and TypeRef entries
-    let alive: HashSet<u32> = {
-        let view = assembly.view();
-        let Some(tables) = view.tables() else {
-            return 0;
-        };
-
-        let mut alive = HashSet::new();
-
-        // ImplMap.import_scope references ModuleRef by raw RID
-        if let Some(implmap_table) = tables.table::<ImplMapRaw>() {
-            for rid in 1..=implmap_table.row_count {
-                if assembly.changes().is_row_deleted(TableId::ImplMap, rid) {
-                    continue;
-                }
-                if let Some(implmap) = implmap_table.get(rid).ok().flatten() {
-                    alive.insert(implmap.import_scope);
-                }
-            }
-        }
-
-        // TypeRef.resolution_scope can reference ModuleRef
-        if let Some(typeref_table) = tables.table::<TypeRefRaw>() {
-            for rid in 1..=typeref_table.row_count {
-                if assembly.changes().is_row_deleted(TableId::TypeRef, rid) {
-                    continue;
-                }
-                if let Some(typeref) = typeref_table.get(rid).ok().flatten() {
-                    if typeref.resolution_scope.tag == TableId::ModuleRef {
-                        alive.insert(typeref.resolution_scope.row);
-                    }
-                }
-            }
-        }
-
-        alive
-    };
+    let alive: HashSet<u32> =
+        rows_of(&scan_metadata_keepers(assembly), TableId::ModuleRef).collect();
 
     let (removed, _) =
         remove_candidates_not_alive(assembly, TableId::ModuleRef, candidates, &alive);
@@ -724,7 +691,8 @@ pub(super) fn remove_orphan_modulerefs(
 /// Removes cascade-candidate `AssemblyRef` entries that are no longer referenced.
 ///
 /// Only removes AssemblyRef entries that are in the `candidates` set AND are not
-/// referenced by any surviving `TypeRef` resolution scope.
+/// referenced by any surviving `TypeRef` resolution scope, `ExportedType` (a type forwarder)
+/// or `ManifestResource` another assembly holds.
 ///
 /// Must be called **after** `remove_unreferenced_typerefs` to ensure cascaded
 /// TypeRef deletions are accounted for.
@@ -736,30 +704,8 @@ pub(super) fn remove_orphan_assemblyrefs(
         return 0;
     }
 
-    let alive: HashSet<u32> = {
-        let view = assembly.view();
-        let Some(tables) = view.tables() else {
-            return 0;
-        };
-
-        let mut alive = HashSet::new();
-
-        // TypeRef.resolution_scope can reference AssemblyRef
-        if let Some(typeref_table) = tables.table::<TypeRefRaw>() {
-            for rid in 1..=typeref_table.row_count {
-                if assembly.changes().is_row_deleted(TableId::TypeRef, rid) {
-                    continue;
-                }
-                if let Some(typeref) = typeref_table.get(rid).ok().flatten() {
-                    if typeref.resolution_scope.tag == TableId::AssemblyRef {
-                        alive.insert(typeref.resolution_scope.row);
-                    }
-                }
-            }
-        }
-
-        alive
-    };
+    let alive: HashSet<u32> =
+        rows_of(&scan_metadata_keepers(assembly), TableId::AssemblyRef).collect();
     let (removed, _) =
         remove_candidates_not_alive(assembly, TableId::AssemblyRef, candidates, &alive);
     removed
@@ -874,50 +820,7 @@ pub(super) fn remove_orphan_files(assembly: &mut CilAssembly, candidates: &BTree
         return 0;
     }
 
-    let alive: HashSet<u32> = {
-        let view = assembly.view();
-        let Some(tables) = view.tables() else {
-            return 0;
-        };
-
-        let mut alive = HashSet::new();
-
-        // ExportedType.implementation can reference File
-        if let Some(table) = tables.table::<ExportedTypeRaw>() {
-            for rid in 1..=table.row_count {
-                if assembly
-                    .changes()
-                    .is_row_deleted(TableId::ExportedType, rid)
-                {
-                    continue;
-                }
-                if let Some(entry) = table.get(rid).ok().flatten() {
-                    if entry.implementation.token.is_table(TableId::File) {
-                        alive.insert(entry.implementation.token.row());
-                    }
-                }
-            }
-        }
-
-        // ManifestResource.implementation can reference File
-        if let Some(table) = tables.table::<ManifestResourceRaw>() {
-            for rid in 1..=table.row_count {
-                if assembly
-                    .changes()
-                    .is_row_deleted(TableId::ManifestResource, rid)
-                {
-                    continue;
-                }
-                if let Some(entry) = table.get(rid).ok().flatten() {
-                    if entry.implementation.token.is_table(TableId::File) {
-                        alive.insert(entry.implementation.token.row());
-                    }
-                }
-            }
-        }
-
-        alive
-    };
+    let alive: HashSet<u32> = rows_of(&scan_metadata_keepers(assembly), TableId::File).collect();
 
     let (removed, _) = remove_candidates_not_alive(assembly, TableId::File, candidates, &alive);
     removed
@@ -984,11 +887,13 @@ pub(super) fn remove_type_dependents(
 /// This handles parent-child cleanup: params, attributes, ClassLayout, FieldRVA,
 /// NestedClass, InterfaceImpl, EventMap, PropertyMap, Event/Property rows,
 /// MethodImpl, MethodSemantics, ImplMap, DeclSecurity, MethodSpec, StandAloneSig,
-/// field-related tables, GenericParam and GenericParamConstraint.
+/// field-related tables, GenericParam and GenericParamConstraint. `body_tokens` are the
+/// tokens surviving method bodies reference.
 pub(super) fn remove_parent_child_dependents(
     assembly: &mut CilAssembly,
     ctx: &DeletionContext,
     _pre_refs: &PreDeletionRefs,
+    body_tokens: &HashSet<Token>,
 ) -> CleanupStats {
     let mut stats = CleanupStats::new();
 
@@ -1039,8 +944,8 @@ pub(super) fn remove_parent_child_dependents(
         remove_orphan_declsecurity(assembly, ctx),
     );
     stats.add(TableId::MethodSpec, remove_orphan_methodspec(assembly, ctx));
-    // StandAloneSig entries are only referenced from method body headers
-    // (local_var_sig_token). After method deletion and body regeneration,
+    // StandAloneSig entries are referenced from method bodies only: a header's local
+    // variable signature or a `calli` operand. After method deletion and body regeneration,
     // old SAS entries become orphaned. Scan ALL SAS entries as candidates
     // since there is no reflection mechanism that references SAS by token.
     {
@@ -1061,7 +966,7 @@ pub(super) fn remove_parent_child_dependents(
         };
         stats.add(
             TableId::StandAloneSig,
-            remove_orphan_standalonesigs(assembly, &all_sas_rids),
+            remove_orphan_standalonesigs(assembly, &all_sas_rids, body_tokens),
         );
     }
 

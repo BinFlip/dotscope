@@ -37,12 +37,13 @@ use crate::{
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```no_run
 /// let mut scheduler = PassScheduler::new(5, 2, 15);
 /// scheduler.add(Box::new(value_pass), PassPhase::Value);
 /// scheduler.add(Box::new(cff_pass), PassPhase::Structure);
 /// scheduler.add(Box::new(dce_pass), PassPhase::Normalize);
 /// scheduler.run_pipeline(&ctx, &assembly, None)?;
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct PassScheduler {
     inner: AnalyssaPassScheduler<CilTarget, CompilerContext>,

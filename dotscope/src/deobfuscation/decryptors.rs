@@ -29,7 +29,7 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::deobfuscation::AnalysisContext;
 //!
 //! // During obfuscator detection:

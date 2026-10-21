@@ -32,26 +32,7 @@
 //!
 //! ## Basic Usage
 //!
-//! ```ignore
-//! use dotscope::emulation::runtime::{AppDomainState, LoadedAssemblyInfo, RuntimeTypeInfo};
-//! use dotscope::metadata::token::Token;
-//!
-//! let mut domain = AppDomainState::new();
-//!
-//! // Register an assembly
-//! domain.register_assembly(LoadedAssemblyInfo {
-//!     name: "MyAssembly".to_string(),
-//!     token: Token::new(0x20000001),
-//!     full_name: Some("MyAssembly, Version=1.0.0.0".to_string()),
-//!     location: Some("/path/to/assembly.dll".to_string()),
-//!     loaded_from_bytes: false,
-//! });
-//!
-//! // Query the assembly
-//! if let Some(info) = domain.get_assembly("MyAssembly") {
-//!     println!("Loaded: {}", info.name);
-//! }
-//! ```
+//! The `examples::module_example` test in this module runs this example.
 //!
 //! # Use Cases
 //!
@@ -96,8 +77,8 @@ use crate::{emulation::HeapRef, metadata::token::Token, CilObject};
 ///
 /// # Examples
 ///
-/// ```ignore
-/// use dotscope::emulation::runtime::AppDomainState;
+/// ```no_run
+/// use dotscope::emulation::AppDomainState;
 ///
 /// let mut domain = AppDomainState::new();
 ///
@@ -175,8 +156,8 @@ impl std::fmt::Debug for AppDomainState {
 ///
 /// # Examples
 ///
-/// ```ignore
-/// use dotscope::emulation::runtime::LoadedAssemblyInfo;
+/// ```no_run
+/// use dotscope::emulation::LoadedAssemblyInfo;
 /// use dotscope::metadata::token::Token;
 ///
 /// let info = LoadedAssemblyInfo {
@@ -226,8 +207,8 @@ impl AppDomainState {
     ///
     /// # Examples
     ///
-    /// ```ignore
-    /// use dotscope::emulation::runtime::AppDomainState;
+    /// ```no_run
+    /// use dotscope::emulation::AppDomainState;
     ///
     /// let domain = AppDomainState::new();
     /// assert!(domain.executing_assembly().is_none());
@@ -248,8 +229,9 @@ impl AppDomainState {
     ///
     /// # Examples
     ///
-    /// ```ignore
-    /// use dotscope::emulation::runtime::{AppDomainState, LoadedAssemblyInfo};
+    /// ```no_run
+    /// use dotscope::emulation::AppDomainState;
+    /// use dotscope::emulation::LoadedAssemblyInfo;
     /// use dotscope::metadata::token::Token;
     ///
     /// let mut domain = AppDomainState::new();
@@ -285,7 +267,7 @@ impl AppDomainState {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
     /// for assembly in domain.loaded_assemblies() {
     ///     println!("Loaded: {}", assembly.name);
     /// }
@@ -363,7 +345,7 @@ impl AppDomainState {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
     /// let ref1 = domain.intern_string("hello".to_string(), HeapRef::new(1));
     /// let ref2 = domain.intern_string("hello".to_string(), HeapRef::new(2));
     /// assert_eq!(ref1, ref2); // Same reference returned
@@ -618,5 +600,35 @@ mod tests {
 
         domain.set_executing_assembly(Token::new(0x20000001));
         assert_eq!(domain.executing_assembly(), Some(Token::new(0x20000001)));
+    }
+}
+
+#[cfg(test)]
+mod examples {
+    use super::*;
+    use crate::{metadata::token::Token, Result};
+
+    /// A registered assembly is found again by its name.
+    #[test]
+    fn module_example() -> Result<()> {
+        let mut domain = AppDomainState::new();
+
+        // Register an assembly
+        domain.register_assembly(LoadedAssemblyInfo {
+            name: "MyAssembly".to_string(),
+            token: Token::new(0x20000001),
+            full_name: Some("MyAssembly, Version=1.0.0.0".to_string()),
+            location: Some("/path/to/assembly.dll".to_string()),
+            loaded_from_bytes: false,
+        });
+
+        // Query the assembly
+        let info = domain.get_assembly("MyAssembly").expect("registered");
+        assert_eq!(
+            info.full_name.as_deref(),
+            Some("MyAssembly, Version=1.0.0.0")
+        );
+        assert!(domain.get_assembly("Other").is_none());
+        Ok(())
     }
 }

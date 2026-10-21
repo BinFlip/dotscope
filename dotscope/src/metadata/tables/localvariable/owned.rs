@@ -14,7 +14,7 @@ use crate::metadata::token::Token;
 ///
 /// # Usage
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::metadata::tables::LocalVariable;
 ///
 /// // Access variable information

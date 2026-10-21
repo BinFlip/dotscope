@@ -46,7 +46,7 @@ pub struct HookFactory {
 /// warmup methods, and state machine providers.
 ///
 /// All `CompilerContext` methods and fields are accessible via `Deref`:
-/// ```rust,ignore
+/// ```no_run
 /// let ctx: &AnalysisContext = ...;
 /// ctx.events.record(...);           // via Deref to CompilerContext
 /// ctx.add_known_value(...);         // via Deref to CompilerContext

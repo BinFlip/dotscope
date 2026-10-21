@@ -15,7 +15,7 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::analysis::{ValueResolver, SsaFunction};
 //! use dotscope::metadata::typesystem::PointerSize;
 //!

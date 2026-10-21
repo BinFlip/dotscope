@@ -154,7 +154,7 @@ fn init_owned_validators() -> Vec<Box<dyn OwnedValidator>> {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use crate::metadata::validation::engine::ValidationEngine;
 ///
 /// let engine = ValidationEngine::new(config)?;
@@ -166,6 +166,7 @@ fn init_owned_validators() -> Vec<Box<dyn OwnedValidator>> {
 ///     Some(&object_data),
 ///     &config,
 /// )?;
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct ValidationEngine {
     /// Validation configuration

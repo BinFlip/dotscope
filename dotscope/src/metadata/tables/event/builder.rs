@@ -41,7 +41,7 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::{EventBuilder, CodedIndex, TableId};
 /// # use std::path::Path;

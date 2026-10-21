@@ -116,7 +116,7 @@ pub type ReflectionPropertyInfo = (Arc<str>, Token, Option<Token>, Option<Token>
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```no_run
 /// for (heap_ref, object) in heap.iter()? {
 ///     println!("{}: {}", heap_ref, object);
 /// }
@@ -1201,7 +1201,7 @@ impl ManagedHeap {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// let heap = ManagedHeap::new(1024 * 1024);
     /// let string_ref = heap.alloc_string("Hello").unwrap();
     ///

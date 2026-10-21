@@ -20,8 +20,8 @@
 //!
 //! # Usage
 //!
-//! ```rust,ignore
-//! use dotscope::metadata::validation::validators::owned::constraints::types::OwnedTypeConstraintValidator;
+//! ```no_run
+//! use dotscope::metadata::validation::OwnedTypeConstraintValidator;
 //! use dotscope::metadata::validation::OwnedValidator;
 //!
 //! # fn get_context() -> dotscope::metadata::validation::context::OwnedValidationContext<'static> { unimplemented!() }

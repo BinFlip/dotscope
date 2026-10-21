@@ -840,7 +840,7 @@ impl TracingConfig {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// let tracing = TracingConfig::full_trace("emulation.trace");
     /// let config = EmulationConfig {
     ///     tracing,

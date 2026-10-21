@@ -119,7 +119,7 @@ impl PartialEq for DependencySource {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use dotscope::metadata::dependencies::DependencySource;
     /// use dotscope::metadata::identity::AssemblyIdentity;
     ///

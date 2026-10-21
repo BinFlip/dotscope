@@ -49,7 +49,7 @@
 //!
 //! # Usage Example
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::analysis::{ControlFlowGraph, SsaConverter, ConstantPropagation};
 //! use dotscope::assembly::decode_blocks;
 //!
@@ -67,6 +67,7 @@
 //! for loop_info in cfg.loops() {
 //!     println!("Loop at block {:?}, depth {}", loop_info.header, loop_info.depth);
 //! }
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 
 mod callgraph;
@@ -138,33 +139,10 @@ mod tests {
     use analyssa::graph::NodeId;
 
     use crate::{
-        analysis::{
-            CfgEdgeKind, ControlFlowGraph, SsaConverter, SsaFunction, SsaVerifier, VariableOrigin,
-            VerifyLevel,
-        },
-        assembly::{decode_blocks, InstructionAssembler},
-        testkit::TestTypeProvider,
+        analysis::{CfgEdgeKind, SsaFunction, SsaVerifier, VariableOrigin, VerifyLevel},
+        assembly::InstructionAssembler,
+        testkit::{build_cfg, build_ssa, TestTypeProvider},
     };
-
-    /// Helper to build bytecode and decode it into a CFG.
-    fn build_cfg(assembler: InstructionAssembler) -> ControlFlowGraph<'static> {
-        let (bytecode, _max_stack, _) = assembler.finish().expect("Failed to assemble bytecode");
-        let blocks =
-            decode_blocks(&bytecode, 0, 0x1000, Some(bytecode.len())).expect("Failed to decode");
-        ControlFlowGraph::from_basic_blocks(blocks).expect("Failed to build CFG")
-    }
-
-    /// Helper to build SSA from a CFG.
-    fn build_ssa(cfg: &ControlFlowGraph<'_>, num_args: usize, num_locals: usize) -> SsaFunction {
-        SsaConverter::build(
-            cfg,
-            num_args,
-            num_locals,
-            &TestTypeProvider::new(num_args, num_locals),
-            Vec::new(),
-        )
-        .expect("SSA construction failed")
-    }
 
     /// Consolidated SSA validation - checks all standard SSA invariants.
     /// Call this instead of individual assert_* functions in most tests.
@@ -270,7 +248,7 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
 
         // CFG validation
         assert_eq!(cfg.block_count(), 1);
@@ -280,7 +258,7 @@ mod tests {
         assert_eq!(cfg.exits()[0], NodeId::new(0));
 
         // SSA validation
-        let ssa = build_ssa(&cfg, 2, 0);
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(2, 0)).expect("SSA construction");
         assert_eq!(ssa.block_count(), 1);
         assert_eq!(ssa.num_args(), 2);
         assert_eq!(ssa.num_locals(), 0);
@@ -308,12 +286,12 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
         assert_eq!(cfg.block_count(), 1);
         let block = cfg.block(cfg.entry()).unwrap();
         assert_eq!(block.instructions.len(), 5); // 3 nops + ldc.i4.0 + ret
 
-        let ssa = build_ssa(&cfg, 0, 0);
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(0, 0)).expect("SSA construction");
         assert_eq!(ssa.block_count(), 1);
         assert_ssa_valid(&ssa);
         assert_eq!(ssa.phi_count(), 0);
@@ -338,7 +316,7 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
         assert_eq!(cfg.block_count(), 3);
         assert!(!cfg.has_loops());
         assert_eq!(cfg.exits().len(), 2);
@@ -349,7 +327,7 @@ mod tests {
         assert!(edge_kinds.contains(&CfgEdgeKind::ConditionalTrue));
         assert!(edge_kinds.contains(&CfgEdgeKind::ConditionalFalse));
 
-        let ssa = build_ssa(&cfg, 1, 0);
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(1, 0)).expect("SSA construction");
         assert_eq!(ssa.block_count(), 3);
         assert_ssa_valid(&ssa);
         assert_eq!(ssa.phi_count(), 0); // No merge point
@@ -376,7 +354,7 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
         assert_eq!(cfg.block_count(), 4);
         assert!(!cfg.has_loops());
         assert_eq!(cfg.exits().len(), 1);
@@ -385,7 +363,7 @@ mod tests {
         let preds: Vec<_> = cfg.predecessors(merge_block).collect();
         assert_eq!(preds.len(), 2);
 
-        let ssa = build_ssa(&cfg, 1, 0);
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(1, 0)).expect("SSA construction");
         assert_eq!(ssa.block_count(), 4);
         assert_ssa_valid(&ssa);
     }
@@ -419,12 +397,12 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
         assert_eq!(cfg.block_count(), 5);
         assert!(!cfg.has_loops());
         assert_eq!(cfg.exits().len(), 3);
 
-        let ssa = build_ssa(&cfg, 2, 0);
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(2, 0)).expect("SSA construction");
         assert_eq!(ssa.block_count(), 5);
         assert_ssa_valid(&ssa);
         assert_eq!(ssa.phi_count(), 0); // All paths return without merge
@@ -459,7 +437,7 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
         assert!(cfg.block_count() >= 2);
         assert!(cfg.has_loops());
 
@@ -468,7 +446,7 @@ mod tests {
         assert_eq!(loops[0].header, NodeId::new(0));
         assert!(!loops[0].latches.is_empty());
 
-        let ssa = build_ssa(&cfg, 1, 0);
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(1, 0)).expect("SSA construction");
         assert_ssa_valid(&ssa);
     }
 
@@ -497,12 +475,12 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
         assert!(cfg.has_loops());
         assert_eq!(cfg.loops().len(), 1);
         assert_eq!(cfg.loops()[0].header, NodeId::new(0));
 
-        let ssa = build_ssa(&cfg, 1, 0);
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(1, 0)).expect("SSA construction");
         assert_ssa_valid(&ssa);
     }
 
@@ -563,7 +541,7 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
         assert!(cfg.has_loops());
         let loops = cfg.loops();
         assert_eq!(loops.len(), 2);
@@ -579,7 +557,7 @@ mod tests {
             );
         }
 
-        let ssa = build_ssa(&cfg, 2, 2);
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(2, 2)).expect("SSA construction");
         assert_ssa_valid(&ssa);
     }
 
@@ -604,7 +582,7 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
         assert_eq!(cfg.block_count(), 4);
 
         let entry = cfg.entry();
@@ -618,7 +596,7 @@ mod tests {
             .unwrap();
         assert_eq!(cfg.idom(merge), Some(entry));
 
-        let ssa = build_ssa(&cfg, 1, 0);
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(1, 0)).expect("SSA construction");
         assert_eq!(ssa.block_count(), 4);
         assert_ssa_valid(&ssa);
     }
@@ -644,12 +622,12 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
         let frontiers = cfg.dominance_frontiers();
         assert!(!frontiers.is_empty());
         assert!(frontiers[cfg.entry().index()].is_empty());
 
-        let ssa = build_ssa(&cfg, 1, 0);
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(1, 0)).expect("SSA construction");
         assert_ssa_valid(&ssa);
     }
 
@@ -674,7 +652,7 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
         let rpo = cfg.reverse_postorder();
         assert_eq!(rpo[0], cfg.entry());
 
@@ -687,7 +665,7 @@ mod tests {
             );
         }
 
-        let ssa = build_ssa(&cfg, 1, 0);
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(1, 0)).expect("SSA construction");
         assert_ssa_valid(&ssa);
     }
 
@@ -704,7 +682,7 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
         let po = cfg.postorder();
         let rpo = cfg.reverse_postorder();
 
@@ -713,7 +691,7 @@ mod tests {
             assert_eq!(*node, rpo[rpo.len() - 1 - i]);
         }
 
-        let ssa = build_ssa(&cfg, 2, 0);
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(2, 0)).expect("SSA construction");
         assert_ssa_valid(&ssa);
     }
 
@@ -730,10 +708,10 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
         assert!(cfg.block_count() >= 2);
 
-        let ssa = build_ssa(&cfg, 0, 0);
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(0, 0)).expect("SSA construction");
         assert_ssa_valid(&ssa);
     }
 
@@ -766,11 +744,11 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
         assert_eq!(cfg.exits().len(), 3);
         assert!(!cfg.has_loops());
 
-        let ssa = build_ssa(&cfg, 2, 0);
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(2, 0)).expect("SSA construction");
         assert_ssa_valid(&ssa);
         assert_eq!(ssa.phi_count(), 0); // All paths return without merge
     }
@@ -788,11 +766,11 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
         assert_eq!(cfg.block_count(), 1);
         assert!(!cfg.has_loops());
 
-        let ssa = build_ssa(&cfg, 1, 1);
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(1, 1)).expect("SSA construction");
         assert_ssa_valid(&ssa);
         assert_eq!(ssa.phi_count(), 0);
     }
@@ -820,11 +798,11 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
         assert_eq!(cfg.block_count(), 3);
         assert!(!cfg.has_loops());
 
-        let ssa = build_ssa(&cfg, 1, 1);
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(1, 1)).expect("SSA construction");
         assert_ssa_valid(&ssa);
     }
 
@@ -841,8 +819,8 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
-        let ssa = build_ssa(&cfg, 1, 0);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(1, 0)).expect("SSA construction");
         assert_ssa_valid(&ssa);
         assert!(
             ssa.variable_count() >= 1,
@@ -863,8 +841,8 @@ mod tests {
             .ret()
             .unwrap();
 
-        let cfg = build_cfg(asm);
-        let ssa = build_ssa(&cfg, 2, 0);
+        let (_, cfg) = build_cfg(asm).expect("assembles and decodes");
+        let ssa = build_ssa(&cfg, &TestTypeProvider::all_i32(2, 0)).expect("SSA construction");
         assert_ssa_valid(&ssa);
         assert!(
             ssa.variable_count() >= 2,

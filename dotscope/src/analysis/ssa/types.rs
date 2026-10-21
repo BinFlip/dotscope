@@ -272,8 +272,39 @@ pub struct FnPtrSig {
     pub ret: SsaType,
     /// Parameter types.
     pub params: Vec<SsaType>,
-    /// Calling convention flags.
+    /// The signature's first byte: calling convention kind and flags, as
+    /// [`SignatureMethod::calling_convention`] gives it.
     pub call_conv: u8,
+    /// The return type's custom modifiers. An unmanaged pointer's platform convention
+    /// (`delegate* unmanaged[Cdecl]`) is one of them.
+    pub ret_modifiers: CustomModifiers,
+    /// Each parameter's custom modifiers, in parameter order.
+    pub param_modifiers: Vec<CustomModifiers>,
+}
+
+impl FnPtrSig {
+    /// The function pointer type a method signature describes.
+    fn from_signature(signature: &SignatureMethod, assembly: &CilObject, depth: usize) -> Self {
+        let parameter = |param: &SignatureParameter| {
+            let base = SsaType::from_signature_at(&param.base, assembly, depth);
+            if param.by_ref {
+                SsaType::ByRef(Box::new(base))
+            } else {
+                base
+            }
+        };
+        Self {
+            ret: parameter(&signature.return_type),
+            params: signature.params.iter().map(parameter).collect(),
+            call_conv: signature.calling_convention(),
+            ret_modifiers: signature.return_type.modifiers.clone(),
+            param_modifiers: signature
+                .params
+                .iter()
+                .map(|param| param.modifiers.clone())
+                .collect(),
+        }
+    }
 }
 
 /// Classification of types by their storage requirements.
@@ -344,11 +375,15 @@ impl SsaType {
                     ret,
                     params,
                     call_conv,
+                    ret_modifiers,
+                    param_modifiers,
                 } = *sig;
                 Self::FnPtr(Box::new(FnPtrSig {
                     ret: substitute(ret),
                     params: params.into_iter().map(substitute).collect(),
                     call_conv,
+                    ret_modifiers,
+                    param_modifiers,
                 }))
             }
             other => other,
@@ -775,35 +810,33 @@ impl SsaType {
             Self::TypedReference => TypeSignature::TypedByRef,
             Self::GenericParam(idx) => TypeSignature::GenericParamType(*idx),
             Self::MethodGenericParam(idx) => TypeSignature::GenericParamMethod(*idx),
-            Self::FnPtr(sig) => TypeSignature::FnPtr(Box::new(SignatureMethod {
-                has_this: false,
-                explicit_this: false,
-                default: true,
-                vararg: false,
-                cdecl: false,
-                stdcall: false,
-                thiscall: false,
-                fastcall: false,
-                param_count_generic: 0,
+            Self::FnPtr(sig) => {
+                let mut signature = SignatureMethod::default();
+                // The byte came from a signature, so it names a method signature kind.
+                if signature.set_calling_convention(sig.call_conv).is_err() {
+                    signature.default = true;
+                }
                 // Safe: .NET methods have at most ~65535 parameters
                 #[allow(clippy::cast_possible_truncation)]
-                param_count: sig.params.len() as u32,
-                return_type: SignatureParameter {
-                    modifiers: CustomModifiers::default(),
+                let param_count = sig.params.len() as u32;
+                signature.param_count = param_count;
+                signature.return_type = SignatureParameter {
+                    modifiers: sig.ret_modifiers.clone(),
                     by_ref: false,
                     base: sig.ret.to_type_signature(),
-                },
-                params: sig
+                };
+                signature.params = sig
                     .params
                     .iter()
-                    .map(|p| SignatureParameter {
-                        modifiers: CustomModifiers::default(),
+                    .enumerate()
+                    .map(|(index, param)| SignatureParameter {
+                        modifiers: sig.param_modifiers.get(index).cloned().unwrap_or_default(),
                         by_ref: false,
-                        base: p.to_type_signature(),
+                        base: param.to_type_signature(),
                     })
-                    .collect(),
-                varargs: Vec::new(),
-            })),
+                    .collect();
+                TypeSignature::FnPtr(Box::new(signature))
+            }
             // Object and analysis-only types. Runtime-handle variants have
             // been removed from `SsaType` — construction sites now always
             // produce `ValueType(token)` for them via
@@ -882,6 +915,29 @@ impl SsaType {
     #[must_use]
     pub fn from_type_signature(signature: &TypeSignature, assembly: &CilObject) -> Self {
         Self::from_signature_at(signature, assembly, 0)
+    }
+
+    /// The type of a local variable: its type, behind a managed pointer for a `ref` local.
+    #[must_use]
+    pub fn from_local(local: &SignatureLocalVariable, assembly: &CilObject) -> Self {
+        let base = Self::from_type_signature(&local.base, assembly);
+        if local.is_byref {
+            Self::ByRef(Box::new(base))
+        } else {
+            base
+        }
+    }
+
+    /// The type of a parameter or return value: its type, behind a managed pointer when the
+    /// signature passes it by reference (`ref T`, ECMA-335 II.23.2.10).
+    #[must_use]
+    pub fn from_parameter(param: &SignatureParameter, assembly: &CilObject) -> Self {
+        let base = Self::from_type_signature(&param.base, assembly);
+        if param.by_ref {
+            Self::ByRef(Box::new(base))
+        } else {
+            base
+        }
     }
 
     /// [`from_type_signature`](Self::from_type_signature) for a type `depth`
@@ -968,9 +1024,12 @@ impl SsaType {
             // Pinned - unwrap to inner type
             TypeSignature::Pinned(inner) => Self::from_signature_at(inner, assembly, nested),
 
-            // Function pointers, modifiers, and special types - not representable
-            TypeSignature::FnPtr(_)
-            | TypeSignature::ModifiedRequired(_)
+            TypeSignature::FnPtr(signature) => Self::FnPtr(Box::new(FnPtrSig::from_signature(
+                signature, assembly, nested,
+            ))),
+
+            // Modifiers and special types - not representable
+            TypeSignature::ModifiedRequired(_)
             | TypeSignature::ModifiedOptional(_)
             | TypeSignature::Sentinel
             | TypeSignature::Unknown
@@ -1041,7 +1100,12 @@ impl SsaType {
                 let Some(cil_type) = assembly.types().get(&token) else {
                     return Self::Unknown;
                 };
-                Self::from_cil_flavor(cil_type.flavor(), token)
+                match cil_type.flavor() {
+                    CilFlavor::FnPtr { signature } => Self::FnPtr(Box::new(
+                        FnPtrSig::from_signature(signature, assembly, depth.saturating_add(1)),
+                    )),
+                    flavor => Self::from_cil_flavor(flavor, token),
+                }
             }
 
             // Unknown table, or nesting too deep to be well-formed
@@ -1218,7 +1282,7 @@ pub trait TypeProvider {
 ///
 /// # Usage
 ///
-/// ```rust,ignore
+/// ```no_run
 /// let ctx = TypeContext::new(&method, &assembly);
 /// let arg0_type = ctx.arg_type(0);
 /// let local2_type = ctx.local_type(2);
@@ -1255,19 +1319,27 @@ impl<'a> TypeContext<'a> {
         // For instance methods, arg 0 is 'this'
         if self.method.signature.has_this {
             if idx == 0 {
-                // 'this' pointer - get type from declaring class
+                // 'this' is the declaring type's instance, or a managed pointer to it
+                // when the type is a value type (ECMA-335 II.13.3)
                 return self
                     .method
                     .declaring_type_rc()
-                    .map_or(SsaType::Object, |dt| SsaType::Class(TypeRef::new(dt.token)));
+                    .map_or(SsaType::Object, |dt| {
+                        let declaring = SsaType::from_type_token(dt.token, self.assembly);
+                        if dt.flavor().is_value_type() {
+                            SsaType::ByRef(Box::new(declaring))
+                        } else {
+                            declaring
+                        }
+                    });
             }
             // Adjust for 'this' offset
             if let Some(param) = self.method.signature.params.get(idx.saturating_sub(1)) {
-                let ty = SsaType::from_type_signature(&param.base, self.assembly);
+                let ty = SsaType::from_parameter(param, self.assembly);
                 return self.validate_generic_params(ty);
             }
         } else if let Some(param) = self.method.signature.params.get(idx) {
-            let ty = SsaType::from_type_signature(&param.base, self.assembly);
+            let ty = SsaType::from_parameter(param, self.assembly);
             return self.validate_generic_params(ty);
         }
 
@@ -1292,8 +1364,7 @@ impl<'a> TypeContext<'a> {
         signatures
             .and_then(|types| types.into_iter().nth(idx as usize))
             .map_or(SsaType::Unknown, |sig| {
-                let ty = SsaType::from_type_signature(&sig.base, self.assembly);
-                self.validate_generic_params(ty)
+                self.validate_generic_params(SsaType::from_local(&sig, self.assembly))
             })
     }
 
@@ -1312,7 +1383,7 @@ impl<'a> TypeContext<'a> {
                 .get(&token)
                 .map_or(SsaType::Unknown, |entry| {
                     let method = entry.value();
-                    SsaType::from_type_signature(&method.signature.return_type.base, self.assembly)
+                    SsaType::from_parameter(&method.signature.return_type, self.assembly)
                 }),
 
             // MemberRef - the signature's return type, in the terms of the
@@ -1369,7 +1440,7 @@ impl<'a> TypeContext<'a> {
                 .get(&ctor_token)
                 .and_then(|entry| entry.value().declaring_type_rc().map(|dt| dt.token))
                 .map_or(SsaType::Object, |type_token| {
-                    SsaType::Class(TypeRef::new(type_token))
+                    SsaType::from_type_token(type_token, self.assembly)
                 }),
 
             // MemberRef - get declaring type from member ref
@@ -1407,10 +1478,10 @@ impl<'a> TypeContext<'a> {
             // Field table (0x04) - look up through type registry
             0x04 => self
                 .assembly
-                .types()
-                .get_field_signature(&field_token)
-                .map_or(SsaType::Unknown, |sig| {
-                    SsaType::from_type_signature(&sig, self.assembly)
+                .fields()
+                .get(&field_token)
+                .map_or(SsaType::Unknown, |entry| {
+                    SsaType::from_type_signature(&entry.value().signature.base, self.assembly)
                 }),
 
             // MemberRef table (0x0A) - a field reached through a reference,
@@ -1463,7 +1534,7 @@ impl<'a> TypeContext<'a> {
         };
         match &owned.parsed_signature {
             StandAloneSignature::Method(sig) => {
-                SsaType::from_type_signature(&sig.return_type.base, self.assembly)
+                SsaType::from_parameter(&sig.return_type, self.assembly)
             }
             _ => SsaType::Unknown,
         }
@@ -1478,7 +1549,7 @@ impl<'a> TypeContext<'a> {
         let MemberRefSignature::Method(sig) = &member_ref.signature else {
             return None;
         };
-        let ret = SsaType::from_type_signature(&sig.return_type.base, self.assembly);
+        let ret = SsaType::from_parameter(&sig.return_type, self.assembly);
         Some((ret, self.instantiation_args(member_ref.declaredby.token())))
     }
 

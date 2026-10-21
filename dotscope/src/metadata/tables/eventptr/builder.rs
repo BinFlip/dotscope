@@ -6,7 +6,7 @@
 //!
 //! # Usage Example
 //!
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::prelude::*;
 //!
 //! # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
@@ -15,6 +15,7 @@
 //! let eventptr_token = EventPtrBuilder::new()
 //!     .event(4)                      // Points to Event table RID 4
 //!     .build(&mut assembly)?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 
 use crate::{
@@ -46,7 +47,7 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::prelude::*;
 ///
 /// // Create event pointer for edit-and-continue
@@ -63,6 +64,7 @@ use crate::{
 /// let ptr3 = EventPtrBuilder::new()
 ///     .event(15)  // Points to Event table entry 15
 ///     .build(&mut assembly)?;
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct EventPtrBuilder {
@@ -141,7 +143,7 @@ impl EventPtrBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use dotscope::prelude::*;
     ///
     /// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
@@ -149,6 +151,7 @@ impl EventPtrBuilder {
     /// let token = EventPtrBuilder::new()
     ///     .event(4)
     ///     .build(&mut assembly)?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let event = self.event.ok_or_else(|| {

@@ -216,33 +216,8 @@ static EXECUTION_LEVELS: LazyLock<Vec<Vec<&'static dyn MetadataLoader>>> = LazyL
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::metadata::loader::{MetadataLoader, LoaderContext};
-/// use dotscope::metadata::tables::TableId;
-/// use dotscope::Result;
-///
-/// struct MyTableLoader;
-///
-/// impl MetadataLoader for MyTableLoader {
-///     fn load(&self, context: &LoaderContext) -> Result<()> {
-///         // Access dependency data
-///         let assembly_data = context.assemblies();
-///
-///         // Process this table's data
-///         // ...
-///
-///         Ok(())
-///     }
-///
-///     fn table_id(&self) -> TableId {
-///         TableId::MyTable
-///     }
-///
-///     fn dependencies(&self) -> &'static [TableId] {
-///         &[TableId::Assembly, TableId::Module]
-///     }
-/// }
-/// ```
+/// Every table has one; `AssemblyLoader` (`metadata/tables/assembly/loader.rs`) is a
+/// complete implementation.
 pub(crate) trait MetadataLoader: Send + Sync {
     /// Load this metadata table using the provided [`LoaderContext`].
     ///
@@ -272,7 +247,7 @@ pub(crate) trait MetadataLoader: Send + Sync {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// fn load(&self, context: &LoaderContext) -> Result<()> {
     ///     // Get required metadata streams
     ///     let table_stream = context.table_stream()?;
@@ -286,6 +261,7 @@ pub(crate) trait MetadataLoader: Send + Sync {
     ///
     ///     Ok(())
     /// }
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     fn load(&self, context: &LoaderContext) -> Result<()>;
 
@@ -306,7 +282,7 @@ pub(crate) trait MetadataLoader: Send + Sync {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use dotscope::metadata::tables::TableId;
     ///
     /// // Regular table loader
@@ -363,7 +339,7 @@ pub(crate) trait MetadataLoader: Send + Sync {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use dotscope::metadata::tables::TableId;
     ///
     /// // A TypeDef loader that depends on MethodDef and Field tables
@@ -424,17 +400,8 @@ pub(crate) trait MetadataLoader: Send + Sync {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::metadata::loader::{build_dependency_graph, LOADERS};
-///
-/// match build_dependency_graph(&LOADERS) {
-///     Ok(graph) => {
-///         let levels = graph.topological_levels()?;
-///         println!("Graph has {} execution levels", levels.len());
-///     }
-///     Err(e) => eprintln!("Failed to build dependency graph: {}", e),
-/// }
-/// ```
+/// The `tests::execution_levels_run_every_loader_once_after_its_dependencies` test in this
+/// module checks the schedule it builds.
 ///
 /// # Thread Safety
 ///
@@ -500,27 +467,8 @@ fn build_dependency_graph(
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::metadata::loader::{LoaderContext, execute_loaders_in_parallel};
-/// use dotscope::file::CilObject;
-///
-/// // Load .NET assembly file
-/// let cil_object = CilObject::parse_file("example.dll")?;
-///
-/// // Create loader context
-/// let context = LoaderContext::new(&cil_object)?;
-///
-/// // Execute all metadata loaders in parallel
-/// match execute_loaders_in_parallel(&context) {
-///     Ok(()) => {
-///         println!("All metadata tables loaded successfully");
-///         // Access loaded data via context methods
-///         let assemblies = context.assemblies();
-///         let types = context.type_defs();
-///     }
-///     Err(e) => eprintln!("Metadata loading failed: {}", e),
-/// }
-/// ```
+/// The `examples::from_assembly_view_example` test in `loader/data.rs` runs every loader
+/// through it.
 ///
 /// # Thread Safety
 ///

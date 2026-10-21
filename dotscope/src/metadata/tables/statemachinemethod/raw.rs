@@ -91,8 +91,8 @@ impl StateMachineMethodRaw {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// # use dotscope::metadata::tables::statemachinemethod::StateMachineMethodRaw;
+    /// ```no_run
+    /// # use dotscope::metadata::tables::StateMachineMethodRaw;
     /// # use dotscope::metadata::token::Token;
     /// # fn example(method_map: &MethodMap) -> dotscope::Result<()> {
     /// let mapping_raw = StateMachineMethodRaw {
@@ -106,6 +106,7 @@ impl StateMachineMethodRaw {
     /// let mapping = mapping_raw.to_owned(method_map)?;
     /// # Ok(())
     /// # }
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn to_owned(&self, method_map: &MethodMap) -> Result<StateMachineMethodRc> {
         let move_next_token = Token::new(0x0600_0000 | self.move_next_method);

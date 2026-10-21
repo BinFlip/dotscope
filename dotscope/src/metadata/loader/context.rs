@@ -31,24 +31,8 @@
 //!
 //! # Examples
 //!
-//! ```rust,ignore
-//! # use dotscope::metadata::loader::context::LoaderContext;
-//! # use dotscope::metadata::tables::CodedIndex;
-//! # fn example_usage(context: &LoaderContext) {
-//! // Resolve a coded index to a type reference
-//! let coded_index = CodedIndex { /* ... */ };
-//! let type_ref = context.get_ref(&coded_index);
-//!
-//! // Access metadata streams
-//! if let Some(strings) = context.strings {
-//!     // Use string heap for name resolution
-//! }
-//!
-//! // Access specific table maps
-//! let method_count = context.method_def.len();
-//! println!("Assembly contains {} methods", method_count);
-//! # }
-//! ```
+//! The loaders show it in use: `CustomAttributeLoader` resolves each attribute's parent
+//! and constructor with [`LoaderContext::get_ref`] (`metadata/tables/customattribute/loader.rs`).
 //!
 //! # Memory Management
 //!
@@ -141,29 +125,9 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// # use dotscope::metadata::loader::context::LoaderContext;
-/// # use dotscope::metadata::tables::{CodedIndex, TableId};
-/// # use dotscope::metadata::token::Token;
-/// # fn loader_example(context: &LoaderContext) -> dotscope::Result<()> {
-/// // Resolve a coded index during loading
-/// let coded_index = CodedIndex {
-///     tag: TableId::TypeDef,
-///     token: Token::new(0x02000001),
-/// };
-/// let type_reference = context.get_ref(&coded_index);
-///
-/// // Access metadata streams for name resolution
-/// if let Some(strings) = context.strings {
-///     let name = strings.get(123)?; // Get string at index 123
-/// }
-///
-/// // Query loaded metadata
-/// println!("Methods loaded: {}", context.method_def.len());
-/// println!("Types registered: {}", context.types.len());
-/// # Ok(())
-/// # }
-/// ```
+/// Every table loader receives one; `CustomAttributeLoader`
+/// (`metadata/tables/customattribute/loader.rs`) reads its maps and resolves coded indices
+/// through it.
 pub(crate) struct LoaderContext<'a> {
     // Core Assembly Data
     /// Input file reference for the assembly being loaded.
@@ -225,7 +189,7 @@ pub(crate) struct LoaderContext<'a> {
     /// Method specifications for generic method instantiations.
     pub method_spec: &'a MethodSpecMap,
     /// Field definitions in types.
-    pub field: FieldMap,
+    pub field: &'a FieldMap,
     /// Field pointer indirection table.
     pub field_ptr: FieldPtrMap,
     /// Method pointer indirection table.
@@ -352,39 +316,8 @@ impl LoaderContext<'_> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::loader::context::LoaderContext;
-    /// use dotscope::metadata::tables::{CodedIndex, TableId};
-    /// use dotscope::metadata::token::Token;
-    /// use dotscope::metadata::typesystem::CilTypeReference;
-    ///
-    /// # fn resolve_example(context: &LoaderContext) {
-    /// // Resolve a TypeDef coded index
-    /// let coded_index = CodedIndex {
-    ///     tag: TableId::TypeDef,
-    ///     token: Token::new(0x02000001),
-    /// };
-    ///
-    /// match context.get_ref(&coded_index) {
-    ///     CilTypeReference::TypeDef(type_def) => {
-    ///         println!("Resolved TypeDef: {}", type_def.name);
-    ///     }
-    ///     CilTypeReference::None => {
-    ///         println!("Could not resolve coded index");
-    ///     }
-    ///     _ => {
-    ///         println!("Unexpected reference type");
-    ///     }
-    /// }
-    ///
-    /// // The method automatically handles different table types
-    /// let method_index = CodedIndex {
-    ///     tag: TableId::MethodDef,
-    ///     token: Token::new(0x06000001),
-    /// };
-    /// let method_ref = context.get_ref(&method_index);
-    /// # }
-    /// ```
+    /// `CustomAttributeLoader` (`metadata/tables/customattribute/loader.rs`) resolves each
+    /// attribute's parent and constructor through it.
     ///
     /// # Thread Safety
     ///
@@ -562,7 +495,7 @@ impl LoaderContext<'_> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use dotscope::metadata::diagnostics::DiagnosticCategory;
     ///
     /// let result = row.to_owned(strings, blob);

@@ -40,9 +40,8 @@ mod tests {
 
     use crate::{
         assembly::Operand,
-        deobfuscation::{engine::DeobfuscationEngine, EngineConfig},
         metadata::validation::ValidationConfig,
-        testkit::fixture,
+        testkit::{engine, fixture},
         CilObject,
     };
 
@@ -99,7 +98,7 @@ mod tests {
 
         // Run deobfuscation on the protected sample
         let assembly = load_nr_sample("reactor_strings.exe");
-        let engine = DeobfuscationEngine::new(EngineConfig::default());
+        let engine = engine();
         let (output, result) = engine
             .process_assembly(assembly)
             .expect("Deobfuscation should succeed");
@@ -182,7 +181,7 @@ mod tests {
             .try_init();
 
         let assembly = load_nr_sample("reactor_necrobit_strings.exe");
-        let engine = DeobfuscationEngine::new(EngineConfig::default());
+        let engine = engine();
         let (_output, result) = engine
             .process_assembly(assembly)
             .expect("Deobfuscation should succeed");

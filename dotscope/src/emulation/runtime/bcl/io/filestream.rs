@@ -1065,11 +1065,11 @@ mod tests {
                 hook::{HookContext, HookManager, PreHookResult},
                 RuntimeState,
             },
-            AddressSpace, CaptureContext, EmValue, EmulationConfig, EmulationThread,
-            SharedFakeObjects, ThreadContext, ThreadId,
+            AddressSpace, CaptureContext, EmValue, EmulationThread, SharedFakeObjects,
+            ThreadContext, ThreadId,
         },
         metadata::{token::Token, typesystem::PointerSize},
-        testkit::emulation::create_test_thread,
+        testkit::emulation::{create_test_thread, emulation_config},
     };
 
     /// Creates a test thread with a virtual filesystem containing "test.exe".
@@ -1083,7 +1083,7 @@ mod tests {
             address_space,
             Arc::new(RwLock::new(RuntimeState::new())),
             Arc::new(CaptureContext::new()),
-            Arc::new(EmulationConfig::default()),
+            Arc::new(emulation_config()),
             None,
             fake_objects,
             Arc::new(vfs),
@@ -1182,7 +1182,7 @@ mod tests {
             address_space,
             Arc::new(RwLock::new(RuntimeState::new())),
             Arc::new(CaptureContext::new()),
-            Arc::new(EmulationConfig::default()),
+            Arc::new(emulation_config()),
             None,
             fake_objects,
             Arc::new(vfs),

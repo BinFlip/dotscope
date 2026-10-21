@@ -33,17 +33,18 @@
 //! Once created, use [`execute_method`](EmulationProcess::execute_method) to
 //! run specific methods:
 //!
-//! ```rust,ignore
+//! ```no_run
 //! # use dotscope::metadata::token::Token;
 //! # let method_token = Token::new(0x06000001);
 //! let outcome = process.execute_method(method_token, vec![])?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! # Retrieving Results
 //!
 //! After execution, retrieve captured data:
 //!
-//! ```rust,ignore
+//! ```no_run
 //! for asm in process.captured_assemblies() {
 //!     println!("Captured: {} bytes", asm.data.len());
 //! }
@@ -495,11 +496,12 @@ impl EmulationProcess {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// # // process is an EmulationProcess instance
     /// for asm in process.captured_assemblies() {
     ///     std::fs::write(format!("extracted_{}.dll", asm.id), &asm.data)?;
     /// }
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn captured_assemblies(&self) -> Vec<CapturedAssembly> {
         self.context.capture.assemblies()
@@ -578,12 +580,13 @@ impl EmulationProcess {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// # use dotscope::emulation::EmValue;
     /// # // process is an EmulationProcess instance
     /// if let Some(token) = process.find_method("StringDecryptor", "Decrypt") {
     ///     process.execute_method(token, vec![EmValue::I32(42)])?;
     /// }
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn find_method(&self, type_name: &str, method_name: &str) -> Option<Token> {
         let assembly = self.context.assembly.as_ref()?;
@@ -957,7 +960,7 @@ impl EmulationProcess {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// # // process is an EmulationProcess instance
     /// let summary = process.summary();
     /// println!("Executed {} instructions", summary.instruction_count);
@@ -999,7 +1002,7 @@ impl fmt::Debug for EmulationProcess {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```no_run
 /// # // process is an EmulationProcess instance
 /// let summary = process.summary();
 /// println!("Process: {}", summary.name);
@@ -1047,15 +1050,16 @@ mod tests {
         emulation::{
             capture::CaptureSource,
             engine::{EmulationOutcome, LimitExceeded},
-            process::{CaptureConfig, ProcessBuilder},
+            process::CaptureConfig,
             EmValue, ThreadId,
         },
         metadata::token::Token,
+        testkit::emulation::process_builder,
     };
 
     #[test]
     fn test_process_creation() {
-        let process = ProcessBuilder::new().name("test").build().unwrap();
+        let process = process_builder().name("test").build().unwrap();
 
         assert_eq!(process.name(), "test");
         assert!(!process.has_assembly());
@@ -1064,7 +1068,7 @@ mod tests {
 
     #[test]
     fn test_instruction_counting() {
-        let process = ProcessBuilder::new().build().unwrap();
+        let process = process_builder().build().unwrap();
 
         process.increment_instructions(100).unwrap();
         assert_eq!(process.instruction_count(), 100);
@@ -1078,7 +1082,7 @@ mod tests {
 
     #[test]
     fn test_memory_operations() {
-        let process = ProcessBuilder::new()
+        let process = process_builder()
             .map_data(0x10000, vec![0xDE, 0xAD, 0xBE, 0xEF], "test")
             .build()
             .unwrap();
@@ -1093,7 +1097,7 @@ mod tests {
 
     #[test]
     fn test_static_fields() {
-        let process = ProcessBuilder::new().build().unwrap();
+        let process = process_builder().build().unwrap();
 
         let token = Token::new(0x04000001);
 
@@ -1105,7 +1109,7 @@ mod tests {
 
     #[test]
     fn test_process_summary() {
-        let process = ProcessBuilder::new()
+        let process = process_builder()
             .name("summary_test")
             .map_data(0x10000, vec![0x01, 0x02], "region1")
             .build()
@@ -1149,7 +1153,7 @@ mod tests {
 
     #[test]
     fn test_fork_memory_isolation() {
-        let process = ProcessBuilder::new()
+        let process = process_builder()
             .name("original")
             .map_data(0x10000, vec![1, 2, 3, 4], "data")
             .build()
@@ -1175,7 +1179,7 @@ mod tests {
 
     #[test]
     fn test_fork_statics_isolation() {
-        let process = ProcessBuilder::new().build().unwrap();
+        let process = process_builder().build().unwrap();
         let field = Token::new(0x04000001);
 
         process.set_static(field, EmValue::I32(42)).unwrap();
@@ -1202,10 +1206,7 @@ mod tests {
             assemblies: true,
             ..Default::default()
         };
-        let process = ProcessBuilder::new()
-            .capture(capture_config)
-            .build()
-            .unwrap();
+        let process = process_builder().capture(capture_config).build().unwrap();
 
         // Fork gets fresh captures
         let forked = process.fork().unwrap();
@@ -1225,7 +1226,7 @@ mod tests {
 
     #[test]
     fn test_fork_instruction_count_fresh() {
-        let process = ProcessBuilder::new().build().unwrap();
+        let process = process_builder().build().unwrap();
 
         process.increment_instructions(100).unwrap();
         assert_eq!(process.instruction_count(), 100);
@@ -1248,10 +1249,7 @@ mod tests {
             strings: true,
             ..Default::default()
         };
-        let process = ProcessBuilder::new()
-            .capture(capture_config)
-            .build()
-            .unwrap();
+        let process = process_builder().capture(capture_config).build().unwrap();
 
         // Add capture to original
         process.capture().capture_assembly_load_bytes(
@@ -1290,7 +1288,7 @@ mod tests {
 
     #[test]
     fn test_multiple_forks() {
-        let process = ProcessBuilder::new()
+        let process = process_builder()
             .map_data(0x10000, vec![0u8; 16], "data")
             .build()
             .unwrap();

@@ -42,7 +42,7 @@
 //! # Usage Patterns
 //!
 //! ## Basic Method Information
-//! ```rust,ignore
+//! ```no_run
 //! use dotscope::metadata::method::MethodBody;
 //!
 //! let method_data = /* ... method body bytes ... */;
@@ -50,10 +50,11 @@
 //!
 //! println!("Method has {} bytes of IL code", body.size_code);
 //! println!("Header type: {}", if body.is_fat { "Fat" } else { "Tiny" });
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! ## Local Variable Analysis
-//! ```rust,ignore
+//! ```no_run
 //! if body.local_var_sig_token != 0 {
 //!     println!("Method has local variables (signature token: 0x{:08X})",
 //!              body.local_var_sig_token);
@@ -64,7 +65,7 @@
 //! ```
 //!
 //! ## Exception Handler Processing
-//! ```rust,ignore
+//! ```no_run
 //! if body.is_exception_data {
 //!     println!("Method has {} exception handlers", body.exception_handlers.len());
 //!     for (i, handler) in body.exception_handlers.iter().enumerate() {

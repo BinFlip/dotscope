@@ -51,7 +51,7 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```no_run
 /// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::FieldLayoutBuilder;
 /// # use std::path::Path;

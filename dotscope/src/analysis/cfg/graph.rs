@@ -31,12 +31,13 @@ use crate::{
 ///
 /// Create a CFG from decoded basic blocks using [`from_basic_blocks`](Self::from_basic_blocks):
 ///
-/// ```rust,ignore
+/// ```no_run
 /// use dotscope::analysis::ControlFlowGraph;
 /// use dotscope::assembly::decode_blocks;
 ///
 /// let blocks = decode_blocks(data, offset, rva, Some(size))?;
 /// let graph = ControlFlowGraph::from_basic_blocks(blocks)?;
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
 /// # Lazy Computation
@@ -97,12 +98,13 @@ impl ControlFlowGraph<'static> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use dotscope::analysis::ControlFlowGraph;
     /// use dotscope::assembly::decode_blocks;
     ///
     /// let blocks = decode_blocks(data, offset, rva, Some(size))?;
     /// let graph = ControlFlowGraph::from_basic_blocks(blocks)?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn from_basic_blocks(blocks: Vec<BasicBlock>) -> Result<Self> {
         if blocks.is_empty() {
@@ -250,7 +252,7 @@ impl<'a> ControlFlowGraph<'a> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use dotscope::analysis::ControlFlowGraph;
     ///
     /// // Build CFG borrowing from method's blocks (zero-copy)
@@ -258,6 +260,7 @@ impl<'a> ControlFlowGraph<'a> {
     ///     let graph = ControlFlowGraph::from_blocks_ref(blocks)?;
     ///     // graph is valid as long as `blocks` is valid
     /// }
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn from_blocks_ref(blocks: &'a [BasicBlock]) -> Result<Self> {
         if blocks.is_empty() {
@@ -483,13 +486,14 @@ impl<'a> ControlFlowGraph<'a> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use dotscope::analysis::ControlFlowGraph;
     ///
     /// let graph = ControlFlowGraph::from_basic_blocks(blocks)?;
     /// for loop_info in graph.loop_forest().loops() {
     ///     println!("Loop at {:?} with {} blocks", loop_info.header, loop_info.size());
     /// }
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
     pub fn loop_forest(&self) -> &LoopForest {
